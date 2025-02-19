@@ -6,5 +6,5 @@
 # https://dart.dev/guides/libraries/private-files#pubspeclock.
 pubspec.lock
 open62541_tools/*
-build*
+open62541_build/*
 .DS_Store
