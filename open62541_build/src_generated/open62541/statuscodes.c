@@ -15,8 +15,8 @@ const char * UA_StatusCode_name(UA_StatusCode code) {
     return emptyStatusCodeName;
 }
 #else
-static const size_t statusCodeDescriptionsSize = 252;
-static const UA_StatusCodeName statusCodeDescriptions[252] = {
+static const size_t statusCodeDescriptionsSize = 253;
+static const UA_StatusCodeName statusCodeDescriptions[253] = {
     {UA_STATUSCODE_GOOD, "Good"},
     {UA_STATUSCODE_GOOD, "Good"},
     {UA_STATUSCODE_UNCERTAIN, "Uncertain"},
@@ -233,6 +233,7 @@ static const UA_StatusCodeName statusCodeDescriptions[252] = {
     {UA_STATUSCODE_GOODDATAIGNORED, "GoodDataIgnored"},
     {UA_STATUSCODE_BADREQUESTNOTALLOWED, "BadRequestNotAllowed"},
     {UA_STATUSCODE_BADREQUESTNOTCOMPLETE, "BadRequestNotComplete"},
+    {UA_STATUSCODE_BADTRANSACTIONPENDING, "BadTransactionPending"},
     {UA_STATUSCODE_BADTICKETREQUIRED, "BadTicketRequired"},
     {UA_STATUSCODE_BADTICKETINVALID, "BadTicketInvalid"},
     {UA_STATUSCODE_GOODEDITED, "GoodEdited"},

@@ -1,8 +1,9 @@
 file(REMOVE_RECURSE
+  "bin/.1.4"
+  "bin/libopen62541.1.4.8.dylib"
+  "bin/libopen62541.1.4.dylib"
+  "bin/libopen62541.dylib"
   "bin/libopen62541.pdb"
-  "bin/libopen62541.so"
-  "bin/libopen62541.so.1"
-  "bin/libopen62541.so.1.4.1"
 )
 
 # Per-language clean rules from dependency scanning.

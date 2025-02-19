@@ -61,9 +61,18 @@ void subscriptionInactivityCallback(Pointer<UA_Client> client, int subId, Pointe
   print('Subscription inactivity callback $subId');
 }
 
-/// Checks if you are awesome. Spoiler: you are.
+Uri? objectPath() {
+  var ending = 'so';
+  if (Platform.isMacOS) {
+    ending = 'dylib';
+  } else if (Platform.isWindows) {
+    ending = 'dll';
+  }
+  return Isolate.resolvePackageUriSync(Uri.parse('package:open62541_bindings/libopen62541.$ending'));
+}
+
 int main() {
-  var location = Isolate.resolvePackageUriSync(Uri.parse('package:open62541_bindings/libopen62541.so'));
+  var location = objectPath();
   print(location);
   lib = open62541(DynamicLibrary.open(location!.path));
   Pointer<UA_Client> client = lib.UA_Client_new();

@@ -148,7 +148,7 @@ static UA_DataTypeMember TcpErrorMessage_members[2] = {
 static UA_DataTypeMember AsymmetricAlgorithmSecurityHeader_members[3] = {
 {
     UA_TYPENAME("SecurityPolicyUri") /* .memberName */
-    &UA_TYPES[UA_TYPES_BYTESTRING], /* .memberType */
+    &UA_TYPES[UA_TYPES_STRING], /* .memberType */
     0, /* .padding */
     false, /* .isArray */
     false  /* .isOptional */
@@ -156,7 +156,7 @@ static UA_DataTypeMember AsymmetricAlgorithmSecurityHeader_members[3] = {
 {
     UA_TYPENAME("SenderCertificate") /* .memberName */
     &UA_TYPES[UA_TYPES_BYTESTRING], /* .memberType */
-    offsetof(UA_AsymmetricAlgorithmSecurityHeader, senderCertificate) - offsetof(UA_AsymmetricAlgorithmSecurityHeader, securityPolicyUri) - sizeof(UA_ByteString), /* .padding */
+    offsetof(UA_AsymmetricAlgorithmSecurityHeader, senderCertificate) - offsetof(UA_AsymmetricAlgorithmSecurityHeader, securityPolicyUri) - sizeof(UA_String), /* .padding */
     false, /* .isArray */
     false  /* .isOptional */
 },

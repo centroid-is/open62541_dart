@@ -1,9 +1,9 @@
-libdir=/home/omar/source/repos/open62541_bindings/open62541_build/install/lib
+libdir=/Users/omar/source/repos/open62541_bindings/open62541_build/install/lib
 sharedlibdir=${libdir}
-includedir=/home/omar/source/repos/open62541_bindings/open62541_build/install/include
+includedir=/Users/omar/source/repos/open62541_bindings/open62541_build/install/include
 
 Name: open62541
 Description: open62541 is an open source C (C99) implementation of OPC UA
-Version: 1.4.1-397-g3d0da9ad7
-Libs: -L${libdir} -lopen62541 -lm -lrt
-Cflags: -I${includedir} -DUA_ENABLE_AMALGAMATION
+Version: 1.4.8-995-gd49cb241b
+Libs: -L${libdir} -lopen62541 -lm 
+Cflags: -I${includedir}
