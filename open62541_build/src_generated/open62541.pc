@@ -1,9 +1,0 @@
-libdir=/Users/omar/source/repos/open62541_bindings/open62541_build/install/lib
-sharedlibdir=${libdir}
-includedir=/Users/omar/source/repos/open62541_bindings/open62541_build/install/include
-
-Name: open62541
-Description: open62541 is an open source C (C99) implementation of OPC UA
-Version: 1.4.8-995-gd49cb241b
-Libs: -L${libdir} -lopen62541 -lm 
-Cflags: -I${includedir}
