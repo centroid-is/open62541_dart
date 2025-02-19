@@ -9,3 +9,7 @@ open62541_tools/*
 open62541_build*
 open62541_examples/*
 .DS_Store
+*.so
+*.so.*
+*.dylib
+lib/src/generated/*

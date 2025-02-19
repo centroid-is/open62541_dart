@@ -32,6 +32,6 @@ ffigen:
         - 'UA_*' # Do this to expose all function pointers.
   compiler-opts:
     - '-Iopen62541_build/install/include/'
-    - '-I/lib/clang/17/include/'
+    - '-I/lib/clang/19/include/'
     - '-Wno-nullability-completeness'
     - '-Wno-expansion-to-defined'
