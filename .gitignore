@@ -13,3 +13,6 @@ open62541_examples/*
 *.so.*
 *.dylib
 lib/src/generated/*
+.direnv
+.envrc
+ffigen.yaml
