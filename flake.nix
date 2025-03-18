@@ -36,8 +36,8 @@ outputs = { self, nixpkgs, flake-utils }:
                 "-idirafter ${pkgs.stdenv.cc.libc_dev}/include"
               ];
               headers.entry-points = [ "open62541_build/open62541.h" ];
-              output = "lib/bindings.dart";
-              name = "Open62541Bindings";
+              output = "lib/src/generated/open62541_bindings.dart";
+              name = "open62541";
             }} ffigen.yaml
           '';
         };
