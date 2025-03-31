@@ -4,9 +4,10 @@ import 'dart:io';
 
 import 'package:open62541_bindings/src/client.dart';
 import 'package:open62541_bindings/src/nodeId.dart';
+import 'package:open62541_bindings/src/library.dart';
 
 int main() {
-  Client c = Client();
+  Client c = Client(Open62541Singleton().lib);
 
   c.config.stateStream
       .listen((event) => print('Channel state: ${event.channelState}'));
@@ -40,11 +41,14 @@ int main() {
 
   print('Read complete');
   print('Subscription!');
-  try{
-    int subId = c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
+  try {
+    int subId = c.subscriptionCreate(
+        requestedPublishingInterval: Duration(milliseconds: 10));
     print('Created subscription $subId');
-    c.monitoredItemCreate(currentTime, subId, (dynamic data) => print("got $data"), samplingInterval: Duration(milliseconds: 10));
-  } catch (error){
+    c.monitoredItemCreate(
+        currentTime, subId, (dynamic data) => print("got $data"),
+        samplingInterval: Duration(milliseconds: 10));
+  } catch (error) {
     print(error);
     c.close();
     exit(-1);
@@ -59,6 +63,7 @@ int main() {
       break;
     }
   }
+  print('CLOSING CLIENT');
   c.close();
   print('Exiting');
   return 0;

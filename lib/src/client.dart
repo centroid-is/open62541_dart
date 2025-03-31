@@ -2,9 +2,10 @@ import 'dart:async';
 import 'dart:ffi' as ffi;
 
 import 'package:ffi/ffi.dart';
+import 'package:logger/logger.dart';
 
 import 'generated/open62541_bindings.dart' as raw;
-import 'library.dart';
+// import 'library.dart';
 import 'nodeId.dart';
 
 class ClientState {
@@ -54,31 +55,28 @@ class ClientConfig {
 }
 
 class Client {
-  Client() {
-    _client = Open62541Singleton().lib.UA_Client_new();
-    ffi.Pointer<raw.UA_ClientConfig> clientConfigPointer =
-        Open62541Singleton().lib.UA_Client_getConfig(_client);
-
-    _clientConfig = ClientConfig(clientConfigPointer);
+  Client(raw.open62541 lib)
+      : _lib = lib,
+        _client = lib.UA_Client_new() {
+    _clientConfig = ClientConfig(lib.UA_Client_getConfig(_client));
   }
 
   ClientConfig get config => _clientConfig;
 
   int connect(String url) {
     ffi.Pointer<ffi.Char> urlPointer = url.toNativeUtf8().cast();
-    return Open62541Singleton().lib.UA_Client_connect(_client, urlPointer);
+    return _lib.UA_Client_connect(_client, urlPointer);
   }
 
   void runIterate(Duration iterate) {
     int ms = iterate.inMilliseconds;
-    Open62541Singleton().lib.UA_Client_run_iterate(_client, ms);
+    _lib.UA_Client_run_iterate(_client, ms);
   }
 
   dynamic readValueAttribute(NodeId nodeId) {
     ffi.Pointer<raw.UA_Variant> data = calloc<raw.UA_Variant>();
-    int statusCode = Open62541Singleton()
-        .lib
-        .UA_Client_readValueAttribute(_client, nodeId.rawNodeId, data);
+    int statusCode =
+        _lib.UA_Client_readValueAttribute(_client, nodeId.rawNodeId, data);
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Bad status code $statusCode';
     }
@@ -97,7 +95,7 @@ class Client {
       int priority = 0}) {
     ffi.Pointer<raw.UA_CreateSubscriptionRequest> request =
         calloc<raw.UA_CreateSubscriptionRequest>();
-    Open62541Singleton().lib.UA_CreateSubscriptionRequest_init(request);
+    _lib.UA_CreateSubscriptionRequest_init(request);
     request.ref.requestedPublishingInterval =
         requestedPublishingInterval.inMicroseconds / 1000.0;
     request.ref.requestedLifetimeCount = requestedLifetimeCount;
@@ -112,16 +110,26 @@ class Client {
         (ffi.Pointer<raw.UA_Client> client, int subid,
                 ffi.Pointer<ffi.Void> somedata) =>
             print("Subscription deleted $subid"));
-    raw.UA_CreateSubscriptionResponse response = Open62541Singleton()
-        .lib
-        .UA_Client_Subscriptions_create(_client, request.ref, ffi.nullptr,
+    raw.UA_CreateSubscriptionResponse response =
+        _lib.UA_Client_Subscriptions_create(_client, request.ref, ffi.nullptr,
             ffi.nullptr, deleteCallback.nativeFunction);
     if (response.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-      throw 'unable to create subscription ${response.responseHeader.serviceResult}';
+      throw 'unable to create subscription ${response.responseHeader.serviceResult} ${statusCodeToString(response.responseHeader.serviceResult)}';
     }
     calloc.free(request);
+    _logger.t("Created subscription ${response.subscriptionId}");
     subscriptionIds[response.subscriptionId] = response;
     return response.subscriptionId;
+  }
+
+  void subscriptionDelete(int subId) {
+    final statusCode =
+        _lib.UA_Client_Subscriptions_deleteSingle(_client, subId);
+    if (statusCode != raw.UA_STATUSCODE_GOOD) {
+      throw 'Unable to delete subscription $subId: $statusCode ${statusCodeToString(statusCode)}';
+    }
+    _logger.t("Deleted subscription $subId");
+    subscriptionIds.remove(subId);
   }
 
   int monitoredItemCreate(
@@ -133,7 +141,7 @@ class Client {
       int queueSize = 1}) {
     ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest =
         calloc<raw.UA_MonitoredItemCreateRequest>();
-    Open62541Singleton().lib.UA_MonitoredItemCreateRequest_init(monRequest);
+    _lib.UA_MonitoredItemCreateRequest_init(monRequest);
     monRequest.ref.itemToMonitor.nodeId = nodeid.rawNodeId;
     monRequest.ref.itemToMonitor.attributeId = attr;
     monRequest.ref.monitoringMode = monitoringMode;
@@ -161,9 +169,8 @@ class Client {
       dynamic retValue = _uaVariantToFlutter(variantPointer);
       callback(retValue);
     });
-    raw.UA_MonitoredItemCreateResult monResponse = Open62541Singleton()
-        .lib
-        .UA_Client_MonitoredItems_createDataChange(
+    raw.UA_MonitoredItemCreateResult monResponse =
+        _lib.UA_Client_MonitoredItems_createDataChange(
             _client,
             subscriptionId,
             raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH,
@@ -172,19 +179,22 @@ class Client {
             monitorCallback.nativeFunction,
             ffi.nullptr);
     if (monResponse.statusCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Unable to create monitored item: ${monResponse.statusCode}';
+      throw 'Unable to create monitored item: ${monResponse.statusCode} ${statusCodeToString(monResponse.statusCode)}';
     }
-    return monResponse.monitoredItemId;
+    final monId = monResponse.monitoredItemId;
+    _logger.t("Created monitored item $monId");
+    monitoredItems.add(monResponse);
+    return monId;
   }
 
   dynamic _uaVariantToFlutter(ffi.Pointer<raw.UA_Variant> data) {
     //TODO, Convert the opc-ua type to some nice flutter type
     // For now we assume everything we read is a datetime.
-    raw.UA_DateTimeStruct dts = Open62541Singleton()
-        .lib
-        .UA_DateTime_toStruct(data.ref.data.cast<raw.UA_DateTime>().value);
+    raw.UA_DateTimeStruct dts =
+        _lib.UA_DateTime_toStruct(data.ref.data.cast<raw.UA_DateTime>().value);
 
-    DateTime dt = DateTime(dts.year, dts.month, dts.day, dts.hour, dts.min, dts.sec, dts.milliSec);
+    DateTime dt = DateTime(
+        dts.year, dts.month, dts.day, dts.hour, dts.min, dts.sec, dts.milliSec);
     return dt;
   }
 
@@ -193,12 +203,40 @@ class Client {
         dts.year, dts.month, dts.day, dts.hour, dts.min, dts.sec, dts.milliSec);
   }
 
-  void close() {
-    print('Closed connection');
-    Open62541Singleton().lib.UA_Client_delete(_client);
+  String statusCodeToString(int statusCode) {
+    return _lib.UA_StatusCode_name(statusCode).cast<Utf8>().toDartString();
   }
 
-  late ffi.Pointer<raw.UA_Client> _client;
-  late ClientConfig _clientConfig;
+  void disconnect() {
+    final statusCode = _lib.UA_Client_disconnect(_client);
+    if (statusCode != raw.UA_STATUSCODE_GOOD) {
+      throw 'Unable to disconnect: $statusCode ${statusCodeToString(statusCode)}';
+    }
+    _logger.t("Disconnected");
+  }
+
+  void delete() {
+    _lib.UA_Client_delete(_client);
+    _logger.t("Deleted client");
+  }
+
+  void close() {
+    for (var subId in List.from(subscriptionIds.keys)) {
+      subscriptionDelete(subId);
+    }
+    assert(subscriptionIds.isEmpty);
+    disconnect();
+    Future.delayed(Duration(seconds: 1), () {
+      _logger.t("Deleting client");
+      // idk why but the client may not be deleted immediately, it segfaults if we delete it immediately
+      delete();
+    });
+  }
+
+  final Logger _logger = Logger();
+  final raw.open62541 _lib;
+  final ffi.Pointer<raw.UA_Client> _client;
+  late final ClientConfig _clientConfig;
   Map<int, raw.UA_CreateSubscriptionResponse> subscriptionIds = {};
+  List<raw.UA_MonitoredItemCreateResult> monitoredItems = [];
 }

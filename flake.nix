@@ -17,6 +17,8 @@ outputs = { self, nixpkgs, flake-utils }:
     {
       devShell =
         with pkgs; mkShell rec {
+          allowSetuid = true;
+
           buildInputs = [
             flutter
             pkg-config
@@ -26,6 +28,7 @@ outputs = { self, nixpkgs, flake-utils }:
             gcc
             llvmPackages_latest.libclang
             clang
+            mbedtls
           ];
 
           shellHook = ''
