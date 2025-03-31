@@ -187,6 +187,38 @@ class Client {
     return monId;
   }
 
+  Stream<dynamic> monitoredItemStream(
+    NodeId nodeId,
+    int subscriptionId, {
+    int attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
+    int monitoringMode = raw.UA_MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    Duration samplingInterval = const Duration(milliseconds: 250),
+    bool discardOldest = true,
+    int queueSize = 1,
+  }) {
+    final controller = StreamController<dynamic>(sync: true);
+
+    int monitoredItemId = monitoredItemCreate(
+      nodeId,
+      subscriptionId,
+      (data) {
+        controller.add(data);
+      },
+      attr: attr,
+      monitoringMode: monitoringMode,
+      samplingInterval: samplingInterval,
+      discardOldest: discardOldest,
+      queueSize: queueSize,
+    );
+
+    controller.onCancel = () {
+      _logger.t("Cancelling monitored item $monitoredItemId");
+      controller.close();
+    };
+
+    return controller.stream;
+  }
+
   dynamic _uaVariantToFlutter(ffi.Pointer<raw.UA_Variant> data) {
     //TODO, Convert the opc-ua type to some nice flutter type
     // For now we assume everything we read is a datetime.

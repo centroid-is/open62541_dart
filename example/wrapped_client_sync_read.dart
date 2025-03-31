@@ -63,6 +63,27 @@ int main() {
       break;
     }
   }
+
+  print('Slow Stream monitored item created');
+  try {
+    int subId = c.subscriptionCreate(
+        requestedPublishingInterval: Duration(milliseconds: 10));
+    print('Created subscription $subId');
+    final myStream = c.monitoredItemStream(currentTime, subId);
+    myStream.listen((event) => print('stream $event'));
+  } catch (error) {
+    print(error);
+    c.close();
+    exit(-1);
+  }
+
+  startTime = DateTime.now().millisecondsSinceEpoch;
+  while (true) {
+    c.runIterate(Duration(milliseconds: 100));
+    if (startTime < DateTime.now().millisecondsSinceEpoch - 5000) {
+      break;
+    }
+  }
   print('CLOSING CLIENT');
   c.close();
   print('Exiting');
