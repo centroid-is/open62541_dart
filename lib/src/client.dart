@@ -5,8 +5,8 @@ import 'package:ffi/ffi.dart';
 import 'package:logger/logger.dart';
 
 import 'generated/open62541_bindings.dart' as raw;
-// import 'library.dart';
 import 'nodeId.dart';
+import 'extensions.dart';
 
 class ClientState {
   int channelState;
@@ -81,7 +81,7 @@ class Client {
       throw 'Bad status code $statusCode';
     }
 
-    final retVal = _uaVariantToFlutter(data);
+    final retVal = _uaVariantToDart(data);
     calloc.free(data);
     return retVal;
   }
@@ -166,7 +166,7 @@ class Client {
             ffi.Pointer<raw.UA_DataValue> value) {
       ffi.Pointer<raw.UA_Variant> variantPointer = calloc<raw.UA_Variant>();
       variantPointer.ref = value.ref.value;
-      dynamic retValue = _uaVariantToFlutter(variantPointer);
+      dynamic retValue = _uaVariantToDart(variantPointer);
       callback(retValue);
     });
     raw.UA_MonitoredItemCreateResult monResponse =
@@ -219,15 +219,64 @@ class Client {
     return controller.stream;
   }
 
-  dynamic _uaVariantToFlutter(ffi.Pointer<raw.UA_Variant> data) {
-    //TODO, Convert the opc-ua type to some nice flutter type
-    // For now we assume everything we read is a datetime.
-    raw.UA_DateTimeStruct dts =
-        _lib.UA_DateTime_toStruct(data.ref.data.cast<raw.UA_DateTime>().value);
+  dynamic _uaVariantToDart(ffi.Pointer<raw.UA_Variant> data) {
+    // Check if the variant contains no data
+    if (data.ref.data == ffi.nullptr) {
+      return null;
+    }
 
-    DateTime dt = DateTime(
-        dts.year, dts.month, dts.day, dts.hour, dts.min, dts.sec, dts.milliSec);
-    return dt;
+    final typeKind = data.ref.type.ref.typeKind;
+    switch (typeKind) {
+      case UA_DataTypeKindEnum.boolean:
+        return data.ref.data.cast<ffi.Bool>().value;
+
+      case UA_DataTypeKindEnum.sbyte:
+        return data.ref.data.cast<ffi.Int8>().value;
+
+      case UA_DataTypeKindEnum.byte:
+        return data.ref.data.cast<ffi.Uint8>().value;
+
+      case UA_DataTypeKindEnum.int16:
+        return data.ref.data.cast<ffi.Int16>().value;
+
+      case UA_DataTypeKindEnum.uint16:
+        return data.ref.data.cast<ffi.Uint16>().value;
+
+      case UA_DataTypeKindEnum.int32:
+        return data.ref.data.cast<ffi.Int32>().value;
+
+      case UA_DataTypeKindEnum.uint32:
+        return data.ref.data.cast<ffi.Uint32>().value;
+
+      case UA_DataTypeKindEnum.int64:
+        return data.ref.data.cast<ffi.Int64>().value;
+
+      case UA_DataTypeKindEnum.uint64:
+        return data.ref.data.cast<ffi.Uint64>().value;
+
+      case UA_DataTypeKindEnum.float:
+        return data.ref.data.cast<ffi.Float>().value;
+
+      case UA_DataTypeKindEnum.double:
+        return data.ref.data.cast<ffi.Double>().value;
+
+      case UA_DataTypeKindEnum.string:
+        final str = data.ref.data.cast<raw.UA_String>().ref;
+        if (str.length == 0 || str.data == ffi.nullptr) {
+          return '';
+        }
+        return String.fromCharCodes(
+            str.data.cast<ffi.Uint8>().asTypedList(str.length));
+
+      case UA_DataTypeKindEnum.dateTime:
+        raw.UA_DateTimeStruct dts = _lib.UA_DateTime_toStruct(
+            data.ref.data.cast<raw.UA_DateTime>().value);
+        return DateTime(dts.year, dts.month, dts.day, dts.hour, dts.min,
+            dts.sec, dts.milliSec);
+
+      default:
+        throw 'Unsupported variant type: $typeKind';
+    }
   }
 
   DateTime _opcuaToDateTime(raw.UA_DateTimeStruct dts) {
