@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
+import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 import 'package:logger/logger.dart';
@@ -7,6 +8,30 @@ import 'package:logger/logger.dart';
 import 'generated/open62541_bindings.dart' as raw;
 import 'nodeId.dart';
 import 'extensions.dart';
+
+class Result<T, E> {
+  final T? _ok;
+  final E? _err;
+  final bool isOk;
+
+  Result.ok(this._ok)
+      : isOk = true,
+        _err = null;
+  Result.error(this._err)
+      : isOk = false,
+        _ok = null;
+  T unwrap() {
+    return _ok!;
+  }
+
+  E error() {
+    return _err!;
+  }
+
+  R match<R>({required R Function(T) ok, required R Function(E) err}) {
+    return isOk ? ok(_ok!) : err(_err!);
+  }
+}
 
 class ClientState {
   int channelState;
@@ -132,8 +157,8 @@ class Client {
     subscriptionIds.remove(subId);
   }
 
-  int monitoredItemCreate(
-      NodeId nodeid, int subscriptionId, void Function(dynamic data) callback,
+  int monitoredItemCreate<T>(
+      NodeId nodeid, int subscriptionId, void Function(T data) callback,
       {int attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
       int monitoringMode = raw.UA_MonitoringMode.UA_MONITORINGMODE_REPORTING,
       Duration samplingInterval = const Duration(milliseconds: 250),
@@ -166,8 +191,19 @@ class Client {
             ffi.Pointer<raw.UA_DataValue> value) {
       ffi.Pointer<raw.UA_Variant> variantPointer = calloc<raw.UA_Variant>();
       variantPointer.ref = value.ref.value;
-      dynamic retValue = _uaVariantToDart(variantPointer);
-      callback(retValue);
+      late final T data;
+      try {
+        data = _uaVariantToType<T>(variantPointer);
+      } catch (e) {
+        print("Error converting data to type $T: $e");
+      } finally {
+        calloc.free(variantPointer);
+      }
+      try {
+        callback(data);
+      } catch (e) {
+        print("Error calling callback: $e");
+      }
     });
     raw.UA_MonitoredItemCreateResult monResponse =
         _lib.UA_Client_MonitoredItems_createDataChange(
@@ -187,7 +223,7 @@ class Client {
     return monId;
   }
 
-  Stream<dynamic> monitoredItemStream(
+  Stream<T> monitoredItemStream<T>(
     NodeId nodeId,
     int subscriptionId, {
     int attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
@@ -196,14 +232,13 @@ class Client {
     bool discardOldest = true,
     int queueSize = 1,
   }) {
-    final controller = StreamController<dynamic>(sync: true);
+    // force the stream to be synchronous and run in the same isolate as the callback
+    final controller = StreamController<T>(sync: true);
 
-    int monitoredItemId = monitoredItemCreate(
+    int monitoredItemId = monitoredItemCreate<T>(
       nodeId,
       subscriptionId,
-      (data) {
-        controller.add(data);
-      },
+      (data) => controller.add(data),
       attr: attr,
       monitoringMode: monitoringMode,
       samplingInterval: samplingInterval,
@@ -269,14 +304,36 @@ class Client {
             str.data.cast<ffi.Uint8>().asTypedList(str.length));
 
       case UA_DataTypeKindEnum.dateTime:
-        raw.UA_DateTimeStruct dts = _lib.UA_DateTime_toStruct(
-            data.ref.data.cast<raw.UA_DateTime>().value);
-        return DateTime(dts.year, dts.month, dts.day, dts.hour, dts.min,
-            dts.sec, dts.milliSec);
+        return _opcuaToDateTime(_lib.UA_DateTime_toStruct(
+            data.ref.data.cast<raw.UA_DateTime>().value));
 
       default:
         throw 'Unsupported variant type: $typeKind';
     }
+  }
+
+  T _uaVariantToType<T>(ffi.Pointer<raw.UA_Variant> data) {
+    if (data.ref.data == ffi.nullptr) {
+      if (null is T) {
+        return null as T;
+      }
+      throw 'Null value cannot be converted to non-nullable type $T';
+    }
+
+    final value = _uaVariantToDart(data);
+
+    // Special case for dynamic type
+    if (T == dynamic) {
+      return value as T;
+    }
+
+    // For specific types
+    if (value is T) {
+      return value;
+    }
+    _logger
+        .e('Expected type $T but got ${value.runtimeType} with value $value');
+    throw 'Expected type $T but got ${value.runtimeType} with value $value';
   }
 
   DateTime _opcuaToDateTime(raw.UA_DateTimeStruct dts) {
@@ -314,7 +371,10 @@ class Client {
     });
   }
 
-  final Logger _logger = Logger();
+  final Logger _logger = Logger(
+    level: Level.all,
+    printer: SimplePrinter(colors: true),
+  );
   final raw.open62541 _lib;
   final ffi.Pointer<raw.UA_Client> _client;
   late final ClientConfig _clientConfig;
