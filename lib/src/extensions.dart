@@ -1,4 +1,10 @@
+import 'package:ffi/ffi.dart';
+import 'dart:convert';
+import 'dart:ffi';
+
 import 'generated/open62541_bindings.dart' as raw;
+
+import 'types/string.dart';
 
 // ignore: camel_case_types
 enum UA_DataTypeKindEnum {
@@ -45,6 +51,129 @@ enum UA_DataTypeKindEnum {
   }
 }
 
+// ignore: camel_case_types
+enum UA_MessageSecurityModeEnum {
+  invalid(raw.UA_MessageSecurityMode.UA_MESSAGESECURITYMODE_INVALID),
+  none(raw.UA_MessageSecurityMode.UA_MESSAGESECURITYMODE_NONE),
+  sign(raw.UA_MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGN),
+  signAndEncrypt(
+      raw.UA_MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT);
+
+  final int value;
+  const UA_MessageSecurityModeEnum(this.value);
+
+  static UA_MessageSecurityModeEnum fromInt(int value) {
+    return UA_MessageSecurityModeEnum.values.firstWhere(
+      (mode) => mode.value == value,
+      orElse: () =>
+          throw ArgumentError('Unknown MessageSecurityMode value: $value'),
+    );
+  }
+}
+
+// ignore: camel_case_types
+enum UA_ExtensionObjectEncodingEnum {
+  encodedNoBody(
+      raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_NOBODY),
+  encodedByteString(
+      raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING),
+  encodedXml(raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_XML),
+  decoded(raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_DECODED),
+  decodedNodelete(
+      raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_DECODED_NODELETE);
+
+  final int value;
+  const UA_ExtensionObjectEncodingEnum(this.value);
+
+  static UA_ExtensionObjectEncodingEnum fromInt(int value) {
+    return UA_ExtensionObjectEncodingEnum.values.firstWhere(
+      (encoding) => encoding.value == value,
+      orElse: () =>
+          throw ArgumentError('Unknown ExtensionObjectEncoding value: $value'),
+    );
+  }
+}
+
+// ignore: camel_case_types
+enum Namespace0Id {
+  boolean(raw.UA_NS0ID_BOOLEAN),
+  sbyte(raw.UA_NS0ID_SBYTE),
+  byte(raw.UA_NS0ID_BYTE),
+  int16(raw.UA_NS0ID_INT16),
+  uint16(raw.UA_NS0ID_UINT16),
+  int32(raw.UA_NS0ID_INT32),
+  uint32(raw.UA_NS0ID_UINT32),
+  int64(raw.UA_NS0ID_INT64),
+  uint64(raw.UA_NS0ID_UINT64),
+  float(raw.UA_NS0ID_FLOAT),
+  double(raw.UA_NS0ID_DOUBLE),
+  string(raw.UA_NS0ID_STRING),
+  dateTime(raw.UA_NS0ID_DATETIME),
+  guid(raw.UA_NS0ID_GUID),
+  byteString(raw.UA_NS0ID_BYTESTRING),
+  xmlElement(raw.UA_NS0ID_XMLELEMENT),
+  nodeId(raw.UA_NS0ID_NODEID),
+  expandedNodeId(raw.UA_NS0ID_EXPANDEDNODEID),
+  statusCode(raw.UA_NS0ID_STATUSCODE),
+  qualifiedName(raw.UA_NS0ID_QUALIFIEDNAME),
+  localizedText(raw.UA_NS0ID_LOCALIZEDTEXT),
+  structure(raw.UA_NS0ID_STRUCTURE),
+  dataValue(raw.UA_NS0ID_DATAVALUE),
+  basedataType(raw.UA_NS0ID_BASEDATATYPE),
+  diagnosticInfo(raw.UA_NS0ID_DIAGNOSTICINFO),
+  number(raw.UA_NS0ID_NUMBER),
+  integer(raw.UA_NS0ID_INTEGER),
+  uinteger(raw.UA_NS0ID_UINTEGER),
+  enumeration(raw.UA_NS0ID_ENUMERATION),
+  image(raw.UA_NS0ID_IMAGE),
+  references(raw.UA_NS0ID_REFERENCES);
+
+  final int value;
+  const Namespace0Id(this.value);
+
+  static Namespace0Id fromInt(int value) {
+    return Namespace0Id.values.firstWhere(
+      (id) => id.value == value,
+      orElse: () => throw ArgumentError('Unknown Namespace0Id value: $value'),
+    );
+  }
+}
+
+// class NodeIdType {
+//   final NodeIdNumericType? numeric;
+//   final String? string;
+//   final int namespaceIndex;
+//   // todo guid
+
+//   factory NodeIdType.fromRaw(raw.UA_NodeId nodeId) {
+//     if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
+//       return NodeIdType.fromInt(nodeId.identifier.numeric);
+//     } else if (nodeId.identifierType ==
+//         raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
+//       return NodeIdType.fromString(nodeId.identifier.string);
+//     }
+//     else if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_BYTESTRING) {
+//       return NodeIdType.fromByteString(nodeId.identifier.byteString);
+//   }
+//     throw UnimplementedError();
+//   }
+//   NodeIdType({this.numeric, this.string, this.namespaceIndex = 0});
+
+//   factory NodeIdType.fromInt(int numeric) {
+//     return NodeIdType(
+//         numeric:
+//             NodeIdNumericType.values.firstWhere((e) => e.value == numeric));
+//   }
+
+//   factory NodeIdType.fromString(raw.UA_String string) {
+//     return NodeIdType(string: string.value);
+//   }
+
+//   factory NodeIdType.fromByteString(raw.UA_ByteString byteString) {
+//     return NodeIdType(string: byteString.value);
+//   }
+// }
+
 // ignore: camel_case_extensions
 extension UA_DataTypeExtension on raw.UA_DataType {
   int get memSize => substitute & 0xFFFF; // First 16 bits
@@ -53,4 +182,22 @@ extension UA_DataTypeExtension on raw.UA_DataType {
   bool get pointerFree => ((substitute >> 22) & 0x1) == 1; // Next 1 bit
   bool get overlayable => ((substitute >> 23) & 0x1) == 1; // Next 1 bit
   int get membersSize => (substitute >> 24) & 0xFF; // Last 8 bits
+}
+
+// ignore: camel_case_extensions
+extension UA_NodeIdExtension on raw.UA_NodeId {
+  String string() {
+    switch (identifierType) {
+      case raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC:
+        return 'ns=$namespaceIndex;i=${identifier.numeric}';
+      case raw.UA_NodeIdType.UA_NODEIDTYPE_STRING:
+        final str = identifier.string;
+        if (str.length == 0 || str.data == nullptr) {
+          return 'ns=$namespaceIndex;s=""';
+        }
+        return 'ns=$namespaceIndex;s="${str.value}"';
+      default:
+        return 'ns=$namespaceIndex;unknown($identifierType)';
+    }
+  }
 }

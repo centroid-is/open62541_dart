@@ -6,8 +6,9 @@ import 'dart:isolate';
 import 'package:open62541_bindings/src/client.dart';
 import 'package:open62541_bindings/src/nodeId.dart';
 import 'package:open62541_bindings/src/library.dart';
+import 'package:open62541_bindings/src/extensions.dart';
 
-void clientIsolate(SendPort mainSendPort) {
+void clientIsolate(SendPort mainSendPort) async {
   Client c = Client(Open62541Singleton().lib);
 
   c.config.stateStream.listen(
@@ -28,14 +29,33 @@ void clientIsolate(SendPort mainSendPort) {
     return;
   }
 
-  NodeId currentTime = NodeId.numeric(0, 2258);
   try {
     int subId = c.subscriptionCreate(
-        requestedPublishingInterval: Duration(milliseconds: 10));
+        requestedPublishingInterval: Duration(milliseconds: 5));
     mainSendPort.send('Created subscription $subId');
-    final monId = c.monitoredItemCreate<DateTime>(currentTime, subId, (data) {
+
+    // final definition =
+    //     c.readValueAttribute(NodeId.string(4, "#Type|ST_SpeedBatcher"));
+    // print("definition: $definition");
+    //<StructuredDataType>:ST_SpeedBatcher
+
+    final schema = c.variableToSchema(NodeId.string(4, "GVL_IO.single_SB"));
+    print("got schema: $schema");
+
+    // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB"));
+    // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB.a_struct"));
+
+    NodeId sb = NodeId.string(4, "GVL_IO.single_SB");
+    final monId = c.monitoredItemCreate<dynamic>(sb, subId, (data) {
       print('print DATA: $data');
-      mainSendPort.send('DATA: $data');
+      mainSendPort.send('SB DATA: $data');
+    });
+
+    NodeId outSignal = NodeId.string(4, "GVL_IO.single_SB.i_xBatchReady");
+    final outSignalMonId =
+        c.monitoredItemCreate<bool>(outSignal, subId, (data) {
+      print('print DATA: $data');
+      mainSendPort.send('Out signal DATA: $data');
     });
   } catch (error) {
     mainSendPort.send('ERROR: $error');
@@ -44,15 +64,24 @@ void clientIsolate(SendPort mainSendPort) {
     return;
   }
 
-  var startTime = DateTime.now().millisecondsSinceEpoch;
+  // Add signal handler
+  ProcessSignal.sigint.watch().listen((signal) {
+    print('Shutting down client gracefully...');
+    c.close();
+    mainSendPort.send('EXIT');
+  });
+
   while (true) {
-    c.runIterate(Duration(milliseconds: 100));
-    if (startTime < DateTime.now().millisecondsSinceEpoch - 5000) {
+    try {
+      c.runIterate(Duration(milliseconds: 10));
+      // Add small delay to allow event loop to process
+      await Future.delayed(Duration(milliseconds: 1));
+    } catch (error) {
+      print('Error: $error');
       break;
     }
   }
 
-  mainSendPort.send('CLOSING CLIENT');
   c.close();
   mainSendPort.send('EXIT');
 }

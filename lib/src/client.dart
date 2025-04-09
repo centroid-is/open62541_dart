@@ -8,6 +8,10 @@ import 'package:logger/logger.dart';
 import 'generated/open62541_bindings.dart' as raw;
 import 'nodeId.dart';
 import 'extensions.dart';
+import 'types/string.dart';
+import '../dynamic_value.dart';
+import 'types/schema.dart';
+import 'types/create_type.dart';
 
 class Result<T, E> {
   final T? _ok;
@@ -71,6 +75,18 @@ class ClientConfig {
   Stream<ClientState> get stateStream => _stateStream.stream;
   Stream<int> get subscriptionInactivityStream =>
       _subscriptionInactivity.stream;
+
+  UA_MessageSecurityModeEnum get securityMode =>
+      UA_MessageSecurityModeEnum.fromInt(_clientConfig.ref.securityMode);
+  set securityMode(UA_MessageSecurityModeEnum mode) {
+    _clientConfig.ref.securityMode = mode.value;
+  }
+
+  String get securityPolicyUri => _clientConfig.ref.securityPolicyUri.value;
+  set securityPolicyUri(String uri) {
+    _clientConfig.ref.securityPolicyUri.set(uri);
+  }
+
   // Private interface
   final ffi.Pointer<raw.UA_ClientConfig> _clientConfig;
   final StreamController<ClientState> _stateStream =
@@ -83,13 +99,20 @@ class Client {
   Client(raw.open62541 lib)
       : _lib = lib,
         _client = lib.UA_Client_new() {
-    _clientConfig = ClientConfig(lib.UA_Client_getConfig(_client));
+    final config = lib.UA_Client_getConfig(_client);
+    _clientConfig = ClientConfig(config);
   }
 
   ClientConfig get config => _clientConfig;
 
-  int connect(String url) {
+  int connect(String url, {String? username, String? password}) {
     ffi.Pointer<ffi.Char> urlPointer = url.toNativeUtf8().cast();
+    if (username != null && password != null) {
+      ffi.Pointer<ffi.Char> usernamePointer = username.toNativeUtf8().cast();
+      ffi.Pointer<ffi.Char> passwordPointer = password.toNativeUtf8().cast();
+      return _lib.UA_Client_connectUsername(
+          _client, urlPointer, usernamePointer, passwordPointer);
+    }
     return _lib.UA_Client_connect(_client, urlPointer);
   }
 
@@ -254,6 +277,129 @@ class Client {
     return controller.stream;
   }
 
+  // This is reading a DataTypeDefinition from namespace 0
+  StructureSchema readDataTypeDefinition(NodeId nodeIdType, String fieldName) {
+    ffi.Pointer<raw.UA_ReadValueId> rvi = calloc<raw.UA_ReadValueId>();
+    _lib.UA_ReadValueId_init(rvi);
+    raw.UA_DataValue res;
+    StructureSchema schema;
+    try {
+      rvi.ref.nodeId = nodeIdType.rawNodeId;
+      rvi.ref.attributeId =
+          raw.UA_AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION;
+      res = _lib.UA_Client_read(_client, rvi);
+
+      if (res.status != raw.UA_STATUSCODE_GOOD) {
+        throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code ${res.status} ${statusCodeToString(res.status)}';
+      }
+      if (res.value.type.ref.typeKind != UA_DataTypeKindEnum.structure) {
+        throw 'UA_Client_read[DATATYPEDEFINITION]: Expected structure type, got ${res.value.type.ref.typeKind}';
+      }
+      schema = StructureSchema(nodeIdType, fieldName);
+      final structDef = res.value.data.cast<raw.UA_StructureDefinition>().ref;
+      for (var i = 0; i < structDef.fieldsSize; i++) {
+        final field = structDef.fields[i];
+        final dataType = NodeId.fromRaw(field.dataType);
+        if (dataType.isNumeric()) {
+          schema.addField(createPredefinedType(dataType, field.name.value));
+        } else if (dataType.isString()) {
+          // recursively read the nested structure type
+          schema.addField(readDataTypeDefinition(dataType, field.name.value));
+        } else {
+          throw 'Unsupported field type: $dataType';
+        }
+      }
+    } catch (e) {
+      print("Error reading DataTypeDefinition: $e");
+      rethrow;
+    } finally {
+      _lib.UA_ReadValueId_delete(rvi);
+    }
+    return schema;
+  }
+
+  StructureSchema variableToSchema(NodeId nodeId) {
+    ffi.Pointer<raw.UA_NodeId> output = calloc<raw.UA_NodeId>();
+    int statusCode =
+        _lib.UA_Client_readDataTypeAttribute(_client, nodeId.rawNodeId, output);
+    if (statusCode != raw.UA_STATUSCODE_GOOD) {
+      _lib.UA_NodeId_delete(output);
+      throw 'UA_Client_readDataTypeAttribute: Bad status code $statusCode ${statusCodeToString(statusCode)}';
+    }
+    StructureSchema result;
+    try {
+      result = readDataTypeDefinition(NodeId.fromRaw(output.ref), '__root');
+    } finally {
+      // todo the node is released by delete of readvalueid
+      // _lib.UA_NodeId_delete(output);
+    }
+    return result;
+  }
+
+  void readDataTypeAttribute(NodeId nodeId) {
+    ffi.Pointer<raw.UA_NodeId> data = calloc<raw.UA_NodeId>();
+    int statusCode =
+        _lib.UA_Client_readDataTypeAttribute(_client, nodeId.rawNodeId, data);
+    if (statusCode != raw.UA_STATUSCODE_GOOD) {
+      throw 'Bad status code $statusCode';
+    }
+    print("readDataTypeAttribute: ${data.ref.string()}");
+
+    // After getting the data type node, we need to read its DataTypeDefinition attribute
+    ffi.Pointer<raw.UA_ReadValueId> rvi = calloc<raw.UA_ReadValueId>();
+    _lib.UA_ReadValueId_init(rvi); // Initialize the ReadValueId
+    rvi.ref.nodeId = data.ref;
+    rvi.ref.attributeId = raw.UA_AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION;
+
+    // Read the DataTypeDefinition attribute
+    raw.UA_DataValue res = _lib.UA_Client_read(_client, rvi);
+    if (res.status != raw.UA_STATUSCODE_GOOD) {
+      print(
+          "Failed to read DataTypeDefinition: ${statusCodeToString(res.status)}");
+      return;
+    }
+
+    // The DataTypeDefinition is returned as a StructureDefinition
+    DynamicValue structure = DynamicValue(data.ref.identifier.string.value);
+    if (res.value.type.ref.typeKind == UA_DataTypeKindEnum.structure) {
+      final structDef = res.value.data.cast<raw.UA_StructureDefinition>().ref;
+      print("Structure fields:");
+
+      // Get the fields array
+      final fields = structDef.fields;
+      for (var i = 0; i < structDef.fieldsSize; i++) {
+        final field = fields[i];
+        print("Field ${i + 1}:");
+        print("  Name: ${field.name.value}");
+        print("  DataType: ${field.dataType.string()}");
+        print("  Array dimensionality: ${field.arrayDimensionsSize}");
+        for (var j = 0; j < field.arrayDimensionsSize; j++) {
+          print("  Array dimension ${j + 1}: ${field.arrayDimensions[j]}");
+        }
+      }
+    }
+
+    // raw.UA_DataValue res = _lib.UA_Client_read(_client, rvi);
+    // print("res: ${res.value.type.ref.typeKind}");
+    // print(
+    //     "typename: ${res.value.type.ref.typeName.cast<Utf8>().toDartString()}");
+    // print("storageType: ${res.value.storageType}");
+    // // external ffi.Pointer<UA_DataTypeMember> members;
+    // print(
+    //     "members: ${res.value.type.ref.members.ref.memberName.cast<Utf8>().toDartString()}");
+    // print("members size: ${res.value.type.ref.membersSize}");
+    // var members = res.value.type.ref.members;
+    // for (var i = 0; i < res.value.type.ref.membersSize; i++) {
+    //   print(
+    //       "member name: ${members.ref.memberName.cast<Utf8>().toDartString()}");
+    //   members += 1;
+    // }
+
+    calloc.free(rvi);
+
+    // UA_StructureDescription
+  }
+
   dynamic _uaVariantToDart(ffi.Pointer<raw.UA_Variant> data) {
     // Check if the variant contains no data
     if (data.ref.data == ffi.nullptr) {
@@ -306,6 +452,88 @@ class Client {
       case UA_DataTypeKindEnum.dateTime:
         return _opcuaToDateTime(_lib.UA_DateTime_toStruct(
             data.ref.data.cast<raw.UA_DateTime>().value));
+
+      case UA_DataTypeKindEnum.extensionObject:
+        final extObj = data.ref.data.cast<raw.UA_ExtensionObject>().ref;
+        if (extObj.encoding ==
+            raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_NOBODY) {
+          return null;
+        }
+
+        // Get the datatype
+        final typeId = extObj.content.encoded.typeId;
+        print("typeId: ${typeId.string()}");
+
+        // Read first two boolean fields
+        var bodyData = extObj.content.encoded.body.data;
+        print("i_xBatchReady: ${bodyData.cast<ffi.Bool>().value}");
+        bodyData += 1;
+        print("i_xDropped: ${(bodyData).cast<ffi.Bool>().value}");
+        bodyData += 1;
+        print("i_xCleaning: ${(bodyData).cast<ffi.Bool>().value}");
+        bodyData += 1;
+        print("i_xOk: ${(bodyData).cast<ffi.Bool>().value}");
+        bodyData += 1;
+        print("q_xDropOk: ${(bodyData).cast<ffi.Bool>().value}");
+        bodyData += 1;
+        print("jbb: ${(bodyData).cast<ffi.Bool>().value}");
+        bodyData += 1;
+        print("ohg: ${(bodyData).cast<ffi.Float>().value}");
+        bodyData += 4;
+        //       Field 8:
+        // Name: a_struct
+        // DataType: ns=4;s="<StructuredDataType>:ST_FP"
+        print("a_struct i_xDropOk: ${(bodyData).cast<ffi.Bool>().value}");
+        bodyData += 1;
+        print("a_struct i_xRun: ${(bodyData).cast<ffi.Bool>().value}");
+        bodyData += 1;
+        final a_struct_len = (bodyData).cast<ffi.Uint32>().value;
+        print("a_struct len: ${a_struct_len}");
+        bodyData += 4;
+        print("a_struct i_xSpare[0]: ${(bodyData).cast<ffi.Bool>().value}");
+        bodyData += 1;
+        print("a_struct i_xSpare[1]: ${(bodyData).cast<ffi.Bool>().value}");
+        bodyData += 1;
+        final string_len = (bodyData).cast<ffi.Uint32>().value;
+        bodyData += 4;
+        print("the_string length: ${string_len}");
+        final string_data =
+            (bodyData).cast<ffi.Uint8>().asTypedList(string_len);
+        String the_string = String.fromCharCodes(string_data);
+        print("the_string: $the_string");
+
+        print(
+            "encoding: ${UA_ExtensionObjectEncodingEnum.fromInt(extObj.encoding)}"); // ENCODED_BYTESTRING
+        print("content: ${extObj.content.encoded.body.length}");
+        print("members size: ${data.ref.type.ref.membersSize}");
+        print(
+            "binary encoding id: ${data.ref.type.ref.binaryEncodingId.string()}");
+
+      // final dataTypePtr = data.ref.type;
+      // ffi.Pointer<raw.UA_String> output = calloc<raw.UA_String>();
+      // _lib.UA_print(data.cast<ffi.Void>(), dataTypePtr, output);
+      // print("output: ${output.ref.value}");
+
+      // final otherType = extObj.content.decoded.type;
+      // if (otherType == ffi.nullptr) {
+      //   print("otherType is nullptr");
+      // } else {
+      //   print("other type ${otherType.ref.typeId.string()}");
+      // }
+
+      // // Handle based on typeId
+      // switch (typeId.identifier.numeric) {
+      //   // Add cases for specific extension object types you need to support
+      //   // Example:
+      //   // case UA_TYPES_ARGUMENT:
+      //   //   final arg = extObj.content.encoded.body.data.cast<raw.UA_Argument>().ref;
+      //   //   return ArgumentType(...);
+
+      //   default:
+      //     _logger.w(
+      //         'Unsupported extension object type: ${typeId.identifier.numeric}');
+      //     return null;
+      // }
 
       default:
         throw 'Unsupported variant type: $typeKind';
