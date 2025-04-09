@@ -4,6 +4,7 @@ import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 import 'package:logger/logger.dart';
+import 'package:binarize/binarize.dart' as binarize;
 
 import 'generated/open62541_bindings.dart' as raw;
 import 'nodeId.dart';
@@ -103,6 +104,7 @@ class Client {
     _clientConfig = ClientConfig(config);
   }
 
+  KnownStructures get knownStructures => _knownStructures;
   ClientConfig get config => _clientConfig;
 
   int connect(String url, {String? username, String? password}) {
@@ -333,71 +335,8 @@ class Client {
       // todo the node is released by delete of readvalueid
       // _lib.UA_NodeId_delete(output);
     }
+    _knownStructures.add(result);
     return result;
-  }
-
-  void readDataTypeAttribute(NodeId nodeId) {
-    ffi.Pointer<raw.UA_NodeId> data = calloc<raw.UA_NodeId>();
-    int statusCode =
-        _lib.UA_Client_readDataTypeAttribute(_client, nodeId.rawNodeId, data);
-    if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Bad status code $statusCode';
-    }
-    print("readDataTypeAttribute: ${data.ref.string()}");
-
-    // After getting the data type node, we need to read its DataTypeDefinition attribute
-    ffi.Pointer<raw.UA_ReadValueId> rvi = calloc<raw.UA_ReadValueId>();
-    _lib.UA_ReadValueId_init(rvi); // Initialize the ReadValueId
-    rvi.ref.nodeId = data.ref;
-    rvi.ref.attributeId = raw.UA_AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION;
-
-    // Read the DataTypeDefinition attribute
-    raw.UA_DataValue res = _lib.UA_Client_read(_client, rvi);
-    if (res.status != raw.UA_STATUSCODE_GOOD) {
-      print(
-          "Failed to read DataTypeDefinition: ${statusCodeToString(res.status)}");
-      return;
-    }
-
-    // The DataTypeDefinition is returned as a StructureDefinition
-    DynamicValue structure = DynamicValue(data.ref.identifier.string.value);
-    if (res.value.type.ref.typeKind == UA_DataTypeKindEnum.structure) {
-      final structDef = res.value.data.cast<raw.UA_StructureDefinition>().ref;
-      print("Structure fields:");
-
-      // Get the fields array
-      final fields = structDef.fields;
-      for (var i = 0; i < structDef.fieldsSize; i++) {
-        final field = fields[i];
-        print("Field ${i + 1}:");
-        print("  Name: ${field.name.value}");
-        print("  DataType: ${field.dataType.string()}");
-        print("  Array dimensionality: ${field.arrayDimensionsSize}");
-        for (var j = 0; j < field.arrayDimensionsSize; j++) {
-          print("  Array dimension ${j + 1}: ${field.arrayDimensions[j]}");
-        }
-      }
-    }
-
-    // raw.UA_DataValue res = _lib.UA_Client_read(_client, rvi);
-    // print("res: ${res.value.type.ref.typeKind}");
-    // print(
-    //     "typename: ${res.value.type.ref.typeName.cast<Utf8>().toDartString()}");
-    // print("storageType: ${res.value.storageType}");
-    // // external ffi.Pointer<UA_DataTypeMember> members;
-    // print(
-    //     "members: ${res.value.type.ref.members.ref.memberName.cast<Utf8>().toDartString()}");
-    // print("members size: ${res.value.type.ref.membersSize}");
-    // var members = res.value.type.ref.members;
-    // for (var i = 0; i < res.value.type.ref.membersSize; i++) {
-    //   print(
-    //       "member name: ${members.ref.memberName.cast<Utf8>().toDartString()}");
-    //   members += 1;
-    // }
-
-    calloc.free(rvi);
-
-    // UA_StructureDescription
   }
 
   dynamic _uaVariantToDart(ffi.Pointer<raw.UA_Variant> data) {
@@ -462,6 +401,18 @@ class Client {
 
         // Get the datatype
         final typeId = extObj.content.encoded.typeId;
+        if (typeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
+          final name = typeId.identifier.string.value;
+          final schema = knownStructures.get(name);
+          if (schema == null) {
+            print("Unknown structure type: $name");
+            return null;
+          }
+          final reader =
+              binarize.Payload.read(extObj.content.encoded.body.dataIterable);
+          final data = reader.get(schema);
+          return data;
+        }
         print("typeId: ${typeId.string()}");
 
         // Read first two boolean fields
@@ -606,6 +557,7 @@ class Client {
   final raw.open62541 _lib;
   final ffi.Pointer<raw.UA_Client> _client;
   late final ClientConfig _clientConfig;
+  final _knownStructures = KnownStructures();
   Map<int, raw.UA_CreateSubscriptionResponse> subscriptionIds = {};
   List<raw.UA_MonitoredItemCreateResult> monitoredItems = [];
 }

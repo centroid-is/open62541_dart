@@ -84,8 +84,7 @@ class DynamicValue {
       }
     } else if (key is String) {
       if (isNull) {
-        _data = <String, DynamicValue>{}.cast<String, DynamicValue>()
-            as LinkedHashMap<String, DynamicValue>;
+        _data = LinkedHashMap<String, DynamicValue>();
       }
       if (isObject) {
         (_data as LinkedHashMap<String, DynamicValue>)[key] = value;

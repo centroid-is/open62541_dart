@@ -1,5 +1,6 @@
 import '../extensions.dart';
 import 'package:binarize/binarize.dart';
+import 'package:collection/collection.dart';
 import '../../dynamic_value.dart';
 import '../nodeId.dart';
 
@@ -108,18 +109,21 @@ $indent}''';
   }
 }
 
-// class KnownStructures {
-//   List<DynamicValue> types = [];
+class KnownStructures {
+  List<StructureSchema> types = [];
 
-//   void add(DynamicValue type) {
-//     types.add(type);
-//   }
+  void add(StructureSchema type) {
+    types.add(type);
+  }
 
-//   DynamicValue? get(String name) {
-//     return types.firstWhere((type) => type.structureName == name);
-//   }
+  StructureSchema? get(String name) {
+    name = name.replaceAll('__DefaultBinary', ''); // this okay?
+    return types.firstWhereOrNull((type) => type.nodeIdType.stringId == name);
+  }
 
-//   bool contains(String name) {
-//     return types.any((type) => type.structureName == name);
-//   }
-// }
+  bool contains(String name) {
+    return types.any((type) => type.nodeIdType.stringId == name) ||
+        types.any(
+            (type) => type.nodeIdType.stringId == "${name}__DefaultBinary");
+  }
+}

@@ -28,6 +28,8 @@ extension UA_StringExtension on raw.UA_String {
     return utf8.decode(bytes);
   }
 
+  Iterable<int> get dataIterable => data.asTypedList(length);
+
   void free() {
     if (data != ffi.nullptr) {
       calloc.free(data);
