@@ -54,12 +54,12 @@ class UA_Int16Payload extends PayloadType<raw.DartUA_Int16>
 
   @override
   raw.DartUA_Int16 get(ByteReader reader, [Endian? endian]) {
-    return reader.int16();
+    return reader.int16(endian);
   }
 
   @override
   void set(ByteWriter writer, raw.DartUA_Int16 value, [Endian? endian]) {
-    writer.int16(value);
+    writer.int16(value, endian);
   }
 }
 
@@ -72,12 +72,12 @@ class UA_Int32Payload extends PayloadType<raw.DartUA_Int32>
 
   @override
   raw.DartUA_Int32 get(ByteReader reader, [Endian? endian]) {
-    return reader.int32();
+    return reader.int32(endian);
   }
 
   @override
   void set(ByteWriter writer, raw.DartUA_Int32 value, [Endian? endian]) {
-    writer.int32(value);
+    writer.int32(value, endian);
   }
 }
 
@@ -90,12 +90,12 @@ class UA_Int64Payload extends PayloadType<raw.DartUA_Int64>
 
   @override
   raw.DartUA_Int64 get(ByteReader reader, [Endian? endian]) {
-    return reader.int64();
+    return reader.int64(endian);
   }
 
   @override
   void set(ByteWriter writer, raw.DartUA_Int64 value, [Endian? endian]) {
-    writer.int64(value);
+    writer.int64(value, endian);
   }
 }
 
@@ -127,12 +127,12 @@ class UA_UInt16Payload extends PayloadType<raw.DartUA_UInt16>
 
   @override
   raw.DartUA_UInt16 get(ByteReader reader, [Endian? endian]) {
-    return reader.uint16();
+    return reader.uint16(endian);
   }
 
   @override
   void set(ByteWriter writer, raw.DartUA_UInt16 value, [Endian? endian]) {
-    writer.uint16(value);
+    writer.uint16(value, endian);
   }
 }
 
@@ -145,12 +145,12 @@ class UA_UInt32Payload extends PayloadType<raw.DartUA_UInt32>
 
   @override
   raw.DartUA_UInt32 get(ByteReader reader, [Endian? endian]) {
-    return reader.uint32();
+    return reader.uint32(endian);
   }
 
   @override
   void set(ByteWriter writer, raw.DartUA_UInt32 value, [Endian? endian]) {
-    writer.uint32(value);
+    writer.uint32(value, endian);
   }
 }
 
@@ -163,12 +163,12 @@ class UA_UInt64Payload extends PayloadType<raw.DartUA_UInt64>
 
   @override
   raw.DartUA_UInt64 get(ByteReader reader, [Endian? endian]) {
-    return reader.uint64();
+    return reader.uint64(endian);
   }
 
   @override
   void set(ByteWriter writer, raw.DartUA_UInt64 value, [Endian? endian]) {
-    writer.uint64(value);
+    writer.uint64(value, endian);
   }
 }
 

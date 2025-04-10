@@ -13,6 +13,7 @@ import 'types/string.dart';
 import '../dynamic_value.dart';
 import 'types/schema.dart';
 import 'types/create_type.dart';
+import 'dart:typed_data';
 
 class Result<T, E> {
   final T? _ok;
@@ -126,7 +127,7 @@ class Client {
   dynamic readValueAttribute(NodeId nodeId) {
     ffi.Pointer<raw.UA_Variant> data = calloc<raw.UA_Variant>();
     int statusCode =
-        _lib.UA_Client_readValueAttribute(_client, nodeId.rawNodeId, data);
+        _lib.UA_Client_readValueAttribute(_client, nodeId.toRaw(_lib), data);
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Bad status code $statusCode';
     }
@@ -192,7 +193,7 @@ class Client {
     ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest =
         calloc<raw.UA_MonitoredItemCreateRequest>();
     _lib.UA_MonitoredItemCreateRequest_init(monRequest);
-    monRequest.ref.itemToMonitor.nodeId = nodeid.rawNodeId;
+    monRequest.ref.itemToMonitor.nodeId = nodeid.toRaw(_lib);
     monRequest.ref.itemToMonitor.attributeId = attr;
     monRequest.ref.monitoringMode = monitoringMode;
     monRequest.ref.requestedParameters.samplingInterval =
@@ -280,13 +281,14 @@ class Client {
   }
 
   // This is reading a DataTypeDefinition from namespace 0
-  StructureSchema readDataTypeDefinition(NodeId nodeIdType, String fieldName) {
+  StructureSchema readDataTypeDefinition(
+      raw.UA_NodeId nodeIdType, String fieldName) {
     ffi.Pointer<raw.UA_ReadValueId> rvi = calloc<raw.UA_ReadValueId>();
     _lib.UA_ReadValueId_init(rvi);
     raw.UA_DataValue res;
     StructureSchema schema;
     try {
-      rvi.ref.nodeId = nodeIdType.rawNodeId;
+      rvi.ref.nodeId = nodeIdType;
       rvi.ref.attributeId =
           raw.UA_AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION;
       res = _lib.UA_Client_read(_client, rvi);
@@ -297,13 +299,14 @@ class Client {
       if (res.value.type.ref.typeKind != UA_DataTypeKindEnum.structure) {
         throw 'UA_Client_read[DATATYPEDEFINITION]: Expected structure type, got ${res.value.type.ref.typeKind}';
       }
-      schema = StructureSchema(nodeIdType, fieldName);
+      schema = StructureSchema(NodeId.fromRaw(nodeIdType), fieldName);
       final structDef = res.value.data.cast<raw.UA_StructureDefinition>().ref;
       for (var i = 0; i < structDef.fieldsSize; i++) {
         final field = structDef.fields[i];
-        final dataType = NodeId.fromRaw(field.dataType);
+        raw.UA_NodeId dataType = field.dataType;
         if (dataType.isNumeric()) {
-          schema.addField(createPredefinedType(dataType, field.name.value));
+          schema.addField(
+              createPredefinedType(dataType.toNodeId(), field.name.value));
         } else if (dataType.isString()) {
           // recursively read the nested structure type
           schema.addField(readDataTypeDefinition(dataType, field.name.value));
@@ -322,15 +325,15 @@ class Client {
 
   StructureSchema variableToSchema(NodeId nodeId) {
     ffi.Pointer<raw.UA_NodeId> output = calloc<raw.UA_NodeId>();
-    int statusCode =
-        _lib.UA_Client_readDataTypeAttribute(_client, nodeId.rawNodeId, output);
+    int statusCode = _lib.UA_Client_readDataTypeAttribute(
+        _client, nodeId.toRaw(_lib), output);
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
       _lib.UA_NodeId_delete(output);
       throw 'UA_Client_readDataTypeAttribute: Bad status code $statusCode ${statusCodeToString(statusCode)}';
     }
     StructureSchema result;
     try {
-      result = readDataTypeDefinition(NodeId.fromRaw(output.ref), '__root');
+      result = readDataTypeDefinition(output.ref, StructureSchema.schemaRootId);
     } finally {
       // todo the node is released by delete of readvalueid
       // _lib.UA_NodeId_delete(output);
@@ -408,12 +411,20 @@ class Client {
             print("Unknown structure type: $name");
             return null;
           }
-          final reader =
-              binarize.Payload.read(extObj.content.encoded.body.dataIterable);
-          final data = reader.get(schema);
+          final iter = extObj.content.encoded.body.dataIterable;
+          print(
+              "Test data bytes: [${iter.map((b) => "0x${b.toRadixString(16).padLeft(2, '0')}").join(", ")}]");
+          final payload = Uint8List.fromList(iter.toList());
+          final reader = binarize.ByteReader(
+              binarize.ByteData.view(payload.buffer),
+              endian: binarize.Endian.little);
+          // final reader =
+          //     binarize.Payload.read(extObj.content.encoded.body.dataIterable);
+          DynamicValue data = schema.elementType?.get(reader);
+          // final data = reader.get(schema);
           return data;
         }
-        print("typeId: ${typeId.string()}");
+        print("typeId: ${typeId.format()}");
 
         // Read first two boolean fields
         var bodyData = extObj.content.encoded.body.data;
@@ -458,7 +469,7 @@ class Client {
         print("content: ${extObj.content.encoded.body.length}");
         print("members size: ${data.ref.type.ref.membersSize}");
         print(
-            "binary encoding id: ${data.ref.type.ref.binaryEncodingId.string()}");
+            "binary encoding id: ${data.ref.type.ref.binaryEncodingId.format()}");
 
       // final dataTypePtr = data.ref.type;
       // ffi.Pointer<raw.UA_String> output = calloc<raw.UA_String>();

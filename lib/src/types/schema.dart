@@ -4,38 +4,17 @@ import 'package:collection/collection.dart';
 import '../../dynamic_value.dart';
 import '../nodeId.dart';
 
-class _IdType {
-  final String? stringId;
-  final int? numericId;
-
-  _IdType.fromNodeId(NodeId nodeId)
-      : stringId = nodeId.isString() ? nodeId.string : null,
-        numericId = nodeId.isNumeric() ? nodeId.numeric : null {
-    if (!nodeId.isString() && !nodeId.isNumeric()) {
-      throw FormatException('NodeId must be either string or numeric');
-    }
-  }
-
-  bool isString() => stringId != null;
-  bool isNumeric() => numericId != null;
-
-  @override
-  String toString() {
-    if (isString()) return 'string:$stringId';
-    if (isNumeric()) return 'numeric:$numericId';
-    return 'invalid';
-  }
-}
-
 class StructureSchema extends PayloadType<DynamicValue> {
-  final _IdType nodeIdType;
+  static const schemaRootId = '__root';
+
+  final NodeId nodeIdType;
   final String fieldName;
   List<StructureSchema> fields = [];
   final PayloadType? elementType;
 
   StructureSchema(NodeId nodeId, this.fieldName,
       [this.elementType, List<StructureSchema>? fields])
-      : nodeIdType = _IdType.fromNodeId(nodeId),
+      : nodeIdType = nodeId,
         fields = fields ?? [];
 
   @override
@@ -53,16 +32,13 @@ class StructureSchema extends PayloadType<DynamicValue> {
   @override
   void set(ByteWriter writer, DynamicValue value, [Endian? endian]) {
     if (value.isObject) {
-      for (var entry in value.entries) {
-        set(writer, entry.value, endian);
-      }
-    } else if (value.isArray) {
-      for (var entry in value.asArray) {
-        set(writer, entry, endian);
+      for (var i = 0; i < fields.length; i++) {
+        fields[i].set(writer, value[fields[i].fieldName], endian);
       }
     } else {
       if (elementType == null) {
-        throw StateError('Element type is not set');
+        throw StateError(
+            'Element type is not set for $nodeIdType where value is\n $value');
       }
       elementType!.set(writer, value.asDynamic, endian);
     }
@@ -118,12 +94,11 @@ class KnownStructures {
 
   StructureSchema? get(String name) {
     name = name.replaceAll('__DefaultBinary', ''); // this okay?
-    return types.firstWhereOrNull((type) => type.nodeIdType.stringId == name);
+    return types.firstWhereOrNull((type) => type.nodeIdType.string == name);
   }
 
   bool contains(String name) {
-    return types.any((type) => type.nodeIdType.stringId == name) ||
-        types.any(
-            (type) => type.nodeIdType.stringId == "${name}__DefaultBinary");
+    name = name.replaceAll('__DefaultBinary', ''); // this okay?
+    return types.any((type) => type.nodeIdType.string == name);
   }
 }

@@ -20,7 +20,7 @@ class ArrayPayload<T> extends PayloadType<List<T>?> with MixinNodeIdType {
 
   @override
   List<T>? get(ByteReader reader, [Endian? endian]) {
-    final length = UA_UInt16Payload().get(reader, endian);
+    final length = UA_Int32Payload().get(reader, endian);
     if (length == 0) return null;
     List<T> elements = [];
     for (int i = 0; i < length; i++) {
@@ -32,9 +32,9 @@ class ArrayPayload<T> extends PayloadType<List<T>?> with MixinNodeIdType {
   @override
   void set(ByteWriter writer, List<T>? value, [Endian? endian]) {
     if (value == null) {
-      UA_UInt16Payload().set(writer, -1, endian);
+      UA_Int32Payload().set(writer, -1, endian);
     } else {
-      UA_UInt16Payload().set(writer, value.length, endian);
+      UA_Int32Payload().set(writer, value.length, endian);
       for (var element in value) {
         elementType.set(writer, element, endian);
       }
