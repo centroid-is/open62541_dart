@@ -139,41 +139,6 @@ enum Namespace0Id {
   }
 }
 
-// class NodeIdType {
-//   final NodeIdNumericType? numeric;
-//   final String? string;
-//   final int namespaceIndex;
-//   // todo guid
-
-//   factory NodeIdType.fromRaw(raw.UA_NodeId nodeId) {
-//     if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
-//       return NodeIdType.fromInt(nodeId.identifier.numeric);
-//     } else if (nodeId.identifierType ==
-//         raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
-//       return NodeIdType.fromString(nodeId.identifier.string);
-//     }
-//     else if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_BYTESTRING) {
-//       return NodeIdType.fromByteString(nodeId.identifier.byteString);
-//   }
-//     throw UnimplementedError();
-//   }
-//   NodeIdType({this.numeric, this.string, this.namespaceIndex = 0});
-
-//   factory NodeIdType.fromInt(int numeric) {
-//     return NodeIdType(
-//         numeric:
-//             NodeIdNumericType.values.firstWhere((e) => e.value == numeric));
-//   }
-
-//   factory NodeIdType.fromString(raw.UA_String string) {
-//     return NodeIdType(string: string.value);
-//   }
-
-//   factory NodeIdType.fromByteString(raw.UA_ByteString byteString) {
-//     return NodeIdType(string: byteString.value);
-//   }
-// }
-
 // ignore: camel_case_extensions
 extension UA_DataTypeExtension on raw.UA_DataType {
   int get memSize => substitute & 0xFFFF; // First 16 bits
@@ -198,6 +163,36 @@ extension UA_NodeIdExtension on raw.UA_NodeId {
         return 'ns=$namespaceIndex;s="${str.value}"';
       default:
         return 'ns=$namespaceIndex;unknown($identifierType)';
+    }
+  }
+}
+
+// ignore: camel_case_extensions
+extension UA_StringExtension on raw.UA_String {
+  void set(String value) {
+    free();
+    final bytes = utf8.encode(value);
+    final dataPtr = calloc<Uint8>(bytes.length);
+
+    final byteList = dataPtr.asTypedList(bytes.length);
+    byteList.setAll(0, bytes);
+
+    length = bytes.length;
+    data = dataPtr;
+  }
+
+  String get value {
+    final bytes = data.asTypedList(length);
+    return utf8.decode(bytes);
+  }
+
+  Iterable<int> get dataIterable => data.asTypedList(length);
+
+  void free() {
+    if (data != nullptr) {
+      calloc.free(data);
+      data = nullptr;
+      length = 0;
     }
   }
 }

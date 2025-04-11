@@ -47,16 +47,22 @@ void clientIsolate(SendPort mainSendPort) async {
 
     NodeId sb = NodeId.string(4, "GVL_IO.single_SB");
     final monId = c.monitoredItemCreate<dynamic>(sb, subId, (data) {
-      print('print DATA: $data');
-      mainSendPort.send('SB DATA: $data');
+      print('print data: $data');
+      mainSendPort.send('DATA: $data');
     });
 
-    NodeId outSignal = NodeId.string(4, "GVL_IO.single_SB.i_xBatchReady");
-    final outSignalMonId =
-        c.monitoredItemCreate<bool>(outSignal, subId, (data) {
-      print('print DATA: $data');
-      mainSendPort.send('Out signal DATA: $data');
-    });
+    // NodeId arr = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xSpare2");
+    // final arrMonId = c.monitoredItemCreate<dynamic>(arr, subId, (data) {
+    //   print('print arr DATA: $data');
+    //   mainSendPort.send('Arr DATA: $data');
+    // });
+
+    // NodeId outSignal = NodeId.string(4, "GVL_IO.single_SB.i_xBatchReady");
+    // final outSignalMonId =
+    //     c.monitoredItemCreate<bool>(outSignal, subId, (data) {
+    //   print('print DATA: $data');
+    //   mainSendPort.send('Out signal DATA: $data');
+    // });
   } catch (error) {
     mainSendPort.send('ERROR: $error');
     c.close();

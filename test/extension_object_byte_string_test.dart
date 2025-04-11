@@ -5,6 +5,7 @@ import 'package:open62541_bindings/src/types/schema.dart';
 import 'package:open62541_bindings/src/nodeId.dart';
 import 'package:open62541_bindings/src/types/trivial.dart';
 import 'package:open62541_bindings/src/types/array.dart';
+import 'package:open62541_bindings/src/types/create_type.dart';
 
 void main() {
   test('Parse extension object byte string', () {
@@ -12,30 +13,21 @@ void main() {
       NodeId.string(0, 'ST_SpeedBatcher'),
       'SpeedBatcher',
     )
-      ..addField(
-          StructureSchema(NodeId.numeric(0, 1), 'field1', BooleanPayload()))
-      ..addField(
-          StructureSchema(NodeId.numeric(0, 1), 'field2', BooleanPayload()))
-      ..addField(
-          StructureSchema(NodeId.numeric(0, 1), 'field3', BooleanPayload()))
-      ..addField(
-          StructureSchema(NodeId.numeric(0, 1), 'field4', BooleanPayload()))
-      ..addField(
-          StructureSchema(NodeId.numeric(0, 1), 'field5', BooleanPayload()))
-      ..addField(
-          StructureSchema(NodeId.numeric(0, 1), 'field6', BooleanPayload()))
-      ..addField(
-          StructureSchema(NodeId.numeric(0, 4), 'field7', UA_Int16Payload()))
+      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field1'))
+      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field2'))
+      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field3'))
+      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field4'))
+      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field5'))
+      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field6'))
+      ..addField(createPredefinedType(NodeId.numeric(0, 4), 'field7'))
       ..addField(StructureSchema(NodeId.string(0, 'ST_FP'), 'field8')
-        ..addField(StructureSchema(
-            NodeId.numeric(0, 1), 'subfield1', BooleanPayload()))
-        ..addField(StructureSchema(
-            NodeId.numeric(0, 1), 'subfield2', BooleanPayload()))
+        ..addField(createPredefinedType(NodeId.numeric(0, 1), 'subfield1'))
+        ..addField(createPredefinedType(NodeId.numeric(0, 1), 'subfield2'))
         ..addField(StructureSchema(
             NodeId.numeric(0, 1),
             'subfield3',
-            ArrayPayload(StructureSchema(
-                NodeId.numeric(0, 1), 'subfield3', BooleanPayload())))));
+            ArrayPayload(
+                createPredefinedType(NodeId.numeric(0, 1), 'subfield3')))));
     const data = [
       0x01, // field1
       0x00, // field2

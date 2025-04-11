@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:logger/logger.dart';
@@ -13,7 +14,7 @@ import 'types/string.dart';
 import '../dynamic_value.dart';
 import 'types/schema.dart';
 import 'types/create_type.dart';
-import 'dart:typed_data';
+import 'types/payloads.dart';
 
 class Result<T, E> {
   final T? _ok;
@@ -304,15 +305,23 @@ class Client {
       for (var i = 0; i < structDef.fieldsSize; i++) {
         final field = structDef.fields[i];
         raw.UA_NodeId dataType = field.dataType;
+        StructureSchema fieldSchema;
+        List<int> arrayDimensions = [];
+        if (field.arrayDimensionsSize > 0) {
+          for (var j = 0; j < field.arrayDimensionsSize; j++) {
+            arrayDimensions.add(field.arrayDimensions[j]);
+          }
+        }
         if (dataType.isNumeric()) {
-          schema.addField(
-              createPredefinedType(dataType.toNodeId(), field.name.value));
+          fieldSchema = createPredefinedType(
+              dataType.toNodeId(), field.name.value, arrayDimensions);
         } else if (dataType.isString()) {
           // recursively read the nested structure type
-          schema.addField(readDataTypeDefinition(dataType, field.name.value));
+          fieldSchema = readDataTypeDefinition(dataType, field.name.value);
         } else {
           throw 'Unsupported field type: $dataType';
         }
+        schema.addField(fieldSchema);
       }
     } catch (e) {
       print("Error reading DataTypeDefinition: $e");
@@ -342,6 +351,54 @@ class Client {
     return result;
   }
 
+  binarize.PayloadType _typeKindToPayloadType(UA_DataTypeKindEnum typeKind) {
+    switch (typeKind) {
+      case UA_DataTypeKindEnum.boolean:
+        return BooleanPayload();
+
+      case UA_DataTypeKindEnum.sbyte:
+        return UA_SBytePayload();
+
+      case UA_DataTypeKindEnum.byte:
+        return UA_BytePayload();
+
+      case UA_DataTypeKindEnum.int16:
+        return UA_Int16Payload();
+
+      case UA_DataTypeKindEnum.uint16:
+        return UA_UInt16Payload();
+
+      case UA_DataTypeKindEnum.int32:
+        return UA_Int32Payload();
+
+      case UA_DataTypeKindEnum.uint32:
+        return UA_UInt32Payload();
+
+      case UA_DataTypeKindEnum.int64:
+        return UA_Int64Payload();
+
+      case UA_DataTypeKindEnum.uint64:
+        return UA_UInt64Payload();
+
+      case UA_DataTypeKindEnum.float:
+        return UA_FloatPayload();
+
+      case UA_DataTypeKindEnum.double:
+        return UA_DoublePayload();
+
+      // case UA_DataTypeKindEnum.string:
+      //   return StringPayload();
+
+      // case UA_DataTypeKindEnum.dateTime:
+      //   return DateTimePayload();
+
+      // case UA_DataTypeKindEnum.extensionObject:
+      //   return ExtensionObjectPayload(knownStructures);
+      default:
+        throw 'Unsupported variant type: $typeKind';
+    }
+  }
+
   dynamic _uaVariantToDart(ffi.Pointer<raw.UA_Variant> data) {
     // Check if the variant contains no data
     if (data.ref.data == ffi.nullptr) {
@@ -349,6 +406,37 @@ class Client {
     }
 
     final typeKind = data.ref.type.ref.typeKind;
+    // final dimensionSize = data.ref.arrayDimensionsSize;
+    // List<int> dimensions = [];
+    // for (var i = 0; i < dimensionSize; i++) {
+    //   dimensions.add(data.ref.arrayDimensions[i]);
+    // }
+    // print("dimensions: $dimensions");
+
+    // var payloadType = _typeKindToPayloadType(typeKind);
+    // for (var dimension in dimensions) {
+    //   payloadType = ArrayPayload(payloadType, dimension);
+    // }
+    // if (dimensions.isEmpty && data.ref.arrayLength > 0) {
+    //   payloadType = ArrayPayload(payloadType, data.ref.arrayLength);
+    // }
+
+    // print("payloadType: $payloadType");
+
+    // print("memsize: ${data.ref.type.ref.memSize}");
+    // print("arraylength: ${data.ref.arrayLength}");
+
+    // final len = data.ref.arrayLength * data.ref.type.ref.memSize;
+    // final buffer = data.ref.data.cast<ffi.Uint8>().asTypedList(len);
+    // print(
+    //     "dimensions length: ${dimensions.length} len: $len buffer: ${buffer}");
+    // final reader = binarize.ByteReader(buffer, endian: binarize.Endian.little);
+    // final value = payloadType.get(reader);
+    // if (reader.isNotDone) {
+    //   throw StateError('Reader is not done reading where value is\n $value');
+    // }
+    // return value;
+
     switch (typeKind) {
       case UA_DataTypeKindEnum.boolean:
         return data.ref.data.cast<ffi.Bool>().value;
@@ -391,9 +479,9 @@ class Client {
         return String.fromCharCodes(
             str.data.cast<ffi.Uint8>().asTypedList(str.length));
 
-      case UA_DataTypeKindEnum.dateTime:
-        return _opcuaToDateTime(_lib.UA_DateTime_toStruct(
-            data.ref.data.cast<raw.UA_DateTime>().value));
+      // case UA_DataTypeKindEnum.dateTime:
+      // return _opcuaToDateTime(_lib.UA_DateTime_toStruct(
+      //     data.ref.data.cast<raw.UA_DateTime>().value));
 
       case UA_DataTypeKindEnum.extensionObject:
         final extObj = data.ref.data.cast<raw.UA_ExtensionObject>().ref;
@@ -404,6 +492,10 @@ class Client {
 
         // Get the datatype
         final typeId = extObj.content.encoded.typeId;
+        // final decodedTypeid = extObj.content.decoded.type.ref.typeName
+        //     .cast<Utf8>()
+        //     .toDartString();
+        // print("decodedTypeid: $decodedTypeid");
         if (typeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
           final name = typeId.identifier.string.value;
           final schema = knownStructures.get(name);
@@ -415,13 +507,17 @@ class Client {
           print(
               "Test data bytes: [${iter.map((b) => "0x${b.toRadixString(16).padLeft(2, '0')}").join(", ")}]");
           final payload = Uint8List.fromList(iter.toList());
-          final reader = binarize.ByteReader(
-              binarize.ByteData.view(payload.buffer),
-              endian: binarize.Endian.little);
-          // final reader =
-          //     binarize.Payload.read(extObj.content.encoded.body.dataIterable);
-          DynamicValue data = schema.elementType?.get(reader);
-          // final data = reader.get(schema);
+
+          final reader =
+              binarize.ByteReader(payload, endian: binarize.Endian.little);
+
+          DynamicValue data = schema.get(reader);
+
+          if (reader.isNotDone) {
+            throw StateError(
+                'Reader is not done reading where value is\n $data');
+          }
+
           return data;
         }
         print("typeId: ${typeId.format()}");
@@ -524,11 +620,6 @@ class Client {
     _logger
         .e('Expected type $T but got ${value.runtimeType} with value $value');
     throw 'Expected type $T but got ${value.runtimeType} with value $value';
-  }
-
-  DateTime _opcuaToDateTime(raw.UA_DateTimeStruct dts) {
-    return DateTime(
-        dts.year, dts.month, dts.day, dts.hour, dts.min, dts.sec, dts.milliSec);
   }
 
   String statusCodeToString(int statusCode) {

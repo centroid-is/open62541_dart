@@ -2,7 +2,7 @@ import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 import 'generated/open62541_bindings.dart' as raw;
 
-import 'types/string.dart';
+import 'extensions.dart';
 
 class NodeId {
   NodeId._internal(this._namespaceIndex, {stringId, numericId})
@@ -72,6 +72,20 @@ class NodeId {
       return 'NodeId(TODO)';
     }
   }
+
+  @override
+  bool operator ==(Object other) {
+    if (other is NodeId) {
+      return _namespaceIndex == other._namespaceIndex &&
+          _stringId == other._stringId &&
+          _numericId == other._numericId;
+    }
+    return false;
+  }
+
+  @override
+  int get hashCode =>
+      _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode;
 
   String? _stringId;
   int? _numericId;

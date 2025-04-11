@@ -11,6 +11,9 @@ class StructureSchema extends PayloadType<DynamicValue> {
   final String fieldName;
   List<StructureSchema> fields = [];
   final PayloadType? elementType;
+  // this would be nice to have, assert that the reader/writer length is the same as the schema
+  // could fail faster
+  // int size = 0;
 
   StructureSchema(NodeId nodeId, this.fieldName,
       [this.elementType, List<StructureSchema>? fields])
