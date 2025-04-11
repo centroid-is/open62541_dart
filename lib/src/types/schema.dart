@@ -1,13 +1,11 @@
-import '../extensions.dart';
 import 'package:binarize/binarize.dart';
 import 'package:collection/collection.dart';
 import '../../dynamic_value.dart';
-import '../nodeId.dart';
 
 class StructureSchema extends PayloadType<DynamicValue> {
   static const schemaRootId = '__root';
 
-  final NodeId nodeIdType;
+  final String? structureName;
   final String fieldName;
   List<StructureSchema> fields = [];
   final PayloadType? elementType;
@@ -15,17 +13,16 @@ class StructureSchema extends PayloadType<DynamicValue> {
   // could fail faster
   // int size = 0;
 
-  StructureSchema(NodeId nodeId, this.fieldName,
-      [this.elementType, List<StructureSchema>? fields])
-      : nodeIdType = nodeId,
-        fields = fields ?? [];
+  StructureSchema(this.fieldName,
+      {this.elementType, this.structureName, List<StructureSchema>? fields})
+      : fields = fields ?? [];
 
   @override
   DynamicValue get(ByteReader reader, [Endian? endian]) {
-    DynamicValue result = DynamicValue(nodeIdType.toString());
     if (elementType != null) {
-      result.value = elementType!.get(reader, endian);
+      return DynamicValue()..value = elementType!.get(reader, endian);
     }
+    DynamicValue result = DynamicValue();
     for (var field in fields) {
       result[field.fieldName] = field.get(reader, endian);
     }
@@ -41,7 +38,7 @@ class StructureSchema extends PayloadType<DynamicValue> {
     } else {
       if (elementType == null) {
         throw StateError(
-            'Element type is not set for $nodeIdType where value is\n $value');
+            'Element type is not set for $fieldName where value is\n $value');
       }
       elementType!.set(writer, value.asDynamic, endian);
     }
@@ -57,7 +54,8 @@ ${fields.map((f) => _formatField(f, 1)).join(',\n')}
   ]''';
 
       return '''StructureSchema(
-  nodeIdType: $nodeIdType,
+  structureName: ${structureName ?? 'null'},
+  fieldName: $fieldName,
   elementType: ${_formatElementType(elementType)},
   $fieldsStr
 )''';
@@ -69,7 +67,8 @@ ${fields.map((f) => _formatField(f, 1)).join(',\n')}
   String _formatField(StructureSchema field, int depth) {
     final indent = '  ' * (depth + 1);
     final fieldStr = '''$indent{
-$indent  type: ${field.nodeIdType},
+$indent  structureName: ${field.structureName ?? 'null'},
+$indent  name: ${field.fieldName},
 $indent  payload: ${_formatElementType(field.elementType)}${field.fields.isEmpty ? '' : ','}${field.fields.isEmpty ? '' : '''
 $indent  fields: [
 ${field.fields.map((f) => _formatField(f, depth + 1)).join(',\n')}
@@ -97,11 +96,11 @@ class KnownStructures {
 
   StructureSchema? get(String name) {
     name = name.replaceAll('__DefaultBinary', ''); // this okay?
-    return types.firstWhereOrNull((type) => type.nodeIdType.string == name);
+    return types.firstWhereOrNull((type) => type.structureName == name);
   }
 
   bool contains(String name) {
     name = name.replaceAll('__DefaultBinary', ''); // this okay?
-    return types.any((type) => type.nodeIdType.string == name);
+    return types.any((type) => type.structureName == name);
   }
 }

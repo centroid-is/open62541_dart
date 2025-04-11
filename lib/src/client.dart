@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
-import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -10,7 +9,6 @@ import 'package:binarize/binarize.dart' as binarize;
 import 'generated/open62541_bindings.dart' as raw;
 import 'nodeId.dart';
 import 'extensions.dart';
-import 'types/string.dart';
 import '../dynamic_value.dart';
 import 'types/schema.dart';
 import 'types/create_type.dart';
@@ -297,10 +295,13 @@ class Client {
       if (res.status != raw.UA_STATUSCODE_GOOD) {
         throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code ${res.status} ${statusCodeToString(res.status)}';
       }
-      if (res.value.type.ref.typeKind != UA_DataTypeKindEnum.structure) {
+      if (res.value.type.ref.typeKind != TypeKindEnum.structure) {
         throw 'UA_Client_read[DATATYPEDEFINITION]: Expected structure type, got ${res.value.type.ref.typeKind}';
       }
-      schema = StructureSchema(NodeId.fromRaw(nodeIdType), fieldName);
+      if (!nodeIdType.isString()) {
+        throw 'UA_Client_read[DATATYPEDEFINITION]: Expected string type, got ${nodeIdType.format()}';
+      }
+      schema = StructureSchema(fieldName, structureName: nodeIdType.string!);
       final structDef = res.value.data.cast<raw.UA_StructureDefinition>().ref;
       for (var i = 0; i < structDef.fieldsSize; i++) {
         final field = structDef.fields[i];
@@ -351,39 +352,39 @@ class Client {
     return result;
   }
 
-  binarize.PayloadType _typeKindToPayloadType(UA_DataTypeKindEnum typeKind) {
+  binarize.PayloadType _typeKindToPayloadType(TypeKindEnum typeKind) {
     switch (typeKind) {
-      case UA_DataTypeKindEnum.boolean:
+      case TypeKindEnum.boolean:
         return BooleanPayload();
 
-      case UA_DataTypeKindEnum.sbyte:
+      case TypeKindEnum.sbyte:
         return UA_SBytePayload();
 
-      case UA_DataTypeKindEnum.byte:
+      case TypeKindEnum.byte:
         return UA_BytePayload();
 
-      case UA_DataTypeKindEnum.int16:
+      case TypeKindEnum.int16:
         return UA_Int16Payload();
 
-      case UA_DataTypeKindEnum.uint16:
+      case TypeKindEnum.uint16:
         return UA_UInt16Payload();
 
-      case UA_DataTypeKindEnum.int32:
+      case TypeKindEnum.int32:
         return UA_Int32Payload();
 
-      case UA_DataTypeKindEnum.uint32:
+      case TypeKindEnum.uint32:
         return UA_UInt32Payload();
 
-      case UA_DataTypeKindEnum.int64:
+      case TypeKindEnum.int64:
         return UA_Int64Payload();
 
-      case UA_DataTypeKindEnum.uint64:
+      case TypeKindEnum.uint64:
         return UA_UInt64Payload();
 
-      case UA_DataTypeKindEnum.float:
+      case TypeKindEnum.float:
         return UA_FloatPayload();
 
-      case UA_DataTypeKindEnum.double:
+      case TypeKindEnum.double:
         return UA_DoublePayload();
 
       // case UA_DataTypeKindEnum.string:
@@ -438,40 +439,40 @@ class Client {
     // return value;
 
     switch (typeKind) {
-      case UA_DataTypeKindEnum.boolean:
+      case TypeKindEnum.boolean:
         return data.ref.data.cast<ffi.Bool>().value;
 
-      case UA_DataTypeKindEnum.sbyte:
+      case TypeKindEnum.sbyte:
         return data.ref.data.cast<ffi.Int8>().value;
 
-      case UA_DataTypeKindEnum.byte:
+      case TypeKindEnum.byte:
         return data.ref.data.cast<ffi.Uint8>().value;
 
-      case UA_DataTypeKindEnum.int16:
+      case TypeKindEnum.int16:
         return data.ref.data.cast<ffi.Int16>().value;
 
-      case UA_DataTypeKindEnum.uint16:
+      case TypeKindEnum.uint16:
         return data.ref.data.cast<ffi.Uint16>().value;
 
-      case UA_DataTypeKindEnum.int32:
+      case TypeKindEnum.int32:
         return data.ref.data.cast<ffi.Int32>().value;
 
-      case UA_DataTypeKindEnum.uint32:
+      case TypeKindEnum.uint32:
         return data.ref.data.cast<ffi.Uint32>().value;
 
-      case UA_DataTypeKindEnum.int64:
+      case TypeKindEnum.int64:
         return data.ref.data.cast<ffi.Int64>().value;
 
-      case UA_DataTypeKindEnum.uint64:
+      case TypeKindEnum.uint64:
         return data.ref.data.cast<ffi.Uint64>().value;
 
-      case UA_DataTypeKindEnum.float:
+      case TypeKindEnum.float:
         return data.ref.data.cast<ffi.Float>().value;
 
-      case UA_DataTypeKindEnum.double:
+      case TypeKindEnum.double:
         return data.ref.data.cast<ffi.Double>().value;
 
-      case UA_DataTypeKindEnum.string:
+      case TypeKindEnum.string:
         final str = data.ref.data.cast<raw.UA_String>().ref;
         if (str.length == 0 || str.data == ffi.nullptr) {
           return '';
@@ -483,7 +484,7 @@ class Client {
       // return _opcuaToDateTime(_lib.UA_DateTime_toStruct(
       //     data.ref.data.cast<raw.UA_DateTime>().value));
 
-      case UA_DataTypeKindEnum.extensionObject:
+      case TypeKindEnum.extensionObject:
         final extObj = data.ref.data.cast<raw.UA_ExtensionObject>().ref;
         if (extObj.encoding ==
             raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_NOBODY) {

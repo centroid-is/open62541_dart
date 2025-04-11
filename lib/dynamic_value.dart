@@ -1,4 +1,3 @@
-import 'src/types/abstract.dart';
 import 'dart:collection' show LinkedHashMap;
 
 enum DynamicType {
@@ -13,11 +12,9 @@ enum DynamicType {
 }
 
 class DynamicValue {
-  List<MixinNodeIdType> typeDefinitions = [];
   dynamic _data;
-  String id;
 
-  DynamicValue(this.id);
+  DynamicValue();
 
   DynamicType get type {
     if (_data == null) return DynamicType.nullValue;

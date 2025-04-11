@@ -2,15 +2,19 @@ import 'dart:convert';
 import 'package:binarize/binarize.dart';
 
 import '../extensions.dart';
-import 'abstract.dart';
-import '../nodeId.dart';
 import '../generated/open62541_bindings.dart' as raw;
 
-class BooleanPayload extends PayloadType<bool> with MixinNodeIdType {
+// TODO this file has a lot of boilerplate, can we make it better?
+
+mixin MixinTypeKind {
+  TypeKindEnum get typeKind;
+}
+
+class BooleanPayload extends PayloadType<bool> with MixinTypeKind {
   const BooleanPayload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.boolean.value);
+  TypeKindEnum get typeKind => TypeKindEnum.boolean;
 
   @override
   bool get(ByteReader reader, [Endian? endian]) {
@@ -26,12 +30,11 @@ class BooleanPayload extends PayloadType<bool> with MixinNodeIdType {
 // Int
 
 // ignore: camel_case_types
-class UA_SBytePayload extends PayloadType<raw.DartUA_SByte>
-    with MixinNodeIdType {
+class UA_SBytePayload extends PayloadType<raw.DartUA_SByte> with MixinTypeKind {
   const UA_SBytePayload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.sbyte.value);
+  TypeKindEnum get typeKind => TypeKindEnum.sbyte;
 
   @override
   raw.DartUA_SByte get(ByteReader reader, [Endian? endian]) {
@@ -45,12 +48,11 @@ class UA_SBytePayload extends PayloadType<raw.DartUA_SByte>
 }
 
 // ignore: camel_case_types
-class UA_Int16Payload extends PayloadType<raw.DartUA_Int16>
-    with MixinNodeIdType {
+class UA_Int16Payload extends PayloadType<raw.DartUA_Int16> with MixinTypeKind {
   const UA_Int16Payload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.int16.value);
+  TypeKindEnum get typeKind => TypeKindEnum.int16;
 
   @override
   raw.DartUA_Int16 get(ByteReader reader, [Endian? endian]) {
@@ -64,12 +66,11 @@ class UA_Int16Payload extends PayloadType<raw.DartUA_Int16>
 }
 
 // ignore: camel_case_types
-class UA_Int32Payload extends PayloadType<raw.DartUA_Int32>
-    with MixinNodeIdType {
+class UA_Int32Payload extends PayloadType<raw.DartUA_Int32> with MixinTypeKind {
   const UA_Int32Payload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.int32.value);
+  TypeKindEnum get typeKind => TypeKindEnum.int32;
 
   @override
   raw.DartUA_Int32 get(ByteReader reader, [Endian? endian]) {
@@ -83,12 +84,11 @@ class UA_Int32Payload extends PayloadType<raw.DartUA_Int32>
 }
 
 // ignore: camel_case_types
-class UA_Int64Payload extends PayloadType<raw.DartUA_Int64>
-    with MixinNodeIdType {
+class UA_Int64Payload extends PayloadType<raw.DartUA_Int64> with MixinTypeKind {
   const UA_Int64Payload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.int64.value);
+  TypeKindEnum get typeKind => TypeKindEnum.int64;
 
   @override
   raw.DartUA_Int64 get(ByteReader reader, [Endian? endian]) {
@@ -104,11 +104,11 @@ class UA_Int64Payload extends PayloadType<raw.DartUA_Int64>
 // UInt
 
 // ignore: camel_case_types
-class UA_BytePayload extends PayloadType<raw.DartUA_Byte> with MixinNodeIdType {
+class UA_BytePayload extends PayloadType<raw.DartUA_Byte> with MixinTypeKind {
   const UA_BytePayload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.byte.value);
+  TypeKindEnum get typeKind => TypeKindEnum.byte;
 
   @override
   raw.DartUA_Byte get(ByteReader reader, [Endian? endian]) {
@@ -123,11 +123,11 @@ class UA_BytePayload extends PayloadType<raw.DartUA_Byte> with MixinNodeIdType {
 
 // ignore: camel_case_types
 class UA_UInt16Payload extends PayloadType<raw.DartUA_UInt16>
-    with MixinNodeIdType {
+    with MixinTypeKind {
   const UA_UInt16Payload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.uint16.value);
+  TypeKindEnum get typeKind => TypeKindEnum.uint16;
 
   @override
   raw.DartUA_UInt16 get(ByteReader reader, [Endian? endian]) {
@@ -142,11 +142,11 @@ class UA_UInt16Payload extends PayloadType<raw.DartUA_UInt16>
 
 // ignore: camel_case_types
 class UA_UInt32Payload extends PayloadType<raw.DartUA_UInt32>
-    with MixinNodeIdType {
+    with MixinTypeKind {
   const UA_UInt32Payload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.uint32.value);
+  TypeKindEnum get typeKind => TypeKindEnum.uint32;
 
   @override
   raw.DartUA_UInt32 get(ByteReader reader, [Endian? endian]) {
@@ -161,11 +161,11 @@ class UA_UInt32Payload extends PayloadType<raw.DartUA_UInt32>
 
 // ignore: camel_case_types
 class UA_UInt64Payload extends PayloadType<raw.DartUA_UInt64>
-    with MixinNodeIdType {
+    with MixinTypeKind {
   const UA_UInt64Payload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.uint64.value);
+  TypeKindEnum get typeKind => TypeKindEnum.uint64;
 
   @override
   raw.DartUA_UInt64 get(ByteReader reader, [Endian? endian]) {
@@ -181,12 +181,11 @@ class UA_UInt64Payload extends PayloadType<raw.DartUA_UInt64>
 // Float
 
 // ignore: camel_case_types
-class UA_FloatPayload extends PayloadType<raw.DartUA_Float>
-    with MixinNodeIdType {
+class UA_FloatPayload extends PayloadType<raw.DartUA_Float> with MixinTypeKind {
   const UA_FloatPayload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.float.value);
+  TypeKindEnum get typeKind => TypeKindEnum.float;
 
   @override
   raw.DartUA_Float get(ByteReader reader, [Endian? endian]) {
@@ -201,11 +200,11 @@ class UA_FloatPayload extends PayloadType<raw.DartUA_Float>
 
 // ignore: camel_case_types
 class UA_DoublePayload extends PayloadType<raw.DartUA_Double>
-    with MixinNodeIdType {
+    with MixinTypeKind {
   const UA_DoublePayload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.double.value);
+  TypeKindEnum get typeKind => TypeKindEnum.double;
 
   @override
   raw.DartUA_Double get(ByteReader reader, [Endian? endian]) {
@@ -221,11 +220,11 @@ class UA_DoublePayload extends PayloadType<raw.DartUA_Double>
 // Other
 
 // ignore: camel_case_types
-class UA_DateTimePayload extends PayloadType<DateTime> with MixinNodeIdType {
+class UA_DateTimePayload extends PayloadType<DateTime> with MixinTypeKind {
   const UA_DateTimePayload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.dateTime.value);
+  TypeKindEnum get typeKind => TypeKindEnum.dateTime;
 
   static const uaDatetimeSec = 10000000;
   static const uaDatetimeUnixEpoch = 116444736000000000;
@@ -267,25 +266,26 @@ class UA_DateTimePayload extends PayloadType<DateTime> with MixinNodeIdType {
 // typedef UA_StatusCode = ffi.Uint32;
 // typedef DartUA_StatusCode = int;
 
-class StringPayload extends PayloadType<String?> with MixinNodeIdType {
+class StringPayload extends PayloadType<String?> with MixinTypeKind {
   const StringPayload();
 
   @override
-  NodeId get nodeIdType => NodeId.numeric(0, Namespace0Id.string.value);
+  TypeKindEnum get typeKind => TypeKindEnum.string;
 
   @override
   String? get(ByteReader reader, [Endian? endian]) {
-    final length = UA_UInt16Payload().get(reader, endian);
-    if (length == 0) return null;
+    final length = UA_Int32Payload().get(reader, endian);
+    if (length == -1) return null;
+    if (length == 0) return '';
     return reader.read(length).toString();
   }
 
   @override
   void set(ByteWriter writer, String? value, [Endian? endian]) {
     if (value == null) {
-      UA_UInt16Payload().set(writer, -1, endian);
+      UA_Int32Payload().set(writer, -1, endian);
     } else {
-      UA_UInt16Payload().set(writer, value.length, endian);
+      UA_Int32Payload().set(writer, value.length, endian);
       writer.write(Uint8List.fromList(utf8.encode(value)));
     }
   }
