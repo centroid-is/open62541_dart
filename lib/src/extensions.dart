@@ -280,6 +280,7 @@ extension UA_StringExtension on raw.UA_String {
   }
 }
 
+// ignore: camel_case_extensions
 extension UA_StructureFieldExtension on raw.UA_StructureField {
   String get fieldName => name.value;
   MemberDescription get fieldDescription {
@@ -290,6 +291,16 @@ extension UA_StructureFieldExtension on raw.UA_StructureField {
     return MemberDescription(textValue, localeValue);
   }
 
+  List<int> get dimensions {
+    if (arrayDimensionsSize == 0 || arrayDimensions == nullptr) {
+      return [];
+    }
+    return arrayDimensions.asTypedList(arrayDimensionsSize);
+  }
+}
+
+// ignore: camel_case_extensions
+extension UA_VariantExtension on raw.UA_Variant {
   List<int> get dimensions {
     if (arrayDimensionsSize == 0 || arrayDimensions == nullptr) {
       return [];

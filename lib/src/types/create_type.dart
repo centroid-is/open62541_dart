@@ -20,6 +20,16 @@ final _payloadTypes = {
   TypeKindEnum.string: StringPayload(),
 };
 
+// Wraps the payload type in an array payload with the given dimensions
+// It will set length to the dimension.
+// If length is set, the length is not read from the binary buffer.
+PayloadType wrapInArray(PayloadType payloadType, List<int> arrayDimensions) {
+  for (var dimension in arrayDimensions) {
+    payloadType = ArrayPayload(payloadType, dimension);
+  }
+  return payloadType;
+}
+
 StructureSchema createFromPayload(
     PayloadType payloadType, String fieldName, List<int> arrayDimensions,
     {String? structureName}) {
@@ -33,16 +43,20 @@ StructureSchema createFromPayload(
       structureName: structureName, elementType: payloadType);
 }
 
+PayloadType typeKindToPayloadType(TypeKindEnum typeKind) {
+  final payloadType = _payloadTypes[typeKind];
+  if (payloadType == null) {
+    throw 'Unsupported field type: $typeKind';
+  }
+  return payloadType as PayloadType;
+}
+
 PayloadType nodeIdToPayloadType(NodeId nodeIdType) {
   if (!nodeIdType.isNumeric()) {
     throw ArgumentError('NodeId is not numeric: $nodeIdType');
   }
-  final typeKind = Namespace0Id.fromInt(nodeIdType.numeric).toTypeKind();
-  final payloadType = _payloadTypes[typeKind];
-  if (payloadType == null) {
-    throw 'Unsupported field type: $nodeIdType';
-  }
-  return payloadType as PayloadType;
+  return typeKindToPayloadType(
+      Namespace0Id.fromInt(nodeIdType.numeric).toTypeKind());
 }
 
 StructureSchema createPredefinedType(

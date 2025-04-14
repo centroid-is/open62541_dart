@@ -1,6 +1,11 @@
+import 'dart:convert';
+import 'dart:ffi';
 import 'package:test/test.dart';
 import 'package:binarize/binarize.dart';
+import 'package:ffi/ffi.dart';
 
+import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
+    as raw;
 import 'package:open62541_bindings/src/types/payloads.dart';
 
 void main() {
@@ -138,5 +143,32 @@ void main() {
     final stringArrayPayload = ArrayPayload(StringPayload());
     final stringList = ['Hello', 'World', '🌟'];
     testPayloadImpl('Array strings', stringArrayPayload, stringList);
+  });
+
+  test('UA_String payload', () {
+    final payload = UA_StringPayload();
+    final writer = ByteWriter();
+
+    final testStr = '🌟 Hello 世界';
+    final bytes = utf8.encode(testStr);
+    final dataPtr = calloc<raw.UA_Byte>(bytes.length);
+    dataPtr.asTypedList(bytes.length).setAll(0, bytes);
+
+    // Write length and pointer
+    final lengthSize = sizeOf<Size>();
+    if (lengthSize == 4) {
+      writer.int32(bytes.length);
+      writer.uint32(dataPtr.address);
+    } else {
+      writer.int64(bytes.length);
+      writer.uint64(dataPtr.address);
+    }
+
+    final reader = ByteReader(writer.toBytes());
+    final result = payload.get(reader);
+    expect(result, testStr);
+
+    // Cleanup
+    calloc.free(dataPtr);
   });
 }
