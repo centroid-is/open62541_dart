@@ -4,20 +4,21 @@ import '../nodeId.dart';
 import 'payloads.dart';
 import '../extensions.dart';
 
-const _payloadTypes = [
-  BooleanPayload(),
-  UA_SBytePayload(),
-  UA_BytePayload(),
-  UA_Int16Payload(),
-  UA_UInt16Payload(),
-  UA_Int32Payload(),
-  UA_UInt32Payload(),
-  UA_Int64Payload(),
-  UA_UInt64Payload(),
-  UA_FloatPayload(),
-  UA_DoublePayload(),
-  StringPayload(),
-];
+final _payloadTypes = {
+  TypeKindEnum.boolean: BooleanPayload(),
+  TypeKindEnum.sbyte: UA_SBytePayload(),
+  TypeKindEnum.byte: UA_BytePayload(),
+  TypeKindEnum.int16: UA_Int16Payload(),
+  TypeKindEnum.uint16: UA_UInt16Payload(),
+  TypeKindEnum.int32: UA_Int32Payload(),
+  TypeKindEnum.uint32: UA_UInt32Payload(),
+  TypeKindEnum.int64: UA_Int64Payload(),
+  TypeKindEnum.uint64: UA_UInt64Payload(),
+  TypeKindEnum.float: UA_FloatPayload(),
+  TypeKindEnum.double: UA_DoublePayload(),
+  TypeKindEnum.dateTime: UA_DateTimePayload(),
+  TypeKindEnum.string: StringPayload(),
+};
 
 StructureSchema createFromPayload(
     PayloadType payloadType, String fieldName, List<int> arrayDimensions,
@@ -37,12 +38,11 @@ PayloadType nodeIdToPayloadType(NodeId nodeIdType) {
     throw ArgumentError('NodeId is not numeric: $nodeIdType');
   }
   final typeKind = Namespace0Id.fromInt(nodeIdType.numeric).toTypeKind();
-  for (var payloadType in _payloadTypes) {
-    if (payloadType.typeKind == typeKind) {
-      return payloadType as PayloadType;
-    }
+  final payloadType = _payloadTypes[typeKind];
+  if (payloadType == null) {
+    throw 'Unsupported field type: $nodeIdType';
   }
-  throw 'Unsupported field type: $nodeIdType';
+  return payloadType as PayloadType;
 }
 
 StructureSchema createPredefinedType(

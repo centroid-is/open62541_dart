@@ -6,15 +6,8 @@ import '../generated/open62541_bindings.dart' as raw;
 
 // TODO this file has a lot of boilerplate, can we make it better?
 
-mixin MixinTypeKind {
-  TypeKindEnum get typeKind;
-}
-
-class BooleanPayload extends PayloadType<bool> with MixinTypeKind {
+class BooleanPayload extends PayloadType<bool> {
   const BooleanPayload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.boolean;
 
   @override
   bool get(ByteReader reader, [Endian? endian]) {
@@ -30,11 +23,8 @@ class BooleanPayload extends PayloadType<bool> with MixinTypeKind {
 // Int
 
 // ignore: camel_case_types
-class UA_SBytePayload extends PayloadType<raw.DartUA_SByte> with MixinTypeKind {
+class UA_SBytePayload extends PayloadType<raw.DartUA_SByte> {
   const UA_SBytePayload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.sbyte;
 
   @override
   raw.DartUA_SByte get(ByteReader reader, [Endian? endian]) {
@@ -48,11 +38,8 @@ class UA_SBytePayload extends PayloadType<raw.DartUA_SByte> with MixinTypeKind {
 }
 
 // ignore: camel_case_types
-class UA_Int16Payload extends PayloadType<raw.DartUA_Int16> with MixinTypeKind {
+class UA_Int16Payload extends PayloadType<raw.DartUA_Int16> {
   const UA_Int16Payload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.int16;
 
   @override
   raw.DartUA_Int16 get(ByteReader reader, [Endian? endian]) {
@@ -66,11 +53,8 @@ class UA_Int16Payload extends PayloadType<raw.DartUA_Int16> with MixinTypeKind {
 }
 
 // ignore: camel_case_types
-class UA_Int32Payload extends PayloadType<raw.DartUA_Int32> with MixinTypeKind {
+class UA_Int32Payload extends PayloadType<raw.DartUA_Int32> {
   const UA_Int32Payload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.int32;
 
   @override
   raw.DartUA_Int32 get(ByteReader reader, [Endian? endian]) {
@@ -84,11 +68,8 @@ class UA_Int32Payload extends PayloadType<raw.DartUA_Int32> with MixinTypeKind {
 }
 
 // ignore: camel_case_types
-class UA_Int64Payload extends PayloadType<raw.DartUA_Int64> with MixinTypeKind {
+class UA_Int64Payload extends PayloadType<raw.DartUA_Int64> {
   const UA_Int64Payload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.int64;
 
   @override
   raw.DartUA_Int64 get(ByteReader reader, [Endian? endian]) {
@@ -104,11 +85,8 @@ class UA_Int64Payload extends PayloadType<raw.DartUA_Int64> with MixinTypeKind {
 // UInt
 
 // ignore: camel_case_types
-class UA_BytePayload extends PayloadType<raw.DartUA_Byte> with MixinTypeKind {
+class UA_BytePayload extends PayloadType<raw.DartUA_Byte> {
   const UA_BytePayload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.byte;
 
   @override
   raw.DartUA_Byte get(ByteReader reader, [Endian? endian]) {
@@ -122,12 +100,8 @@ class UA_BytePayload extends PayloadType<raw.DartUA_Byte> with MixinTypeKind {
 }
 
 // ignore: camel_case_types
-class UA_UInt16Payload extends PayloadType<raw.DartUA_UInt16>
-    with MixinTypeKind {
+class UA_UInt16Payload extends PayloadType<raw.DartUA_UInt16> {
   const UA_UInt16Payload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.uint16;
 
   @override
   raw.DartUA_UInt16 get(ByteReader reader, [Endian? endian]) {
@@ -141,12 +115,8 @@ class UA_UInt16Payload extends PayloadType<raw.DartUA_UInt16>
 }
 
 // ignore: camel_case_types
-class UA_UInt32Payload extends PayloadType<raw.DartUA_UInt32>
-    with MixinTypeKind {
+class UA_UInt32Payload extends PayloadType<raw.DartUA_UInt32> {
   const UA_UInt32Payload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.uint32;
 
   @override
   raw.DartUA_UInt32 get(ByteReader reader, [Endian? endian]) {
@@ -160,12 +130,8 @@ class UA_UInt32Payload extends PayloadType<raw.DartUA_UInt32>
 }
 
 // ignore: camel_case_types
-class UA_UInt64Payload extends PayloadType<raw.DartUA_UInt64>
-    with MixinTypeKind {
+class UA_UInt64Payload extends PayloadType<raw.DartUA_UInt64> {
   const UA_UInt64Payload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.uint64;
 
   @override
   raw.DartUA_UInt64 get(ByteReader reader, [Endian? endian]) {
@@ -181,11 +147,8 @@ class UA_UInt64Payload extends PayloadType<raw.DartUA_UInt64>
 // Float
 
 // ignore: camel_case_types
-class UA_FloatPayload extends PayloadType<raw.DartUA_Float> with MixinTypeKind {
+class UA_FloatPayload extends PayloadType<raw.DartUA_Float> {
   const UA_FloatPayload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.float;
 
   @override
   raw.DartUA_Float get(ByteReader reader, [Endian? endian]) {
@@ -199,12 +162,8 @@ class UA_FloatPayload extends PayloadType<raw.DartUA_Float> with MixinTypeKind {
 }
 
 // ignore: camel_case_types
-class UA_DoublePayload extends PayloadType<raw.DartUA_Double>
-    with MixinTypeKind {
+class UA_DoublePayload extends PayloadType<raw.DartUA_Double> {
   const UA_DoublePayload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.double;
 
   @override
   raw.DartUA_Double get(ByteReader reader, [Endian? endian]) {
@@ -220,11 +179,8 @@ class UA_DoublePayload extends PayloadType<raw.DartUA_Double>
 // Other
 
 // ignore: camel_case_types
-class UA_DateTimePayload extends PayloadType<DateTime> with MixinTypeKind {
+class UA_DateTimePayload extends PayloadType<DateTime> {
   const UA_DateTimePayload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.dateTime;
 
   static const uaDatetimeSec = 10000000;
   static const uaDatetimeUnixEpoch = 116444736000000000;
@@ -266,11 +222,8 @@ class UA_DateTimePayload extends PayloadType<DateTime> with MixinTypeKind {
 // typedef UA_StatusCode = ffi.Uint32;
 // typedef DartUA_StatusCode = int;
 
-class StringPayload extends PayloadType<String?> with MixinTypeKind {
+class StringPayload extends PayloadType<String?> {
   const StringPayload();
-
-  @override
-  TypeKindEnum get typeKind => TypeKindEnum.string;
 
   @override
   String? get(ByteReader reader, [Endian? endian]) {
