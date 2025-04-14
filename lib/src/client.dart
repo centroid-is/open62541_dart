@@ -273,6 +273,8 @@ class Client {
 
     controller.onCancel = () {
       _logger.t("Cancelling monitored item $monitoredItemId");
+      _lib.UA_Client_MonitoredItems_deleteSingle(
+          _client, subscriptionId, monitoredItemId);
       controller.close();
     };
 
