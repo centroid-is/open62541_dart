@@ -23,7 +23,10 @@ StructureSchema createFromPayload(
     PayloadType payloadType, String fieldName, List<int> arrayDimensions,
     {String? structureName}) {
   for (var dimension in arrayDimensions) {
-    payloadType = ArrayPayload(payloadType /*, dimension*/);
+    // wrap the payload type in an array payload with StructureSchema which will make it a Array<DynamicValue>
+    payloadType = ArrayPayload(StructureSchema(fieldName,
+        elementType: payloadType, structureName: structureName));
+    // payloadType = ArrayPayload(payloadType /*, dimension*/);
   }
   return StructureSchema(fieldName,
       structureName: structureName, elementType: payloadType);

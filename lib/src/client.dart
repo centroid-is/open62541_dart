@@ -301,27 +301,34 @@ class Client {
       if (!nodeIdType.isString()) {
         throw 'UA_Client_read[DATATYPEDEFINITION]: Expected string type, got ${nodeIdType.format()}';
       }
+
+      // TODO: get this to work
+      // rvi.ref.attributeId = raw.UA_AttributeId.UA_ATTRIBUTEID_DESCRIPTION;
+      // final descriptionRes = _lib.UA_Client_read(_client, rvi);
+      // if (descriptionRes.status == raw.UA_STATUSCODE_GOOD) {
+
+      //   print(
+      //       'Description: ${descriptionRes.value.data.cast<raw.UA_LocalizedText>().ref.text.value}');
+      // }
+
       schema = StructureSchema(fieldName, structureName: nodeIdType.string!);
       final structDef = res.value.data.cast<raw.UA_StructureDefinition>().ref;
       for (var i = 0; i < structDef.fieldsSize; i++) {
         final field = structDef.fields[i];
         raw.UA_NodeId dataType = field.dataType;
         StructureSchema fieldSchema;
-        List<int> arrayDimensions = [];
-        if (field.arrayDimensionsSize > 0) {
-          for (var j = 0; j < field.arrayDimensionsSize; j++) {
-            arrayDimensions.add(field.arrayDimensions[j]);
-          }
-        }
+        List<int> arrayDimensions = field.dimensions;
         if (dataType.isNumeric()) {
           fieldSchema = createPredefinedType(
-              dataType.toNodeId(), field.name.value, arrayDimensions);
+              dataType.toNodeId(), field.fieldName, arrayDimensions);
         } else if (dataType.isString()) {
           // recursively read the nested structure type
-          fieldSchema = readDataTypeDefinition(dataType, field.name.value);
+          fieldSchema = readDataTypeDefinition(dataType, field.fieldName);
         } else {
           throw 'Unsupported field type: $dataType';
         }
+        // print('fieldName: ${field.fieldName}');
+        fieldSchema.description = field.fieldDescription;
         schema.addField(fieldSchema);
       }
     } catch (e) {

@@ -22,9 +22,8 @@ void main() {
       ..addField(StructureSchema('field8', structureName: 'ST_FP')
         ..addField(createPredefinedType(NodeId.numeric(0, 1), 'subfield1', []))
         ..addField(createPredefinedType(NodeId.numeric(0, 1), 'subfield2', []))
-        ..addField(StructureSchema('subfield3',
-            elementType: ArrayPayload(
-                createPredefinedType(NodeId.numeric(0, 1), 'subfield3', [])))));
+        ..addField(createPredefinedType(NodeId.numeric(0, 1), 'subfield3',
+            [2]))); // Array<DynamicValue> of size 2
     const data = [
       0x01, // field1
       0x00, // field2

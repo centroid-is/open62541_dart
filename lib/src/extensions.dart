@@ -2,6 +2,7 @@ import 'package:ffi/ffi.dart';
 import 'dart:convert';
 import 'dart:ffi';
 
+import '../dynamic_value.dart';
 import 'nodeId.dart';
 import 'generated/open62541_bindings.dart' as raw;
 
@@ -276,5 +277,23 @@ extension UA_StringExtension on raw.UA_String {
       data = nullptr;
       length = 0;
     }
+  }
+}
+
+extension UA_StructureFieldExtension on raw.UA_StructureField {
+  String get fieldName => name.value;
+  MemberDescription get fieldDescription {
+    final textValue = description.text.value;
+    final localeValue = description.locale.value;
+    // print('description: $textValue');
+    // print('locale: $localeValue');
+    return MemberDescription(textValue, localeValue);
+  }
+
+  List<int> get dimensions {
+    if (arrayDimensionsSize == 0 || arrayDimensions == nullptr) {
+      return [];
+    }
+    return arrayDimensions.asTypedList(arrayDimensionsSize);
   }
 }

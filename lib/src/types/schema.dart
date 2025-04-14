@@ -7,6 +7,7 @@ class StructureSchema extends PayloadType<DynamicValue> {
 
   final String? structureName;
   final String fieldName;
+  MemberDescription? description;
   List<StructureSchema> fields = [];
   final PayloadType? elementType;
   // this would be nice to have, assert that the reader/writer length is the same as the schema
@@ -14,16 +15,20 @@ class StructureSchema extends PayloadType<DynamicValue> {
   // int size = 0;
 
   StructureSchema(this.fieldName,
-      {this.elementType, this.structureName, List<StructureSchema>? fields})
+      {this.elementType,
+      this.structureName,
+      List<StructureSchema>? fields,
+      this.description})
       : fields = fields ?? [];
 
   @override
   DynamicValue get(ByteReader reader, [Endian? endian]) {
     if (elementType != null) {
-      return DynamicValue()..value = elementType!.get(reader, endian);
+      return DynamicValue(
+          value: elementType!.get(reader, endian), description: description);
     }
-    DynamicValue result = DynamicValue();
-    for (var field in fields) {
+    DynamicValue result = DynamicValue(description: description);
+    for (final field in fields) {
       result[field.fieldName] = field.get(reader, endian);
     }
     return result;
@@ -56,6 +61,7 @@ ${fields.map((f) => _formatField(f, 1)).join(',\n')}
       return '''StructureSchema(
   structureName: ${structureName ?? 'null'},
   fieldName: $fieldName,
+  description: ${description?.value ?? 'null'},
   elementType: ${_formatElementType(elementType)},
   $fieldsStr
 )''';
@@ -69,6 +75,7 @@ ${fields.map((f) => _formatField(f, 1)).join(',\n')}
     final fieldStr = '''$indent{
 $indent  structureName: ${field.structureName ?? 'null'},
 $indent  name: ${field.fieldName},
+$indent  description: ${field.description?.value ?? 'null'},
 $indent  payload: ${_formatElementType(field.elementType)}${field.fields.isEmpty ? '' : ','}${field.fields.isEmpty ? '' : '''
 $indent  fields: [
 ${field.fields.map((f) => _formatField(f, depth + 1)).join(',\n')}

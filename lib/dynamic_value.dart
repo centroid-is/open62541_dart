@@ -11,10 +11,19 @@ enum DynamicType {
   float,
 }
 
+class MemberDescription {
+  final String value;
+  final String locale;
+  MemberDescription(this.value, this.locale);
+}
+
 class DynamicValue {
   dynamic _data;
+  MemberDescription? _description;
 
-  DynamicValue();
+  DynamicValue({value, description})
+      : _data = value,
+        _description = description;
 
   DynamicType get type {
     if (_data == null) return DynamicType.nullValue;
@@ -42,6 +51,7 @@ class DynamicValue {
   bool get asBool => _parseBool(_data) ?? false;
   DateTime? get asDateTime => _parseDateTime(_data);
   dynamic get asDynamic => _data;
+  MemberDescription? get description => _description;
 
   List<DynamicValue> get asArray => isArray
       ? _data

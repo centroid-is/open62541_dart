@@ -76,3 +76,11 @@ dart run ffigen
 ```
 
 Some clang errors have been turned off to disable errors coming from macos's pthread library and other standard libraries
+
+
+## Notes
+
+### Stuff that does not work
+
+- Monitoring a structure with multi dimensional array member, turns as empty array. Don't know why.
+- Description of structure fields is not working.
