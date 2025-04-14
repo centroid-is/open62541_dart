@@ -5,29 +5,33 @@ import 'generated/open62541_bindings.dart' as raw;
 import 'extensions.dart';
 
 class NodeId {
-  NodeId._internal(this._namespaceIndex, {stringId, numericId})
-      : _stringId = stringId,
-        _numericId = numericId;
+  NodeId._internal(this._namespaceIndex, {dynamic id})
+      : _stringId = id is String ? id : null,
+        _numericId = id is int ? id : null {
+    if (_stringId == null && _numericId == null) {
+      throw 'NodeId is not initialized or unimplemented';
+    }
+  }
 
   factory NodeId.fromRaw(raw.UA_NodeId nodeId) {
     if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
       return NodeId._internal(nodeId.namespaceIndex,
-          stringId: nodeId.identifier.string.value);
+          id: nodeId.identifier.string.value);
     } else if (nodeId.identifierType ==
         raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
       return NodeId._internal(nodeId.namespaceIndex,
-          numericId: nodeId.identifier.numeric);
+          id: nodeId.identifier.numeric);
     } else {
       throw 'NodeId todo implement';
     }
   }
 
   factory NodeId.numeric(int nsIndex, int identifier) {
-    return NodeId._internal(nsIndex, numericId: identifier);
+    return NodeId._internal(nsIndex, id: identifier);
   }
 
   factory NodeId.string(int nsIndex, String chars) {
-    return NodeId._internal(nsIndex, stringId: chars);
+    return NodeId._internal(nsIndex, id: chars);
   }
 
   raw.UA_NodeId toRaw(raw.open62541 lib) {
