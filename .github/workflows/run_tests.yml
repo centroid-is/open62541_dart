@@ -23,7 +23,7 @@ jobs:
 
       - name: Build open62541 library
         run: |
-          apt install libmbedtls-dev
+          sudo apt install libmbedtls-dev
           ./build_lib.sh
 
       - name: Run tests
