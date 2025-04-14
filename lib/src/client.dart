@@ -284,15 +284,15 @@ class Client {
   // This is reading a DataTypeDefinition from namespace 0
   StructureSchema readDataTypeDefinition(
       raw.UA_NodeId nodeIdType, String fieldName) {
-    ffi.Pointer<raw.UA_ReadValueId> rvi = calloc<raw.UA_ReadValueId>();
-    _lib.UA_ReadValueId_init(rvi);
+    ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>();
+    _lib.UA_ReadValueId_init(readValueId);
     raw.UA_DataValue res;
     StructureSchema schema;
     try {
-      rvi.ref.nodeId = nodeIdType;
-      rvi.ref.attributeId =
+      readValueId.ref.nodeId = nodeIdType;
+      readValueId.ref.attributeId =
           raw.UA_AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION;
-      res = _lib.UA_Client_read(_client, rvi);
+      res = _lib.UA_Client_read(_client, readValueId);
 
       if (res.status != raw.UA_STATUSCODE_GOOD) {
         throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code ${res.status} ${statusCodeToString(res.status)}';
@@ -337,7 +337,7 @@ class Client {
       print("Error reading DataTypeDefinition: $e");
       rethrow;
     } finally {
-      _lib.UA_ReadValueId_delete(rvi);
+      _lib.UA_ReadValueId_delete(readValueId);
     }
     return schema;
   }
