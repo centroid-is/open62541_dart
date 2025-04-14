@@ -230,7 +230,8 @@ class StringPayload extends PayloadType<String?> {
     final length = UA_Int32Payload().get(reader, endian);
     if (length == -1) return null;
     if (length == 0) return '';
-    return reader.read(length).toString();
+    final bytes = reader.read(length);
+    return utf8.decode(bytes);
   }
 
   @override
@@ -238,8 +239,9 @@ class StringPayload extends PayloadType<String?> {
     if (value == null) {
       UA_Int32Payload().set(writer, -1, endian);
     } else {
-      UA_Int32Payload().set(writer, value.length, endian);
-      writer.write(Uint8List.fromList(utf8.encode(value)));
+      final bytes = utf8.encode(value);
+      UA_Int32Payload().set(writer, bytes.length, endian);
+      writer.write(bytes);
     }
   }
 }

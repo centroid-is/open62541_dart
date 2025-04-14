@@ -4,6 +4,91 @@ import 'package:binarize/binarize.dart';
 import 'package:open62541_bindings/src/types/payloads.dart';
 
 void main() {
+  void testPayloadImpl<T>(String name, PayloadType<T> payload, T value) {
+    final writer = ByteWriter();
+    payload.set(writer, value);
+
+    final reader = ByteReader(writer.toBytes());
+    final result = payload.get(reader);
+
+    expect(result, value);
+  }
+
+  void testPayload<T>(String name, PayloadType<T> payload, T value) {
+    test('$name payload', () {
+      testPayloadImpl(name, payload, value);
+    });
+  }
+
+  // Boolean
+  testPayload('Boolean true', BooleanPayload(), true);
+  testPayload('Boolean false', BooleanPayload(), false);
+
+  // Signed integers
+  testPayload('SByte min', UA_SBytePayload(), -128);
+  testPayload('SByte max', UA_SBytePayload(), 127);
+
+  testPayload('Int16 min', UA_Int16Payload(), -32768);
+  testPayload('Int16 max', UA_Int16Payload(), 32767);
+
+  testPayload('Int32 min', UA_Int32Payload(), -2147483648);
+  testPayload('Int32 max', UA_Int32Payload(), 2147483647);
+
+  testPayload('Int64 min', UA_Int64Payload(), -9223372036854775808);
+  testPayload('Int64 max', UA_Int64Payload(), 9223372036854775807);
+
+  // Unsigned integers
+  testPayload('Byte min', UA_BytePayload(), 0);
+  testPayload('Byte max', UA_BytePayload(), 255);
+
+  testPayload('UInt16 min', UA_UInt16Payload(), 0);
+  testPayload('UInt16 max', UA_UInt16Payload(), 65535);
+
+  testPayload('UInt32 min', UA_UInt32Payload(), 0);
+  testPayload('UInt32 max', UA_UInt32Payload(), 4294967295);
+
+  testPayload('UInt64 min', UA_UInt64Payload(), 0);
+  testPayload(
+      'UInt64 (dart) max as in int64', UA_UInt64Payload(), 9223372036854775807);
+
+  // Floating point
+  testPayload('Double positive', UA_DoublePayload(), 3.14159265359);
+  testPayload('Double negative', UA_DoublePayload(), -3.14159265359);
+  testPayload('Double zero', UA_DoublePayload(), 0.0);
+  test('Float payload', () {
+    final payload = UA_FloatPayload();
+    final writer = ByteWriter();
+
+    // Test normal float with precision check
+    final float = 3.14159;
+    payload.set(writer, float);
+    final reader = ByteReader(writer.toBytes());
+    final result = payload.get(reader);
+    expect(result, closeTo(float, 1e-6));
+
+    // Test negative
+    writer.clear();
+    payload.set(writer, -float);
+    expect(payload.get(ByteReader(writer.toBytes())), closeTo(-float, 1e-6));
+
+    // Test zero
+    writer.clear();
+    payload.set(writer, 0.0);
+    expect(payload.get(ByteReader(writer.toBytes())), 0.0);
+  });
+
+  // String
+  testPayload('String normal', StringPayload(), 'Hello, World!');
+
+  // Test empty string
+  testPayload('String empty', StringPayload(), '');
+
+  // Test null string
+  testPayload('String null', StringPayload(), null);
+
+  // Test UTF-8 characters
+  testPayload('String UTF-8', StringPayload(), '🌟 Hello 世界');
+
   test('DateTime payload', () {
     final payload = UA_DateTimePayload();
 
@@ -27,5 +112,31 @@ void main() {
     expect(convertedDate.minute, 9);
     expect(convertedDate.second, 26);
     expect(convertedDate.millisecond, 535);
+  });
+
+  // Array
+  test('Array payload', () {
+    // Test integer array
+    final intArrayPayload = ArrayPayload(UA_Int32Payload());
+    final intList = [1, 2, 3, 4, 5];
+
+    final writer = ByteWriter();
+    intArrayPayload.set(writer, intList);
+
+    final reader = ByteReader(writer.toBytes());
+    final result = intArrayPayload.get(reader);
+
+    expect(result, intList);
+
+    // Test empty array
+    testPayloadImpl('Array empty', ArrayPayload(UA_Int32Payload()), <int>[]);
+
+    // Test null array
+    testPayloadImpl('Array null', ArrayPayload(UA_Int32Payload()), null);
+
+    // Test string array
+    final stringArrayPayload = ArrayPayload(StringPayload());
+    final stringList = ['Hello', 'World', '🌟'];
+    testPayloadImpl('Array strings', stringArrayPayload, stringList);
   });
 }
