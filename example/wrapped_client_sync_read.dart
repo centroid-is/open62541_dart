@@ -39,18 +39,46 @@ void clientIsolate(SendPort mainSendPort) async {
     // print("definition: $definition");
     //<StructuredDataType>:ST_SpeedBatcher
 
-    final schema = c.variableToSchema(NodeId.string(4, "GVL_IO.single_SB"));
-    print("got schema: $schema");
+    // final schema = c.variableToSchema(NodeId.string(4, "GVL_HMI.Drives_Line2"));
+    // print("got schema: $schema");
 
-    // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB"));
-    // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB.a_struct"));
+    // // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB"));
+    // // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB.a_struct"));
 
-    NodeId sb = NodeId.string(4, "GVL_IO.single_SB");
-    final monId = c.monitoredItemCreate<dynamic>(sb, subId, (data) {
-      print('print data: $data');
-      mainSendPort.send('DATA: $data');
-    });
+    // NodeId sb = NodeId.string(4, "GVL_HMI.Drives_Line2");
+    // final monId = c.monitoredItemCreate<dynamic>(sb, subId, (data) {
+    //   print('print data: $data');
+    //   mainSendPort.send('DATA: $data');
+    // });
 
+    // Test writing value attribute
+    // boolean
+    NodeId toWrite = NodeId.string(4, "MAIN.lines[1][1].xInUse"); // The bool to write
+    final current_value = c.readValue(toWrite);
+    print("Current value : $current_value");
+    c.writeValue(toWrite, false);
+
+    // int16
+    int curr = 0;
+    NodeId int16ToWrite = NodeId.string(4, "MAIN.nCounter"); // The bool to write
+    curr = c.readValue(int16ToWrite);
+    c.writeValue(int16ToWrite, curr + 1);
+
+    NodeId nreal = NodeId.string(4, "GVL_HMI.Drives_Line1[1].i_rFreq");
+    c.writeValue(nreal, 0.0);
+    var curr_real = c.readValue(nreal);
+    c.writeValue(nreal, curr_real + 0.1337);
+    NodeId string = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xStrings");
+    //var curr_string = c.readValue(string);
+  //print(curr_string);
+    c.writeValue(string, "This is a test");
+   //  while (curr_real < 25){
+   //    print(curr_real);
+   //    c.writeValue(nreal, curr_real + 0.1337);
+   //    curr_real = c.readValue(nreal);
+   //    await Future.delayed(Duration(milliseconds: 100));
+   //  }
+   //  c.writeValue(nreal, 1000.0);
     // NodeId arr = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xSpare2");
     // final arrMonId = c.monitoredItemCreate<dynamic>(arr, subId, (data) {
     //   print('print arr DATA: $data');
@@ -104,8 +132,8 @@ Future<int> main() async {
       break;
     } else if (message.startsWith('DATA: ')) {
       // Handle subscription data
-      print('Received subscription data: ${message.substring(6)}');
-      print('message: $message');
+      // print('Received subscription data: ${message.substring(6)}');
+      // print('message: $message');
     } else {
       // Print other messages
       print(message);

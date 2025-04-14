@@ -123,12 +123,53 @@ class Client {
     _lib.UA_Client_run_iterate(_client, ms);
   }
 
-  dynamic readValueAttribute(NodeId nodeId) {
+  ffi.Pointer<raw.UA_DataType> getType(int type){
+    if (type < 0 || type > raw.UA_TYPES_COUNT){
+      throw 'Type out of boundary $type';
+    }
+    return ffi.Pointer.fromAddress(_lib.UA_TYPES.address + (type * ffi.sizeOf<raw.UA_DataType>()));
+  }
+
+  void writeValue(NodeId nodeId, dynamic value){
+    ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
+    ffi.Pointer<raw.UA_DataType> type = calloc<raw.UA_DataType>();
+
+    _lib.UA_Client_readDataTypeAttribute(_client, nodeId.toRaw(_lib), type.cast());
+    ffi.Pointer<raw.UA_NodeId> id = type.cast();
+    if (!id.ref.isNumeric() || id.ref.namespaceIndex != 0){
+      throw 'unexpected for now';
+    }
+    print(id.ref.namespaceIndex);
+    final tKind = Namespace0Id.fromInt(id.ref.numeric!).toTypeKind();
+    final pload = nodeIdToPayloadType(NodeId.fromRaw(id.ref));
+    binarize.ByteWriter wr = binarize.ByteWriter();
+    pload.set(wr, value, Endian.little);
+    final bytes = wr.toBytes();
+    ffi.Pointer<ffi.Uint8> pointer = calloc<ffi.Uint8>(bytes.length);
+    pointer.value = 0;
+    for(int i = 0; i < bytes.length; i++){
+      pointer[i] = bytes[i];
+    }
+    _lib.UA_Variant_setScalar(variant, pointer.cast(), getType(tKind.value));
+
+    // Write value
+    final retValue = _lib.UA_Client_writeValueAttribute(_client, nodeId.toRaw(_lib), variant);
+    if (retValue != raw.UA_STATUSCODE_GOOD){
+      final statusCodeName = _lib.UA_StatusCode_name(retValue);
+      throw 'Write off $nodeId to $value failed with $retValue, name: ${statusCodeName.cast<Utf8>().toDartString()}';
+    }
+    // Use variant delete to delete the internal data pointer as well
+    _lib.UA_Variant_delete(variant);
+    calloc.free(type);
+  }
+
+  dynamic readValue(NodeId nodeId) {
     ffi.Pointer<raw.UA_Variant> data = calloc<raw.UA_Variant>();
     int statusCode =
         _lib.UA_Client_readValueAttribute(_client, nodeId.toRaw(_lib), data);
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Bad status code $statusCode';
+      final statusCodeName = _lib.UA_StatusCode_name(statusCode);
+      throw 'Bad status code $statusCode name: ${statusCodeName.cast<Utf8>().toDartString()}';
     }
 
     final retVal = _uaVariantToDart(data);
@@ -530,6 +571,7 @@ class Client {
 
           return data;
         }
+
         print("typeId: ${typeId.format()}");
 
         // Read first two boolean fields
