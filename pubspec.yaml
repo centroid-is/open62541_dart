@@ -6,7 +6,10 @@ repository: https://github.com/omarhogni/open62541_bindings
 environment:
   sdk: ^3.3.0-82.0.dev
 dependencies:
+  binarize: ^2.0.0
+  collection: ^1.19.1
   ffi: ^2.1.2
+  logger: ^2.5.0
 platforms:
   linux:
 topics:
@@ -32,6 +35,6 @@ ffigen:
         - 'UA_*' # Do this to expose all function pointers.
   compiler-opts:
     - '-Iopen62541_build/install/include/'
-    - '-I/lib/clang/17/include/'
+    - '-I/lib/clang/19/include/'
     - '-Wno-nullability-completeness'
     - '-Wno-expansion-to-defined'

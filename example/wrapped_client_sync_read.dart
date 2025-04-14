@@ -1,65 +1,116 @@
 // TODO: Put public facing types in this file.
 // import 'dart:ffi';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:open62541_bindings/src/client.dart';
 import 'package:open62541_bindings/src/nodeId.dart';
+import 'package:open62541_bindings/src/library.dart';
+import 'package:open62541_bindings/src/extensions.dart';
 
-int main() {
-  Client c = Client();
+void clientIsolate(SendPort mainSendPort) async {
+  Client c = Client(Open62541Singleton().lib);
 
-  c.config.stateStream
-      .listen((event) => print('Channel state: ${event.channelState}'));
+  c.config.stateStream.listen(
+      (event) => mainSendPort.send('Channel state: ${event.channelState}'));
 
   c.config.subscriptionInactivityStream
-      .listen((event) => print('inactive subscription $event'));
+      .listen((event) => mainSendPort.send('inactive subscription $event'));
 
-  // // Pointer<Pointer<UA_EndpointDescription>> endpointDescription = nullptr;
-  String endpointUrl = 'opc.tcp://localhost:4840';
+  String endpointUrl = 'opc.tcp://172.30.118.23:4840';
   var statusCode = c.connect(endpointUrl);
-  print('Endpoint url: $endpointUrl');
+  mainSendPort.send('Endpoint url: $endpointUrl');
+
   if (statusCode == 0) {
-    print('Client connected!');
+    mainSendPort.send('Client connected!');
   } else {
     c.close();
-    exit(-1);
+    mainSendPort.send('EXIT');
+    return;
   }
 
-  NodeId currentTime = NodeId.numeric(0, 2258);
-  print("Starting read loop");
-  for (int i = 0; i < 10; i++) {
-    try {
-      print(c.readValueAttribute(currentTime));
-    } catch (error) {
-      print(error);
-      c.close();
-      exit(-1);
-    }
-    sleep(Duration(milliseconds: 100));
-  }
+  try {
+    int subId = c.subscriptionCreate(
+        requestedPublishingInterval: Duration(milliseconds: 5));
+    mainSendPort.send('Created subscription $subId');
 
-  print('Read complete');
-  print('Subscription!');
-  try{
-    int subId = c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-    print('Created subscription $subId');
-    c.monitoredItemCreate(currentTime, subId, (dynamic data) => print("got $data"), samplingInterval: Duration(milliseconds: 10));
-  } catch (error){
-    print(error);
+    // final definition =
+    //     c.readValueAttribute(NodeId.string(4, "#Type|ST_SpeedBatcher"));
+    // print("definition: $definition");
+    //<StructuredDataType>:ST_SpeedBatcher
+
+    final schema = c.variableToSchema(NodeId.string(4, "GVL_IO.single_SB"));
+    print("got schema: $schema");
+
+    // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB"));
+    // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB.a_struct"));
+
+    NodeId sb = NodeId.string(4, "GVL_IO.single_SB");
+    final monId = c.monitoredItemCreate<dynamic>(sb, subId, (data) {
+      print('print data: $data');
+      mainSendPort.send('DATA: $data');
+    });
+
+    // NodeId arr = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xSpare2");
+    // final arrMonId = c.monitoredItemCreate<dynamic>(arr, subId, (data) {
+    //   print('print arr DATA: $data');
+    //   mainSendPort.send('Arr DATA: $data');
+    // });
+
+    // NodeId outSignal = NodeId.string(4, "GVL_IO.single_SB.i_xBatchReady");
+    // final outSignalMonId =
+    //     c.monitoredItemCreate<bool>(outSignal, subId, (data) {
+    //   print('print DATA: $data');
+    //   mainSendPort.send('Out signal DATA: $data');
+    // });
+  } catch (error) {
+    mainSendPort.send('ERROR: $error');
     c.close();
-    exit(-1);
+    mainSendPort.send('EXIT');
+    return;
   }
 
-  print('setup complete');
+  // Add signal handler
+  ProcessSignal.sigint.watch().listen((signal) {
+    print('Shutting down client gracefully...');
+    c.close();
+    mainSendPort.send('EXIT');
+  });
 
-  var startTime = DateTime.now().millisecondsSinceEpoch;
   while (true) {
-    c.runIterate(Duration(milliseconds: 100));
-    if (startTime < DateTime.now().millisecondsSinceEpoch - 5000) {
+    try {
+      c.runIterate(Duration(milliseconds: 10));
+      // Add small delay to allow event loop to process
+      await Future.delayed(Duration(milliseconds: 1));
+    } catch (error) {
+      print('Error: $error');
       break;
     }
   }
+
   c.close();
-  print('Exiting');
+  mainSendPort.send('EXIT');
+}
+
+Future<int> main() async {
+  final receivePort = ReceivePort();
+
+  // Start client in separate isolate
+  await Isolate.spawn(clientIsolate, receivePort.sendPort);
+
+  // Listen for messages from client isolate
+  await for (final message in receivePort) {
+    if (message == 'EXIT') {
+      break;
+    } else if (message.startsWith('DATA: ')) {
+      // Handle subscription data
+      print('Received subscription data: ${message.substring(6)}');
+      print('message: $message');
+    } else {
+      // Print other messages
+      print(message);
+    }
+  }
+
   return 0;
 }

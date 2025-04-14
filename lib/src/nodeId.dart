@@ -1,20 +1,98 @@
+import 'dart:ffi';
 import 'package:ffi/ffi.dart';
-
 import 'generated/open62541_bindings.dart' as raw;
-import 'library.dart';
+
+import 'extensions.dart';
 
 class NodeId {
-  NodeId._internal(this._nodeId);
-
-  factory NodeId.numeric(int nsIndex, int identifier){
-      return NodeId._internal(Open62541Singleton().lib.UA_NODEID_NUMERIC(nsIndex, identifier));
+  NodeId._internal(this._namespaceIndex, {dynamic id})
+      : _stringId = id is String ? id : null,
+        _numericId = id is int ? id : null {
+    if (_stringId == null && _numericId == null) {
+      throw 'NodeId is not initialized or unimplemented';
+    }
   }
 
-  factory NodeId.string(int nsIndex, String chars){
-      return NodeId._internal(Open62541Singleton().lib.UA_NODEID_STRING(nsIndex, chars.toNativeUtf8().cast()));
+  factory NodeId.fromRaw(raw.UA_NodeId nodeId) {
+    if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
+      return NodeId._internal(nodeId.namespaceIndex,
+          id: nodeId.identifier.string.value);
+    } else if (nodeId.identifierType ==
+        raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
+      return NodeId._internal(nodeId.namespaceIndex,
+          id: nodeId.identifier.numeric);
+    } else {
+      throw 'NodeId todo implement';
+    }
   }
 
-  raw.UA_NodeId _nodeId;
+  factory NodeId.numeric(int nsIndex, int identifier) {
+    return NodeId._internal(nsIndex, id: identifier);
+  }
 
-  raw.UA_NodeId get rawNodeId => _nodeId;
+  factory NodeId.string(int nsIndex, String chars) {
+    return NodeId._internal(nsIndex, id: chars);
+  }
+
+  raw.UA_NodeId toRaw(raw.open62541 lib) {
+    if (_stringId != null) {
+      return lib.UA_NODEID_STRING(
+          _namespaceIndex, _stringId!.toNativeUtf8().cast());
+    } else if (_numericId != null) {
+      return lib.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
+    } else {
+      throw 'NodeId is not initialized or unimplemented';
+    }
+  }
+
+  int get numeric => _numericId!;
+  String get string => _stringId!;
+  // GUID
+  // String get byteString => _byteStringId!;
+
+  bool isNumeric() {
+    return _numericId != null;
+  }
+
+  bool isString() {
+    return _stringId != null;
+  }
+
+  // bool isGuid() {
+  //   return _nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_GUID;
+  // }
+
+  // bool isByteString() {
+  //   return _nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_BYTESTRING;
+  // }
+
+  @override
+  String toString() {
+    if (_stringId != null) {
+      return 'NodeId(namespace: $_namespaceIndex, string: $_stringId)';
+    } else if (_numericId != null) {
+      return 'NodeId(namespace: $_namespaceIndex, numeric: $_numericId)';
+    } else {
+      return 'NodeId(TODO)';
+    }
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (other is NodeId) {
+      return _namespaceIndex == other._namespaceIndex &&
+          _stringId == other._stringId &&
+          _numericId == other._numericId;
+    }
+    return false;
+  }
+
+  @override
+  int get hashCode =>
+      _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode;
+
+  String? _stringId;
+  int? _numericId;
+  // String? _byteStringId;
+  int _namespaceIndex;
 }
