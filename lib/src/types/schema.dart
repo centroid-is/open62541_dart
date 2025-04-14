@@ -15,11 +15,7 @@ class StructureSchema extends PayloadType<DynamicValue> {
   // int size = 0;
 
   StructureSchema(this.fieldName,
-      {this.elementType,
-      this.structureName,
-      List<StructureSchema>? fields,
-      this.description})
-      : fields = fields ?? [];
+      {this.elementType, this.structureName, this.description});
 
   @override
   DynamicValue get(ByteReader reader, [Endian? endian]) {
