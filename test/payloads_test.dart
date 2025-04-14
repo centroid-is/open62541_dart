@@ -94,7 +94,7 @@ void main() {
 
     // Test a known date/time value
     final writer = ByteWriter();
-    final originalDate = DateTime(2024, 3, 14, 15, 9, 26, 535);
+    final originalDate = DateTime.utc(2024, 3, 14, 15, 9, 26, 535);
     payload.set(writer, originalDate);
 
     final reader = ByteReader(writer.toBytes());

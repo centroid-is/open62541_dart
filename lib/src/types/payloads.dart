@@ -182,39 +182,34 @@ class UA_DoublePayload extends PayloadType<raw.DartUA_Double> {
 class UA_DateTimePayload extends PayloadType<DateTime> {
   const UA_DateTimePayload();
 
-  static const uaDatetimeSec = 10000000;
-  static const uaDatetimeUnixEpoch = 116444736000000000;
-
-  DateTime _opcuaToDateTime(int t) {
-    // Convert to seconds since Unix epoch using the same logic as the C code
-    final secSinceUnixEpoch =
-        (t ~/ uaDatetimeSec) - (uaDatetimeUnixEpoch ~/ uaDatetimeSec);
-
-    // Handle fractional part
-    var frac = t % uaDatetimeSec;
-    if (frac < 0) {
-      frac += uaDatetimeSec;
-    }
-
-    // Convert seconds to DateTime
-    final millisSinceEpoch =
-        secSinceUnixEpoch * 1000 + ((frac % 10000000) ~/ 10000);
-
-    return DateTime.fromMillisecondsSinceEpoch(millisSinceEpoch);
-  }
+  static final opcuaEpoch = DateTime.utc(1601, 1, 1, 0, 0, 0);
+  static final maxint = 9223372036854775807;
 
   @override
   DateTime get(ByteReader reader, [Endian? endian]) {
-    return _opcuaToDateTime(reader.int64(endian));
+    final dateTimeRaw = reader.int64(endian);
+    if (dateTimeRaw ==
+        0 /* Don't have to check platform, it goes earlier then opcua epoch*/) {
+      return DateTime(-271821, 04, 20);
+    } else if (dateTimeRaw == maxint) {
+      return DateTime(275760, 09, 13);
+    } else {
+      final sinceEpoch = Duration(microseconds: dateTimeRaw ~/ 10);
+      return opcuaEpoch.add(sinceEpoch);
+    }
   }
 
   @override
   void set(ByteWriter writer, DateTime value, [Endian? endian]) {
-    final millisSinceEpoch = value.millisecondsSinceEpoch;
-    final t = (millisSinceEpoch ~/ 1000) * uaDatetimeSec +
-        uaDatetimeUnixEpoch +
-        (millisSinceEpoch % 1000) * 10000;
-    writer.int64(t, endian);
+    if (value.isBefore(
+        opcuaEpoch) /* Eearliest representable by development platform is lower then opcua epoch. Don't need to check it. */) {
+      writer.int64(0, endian);
+    } else if (value.isAfter(DateTime(9999, 12, 31, 11, 59, 58, 999, 999))) {
+      writer.int64(maxint, endian);
+    } else {
+      final difference = value.difference(opcuaEpoch);
+      writer.int64(difference.inMicroseconds * 10, endian);
+    }
   }
 }
 // typedef UA_DateTime = ffi.Int64;
