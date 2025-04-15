@@ -47,16 +47,7 @@ class NodeId {
 
   Pointer<raw.UA_NodeId> toRawPointer(raw.open62541 lib) {
     final nodeId = calloc<raw.UA_NodeId>();
-    nodeId.ref.namespaceIndex = _namespaceIndex;
-    if (_numericId != null) {
-      nodeId.ref.identifierType = raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC;
-      nodeId.ref.identifier.numeric = _numericId!;
-    } else if (_stringId != null) {
-      nodeId.ref.identifierType = raw.UA_NodeIdType.UA_NODEIDTYPE_STRING;
-      nodeId.ref.identifier.string.set(_stringId!);
-    } else {
-      throw 'NodeId is not initialized or unimplemented';
-    }
+    nodeId.ref = toRaw(lib);
     return nodeId;
   }
 
