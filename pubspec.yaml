@@ -33,6 +33,12 @@ ffigen:
     symbol-address:
       include:
         - 'UA_*' # Do this to expose all function pointers.
+  # UA_TYPES is a list inside the library and we need raw access
+  # To the top level pointer to increment the list.
+  globals:
+    symbol-address:
+      include:
+        - 'UA_TYPES'
   compiler-opts:
     - '-Iopen62541_build/install/include/'
     - '-I/lib/clang/19/include/'
