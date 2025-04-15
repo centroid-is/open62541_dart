@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:open62541_bindings/dynamic_value.dart';
 import 'package:test/test.dart';
 
@@ -28,5 +30,48 @@ void main() {
     final dynamicValue = DynamicValue();
     dynamicValue.value = 42.2;
     expect(dynamicValue.type, DynamicType.float);
+  });
+  test('set sub values', () {
+    var values = <String, dynamic>{
+      "jbb": false,
+      "ohg": true,
+      "w": {
+        "jbb": true,
+        "w": {
+          "ohg": false,
+          "a": [
+            {
+              "jbb": false,
+              "ohg": [
+                {"final_boss": true},
+                [
+                  [1337]
+                ]
+              ]
+            }
+          ]
+        }
+      }
+    };
+    final d = DynamicValue.fromMap(values);
+    expect(d["ohg"].asBool, true);
+    expect(d["jbb"].asBool, false);
+    expect(d["w"]["jbb"].asBool, true);
+    expect(d["w"]["w"]["ohg"].asBool, false);
+    expect(d["w"]["w"]["a"][0]["jbb"].asBool, false);
+    expect(d["w"]["w"]["a"][0]["ohg"][0]["final_boss"].asBool, true);
+    expect(d["w"]["w"]["a"][0]["ohg"][1][0][0].asInt, 1337);
+    d["jbb"] = true;
+    d["w"]["jbb"] = false;
+    d["w"]["w"]["ohg"] = true;
+    d["w"]["w"]["a"][0]["jbb"] = true;
+    d["w"]["w"]["a"][0]["ohg"][0]["final_boss"] = false;
+    d["w"]["w"]["a"][0]["ohg"][1][0][0] = 42;
+    expect(d["jbb"].asBool, true);
+    expect(d["w"]["jbb"].asBool, false);
+    expect(d["w"]["w"]["ohg"].asBool, true);
+    expect(d["w"]["w"]["a"][0]["jbb"].asBool, true);
+    expect(d["w"]["w"]["a"][0]["ohg"][0]["final_boss"].asBool, false);
+    expect(d["w"]["w"]["a"][0]["ohg"][1][0][0].asInt, 42);
   });
 }

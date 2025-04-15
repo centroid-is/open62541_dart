@@ -250,10 +250,10 @@ class UA_StringPayload extends PayloadType<String> {
     }
     final lengthSize = ffi.sizeOf<ffi.Size>();
     if (lengthSize == 4) {
-      writer.int32(value.length, endian);
+      writer.int32(buffer.length, endian);
       writer.int32(heap.address, endian);
     } else {
-      writer.int64(value.length, endian);
+      writer.int64(buffer.length, endian);
       writer.int64(heap.address, endian);
     }
   }

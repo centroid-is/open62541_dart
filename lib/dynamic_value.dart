@@ -21,6 +21,20 @@ class DynamicValue {
   dynamic _data;
   MemberDescription? _description;
 
+  factory DynamicValue.fromMap(Map<String, dynamic> entries) {
+    DynamicValue v = DynamicValue();
+    entries.forEach((key, value) => v[key] = value);
+    return v;
+  }
+
+  factory DynamicValue.fromList(List<dynamic> entries) {
+    DynamicValue v = DynamicValue();
+    var counter = 0;
+    entries.forEach((value) {
+      v[counter++] = value;
+    });
+    return v;
+  }
   DynamicValue({value, description})
       : _data = value,
         _description = description;
@@ -74,7 +88,22 @@ class DynamicValue {
     throw StateError('Invalid key type: ${key.runtimeType}');
   }
 
-  operator []=(dynamic key, DynamicValue value) {
+  operator []=(dynamic key, dynamic passed) {
+    // Try to acomidate people setting trivial values directly
+    DynamicValue value;
+    if (passed is DynamicValue) {
+      value = passed;
+    } else {
+      if (passed is Map<String, dynamic>) {
+        value = DynamicValue.fromMap(passed);
+      } else if (passed is Map<dynamic, dynamic>) {
+        throw 'Please dont do this';
+      } else if (passed is List) {
+        value = DynamicValue.fromList(passed);
+      } else {
+        value = DynamicValue(value: passed);
+      }
+    }
     if (key is int) {
       if (isNull) _data = <DynamicValue>[];
       if (isArray) {
