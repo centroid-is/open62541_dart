@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'package:binarize/binarize.dart';
+import 'package:ffi/ffi.dart';
 
 import '../generated/open62541_bindings.dart' as raw;
 // TODO this file has a lot of boilerplate, can we make it better?
@@ -242,16 +243,19 @@ class UA_StringPayload extends PayloadType<String> {
 
   @override
   void set(ByteWriter writer, String value, [Endian? endian]) {
-    throw UnimplementedError('UA_StringPayload.set');
-    // final lengthSize = sizeOf<Size>();
-    // if (lengthSize == 4) {
-    //   writer.int32(value.ref.length, endian);
-    // } else {
-    //   writer.int64(value.ref.length, endian);
-    // }
-
-    // final buffer = value.ref.data.asTypedList(value.ref.length);
-    // writer.write(buffer);
+    final buffer = utf8.encode(value);
+    ffi.Pointer<ffi.Char> heap = calloc(buffer.length);
+    for (int i = 0; i < buffer.length; i++) {
+      heap[i] = buffer[i];
+    }
+    final lengthSize = ffi.sizeOf<ffi.Size>();
+    if (lengthSize == 4) {
+      writer.int32(value.length, endian);
+      writer.int32(heap.address, endian);
+    } else {
+      writer.int64(value.length, endian);
+      writer.int64(heap.address, endian);
+    }
   }
 }
 

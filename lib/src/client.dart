@@ -191,7 +191,7 @@ class Client {
       // Populate missing structure definition, todo dont fetch already fetched items
       variableToSchema(nodeId);
     }
-    final retVal = variantToValue(data);
+    final retVal = variantToValue(data, structs: _knownStructures);
     calloc.free(data);
     return retVal;
   }
@@ -421,7 +421,8 @@ class Client {
     return result;
   }
 
-  static dynamic variantToValue(ffi.Pointer<raw.UA_Variant> data) {
+  static dynamic variantToValue(ffi.Pointer<raw.UA_Variant> data,
+      {KnownStructures? structs}) {
     // Check if the variant contains no data
     if (data.ref.data == ffi.nullptr) {
       return null;
@@ -462,17 +463,20 @@ class Client {
         return value;
 
       case TypeKindEnum.extensionObject:
+        if (structs == null) {
+          throw 'Structs needs to be provided';
+        }
         final dimensions =
             ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
         if (dimensions.isEmpty) {
           final extObj = ref.data.cast<raw.UA_ExtensionObject>().ref;
-          return extObj.toDynamicValue(_knownStructures);
+          return extObj.toDynamicValue(structs);
         }
         if (dimensions.length == 1) {
           final result = <DynamicValue>[];
           for (var i = 0; i < dimensions[0]; i++) {
             final extObj = ref.data.cast<raw.UA_ExtensionObject>()[i];
-            result.add(extObj.toDynamicValue(_knownStructures));
+            result.add(extObj.toDynamicValue(structs));
           }
           return result;
         }
@@ -481,7 +485,7 @@ class Client {
           final innerResult = <DynamicValue>[];
           for (var i = 0; i < dimension; i++) {
             final extObj = ref.data.cast<raw.UA_ExtensionObject>()[i];
-            innerResult.add(extObj.toDynamicValue(_knownStructures));
+            innerResult.add(extObj.toDynamicValue(structs));
           }
           result.add(innerResult);
         }
@@ -500,7 +504,7 @@ class Client {
       throw 'Null value cannot be converted to non-nullable type $T';
     }
 
-    final value = variantToValue(data);
+    final value = variantToValue(data, structs: _knownStructures);
 
     // Special case for dynamic type
     if (T == dynamic) {
