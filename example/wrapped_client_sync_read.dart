@@ -39,11 +39,11 @@ void clientIsolate(SendPort mainSendPort) async {
     // print("definition: $definition");
     //<StructuredDataType>:ST_SpeedBatcher
 
-    // final schema = c.variableToSchema(NodeId.string(4, "GVL_HMI.Drives_Line2"));
-    // print("got schema: $schema");
+    final schema = c.variableToSchema(NodeId.string(4, "GVL_HMI.Drives_Line2"));
+    print("got schema: $schema");
 
     // // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB"));
-    // // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB.a_struct"));
+    // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB.a_struct"));
 
     NodeId sb = NodeId.string(4, "GVL_IO.single_SB");
     final monId = c.monitoredItemCreate<dynamic>(sb, subId, (data) {
@@ -67,23 +67,89 @@ void clientIsolate(SendPort mainSendPort) async {
         NodeId.string(4, "MAIN.lines[1][1].xInUse"); // The bool to write
     final current_value = c.readValue(toWrite);
     print("Current value : $current_value");
-    c.writeValue(toWrite, false);
+    c.writeValue(toWrite, false, TypeKindEnum.boolean);
 
     // int16
     int curr = 0;
     NodeId int16ToWrite =
         NodeId.string(4, "MAIN.nCounter"); // The bool to write
     curr = c.readValue(int16ToWrite);
-    c.writeValue(int16ToWrite, curr + 1);
+    c.writeValue(int16ToWrite, curr + 1, TypeKindEnum.int16);
 
     NodeId nreal = NodeId.string(4, "GVL_HMI.Drives_Line1[1].i_rFreq");
     var currReal = c.readValue(nreal);
-    c.writeValue(nreal, currReal + 0.1337);
+    c.writeValue(nreal, currReal + 0.1337, TypeKindEnum.float);
 
-    NodeId string = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xStrings");
-    var currString = c.readValue(string);
-    print(currString);
-    c.writeValue(string, "This is a test");
+    var arrayReadTest = [
+      "GVL_HMI.bool_array",
+      "GVL_HMI.dint_array",
+      "GVL_HMI.udint_array",
+      "GVL_HMI.uint_array",
+      "GVL_HMI.int_array",
+    ];
+
+    print("Arrays begin");
+    for (var value in arrayReadTest) {
+      NodeId id = NodeId.string(4, value);
+      print(c.readValue(id));
+    }
+    print("Arrays end");
+
+    print("Bool array write things");
+    NodeId nBoolArray = NodeId.string(4, "GVL_HMI.bool_array");
+    List<dynamic> bArray = c.readValue(nBoolArray);
+    // Invert bArray
+    for (int i = 0; i < bArray.length; i++) {
+      bArray[i] = !bArray[i];
+    }
+    c.writeValue(nBoolArray, bArray, TypeKindEnum.boolean);
+
+    print("int array write things");
+    NodeId nIntArray = NodeId.string(4, "GVL_HMI.int_array");
+    List<dynamic> iArray = c.readValue(nIntArray);
+    // Invert bArray
+    for (int i = 0; i < iArray.length; i++) {
+      iArray[i] = iArray[i] + i;
+    }
+    c.writeValue(nIntArray, iArray, TypeKindEnum.int16);
+
+    print("uint array write things");
+    NodeId unIntArray = NodeId.string(4, "GVL_HMI.uint_array");
+    List<dynamic> uArray = c.readValue(unIntArray);
+    // Invert bArray
+    for (int i = 0; i < uArray.length; i++) {
+      uArray[i] = uArray[i] + i;
+    }
+    c.writeValue(unIntArray, uArray, TypeKindEnum.uint16);
+
+    print("dint array write things");
+    NodeId dIntArray = NodeId.string(4, "GVL_HMI.dint_array");
+    List<dynamic> dArray = c.readValue(dIntArray);
+    // Invert bArray
+    for (int i = 0; i < dArray.length; i++) {
+      dArray[i] = i + dArray[i];
+    }
+    c.writeValue(dIntArray, dArray, TypeKindEnum.int32);
+
+    print("udint array write things");
+    NodeId udIntArray = NodeId.string(4, "GVL_HMI.udint_array");
+    List<dynamic> udArray = c.readValue(udIntArray);
+    // Invert bArray
+    for (int i = 0; i < udArray.length; i++) {
+      udArray[i] = i + udArray[i];
+    }
+    c.writeValue(udIntArray, udArray, TypeKindEnum.uint32);
+
+    print("writing struct and stuff");
+    NodeId sId = NodeId.string(4, "GVL_IO.single_SB");
+    var value = c.readValue(sId);
+    print(value);
+
+    NodeId tId = NodeId.string(4, "GVL_HMI.t");
+    print("Time: ${c.readValue(tId)}");
+
+    NodeId dId = NodeId.string(4, "GVL_HMI.d");
+    print("Date: ${c.readValue(dId)}");
     //  while (curr_real < 25){
     //    print(curr_real);
     //    c.writeValue(nreal, curr_real + 0.1337);

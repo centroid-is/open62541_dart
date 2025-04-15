@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -122,47 +123,58 @@ class Client {
     _lib.UA_Client_run_iterate(_client, ms);
   }
 
-  ffi.Pointer<raw.UA_DataType> getType(int type) {
+  static ffi.Pointer<raw.UA_DataType> getType(int type, raw.open62541 lib) {
     if (type < 0 || type > raw.UA_TYPES_COUNT) {
       throw 'Type out of boundary $type';
     }
-    return ffi.Pointer.fromAddress(_lib.addresses.UA_TYPES.address +
+    return ffi.Pointer.fromAddress(lib.addresses.UA_TYPES.address +
         (type * ffi.sizeOf<raw.UA_DataType>()));
   }
 
-  void writeValue(NodeId nodeId, dynamic value) {
+  static ffi.Pointer<raw.UA_Variant> valueToVariant(
+      dynamic value, TypeKindEnum tKind, raw.open62541 lib) {
     ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
-    ffi.Pointer<raw.UA_NodeId> id = calloc<raw.UA_NodeId>();
 
-    _lib.UA_Client_readDataTypeAttribute(_client, nodeId.toRaw(_lib), id);
-    ffi.Pointer<raw.UA_DataType> type = _lib.UA_findDataType(id);
-    print(type.ref.typeName.cast<Utf8>().toDartString());
-    print(NodeId.fromRaw(type.ref.binaryEncodingId));
-    if (!id.ref.isNumeric() || id.ref.namespaceIndex != 0) {
-      throw 'unexpected for now';
+    var pload = typeKindToPayloadType(tKind);
+    var offset = 0;
+    if (value is List) {
+      pload = wrapInArray(pload, [value.length]);
+      offset = 4; // Size encoded in the front
     }
-    print(id.ref.namespaceIndex);
-    final tKind = Namespace0Id.fromInt(id.ref.numeric!).toTypeKind();
-    final pload = nodeIdToPayloadType(NodeId.fromRaw(id.ref));
+
     binarize.ByteWriter wr = binarize.ByteWriter();
     pload.set(wr, value, Endian.little);
     final bytes = wr.toBytes();
     ffi.Pointer<ffi.Uint8> pointer = calloc<ffi.Uint8>(bytes.length);
-    pointer.value = 0;
-    for (int i = 0; i < bytes.length; i++) {
-      pointer[i] = bytes[i];
+    for (int i = offset; i < bytes.length; i++) {
+      pointer[i - offset] = bytes[i];
     }
-    _lib.UA_Variant_setScalar(variant, pointer.cast(), getType(tKind.value));
+
+    if (value is List) {
+      lib.UA_Variant_setArray(
+          variant, pointer.cast(), value.length, getType(tKind.value, lib));
+    } else {
+      lib.UA_Variant_setScalar(
+          variant, pointer.cast(), getType(tKind.value, lib));
+    }
+
+    return variant;
+  }
+
+  bool writeValue(NodeId nodeId, dynamic value, TypeKindEnum tKind) {
+    final variant = valueToVariant(value, tKind, _lib);
 
     // Write value
     final retValue = _lib.UA_Client_writeValueAttribute(
         _client, nodeId.toRaw(_lib), variant);
     if (retValue != raw.UA_STATUSCODE_GOOD) {
-      throw 'Write off $nodeId to $value failed with $retValue, name: ${statusCodeToString(retValue)}';
+      stderr.write(
+          'Write off $nodeId to $value failed with $retValue, name: ${statusCodeToString(retValue)}');
     }
+
     // Use variant delete to delete the internal data pointer as well
     _lib.UA_Variant_delete(variant);
-    calloc.free(id);
+    return retValue == raw.UA_STATUSCODE_GOOD;
   }
 
   dynamic readValue(NodeId nodeId) {
@@ -174,7 +186,12 @@ class Client {
       throw 'Bad status code $statusCode name: ${statusCodeName.cast<Utf8>().toDartString()}';
     }
 
-    final retVal = _uaVariantToDart(data);
+    final typeKind = data.ref.type.ref.typeKind;
+    if (typeKind == TypeKindEnum.extensionObject) {
+      // Populate missing structure definition, todo dont fetch already fetched items
+      variableToSchema(nodeId);
+    }
+    final retVal = variantToValue(data);
     calloc.free(data);
     return retVal;
   }
@@ -404,7 +421,7 @@ class Client {
     return result;
   }
 
-  dynamic _uaVariantToDart(ffi.Pointer<raw.UA_Variant> data) {
+  static dynamic variantToValue(ffi.Pointer<raw.UA_Variant> data) {
     // Check if the variant contains no data
     if (data.ref.data == ffi.nullptr) {
       return null;
@@ -483,7 +500,7 @@ class Client {
       throw 'Null value cannot be converted to non-nullable type $T';
     }
 
-    final value = _uaVariantToDart(data);
+    final value = variantToValue(data);
 
     // Special case for dynamic type
     if (T == dynamic) {
