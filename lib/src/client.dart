@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
+import 'dart:math' as math;
 
 import 'package:ffi/ffi.dart';
 import 'package:logger/logger.dart';
@@ -123,14 +124,15 @@ class Client {
     _lib.UA_Client_run_iterate(_client, ms);
   }
 
-  ffi.Pointer<raw.UA_DataType> getType(int type){
-    if (type < 0 || type > raw.UA_TYPES_COUNT){
+  ffi.Pointer<raw.UA_DataType> getType(int type) {
+    if (type < 0 || type > raw.UA_TYPES_COUNT) {
       throw 'Type out of boundary $type';
     }
-    return ffi.Pointer.fromAddress(_lib.addresses.UA_TYPES.address + (type * ffi.sizeOf<raw.UA_DataType>()));
+    return ffi.Pointer.fromAddress(_lib.addresses.UA_TYPES.address +
+        (type * ffi.sizeOf<raw.UA_DataType>()));
   }
 
-  void writeValue(NodeId nodeId, dynamic value){
+  void writeValue(NodeId nodeId, dynamic value) {
     ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
     ffi.Pointer<raw.UA_NodeId> id = calloc<raw.UA_NodeId>();
 
@@ -138,7 +140,7 @@ class Client {
     ffi.Pointer<raw.UA_DataType> type = _lib.UA_findDataType(id);
     print(type.ref.typeName.cast<Utf8>().toDartString());
     print(NodeId.fromRaw(type.ref.binaryEncodingId));
-    if (!id.ref.isNumeric() || id.ref.namespaceIndex != 0){
+    if (!id.ref.isNumeric() || id.ref.namespaceIndex != 0) {
       throw 'unexpected for now';
     }
     print(id.ref.namespaceIndex);
@@ -149,14 +151,15 @@ class Client {
     final bytes = wr.toBytes();
     ffi.Pointer<ffi.Uint8> pointer = calloc<ffi.Uint8>(bytes.length);
     pointer.value = 0;
-    for(int i = 0; i < bytes.length; i++){
+    for (int i = 0; i < bytes.length; i++) {
       pointer[i] = bytes[i];
     }
     _lib.UA_Variant_setScalar(variant, pointer.cast(), getType(tKind.value));
 
     // Write value
-    final retValue = _lib.UA_Client_writeValueAttribute(_client, nodeId.toRaw(_lib), variant);
-    if (retValue != raw.UA_STATUSCODE_GOOD){
+    final retValue = _lib.UA_Client_writeValueAttribute(
+        _client, nodeId.toRaw(_lib), variant);
+    if (retValue != raw.UA_STATUSCODE_GOOD) {
       throw 'Write off $nodeId to $value failed with $retValue, name: ${statusCodeToString(retValue)}';
     }
     // Use variant delete to delete the internal data pointer as well
@@ -403,54 +406,6 @@ class Client {
     return result;
   }
 
-  binarize.PayloadType _typeKindToPayloadType(TypeKindEnum typeKind) {
-    switch (typeKind) {
-      case TypeKindEnum.boolean:
-        return BooleanPayload();
-
-      case TypeKindEnum.sbyte:
-        return UA_SBytePayload();
-
-      case TypeKindEnum.byte:
-        return UA_BytePayload();
-
-      case TypeKindEnum.int16:
-        return UA_Int16Payload();
-
-      case TypeKindEnum.uint16:
-        return UA_UInt16Payload();
-
-      case TypeKindEnum.int32:
-        return UA_Int32Payload();
-
-      case TypeKindEnum.uint32:
-        return UA_UInt32Payload();
-
-      case TypeKindEnum.int64:
-        return UA_Int64Payload();
-
-      case TypeKindEnum.uint64:
-        return UA_UInt64Payload();
-
-      case TypeKindEnum.float:
-        return UA_FloatPayload();
-
-      case TypeKindEnum.double:
-        return UA_DoublePayload();
-
-      // case UA_DataTypeKindEnum.string:
-      //   return StringPayload();
-
-      // case UA_DataTypeKindEnum.dateTime:
-      //   return DateTimePayload();
-
-      // case UA_DataTypeKindEnum.extensionObject:
-      //   return ExtensionObjectPayload(knownStructures);
-      default:
-        throw 'Unsupported variant type: $typeKind';
-    }
-  }
-
   dynamic _uaVariantToDart(ffi.Pointer<raw.UA_Variant> data) {
     // Check if the variant contains no data
     if (data.ref.data == ffi.nullptr) {
@@ -458,85 +413,44 @@ class Client {
     }
 
     final typeKind = data.ref.type.ref.typeKind;
-    // final dimensionSize = data.ref.arrayDimensionsSize;
-    // List<int> dimensions = [];
-    // for (var i = 0; i < dimensionSize; i++) {
-    //   dimensions.add(data.ref.arrayDimensions[i]);
-    // }
-    // print("dimensions: $dimensions");
-
-    // var payloadType = _typeKindToPayloadType(typeKind);
-    // for (var dimension in dimensions) {
-    //   payloadType = ArrayPayload(payloadType, dimension);
-    // }
-    // if (dimensions.isEmpty && data.ref.arrayLength > 0) {
-    //   payloadType = ArrayPayload(payloadType, data.ref.arrayLength);
-    // }
-
-    // print("payloadType: $payloadType");
-
-    // print("memsize: ${data.ref.type.ref.memSize}");
-    // print("arraylength: ${data.ref.arrayLength}");
-
-    // final len = data.ref.arrayLength * data.ref.type.ref.memSize;
-    // final buffer = data.ref.data.cast<ffi.Uint8>().asTypedList(len);
-    // print(
-    //     "dimensions length: ${dimensions.length} len: $len buffer: ${buffer}");
-    // final reader = binarize.ByteReader(buffer, endian: binarize.Endian.little);
-    // final value = payloadType.get(reader);
-    // if (reader.isNotDone) {
-    //   throw StateError('Reader is not done reading where value is\n $value');
-    // }
-    // return value;
+    final ref = data.ref;
 
     switch (typeKind) {
       case TypeKindEnum.boolean:
-        return data.ref.data.cast<ffi.Bool>().value;
-
       case TypeKindEnum.sbyte:
-        return data.ref.data.cast<ffi.Int8>().value;
-
       case TypeKindEnum.byte:
-        return data.ref.data.cast<ffi.Uint8>().value;
-
       case TypeKindEnum.int16:
-        return data.ref.data.cast<ffi.Int16>().value;
-
       case TypeKindEnum.uint16:
-        return data.ref.data.cast<ffi.Uint16>().value;
-
       case TypeKindEnum.int32:
-        return data.ref.data.cast<ffi.Int32>().value;
-
       case TypeKindEnum.uint32:
-        return data.ref.data.cast<ffi.Uint32>().value;
-
       case TypeKindEnum.int64:
-        return data.ref.data.cast<ffi.Int64>().value;
-
       case TypeKindEnum.uint64:
-        return data.ref.data.cast<ffi.Uint64>().value;
-
       case TypeKindEnum.float:
-        return data.ref.data.cast<ffi.Float>().value;
-
       case TypeKindEnum.double:
-        return data.ref.data.cast<ffi.Double>().value;
-
       case TypeKindEnum.string:
-        final str = data.ref.data.cast<raw.UA_String>().ref;
-        if (str.length == 0 || str.data == ffi.nullptr) {
-          return '';
+        final dimensions =
+            ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
+        final payloadType =
+            wrapInArray(typeKindToPayloadType(typeKind), dimensions);
+        final dimensionsMultiplied = dimensions.fold(1, (a, b) => a * b);
+        final bufferLength = dimensionsMultiplied * ref.type.ref.memSize;
+        final reader = binarize.ByteReader(
+            ref.data.cast<ffi.Uint8>().asTypedList(bufferLength),
+            endian: binarize.Endian.little);
+
+        final value = payloadType.get(reader);
+        if (reader.isNotDone) {
+          throw StateError(
+              'Reader is not done reading where value is\n $value');
         }
-        return String.fromCharCodes(
-            str.data.cast<ffi.Uint8>().asTypedList(str.length));
+        return value;
 
       // case UA_DataTypeKindEnum.dateTime:
       // return _opcuaToDateTime(_lib.UA_DateTime_toStruct(
       //     data.ref.data.cast<raw.UA_DateTime>().value));
 
       case TypeKindEnum.extensionObject:
-        final extObj = data.ref.data.cast<raw.UA_ExtensionObject>().ref;
+        final extObj = ref.data.cast<raw.UA_ExtensionObject>().ref;
         if (extObj.encoding ==
             raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_NOBODY) {
           return null;
@@ -544,10 +458,7 @@ class Client {
 
         // Get the datatype
         final typeId = extObj.content.encoded.typeId;
-        // final decodedTypeid = extObj.content.decoded.type.ref.typeName
-        //     .cast<Utf8>()
-        //     .toDartString();
-        // print("decodedTypeid: $decodedTypeid");
+
         if (typeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
           final name = typeId.identifier.string.value;
           final schema = knownStructures.get(name);
@@ -556,12 +467,10 @@ class Client {
             return null;
           }
           final iter = extObj.content.encoded.body.dataIterable;
-          print(
-              "Test data bytes: [${iter.map((b) => "0x${b.toRadixString(16).padLeft(2, '0')}").join(", ")}]");
-          final payload = Uint8List.fromList(iter.toList());
+          final buffer = Uint8List.fromList(iter.toList());
 
           final reader =
-              binarize.ByteReader(payload, endian: binarize.Endian.little);
+              binarize.ByteReader(buffer, endian: binarize.Endian.little);
 
           DynamicValue data = schema.get(reader);
 
@@ -572,79 +481,7 @@ class Client {
 
           return data;
         }
-
-        print("typeId: ${typeId.format()}");
-
-        // Read first two boolean fields
-        var bodyData = extObj.content.encoded.body.data;
-        print("i_xBatchReady: ${bodyData.cast<ffi.Bool>().value}");
-        bodyData += 1;
-        print("i_xDropped: ${(bodyData).cast<ffi.Bool>().value}");
-        bodyData += 1;
-        print("i_xCleaning: ${(bodyData).cast<ffi.Bool>().value}");
-        bodyData += 1;
-        print("i_xOk: ${(bodyData).cast<ffi.Bool>().value}");
-        bodyData += 1;
-        print("q_xDropOk: ${(bodyData).cast<ffi.Bool>().value}");
-        bodyData += 1;
-        print("jbb: ${(bodyData).cast<ffi.Bool>().value}");
-        bodyData += 1;
-        print("ohg: ${(bodyData).cast<ffi.Float>().value}");
-        bodyData += 4;
-        //       Field 8:
-        // Name: a_struct
-        // DataType: ns=4;s="<StructuredDataType>:ST_FP"
-        print("a_struct i_xDropOk: ${(bodyData).cast<ffi.Bool>().value}");
-        bodyData += 1;
-        print("a_struct i_xRun: ${(bodyData).cast<ffi.Bool>().value}");
-        bodyData += 1;
-        final a_struct_len = (bodyData).cast<ffi.Uint32>().value;
-        print("a_struct len: ${a_struct_len}");
-        bodyData += 4;
-        print("a_struct i_xSpare[0]: ${(bodyData).cast<ffi.Bool>().value}");
-        bodyData += 1;
-        print("a_struct i_xSpare[1]: ${(bodyData).cast<ffi.Bool>().value}");
-        bodyData += 1;
-        final string_len = (bodyData).cast<ffi.Uint32>().value;
-        bodyData += 4;
-        print("the_string length: ${string_len}");
-        final string_data =
-            (bodyData).cast<ffi.Uint8>().asTypedList(string_len);
-        String the_string = String.fromCharCodes(string_data);
-        print("the_string: $the_string");
-
-        print(
-            "encoding: ${UA_ExtensionObjectEncodingEnum.fromInt(extObj.encoding)}"); // ENCODED_BYTESTRING
-        print("content: ${extObj.content.encoded.body.length}");
-        print("members size: ${data.ref.type.ref.membersSize}");
-        print(
-            "binary encoding id: ${data.ref.type.ref.binaryEncodingId.format()}");
-
-      // final dataTypePtr = data.ref.type;
-      // ffi.Pointer<raw.UA_String> output = calloc<raw.UA_String>();
-      // _lib.UA_print(data.cast<ffi.Void>(), dataTypePtr, output);
-      // print("output: ${output.ref.value}");
-
-      // final otherType = extObj.content.decoded.type;
-      // if (otherType == ffi.nullptr) {
-      //   print("otherType is nullptr");
-      // } else {
-      //   print("other type ${otherType.ref.typeId.string()}");
-      // }
-
-      // // Handle based on typeId
-      // switch (typeId.identifier.numeric) {
-      //   // Add cases for specific extension object types you need to support
-      //   // Example:
-      //   // case UA_TYPES_ARGUMENT:
-      //   //   final arg = extObj.content.encoded.body.data.cast<raw.UA_Argument>().ref;
-      //   //   return ArgumentType(...);
-
-      //   default:
-      //     _logger.w(
-      //         'Unsupported extension object type: ${typeId.identifier.numeric}');
-      //     return null;
-      // }
+        throw 'Unsupported extension object identifier type: ${typeId.identifierType}';
 
       default:
         throw 'Unsupported variant type: $typeKind';
@@ -670,6 +507,7 @@ class Client {
     if (value is T) {
       return value;
     }
+    // todo: handle lists
     _logger
         .e('Expected type $T but got ${value.runtimeType} with value $value');
     throw 'Expected type $T but got ${value.runtimeType} with value $value';

@@ -1,6 +1,11 @@
+import 'dart:convert';
+import 'dart:ffi';
 import 'package:test/test.dart';
 import 'package:binarize/binarize.dart';
+import 'package:ffi/ffi.dart';
 
+import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
+    as raw;
 import 'package:open62541_bindings/src/types/payloads.dart';
 
 void main() {
@@ -78,16 +83,16 @@ void main() {
   });
 
   // String
-  testPayload('String normal', StringPayload(), 'Hello, World!');
+  testPayload('String normal', ContiguousStringPayload(), 'Hello, World!');
 
   // Test empty string
-  testPayload('String empty', StringPayload(), '');
+  testPayload('String empty', ContiguousStringPayload(), '');
 
   // Test null string
-  testPayload('String null', StringPayload(), null);
+  testPayload('String null', ContiguousStringPayload(), null);
 
   // Test UTF-8 characters
-  testPayload('String UTF-8', StringPayload(), '🌟 Hello 世界');
+  testPayload('String UTF-8', ContiguousStringPayload(), '🌟 Hello 世界');
 
   test('DateTime payload', () {
     final payload = UA_DateTimePayload();
@@ -135,8 +140,35 @@ void main() {
     testPayloadImpl('Array null', ArrayPayload(UA_Int32Payload()), null);
 
     // Test string array
-    final stringArrayPayload = ArrayPayload(StringPayload());
+    final stringArrayPayload = ArrayPayload(ContiguousStringPayload());
     final stringList = ['Hello', 'World', '🌟'];
     testPayloadImpl('Array strings', stringArrayPayload, stringList);
+  });
+
+  test('UA_String payload', () {
+    final payload = UA_StringPayload();
+    final writer = ByteWriter();
+
+    final testStr = '🌟 Hello 世界';
+    final bytes = utf8.encode(testStr);
+    final dataPtr = calloc<raw.UA_Byte>(bytes.length);
+    dataPtr.asTypedList(bytes.length).setAll(0, bytes);
+
+    // Write length and pointer
+    final lengthSize = sizeOf<Size>();
+    if (lengthSize == 4) {
+      writer.int32(bytes.length);
+      writer.uint32(dataPtr.address);
+    } else {
+      writer.int64(bytes.length);
+      writer.uint64(dataPtr.address);
+    }
+
+    final reader = ByteReader(writer.toBytes());
+    final result = payload.get(reader);
+    expect(result, testStr);
+
+    // Cleanup
+    calloc.free(dataPtr);
   });
 }

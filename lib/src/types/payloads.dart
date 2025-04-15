@@ -1,9 +1,8 @@
 import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'package:binarize/binarize.dart';
 
-import '../extensions.dart';
 import '../generated/open62541_bindings.dart' as raw;
-
 // TODO this file has a lot of boilerplate, can we make it better?
 
 class BooleanPayload extends PayloadType<bool> {
@@ -212,13 +211,52 @@ class UA_DateTimePayload extends PayloadType<DateTime> {
     }
   }
 }
-// typedef UA_DateTime = ffi.Int64;
-// typedef DartUA_DateTime = int;
+
 // typedef UA_StatusCode = ffi.Uint32;
 // typedef DartUA_StatusCode = int;
 
-class StringPayload extends PayloadType<String?> {
-  const StringPayload();
+// ignore: camel_case_types
+class UA_StringPayload extends PayloadType<String> {
+  const UA_StringPayload();
+
+  @override
+  String get(ByteReader reader, [Endian? endian]) {
+    final lengthSize = ffi.sizeOf<ffi.Size>();
+    final length =
+        lengthSize == 4 ? reader.int32(endian) : reader.int64(endian);
+    final ptrValue =
+        lengthSize == 4 ? reader.uint32(endian) : reader.uint64(endian);
+    if (length <= 0) return '';
+    final ptr = ffi.Pointer<raw.UA_Byte>.fromAddress(ptrValue);
+    final buffer = ptr.asTypedList(length);
+    return utf8.decode(buffer);
+    // final ptr = calloc<raw.UA_String>();
+    // final lengthSize = sizeOf<Size>();
+    // ptr.ref.length =
+    //     lengthSize == 4 ? reader.int32(endian) : reader.int64(endian);
+    // final buffer = reader.read(ptr.ref.length);
+    // ptr.ref.data = calloc<raw.UA_Byte>(buffer.length);
+    // ptr.ref.data.asTypedList(buffer.length).setAll(0, buffer);
+    // return ptr;
+  }
+
+  @override
+  void set(ByteWriter writer, String value, [Endian? endian]) {
+    throw UnimplementedError('UA_StringPayload.set');
+    // final lengthSize = sizeOf<Size>();
+    // if (lengthSize == 4) {
+    //   writer.int32(value.ref.length, endian);
+    // } else {
+    //   writer.int64(value.ref.length, endian);
+    // }
+
+    // final buffer = value.ref.data.asTypedList(value.ref.length);
+    // writer.write(buffer);
+  }
+}
+
+class ContiguousStringPayload extends PayloadType<String?> {
+  const ContiguousStringPayload();
 
   @override
   String? get(ByteReader reader, [Endian? endian]) {

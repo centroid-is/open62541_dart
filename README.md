@@ -84,3 +84,4 @@ Some clang errors have been turned off to disable errors coming from macos's pth
 
 - Monitoring a structure with multi dimensional array member, turns as empty array. Don't know why.
 - Description of structure fields is not working.
+- monitoredItemCreate<List<dynamic>> needs to be used instead of List<int> or any other element type.

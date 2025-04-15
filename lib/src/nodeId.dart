@@ -45,6 +45,12 @@ class NodeId {
     }
   }
 
+  Pointer<raw.UA_NodeId> toRawPointer(raw.open62541 lib) {
+    final nodeId = calloc<raw.UA_NodeId>();
+    nodeId.ref = toRaw(lib);
+    return nodeId;
+  }
+
   int get numeric => _numericId!;
   String get string => _stringId!;
   // GUID

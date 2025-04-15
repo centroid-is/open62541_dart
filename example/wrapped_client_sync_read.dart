@@ -45,6 +45,16 @@ void clientIsolate(SendPort mainSendPort) async {
     // // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB"));
     // // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB.a_struct"));
 
+    NodeId sb = NodeId.string(4, "GVL_IO.single_SB");
+    final monId = c.monitoredItemCreate<dynamic>(sb, subId, (data) {
+      print('print data: $data');
+      mainSendPort.send('DATA: $data');
+    });
+    NodeId foo = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xStrings");
+    final fooMonId = c.monitoredItemCreate<List<dynamic>>(foo, subId, (data) {
+      print('print foo DATA: $data');
+      mainSendPort.send('foo DATA: $data');
+    });
     // NodeId sb = NodeId.string(4, "GVL_HMI.Drives_Line2");
     // final monId = c.monitoredItemCreate<dynamic>(sb, subId, (data) {
     //   print('print data: $data');
@@ -53,14 +63,16 @@ void clientIsolate(SendPort mainSendPort) async {
 
     // Test writing value attribute
     // boolean
-    NodeId toWrite = NodeId.string(4, "MAIN.lines[1][1].xInUse"); // The bool to write
+    NodeId toWrite =
+        NodeId.string(4, "MAIN.lines[1][1].xInUse"); // The bool to write
     final current_value = c.readValue(toWrite);
     print("Current value : $current_value");
     c.writeValue(toWrite, false);
 
     // int16
     int curr = 0;
-    NodeId int16ToWrite = NodeId.string(4, "MAIN.nCounter"); // The bool to write
+    NodeId int16ToWrite =
+        NodeId.string(4, "MAIN.nCounter"); // The bool to write
     curr = c.readValue(int16ToWrite);
     c.writeValue(int16ToWrite, curr + 1);
 
@@ -68,18 +80,17 @@ void clientIsolate(SendPort mainSendPort) async {
     var currReal = c.readValue(nreal);
     c.writeValue(nreal, currReal + 0.1337);
 
-
     NodeId string = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xStrings");
     var currString = c.readValue(string);
     print(currString);
     c.writeValue(string, "This is a test");
-   //  while (curr_real < 25){
-   //    print(curr_real);
-   //    c.writeValue(nreal, curr_real + 0.1337);
-   //    curr_real = c.readValue(nreal);
-   //    await Future.delayed(Duration(milliseconds: 100));
-   //  }
-   //  c.writeValue(nreal, 1000.0);
+    //  while (curr_real < 25){
+    //    print(curr_real);
+    //    c.writeValue(nreal, curr_real + 0.1337);
+    //    curr_real = c.readValue(nreal);
+    //    await Future.delayed(Duration(milliseconds: 100));
+    //  }
+    //  c.writeValue(nreal, 1000.0);
     // NodeId arr = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xSpare2");
     // final arrMonId = c.monitoredItemCreate<dynamic>(arr, subId, (data) {
     //   print('print arr DATA: $data');
