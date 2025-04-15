@@ -83,16 +83,16 @@ void main() {
   });
 
   // String
-  testPayload('String normal', StringPayload(), 'Hello, World!');
+  testPayload('String normal', ContiguousStringPayload(), 'Hello, World!');
 
   // Test empty string
-  testPayload('String empty', StringPayload(), '');
+  testPayload('String empty', ContiguousStringPayload(), '');
 
   // Test null string
-  testPayload('String null', StringPayload(), null);
+  testPayload('String null', ContiguousStringPayload(), null);
 
   // Test UTF-8 characters
-  testPayload('String UTF-8', StringPayload(), '🌟 Hello 世界');
+  testPayload('String UTF-8', ContiguousStringPayload(), '🌟 Hello 世界');
 
   test('DateTime payload', () {
     final payload = UA_DateTimePayload();
@@ -140,7 +140,7 @@ void main() {
     testPayloadImpl('Array null', ArrayPayload(UA_Int32Payload()), null);
 
     // Test string array
-    final stringArrayPayload = ArrayPayload(StringPayload());
+    final stringArrayPayload = ArrayPayload(ContiguousStringPayload());
     final stringList = ['Hello', 'World', '🌟'];
     testPayloadImpl('Array strings', stringArrayPayload, stringList);
   });

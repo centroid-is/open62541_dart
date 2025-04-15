@@ -255,8 +255,8 @@ class UA_StringPayload extends PayloadType<String> {
   }
 }
 
-class StringPayload extends PayloadType<String?> {
-  const StringPayload();
+class ContiguousStringPayload extends PayloadType<String?> {
+  const ContiguousStringPayload();
 
   @override
   String? get(ByteReader reader, [Endian? endian]) {

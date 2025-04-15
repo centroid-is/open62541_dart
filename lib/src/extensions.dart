@@ -38,7 +38,9 @@ enum TypeKindEnum {
   structure(raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE),
   optStruct(raw.UA_DataTypeKind.UA_DATATYPEKIND_OPTSTRUCT),
   union(raw.UA_DataTypeKind.UA_DATATYPEKIND_UNION),
-  bitfieldCluster(raw.UA_DataTypeKind.UA_DATATYPEKIND_BITFIELDCLUSTER);
+  bitfieldCluster(raw.UA_DataTypeKind.UA_DATATYPEKIND_BITFIELDCLUSTER),
+  outOfSpecContiguousString(
+      99); // I dont like this, but when we use namespace 0 id type string, that will be this value
 
   final int value;
   const TypeKindEnum(this.value);
@@ -48,6 +50,64 @@ enum TypeKindEnum {
       (kind) => kind.value == value,
       orElse: () => throw ArgumentError('Unknown DataTypeKind value: $value'),
     );
+  }
+
+  Namespace0Id toNamespace0Id() {
+    switch (this) {
+      case TypeKindEnum.boolean:
+        return Namespace0Id.boolean;
+      case TypeKindEnum.sbyte:
+        return Namespace0Id.sbyte;
+      case TypeKindEnum.byte:
+        return Namespace0Id.byte;
+      case TypeKindEnum.int16:
+        return Namespace0Id.int16;
+      case TypeKindEnum.uint16:
+        return Namespace0Id.uint16;
+      case TypeKindEnum.int32:
+        return Namespace0Id.int32;
+      case TypeKindEnum.uint32:
+        return Namespace0Id.uint32;
+      case TypeKindEnum.int64:
+        return Namespace0Id.int64;
+      case TypeKindEnum.uint64:
+        return Namespace0Id.uint64;
+      case TypeKindEnum.float:
+        return Namespace0Id.float;
+      case TypeKindEnum.double:
+        return Namespace0Id.double;
+      case TypeKindEnum.string:
+      case TypeKindEnum.outOfSpecContiguousString:
+        return Namespace0Id.string;
+      case TypeKindEnum.dateTime:
+        return Namespace0Id.dateTime;
+      case TypeKindEnum.guid:
+        return Namespace0Id.guid;
+      case TypeKindEnum.byteString:
+        return Namespace0Id.byteString;
+      case TypeKindEnum.xmlElement:
+        return Namespace0Id.xmlElement;
+      case TypeKindEnum.nodeId:
+        return Namespace0Id.nodeId;
+      case TypeKindEnum.expandedNodeId:
+        return Namespace0Id.expandedNodeId;
+      case TypeKindEnum.statusCode:
+        return Namespace0Id.statusCode;
+      case TypeKindEnum.qualifiedName:
+        return Namespace0Id.qualifiedName;
+      case TypeKindEnum.localizedText:
+        return Namespace0Id.localizedText;
+      case TypeKindEnum.structure:
+        return Namespace0Id.structure;
+      case TypeKindEnum.dataValue:
+        return Namespace0Id.dataValue;
+      // case Namespace0Id.basedataType:
+      //   return TypeKindEnum.basedataType;
+      case TypeKindEnum.diagnosticInfo:
+        return Namespace0Id.diagnosticInfo;
+      default:
+        throw ArgumentError('Unknown TypeKindEnum value: $this');
+    }
   }
 }
 
@@ -163,7 +223,7 @@ enum Namespace0Id {
       case Namespace0Id.double:
         return TypeKindEnum.double;
       case Namespace0Id.string:
-        return TypeKindEnum.string;
+        return TypeKindEnum.outOfSpecContiguousString;
       case Namespace0Id.dateTime:
         return TypeKindEnum.dateTime;
       case Namespace0Id.guid:
@@ -193,6 +253,10 @@ enum Namespace0Id {
       default:
         throw ArgumentError('Unknown Namespace0Id value: $this');
     }
+  }
+
+  NodeId toNodeId() {
+    return NodeId.numeric(0, value);
   }
 }
 

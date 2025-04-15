@@ -17,7 +17,8 @@ final _payloadTypes = {
   TypeKindEnum.float: UA_FloatPayload(),
   TypeKindEnum.double: UA_DoublePayload(),
   TypeKindEnum.dateTime: UA_DateTimePayload(),
-  TypeKindEnum.string: StringPayload(),
+  TypeKindEnum.string: UA_StringPayload(),
+  TypeKindEnum.outOfSpecContiguousString: ContiguousStringPayload(),
 };
 
 // Wraps the payload type in an array payload with the given dimensions

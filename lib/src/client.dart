@@ -413,36 +413,6 @@ class Client {
     }
 
     final typeKind = data.ref.type.ref.typeKind;
-    // final dimensionSize = data.ref.arrayDimensionsSize;
-    // List<int> dimensions = [];
-    // for (var i = 0; i < dimensionSize; i++) {
-    //   dimensions.add(data.ref.arrayDimensions[i]);
-    // }
-    // print("dimensions: $dimensions");
-
-    // var payloadType = _typeKindToPayloadType(typeKind);
-    // for (var dimension in dimensions) {
-    //   payloadType = ArrayPayload(payloadType, dimension);
-    // }
-    // if (dimensions.isEmpty && data.ref.arrayLength > 0) {
-    //   payloadType = ArrayPayload(payloadType, data.ref.arrayLength);
-    // }
-
-    // print("payloadType: $payloadType");
-
-    // print("memsize: ${data.ref.type.ref.memSize}");
-    // print("arraylength: ${data.ref.arrayLength}");
-
-    // final len = data.ref.arrayLength * data.ref.type.ref.memSize;
-    // final buffer = data.ref.data.cast<ffi.Uint8>().asTypedList(len);
-    // print(
-    //     "dimensions length: ${dimensions.length} len: $len buffer: ${buffer}");
-    // final reader = binarize.ByteReader(buffer, endian: binarize.Endian.little);
-    // final value = payloadType.get(reader);
-    // if (reader.isNotDone) {
-    //   throw StateError('Reader is not done reading where value is\n $value');
-    // }
-    // return value;
     final ref = data.ref;
 
     switch (typeKind) {
@@ -457,29 +427,13 @@ class Client {
       case TypeKindEnum.uint64:
       case TypeKindEnum.float:
       case TypeKindEnum.double:
-        final len = math.max(ref.arrayLength, 1) * ref.type.ref.memSize;
-        final buffer = ref.data.cast<ffi.Uint8>().asTypedList(len);
-
-        final reader =
-            binarize.ByteReader(buffer, endian: binarize.Endian.little);
-        // one dimensional does not populate dimensions
+      case TypeKindEnum.string:
         final dimensions =
             ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
         final payloadType =
             wrapInArray(typeKindToPayloadType(typeKind), dimensions);
-        final value = payloadType.get(reader);
-        if (reader.isNotDone) {
-          throw StateError(
-              'Reader is not done reading where value is\n $value');
-        }
-        return value;
-
-      case TypeKindEnum.string:
-        final dimensions =
-            ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
-        final payloadType = wrapInArray(UA_StringPayload(), dimensions);
         final dimensionsMultiplied = dimensions.fold(1, (a, b) => a * b);
-        final bufferLength = dimensionsMultiplied * ffi.sizeOf<raw.UA_String>();
+        final bufferLength = dimensionsMultiplied * ref.type.ref.memSize;
         final reader = binarize.ByteReader(
             ref.data.cast<ffi.Uint8>().asTypedList(bufferLength),
             endian: binarize.Endian.little);
