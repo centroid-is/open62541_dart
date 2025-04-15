@@ -4,7 +4,7 @@ import 'dart:ffi';
 import 'dart:typed_data';
 import 'package:binarize/binarize.dart' as binarize;
 
-import '../dynamic_value.dart';
+import 'dynamic_value.dart';
 import 'nodeId.dart';
 import 'generated/open62541_bindings.dart' as raw;
 import 'types/schema.dart';

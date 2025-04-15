@@ -1,4 +1,5 @@
 import 'package:binarize/binarize.dart';
+import 'package:open62541_bindings/src/dynamic_value.dart';
 import 'schema.dart';
 import '../nodeId.dart';
 import 'payloads.dart';
@@ -19,6 +20,7 @@ final _payloadTypes = {
   TypeKindEnum.dateTime: UA_DateTimePayload(),
   TypeKindEnum.string: UA_StringPayload(),
   TypeKindEnum.outOfSpecContiguousString: ContiguousStringPayload(),
+  TypeKindEnum.extensionObject: DynamicValue(),
 };
 
 // Wraps the payload type in an array payload with the given dimensions

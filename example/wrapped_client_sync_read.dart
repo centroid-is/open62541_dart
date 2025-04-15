@@ -154,10 +154,8 @@ void clientIsolate(SendPort mainSendPort) async {
     NodeId lId = NodeId.string(4, "GVL_IO.single_SB");
     var lval = c.readValue(lId);
     print(lval);
-    print(lval["jbb"]);
-    lval["jbb"] = !lval["jbb"].asBool();
+    lval["jbb"] = !lval["jbb"].asBool;
     print(lval);
-    throw 'Done';
     c.writeValue(lId, lval, TypeKindEnum.extensionObject);
     //    print(curr_real);
     //    c.writeValue(nreal, curr_real + 0.1337);

@@ -1,6 +1,6 @@
 import 'package:binarize/binarize.dart';
 import 'package:collection/collection.dart';
-import '../../dynamic_value.dart';
+import '../dynamic_value.dart';
 
 class StructureSchema extends PayloadType<DynamicValue> {
   static const schemaRootId = '__root';

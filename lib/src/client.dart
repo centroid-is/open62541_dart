@@ -10,7 +10,7 @@ import 'package:binarize/binarize.dart' as binarize;
 import 'generated/open62541_bindings.dart' as raw;
 import 'nodeId.dart';
 import 'extensions.dart';
-import '../dynamic_value.dart';
+import 'dynamic_value.dart';
 import 'types/schema.dart';
 import 'types/create_type.dart';
 
@@ -159,6 +159,13 @@ class Client {
     }
 
     return variant;
+  }
+
+  Future<bool> asyncWriteValue(
+      NodeId nodeId, dynamic value, TypeKindEnum tKind) {
+    Completer<bool> future = Completer<bool>();
+    throw 'unimplemented';
+    return future.future;
   }
 
   bool writeValue(NodeId nodeId, dynamic value, TypeKindEnum tKind) {

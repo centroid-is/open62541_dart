@@ -1,6 +1,6 @@
 import 'dart:collection';
 
-import 'package:open62541_bindings/dynamic_value.dart';
+import 'package:open62541_bindings/src/dynamic_value.dart';
 import 'package:test/test.dart';
 
 void main() {

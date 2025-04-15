@@ -1,7 +1,7 @@
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:ffi';
-import 'package:open62541_bindings/dynamic_value.dart';
+import 'package:open62541_bindings/src/dynamic_value.dart';
 import 'package:open62541_bindings/src/extensions.dart';
 import 'package:open62541_bindings/src/library.dart';
 import 'package:open62541_bindings/src/nodeId.dart';
@@ -135,27 +135,56 @@ void main() {
       ..addField(createPredefinedType(NodeId.numeric(0, 1), 'subfield3',
           [2]))); // Array<DynamicValue> of size 2
   // Populate a struct type
-  var myStructs = KnownStructures();
-  myStructs.add(schema);
 
   test('Encode structs', () {
     var myMap = <String, dynamic>{
-      "field1": false,
-      "field2": true,
-      "field3": false,
-      "field4": true,
-      "field5": false,
-      "field6": true,
-      "field7": 10,
+      "field1": true,
+      "field2": false,
+      "field3": true,
+      "field4": false,
+      "field5": true,
+      "field6": false,
+      "field7": 42,
       "field8": {
         "subfield1": false,
         "subfield2": true,
-        "subfield3": false,
+        "subfield3": [false, true],
       }
     };
-    LinkedHashMap hashMap = LinkedHashMap();
-    hashMap.addAll(myMap);
-    var myVal = DynamicValue(value: hashMap);
-    testSimpleTypes(myVal, TypeKindEnum.extensionObject);
+    var myVal = DynamicValue.fromMap(myMap);
+    myVal["field1"].tKind = TypeKindEnum.boolean;
+    myVal["field2"].tKind = TypeKindEnum.boolean;
+    myVal["field3"].tKind = TypeKindEnum.boolean;
+    myVal["field4"].tKind = TypeKindEnum.boolean;
+    myVal["field5"].tKind = TypeKindEnum.boolean;
+    myVal["field6"].tKind = TypeKindEnum.boolean;
+    myVal["field7"].tKind = TypeKindEnum.int16;
+    myVal["field8"].tKind = TypeKindEnum.extensionObject;
+    myVal["field8"]["subfield1"].tKind = TypeKindEnum.boolean;
+    myVal["field8"]["subfield2"].tKind = TypeKindEnum.boolean;
+    myVal["field8"]["subfield3"].tKind = TypeKindEnum.boolean;
+    myVal["field8"]["subfield3"][0].tKind = TypeKindEnum.boolean;
+    myVal["field8"]["subfield3"][1].tKind = TypeKindEnum.boolean;
+    final variant =
+        Client.valueToVariant(myVal, TypeKindEnum.extensionObject, lib);
+
+    ByteWriter writer = ByteWriter();
+    myVal.set(writer, myVal, Endian.little);
+    final bytes = writer.toBytes();
+    ByteReader reader = ByteReader(bytes, endian: Endian.little);
+    final decoded = myVal.get(reader, Endian.little);
+    expect(decoded['field1'].asBool, true);
+    expect(decoded['field2'].asBool, false);
+    expect(decoded['field3'].asBool, true);
+    expect(decoded['field4'].asBool, false);
+    expect(decoded['field5'].asBool, true);
+    expect(decoded['field6'].asBool, false);
+    expect(decoded['field7'].asInt, 42);
+    expect(decoded['field8']['subfield1'].asBool, false);
+    expect(decoded['field8']['subfield2'].asBool, true);
+    expect(decoded['field8']['subfield3'].asArray.length, 2);
+    expect(decoded['field8']['subfield3'][0].asBool, false);
+    expect(decoded['field8']['subfield3'][1].asBool, true);
+    calloc.free(variant);
   });
 }

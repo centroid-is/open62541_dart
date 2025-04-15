@@ -1,4 +1,8 @@
 import 'dart:collection' show LinkedHashMap;
+import 'package:binarize/binarize.dart';
+import 'package:open62541_bindings/src/extensions.dart';
+import 'types/create_type.dart';
+import 'types/payloads.dart';
 
 enum DynamicType {
   object,
@@ -17,8 +21,15 @@ class MemberDescription {
   MemberDescription(this.value, this.locale);
 }
 
-class DynamicValue {
+// DynamicValue t = DynamicValue();
+// t.readSchema(SomeOpcuaStructlayouttype); // Populate tKind and metadata
+// t.set(buffer); // Populate data from buffer
+// buffer = t.get(); // Schema in tKind and fellows, information known
+
+class DynamicValue extends PayloadType<DynamicValue> {
   dynamic _data;
+  TypeKindEnum? tKind;
+  String? extensionObjectName;
   MemberDescription? _description;
 
   factory DynamicValue.fromMap(Map<String, dynamic> entries) {
@@ -35,7 +46,7 @@ class DynamicValue {
     });
     return v;
   }
-  DynamicValue({value, description})
+  DynamicValue({value, description, tKind})
       : _data = value,
         _description = description;
 
@@ -181,10 +192,50 @@ class DynamicValue {
     return null;
   }
 
+  TypeKindEnum autoDeduceType<T>(dynamic _) {
+    if (T is bool) return TypeKindEnum.boolean;
+    if (T is String) return TypeKindEnum.string;
+    if (T is int) throw 'Unable to auto deduce type';
+    throw 'Unable to deduce type $T';
+  }
+
   Iterable<MapEntry<String, DynamicValue>> get entries {
     if (!isObject) {
       throw StateError('DynamicValue is not an object');
     }
     return (_data as LinkedHashMap<String, DynamicValue>).entries;
+  }
+
+  @override
+  DynamicValue get(ByteReader reader,
+      [Endian? endian, Map<String, String>? structure]) {
+    // if (elementType != null) {
+    //   return DynamicValue(
+    //       value: elementType!.get(reader, endian), description: description);
+    // }
+    // DynamicValue result = DynamicValue(description: description);
+    // for (final field in fields) {
+    //   result[field.fieldName] = field.get(reader, endian);
+    // }
+    // return result;
+    return DynamicValue();
+  }
+
+  @override
+  void set(ByteWriter writer, DynamicValue value, [Endian? endian]) {
+    if (value.isArray) {
+      writer.int32(value._data.length, endian);
+      for (var i = 0; i < value._data.length; i++) {
+        value._data[i].set(writer, value._data[i], endian);
+      }
+    } else if (value.isObject) {
+      value._data.forEach((key, value) => value.set(writer, value, endian));
+    } else {
+      if (value.isNull) {
+        throw StateError('Element type is not set for where value is\n $value');
+      }
+      typeKindToPayloadType(value.tKind ?? autoDeduceType(value._data))
+          .set(writer, value.asDynamic, endian);
+    }
   }
 }

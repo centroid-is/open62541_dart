@@ -3,6 +3,7 @@ import 'dart:ffi' as ffi;
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
 
+import '../dynamic_value.dart';
 import '../generated/open62541_bindings.dart' as raw;
 // TODO this file has a lot of boilerplate, can we make it better?
 
@@ -231,14 +232,6 @@ class UA_StringPayload extends PayloadType<String> {
     final ptr = ffi.Pointer<raw.UA_Byte>.fromAddress(ptrValue);
     final buffer = ptr.asTypedList(length);
     return utf8.decode(buffer);
-    // final ptr = calloc<raw.UA_String>();
-    // final lengthSize = sizeOf<Size>();
-    // ptr.ref.length =
-    //     lengthSize == 4 ? reader.int32(endian) : reader.int64(endian);
-    // final buffer = reader.read(ptr.ref.length);
-    // ptr.ref.data = calloc<raw.UA_Byte>(buffer.length);
-    // ptr.ref.data.asTypedList(buffer.length).setAll(0, buffer);
-    // return ptr;
   }
 
   @override
