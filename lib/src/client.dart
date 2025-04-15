@@ -127,7 +127,7 @@ class Client {
     if (type < 0 || type > raw.UA_TYPES_COUNT){
       throw 'Type out of boundary $type';
     }
-    return ffi.Pointer.fromAddress(_lib.UA_TYPES.address + (type * ffi.sizeOf<raw.UA_DataType>()));
+    return ffi.Pointer.fromAddress(_lib.addresses.UA_TYPES.address + (type * ffi.sizeOf<raw.UA_DataType>()));
   }
 
   void writeValue(NodeId nodeId, dynamic value){
