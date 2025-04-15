@@ -132,10 +132,12 @@ class Client {
 
   void writeValue(NodeId nodeId, dynamic value){
     ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
-    ffi.Pointer<raw.UA_DataType> type = calloc<raw.UA_DataType>();
+    ffi.Pointer<raw.UA_NodeId> id = calloc<raw.UA_NodeId>();
 
-    _lib.UA_Client_readDataTypeAttribute(_client, nodeId.toRaw(_lib), type.cast());
-    ffi.Pointer<raw.UA_NodeId> id = type.cast();
+    _lib.UA_Client_readDataTypeAttribute(_client, nodeId.toRaw(_lib), id);
+    ffi.Pointer<raw.UA_DataType> type = _lib.UA_findDataType(id);
+    print(type.ref.typeName.cast<Utf8>().toDartString());
+    print(NodeId.fromRaw(type.ref.binaryEncodingId));
     if (!id.ref.isNumeric() || id.ref.namespaceIndex != 0){
       throw 'unexpected for now';
     }
@@ -155,12 +157,11 @@ class Client {
     // Write value
     final retValue = _lib.UA_Client_writeValueAttribute(_client, nodeId.toRaw(_lib), variant);
     if (retValue != raw.UA_STATUSCODE_GOOD){
-      final statusCodeName = _lib.UA_StatusCode_name(retValue);
-      throw 'Write off $nodeId to $value failed with $retValue, name: ${statusCodeName.cast<Utf8>().toDartString()}';
+      throw 'Write off $nodeId to $value failed with $retValue, name: ${statusCodeToString(retValue)}';
     }
     // Use variant delete to delete the internal data pointer as well
     _lib.UA_Variant_delete(variant);
-    calloc.free(type);
+    calloc.free(id);
   }
 
   dynamic readValue(NodeId nodeId) {

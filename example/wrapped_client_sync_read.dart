@@ -65,12 +65,13 @@ void clientIsolate(SendPort mainSendPort) async {
     c.writeValue(int16ToWrite, curr + 1);
 
     NodeId nreal = NodeId.string(4, "GVL_HMI.Drives_Line1[1].i_rFreq");
-    c.writeValue(nreal, 0.0);
-    var curr_real = c.readValue(nreal);
-    c.writeValue(nreal, curr_real + 0.1337);
+    var currReal = c.readValue(nreal);
+    c.writeValue(nreal, currReal + 0.1337);
+
+
     NodeId string = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xStrings");
-    //var curr_string = c.readValue(string);
-  //print(curr_string);
+    var currString = c.readValue(string);
+    print(currString);
     c.writeValue(string, "This is a test");
    //  while (curr_real < 25){
    //    print(curr_real);
