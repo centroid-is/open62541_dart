@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
-import 'dart:math' as math;
 
 import 'package:ffi/ffi.dart';
 import 'package:logger/logger.dart';
@@ -13,7 +12,6 @@ import 'extensions.dart';
 import '../dynamic_value.dart';
 import 'types/schema.dart';
 import 'types/create_type.dart';
-import 'types/payloads.dart';
 
 class Result<T, E> {
   final T? _ok;
@@ -427,6 +425,7 @@ class Client {
       case TypeKindEnum.uint64:
       case TypeKindEnum.float:
       case TypeKindEnum.double:
+      case TypeKindEnum.dateTime:
       case TypeKindEnum.string:
         final dimensions =
             ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
@@ -445,43 +444,31 @@ class Client {
         }
         return value;
 
-      // case UA_DataTypeKindEnum.dateTime:
-      // return _opcuaToDateTime(_lib.UA_DateTime_toStruct(
-      //     data.ref.data.cast<raw.UA_DateTime>().value));
-
       case TypeKindEnum.extensionObject:
-        final extObj = ref.data.cast<raw.UA_ExtensionObject>().ref;
-        if (extObj.encoding ==
-            raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_NOBODY) {
-          return null;
+        final dimensions =
+            ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
+        if (dimensions.isEmpty) {
+          final extObj = ref.data.cast<raw.UA_ExtensionObject>().ref;
+          return extObj.toDynamicValue(_knownStructures);
         }
-
-        // Get the datatype
-        final typeId = extObj.content.encoded.typeId;
-
-        if (typeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
-          final name = typeId.identifier.string.value;
-          final schema = knownStructures.get(name);
-          if (schema == null) {
-            print("Unknown structure type: $name");
-            return null;
+        if (dimensions.length == 1) {
+          final result = <DynamicValue>[];
+          for (var i = 0; i < dimensions[0]; i++) {
+            final extObj = ref.data.cast<raw.UA_ExtensionObject>()[i];
+            result.add(extObj.toDynamicValue(_knownStructures));
           }
-          final iter = extObj.content.encoded.body.dataIterable;
-          final buffer = Uint8List.fromList(iter.toList());
-
-          final reader =
-              binarize.ByteReader(buffer, endian: binarize.Endian.little);
-
-          DynamicValue data = schema.get(reader);
-
-          if (reader.isNotDone) {
-            throw StateError(
-                'Reader is not done reading where value is\n $data');
-          }
-
-          return data;
+          return result;
         }
-        throw 'Unsupported extension object identifier type: ${typeId.identifierType}';
+        final result = <List<DynamicValue>>[];
+        for (var dimension in dimensions) {
+          final innerResult = <DynamicValue>[];
+          for (var i = 0; i < dimension; i++) {
+            final extObj = ref.data.cast<raw.UA_ExtensionObject>()[i];
+            innerResult.add(extObj.toDynamicValue(_knownStructures));
+          }
+          result.add(innerResult);
+        }
+        return result;
 
       default:
         throw 'Unsupported variant type: $typeKind';
