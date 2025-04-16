@@ -372,4 +372,278 @@ void main() {
       expect(bytes[i], b[i]);
     }
   });
+  test('Struct of strings', () {
+    // Layout and data
+    // Array [4] of ST_SimpleStrings
+    // field1:
+    // field2:
+    // field3:
+    // field4:
+    // bigfield1:
+    // bigfield2:
+    // bigfield3:
+    // bigfield4
+
+    var data = [
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x61,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x62,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x63,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x64,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x65,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x66,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x67,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x68,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x69,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x6a,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x6b,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x6c,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x6d,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x6e,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x6f,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x70,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x71,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x72,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x73,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x74,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x61,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x62,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x63,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x64,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0xc0,
+      0xef,
+      0x35,
+      0x3d,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x04,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x80,
+      0x9d,
+      0x01,
+      0x00,
+      0x60,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00
+    ];
+
+    // Create a dynamic value with the structure
+    DynamicValue test1 = DynamicValue(
+        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    test1["field1"] = DynamicValue(typeId: NodeId.uastring);
+    test1["field2"] = DynamicValue(typeId: NodeId.uastring);
+    test1["field3"] = DynamicValue(typeId: NodeId.uastring);
+    test1["field4"] = DynamicValue(typeId: NodeId.uastring);
+    test1["bigfield1"] = DynamicValue(typeId: NodeId.uastring);
+    test1["bigfield2"] = DynamicValue(typeId: NodeId.uastring);
+    test1["bigfield3"] = DynamicValue(typeId: NodeId.uastring);
+    test1["bigfield4"] = DynamicValue(typeId: NodeId.uastring);
+
+    DynamicValue test2 = DynamicValue(
+        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    test2["field1"] = DynamicValue(typeId: NodeId.uastring);
+    test2["field2"] = DynamicValue(typeId: NodeId.uastring);
+    test2["field3"] = DynamicValue(typeId: NodeId.uastring);
+    test2["field4"] = DynamicValue(typeId: NodeId.uastring);
+    test2["bigfield1"] = DynamicValue(typeId: NodeId.uastring);
+    test2["bigfield2"] = DynamicValue(typeId: NodeId.uastring);
+    test2["bigfield3"] = DynamicValue(typeId: NodeId.uastring);
+    test2["bigfield4"] = DynamicValue(typeId: NodeId.uastring);
+
+    DynamicValue test3 = DynamicValue(
+        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    test3["field1"] = DynamicValue(typeId: NodeId.uastring);
+    test3["field2"] = DynamicValue(typeId: NodeId.uastring);
+    test3["field3"] = DynamicValue(typeId: NodeId.uastring);
+    test3["field4"] = DynamicValue(typeId: NodeId.uastring);
+    test3["bigfield1"] = DynamicValue(typeId: NodeId.uastring);
+    test3["bigfield2"] = DynamicValue(typeId: NodeId.uastring);
+    test3["bigfield3"] = DynamicValue(typeId: NodeId.uastring);
+    test3["bigfield4"] = DynamicValue(typeId: NodeId.uastring);
+
+    DynamicValue test4 = DynamicValue(
+        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    test4["field1"] = DynamicValue(typeId: NodeId.uastring);
+    test4["field2"] = DynamicValue(typeId: NodeId.uastring);
+    test4["field3"] = DynamicValue(typeId: NodeId.uastring);
+    test4["field4"] = DynamicValue(typeId: NodeId.uastring);
+    test4["bigfield1"] = DynamicValue(typeId: NodeId.uastring);
+    test4["bigfield2"] = DynamicValue(typeId: NodeId.uastring);
+    test4["bigfield3"] = DynamicValue(typeId: NodeId.uastring);
+    test4["bigfield4"] = DynamicValue(typeId: NodeId.uastring);
+
+    final parent = DynamicValue.fromList([test1, test2, test3, test4]);
+
+    final bytes = Uint8List.fromList(data);
+    ByteReader reader = ByteReader(bytes, endian: Endian.little);
+    parent.get(reader, Endian.little);
+    // expect(test["field1"].asString, "Centroid");
+    // expect(test["field2"].asString, "Omar");
+    // expect(test["field3"].asString, "JBB");
+    // expect(test["field4"].asString, "ARNI");
+    // expect(test["bigfield1"].asString, "☓");
+    // expect(test["bigfield2"].asString, "☔");
+    // expect(test["bigfield3"].asString, "☕");
+    // expect(test["bigfield4"].asString, "☘");
+
+    // ByteWriter writer = ByteWriter(endian: Endian.little);
+    // test.set(writer, test, Endian.little);
+    // final b = writer.toBytes();
+    // expect(bytes.length, b.length);
+    // for (int i = 0; i < bytes.length; i++) {
+    //   expect(bytes[i], b[i]);
+    // }
+  });
 }

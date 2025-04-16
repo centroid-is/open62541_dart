@@ -198,6 +198,8 @@ void clientIsolate(SendPort mainSendPort) async {
 
     NodeId sId = NodeId.fromString(4, "GVL_HMI.m");
     print(c.readValue(sId));
+    NodeId s2Id = NodeId.fromString(4, "GVL_HMI.n");
+    print(c.readValue(s2Id));
 
     //    print(curr_real);
     //    c.writeValue(nreal, curr_real + 0.1337);

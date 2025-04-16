@@ -392,6 +392,9 @@ class Client {
       final ext = data.ref.data.cast<raw.UA_ExtensionObject>();
       final typeId = ext.ref.content.encoded.typeId.toNodeId();
       defs = readDataTypeDefinition(typeId);
+      for (var def in defs.keys) {
+        print(defs[def]!.format());
+      }
     }
     return variantToValue(data, defs: defs);
   }
@@ -407,6 +410,10 @@ class Client {
     final typeId = data.ref.type.ref.typeId;
     final ref = data.ref;
 
+    final dimensions = ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
+    final dimensionsMultiplied = dimensions.fold(1, (a, b) => a * b);
+    final bufferLength = dimensionsMultiplied * ref.type.ref.memSize;
+
     switch (typeKind) {
       case TypeKindEnum.boolean:
       case TypeKindEnum.sbyte:
@@ -421,12 +428,8 @@ class Client {
       case TypeKindEnum.double:
       case TypeKindEnum.datetime:
       case TypeKindEnum.string:
-        final dimensions =
-            ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
         final payloadType =
             wrapInArray(nodeIdToPayloadType(typeId.toNodeId()), dimensions);
-        final dimensionsMultiplied = dimensions.fold(1, (a, b) => a * b);
-        final bufferLength = dimensionsMultiplied * ref.type.ref.memSize;
         final reader = binarize.ByteReader(
             ref.data.cast<ffi.Uint8>().asTypedList(bufferLength),
             endian: binarize.Endian.little);
@@ -451,20 +454,14 @@ class Client {
         //TODO: Delete
         // Debug primative dump the answer from the server
         var bytes = <int>[];
-        for (int i = 0; i < ext.body.length; i++) {
+        for (int i = 0; i < bufferLength; i++) {
           bytes.add(ext.body.data[i]);
         }
-        printBytes("some_name", Uint8List.fromList(bytes));
-
+        printBytes("data", Uint8List.fromList(bytes));
         DynamicValue object =
             DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs!);
 
-        //TODO: I want raw.UA_String to implemnt TypedData s.t. no copy is needed here
-        var buffer = <int>[];
-        for (int i = 0; i < ext.body.length; i++) {
-          buffer.add(ext.body.data[i]);
-        }
-        var reader = binarize.ByteReader(Uint8List.fromList(buffer));
+        var reader = binarize.ByteReader(Uint8List.fromList(bytes));
         object.get(reader, Endian.little);
 
         return object;

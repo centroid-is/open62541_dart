@@ -455,6 +455,40 @@ extension UA_NodeIdExtension on raw.UA_NodeId {
   }
 }
 
+extension UA_StructFieldFormat on raw.UA_StructureDefinition {
+  String format() {
+    try {
+      var fstr = '';
+      for (int i = 0; i < fields.ref.dimensions.length; i++) {
+        fstr += _formatField(fields[i], 1);
+      }
+      final fieldsStr = fields.ref.dimensions.isEmpty
+          ? 'fields: []'
+          : '''fields: [
+          $fstr
+  ]''';
+
+      return '''StructureSchema(
+  NodeId: ${baseDataType.format()},
+  $fieldsStr
+)''';
+    } catch (e) {
+      return 'StructureSchema(<format error>)';
+    }
+  }
+
+  String _formatField(raw.UA_StructureField field, int depth) {
+    final indent = '  ' * (depth + 1);
+    final fieldStr = '''$indent{
+$indent  structureName: ${field.name.value},
+$indent  name: ${field.fieldName},
+$indent  NodeId: ${field.dataType.format()}${field.dimensions.isEmpty ? '' : ','}${field.dimensions.isEmpty ? '' : '''
+$indent  ]'''}
+$indent}''';
+    return fieldStr;
+  }
+}
+
 // ignore: camel_case_extensions
 extension UA_StringExtension on raw.UA_String {
   void set(String value) {
@@ -531,7 +565,7 @@ extension UA_ExtensionObjectExtension on raw.UA_ExtensionObject {
 
 void printBytes(String var_name, Uint8List bytes) {
   final buffer = StringBuffer();
-  buffer.write('$var_name = [');
+  buffer.write('var $var_name = [');
   for (var i = 0; i < bytes.length; i++) {
     if (i > 0) buffer.write(', ');
     buffer.write('0x${bytes[i].toRadixString(16).padLeft(2, '0')}');
