@@ -23,7 +23,7 @@ enum TypeKindEnum {
   float(raw.UA_DataTypeKind.UA_DATATYPEKIND_FLOAT),
   double(raw.UA_DataTypeKind.UA_DATATYPEKIND_DOUBLE),
   string(raw.UA_DataTypeKind.UA_DATATYPEKIND_STRING),
-  dateTime(raw.UA_DataTypeKind.UA_DATATYPEKIND_DATETIME),
+  datetime(raw.UA_DataTypeKind.UA_DATATYPEKIND_DATETIME),
   guid(raw.UA_DataTypeKind.UA_DATATYPEKIND_GUID),
   byteString(raw.UA_DataTypeKind.UA_DATATYPEKIND_BYTESTRING),
   xmlElement(raw.UA_DataTypeKind.UA_DATATYPEKIND_XMLELEMENT),
@@ -82,8 +82,8 @@ enum TypeKindEnum {
       case TypeKindEnum.string:
       case TypeKindEnum.outOfSpecContiguousString:
         return Namespace0Id.string;
-      case TypeKindEnum.dateTime:
-        return Namespace0Id.dateTime;
+      case TypeKindEnum.datetime:
+        return Namespace0Id.datetime;
       case TypeKindEnum.guid:
         return Namespace0Id.guid;
       case TypeKindEnum.byteString:
@@ -171,7 +171,7 @@ enum Namespace0Id {
   float(raw.UA_NS0ID_FLOAT),
   double(raw.UA_NS0ID_DOUBLE),
   string(raw.UA_NS0ID_STRING),
-  dateTime(raw.UA_NS0ID_DATETIME),
+  datetime(raw.UA_NS0ID_DATETIME),
   guid(raw.UA_NS0ID_GUID),
   byteString(raw.UA_NS0ID_BYTESTRING),
   xmlElement(raw.UA_NS0ID_XMLELEMENT),
@@ -227,8 +227,8 @@ enum Namespace0Id {
         return TypeKindEnum.double;
       case Namespace0Id.string:
         return TypeKindEnum.outOfSpecContiguousString;
-      case Namespace0Id.dateTime:
-        return TypeKindEnum.dateTime;
+      case Namespace0Id.datetime:
+        return TypeKindEnum.datetime;
       case Namespace0Id.guid:
         return TypeKindEnum.guid;
       case Namespace0Id.byteString:
@@ -259,7 +259,7 @@ enum Namespace0Id {
   }
 
   NodeId toNodeId() {
-    return NodeId.numeric(0, value);
+    return NodeId.fromNumeric(0, value);
   }
 }
 

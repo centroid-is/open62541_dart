@@ -2,7 +2,7 @@ import 'dart:collection' show LinkedHashMap;
 import 'package:binarize/binarize.dart';
 import 'package:open62541_bindings/src/extensions.dart';
 import 'types/create_type.dart';
-import 'types/payloads.dart';
+import 'nodeId.dart';
 
 enum DynamicType {
   object,
@@ -23,8 +23,7 @@ class MemberDescription {
 
 class DynamicValue extends PayloadType<DynamicValue> {
   dynamic _data;
-  TypeKindEnum? tKind;
-  String? extensionObjectName;
+  NodeId? typeId;
   MemberDescription? _description;
 
   factory DynamicValue.fromMap(Map<String, dynamic> entries) {
@@ -41,7 +40,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     });
     return v;
   }
-  DynamicValue({value, description, this.tKind})
+  DynamicValue({value, description, this.typeId})
       : _data = value,
         _description = description;
 
@@ -117,8 +116,8 @@ class DynamicValue extends PayloadType<DynamicValue> {
       } else if (passed is List) {
         value = DynamicValue.fromList(passed);
       } else {
-        TypeKindEnum? foundKind = contains(key) ? this[key].tKind : null;
-        value = DynamicValue(value: passed, tKind: foundKind);
+        NodeId? foundType = contains(key) ? this[key].typeId : null;
+        value = DynamicValue(value: passed, typeId: foundType);
       }
     }
     if (key is int) {
@@ -198,9 +197,9 @@ class DynamicValue extends PayloadType<DynamicValue> {
     return null;
   }
 
-  TypeKindEnum autoDeduceType<T>(dynamic data) {
-    if (T is bool) return TypeKindEnum.boolean;
-    if (T is String) return TypeKindEnum.string;
+  NodeId autoDeduceType<T>(dynamic data) {
+    if (T is bool) return NodeId.boolean;
+    if (T is String) return NodeId.uastring;
     if (T is int) throw 'Unable to auto deduce type';
     throw 'Unable to deduce type $T for $data';
   }
@@ -240,7 +239,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       if (value.isNull) {
         throw StateError('Element type is not set for where value is\n $value');
       }
-      typeKindToPayloadType(value.tKind ?? autoDeduceType(value._data))
+      nodeIdToPayloadType(value.typeId ?? autoDeduceType(value._data))
           .set(writer, value.asDynamic, endian);
     }
   }

@@ -12,17 +12,19 @@ void main() {
       'SpeedBatcher',
       structureName: 'ST_SpeedBatcher',
     )
-      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field1', []))
-      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field2', []))
-      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field3', []))
-      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field4', []))
-      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field5', []))
-      ..addField(createPredefinedType(NodeId.numeric(0, 1), 'field6', []))
-      ..addField(createPredefinedType(NodeId.numeric(0, 4), 'field7', []))
+      ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field1', []))
+      ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field2', []))
+      ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field3', []))
+      ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field4', []))
+      ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field5', []))
+      ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field6', []))
+      ..addField(createPredefinedType(NodeId.fromNumeric(0, 4), 'field7', []))
       ..addField(StructureSchema('field8', structureName: 'ST_FP')
-        ..addField(createPredefinedType(NodeId.numeric(0, 1), 'subfield1', []))
-        ..addField(createPredefinedType(NodeId.numeric(0, 1), 'subfield2', []))
-        ..addField(createPredefinedType(NodeId.numeric(0, 1), 'subfield3',
+        ..addField(
+            createPredefinedType(NodeId.fromNumeric(0, 1), 'subfield1', []))
+        ..addField(
+            createPredefinedType(NodeId.fromNumeric(0, 1), 'subfield2', []))
+        ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'subfield3',
             [2]))); // Array<DynamicValue> of size 2
     const data = [
       0x01, // field1

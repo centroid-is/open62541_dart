@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'package:open62541_bindings/src/dynamic_value.dart';
 import 'package:open62541_bindings/src/extensions.dart';
 import 'package:test/test.dart';
+import 'package:open62541_bindings/src/nodeId.dart';
 
 void main() {
   test('dynamic value', () {
@@ -75,33 +76,33 @@ void main() {
     expect(d["w"]["w"]["a"][0]["ohg"][0]["final_boss"].asBool, false);
     expect(d["w"]["w"]["a"][0]["ohg"][1][0][0].asInt, 42);
   });
-  test('tKind persistance trivial', () {
-    DynamicValue k = DynamicValue(value: false, tKind: TypeKindEnum.boolean);
-    expect(k.tKind, TypeKindEnum.boolean);
+  test('typeId persistance trivial', () {
+    DynamicValue k = DynamicValue(value: false, typeId: NodeId.boolean);
+    expect(k.typeId, NodeId.boolean);
     k.value = true;
-    expect(k.tKind, TypeKindEnum.boolean);
+    expect(k.typeId, NodeId.boolean);
   });
-  test('tKind persistance complex map', () {
+  test('typeId persistance complex map', () {
     var values = <String, dynamic>{
       "jbb": false,
     };
     final d = DynamicValue.fromMap(values);
-    d["jbb"].tKind = TypeKindEnum.boolean;
-    expect(d["jbb"].tKind, TypeKindEnum.boolean);
+    d["jbb"].typeId = NodeId.boolean;
+    expect(d["jbb"].typeId, NodeId.boolean);
     d["jbb"] = true;
-    expect(d["jbb"].tKind, TypeKindEnum.boolean);
+    expect(d["jbb"].typeId, NodeId.boolean);
   });
-  test('tKind persistance array', () {
+  test('typeId persistance array', () {
     var values = [
-      DynamicValue(value: true, tKind: TypeKindEnum.boolean),
-      DynamicValue(value: false, tKind: TypeKindEnum.boolean),
+      DynamicValue(value: true, typeId: NodeId.boolean),
+      DynamicValue(value: false, typeId: NodeId.boolean),
     ];
     final d = DynamicValue.fromList(values);
-    expect(d[0].tKind, TypeKindEnum.boolean);
-    expect(d[1].tKind, TypeKindEnum.boolean);
+    expect(d[0].typeId, NodeId.boolean);
+    expect(d[1].typeId, NodeId.boolean);
     d[0] = false;
     d[1] = true;
-    expect(d[0].tKind, TypeKindEnum.boolean);
-    expect(d[1].tKind, TypeKindEnum.boolean);
+    expect(d[0].typeId, NodeId.boolean);
+    expect(d[1].typeId, NodeId.boolean);
   });
 }

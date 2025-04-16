@@ -123,7 +123,14 @@ class Client {
     _lib.UA_Client_run_iterate(_client, ms);
   }
 
-  static ffi.Pointer<raw.UA_DataType> getType(int type, raw.open62541 lib) {
+  static ffi.Pointer<raw.UA_DataType> getType(
+      NodeId typeId, raw.open62541 lib) {
+    int type = 0;
+    if (typeId.isString()) {
+      type = raw.UA_TYPES_EXTENSIONOBJECT;
+    } else {
+      type = typeId.numeric;
+    }
     if (type < 0 || type > raw.UA_TYPES_COUNT) {
       throw 'Type out of boundary $type';
     }
@@ -132,30 +139,24 @@ class Client {
   }
 
   static ffi.Pointer<raw.UA_Variant> valueToVariant(
-      dynamic value, TypeKindEnum tKind, raw.open62541 lib) {
+      DynamicValue value, raw.open62541 lib) {
     ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
 
-    var pload = typeKindToPayloadType(tKind);
-    var offset = 0;
-    if (value is List) {
-      pload = wrapInArray(pload, [value.length]);
-      offset = 4; // Size encoded in the front
-    }
-
     binarize.ByteWriter wr = binarize.ByteWriter();
-    pload.set(wr, value, Endian.little);
+    value.set(wr, value, Endian.little);
     final bytes = wr.toBytes();
     ffi.Pointer<ffi.Uint8> pointer = calloc<ffi.Uint8>(bytes.length);
-    for (int i = offset; i < bytes.length; i++) {
-      pointer[i - offset] = bytes[i];
+    for (int i = 0; i < bytes.length; i++) {
+      pointer[i] = bytes[i];
     }
 
-    if (TypeKindEnum.extensionObject == tKind) {
+    //TODO: This is propably not correct, do this for now
+    if (value.typeId != null && value.typeId!.isString()) {
       //TODO: Array
       ffi.Pointer<raw.UA_ExtensionObject> ext =
           calloc<raw.UA_ExtensionObject>();
       ext.ref.content.encoded.typeId =
-          NodeId.string(4, "<StructuredDataType>:ST_Simple__DefaultBinary")
+          NodeId.fromString(4, "<StructuredDataType>:ST_Simple__DefaultBinary")
               .toRaw(lib);
       ext.ref.content.encoded.body.length = bytes.length;
       ext.ref.content.encoded.body.data = pointer;
@@ -163,12 +164,12 @@ class Client {
       pointer = ext.cast();
     }
 
-    if (value is List) {
-      lib.UA_Variant_setArray(
-          variant, pointer.cast(), value.length, getType(tKind.value, lib));
+    if (value.isArray) {
+      lib.UA_Variant_setArray(variant, pointer.cast(), value.asArray.length,
+          getType(value.typeId!, lib));
     } else {
       lib.UA_Variant_setScalar(
-          variant, pointer.cast(), getType(tKind.value, lib));
+          variant, pointer.cast(), getType(value.typeId!, lib));
     }
 
     return variant;
@@ -195,8 +196,8 @@ class Client {
     return retValue == raw.UA_STATUSCODE_GOOD;
   }
 
-  bool writeValue(NodeId nodeId, dynamic value, TypeKindEnum tKind) {
-    final variant = valueToVariant(value, tKind, _lib);
+  bool writeValue(NodeId nodeId, DynamicValue value) {
+    final variant = valueToVariant(value, _lib);
 
     // Write value
     final retValue = _lib.UA_Client_writeValueAttribute(
@@ -419,8 +420,7 @@ class Client {
       // }
 
       schema = StructureSchema(fieldName,
-          structureName: nodeIdType.string!,
-          tKind: res.value.type.ref.typeKind);
+          structureName: nodeIdType.string!, typeId: nodeIdType.toNodeId());
       final structDef = res.value.data.cast<raw.UA_StructureDefinition>().ref;
       for (var i = 0; i < structDef.fieldsSize; i++) {
         final field = structDef.fields[i];
@@ -476,6 +476,7 @@ class Client {
     }
 
     final typeKind = data.ref.type.ref.typeKind;
+    final typeId = data.ref.type.ref.typeId;
     final ref = data.ref;
 
     switch (typeKind) {
@@ -490,12 +491,12 @@ class Client {
       case TypeKindEnum.uint64:
       case TypeKindEnum.float:
       case TypeKindEnum.double:
-      case TypeKindEnum.dateTime:
+      case TypeKindEnum.datetime:
       case TypeKindEnum.string:
         final dimensions =
             ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
         final payloadType =
-            wrapInArray(typeKindToPayloadType(typeKind), dimensions);
+            wrapInArray(nodeIdToPayloadType(typeId.toNodeId()), dimensions);
         final dimensionsMultiplied = dimensions.fold(1, (a, b) => a * b);
         final bufferLength = dimensionsMultiplied * ref.type.ref.memSize;
         final reader = binarize.ByteReader(

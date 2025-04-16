@@ -189,7 +189,7 @@ void clientIsolate(SendPort mainSendPort) async {
       print(ext.ref.content.encoded.typeId.format());
     }
 
-    NodeId lId = NodeId.string(4, "GVL_HMI.k");
+    NodeId lId = NodeId.fromString(4, "GVL_HMI.k");
     ffi.Pointer<raw.UA_Variant> lval = c.rawRead(lId);
     print("################################### done");
     print(c.rawWrite(lId, lval));
@@ -204,7 +204,7 @@ void clientIsolate(SendPort mainSendPort) async {
       DynamicValue rr = c.readValue(lId);
       rr["bool1"] = !rr["bool1"].asBool;
       rr["bool2"] = !rr["bool2"].asBool;
-      c.writeValue(lId, rr, TypeKindEnum.extensionObject);
+      c.writeValue(lId, rr);
       await Future.delayed(Duration(milliseconds: 150));
     }
 
