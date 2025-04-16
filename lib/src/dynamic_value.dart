@@ -1,6 +1,11 @@
 import 'dart:collection' show LinkedHashMap;
+import 'dart:ffi';
 import 'package:binarize/binarize.dart';
 import 'package:open62541_bindings/src/extensions.dart';
+import 'package:open62541_bindings/src/generated/open62541_bindings.dart';
+import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
+    as raw;
+import 'package:open62541_bindings/src/types/schema.dart';
 import 'types/create_type.dart';
 import 'nodeId.dart';
 
@@ -215,35 +220,74 @@ class DynamicValue extends PayloadType<DynamicValue> {
     return (_data as LinkedHashMap<String, DynamicValue>).entries;
   }
 
-  // @override
-  // bool operator ==(Object other) {
-  //   if (other is DynamicValue) {
-  //     return _namespaceIndex == other._namespaceIndex &&
-  //         _stringId == other._stringId &&
-  //         _numericId == other._numericId;
-  //   }
-  //   // DynamicValue(value: true) == true; // False?
-  //   // DynamicValue(value: true) == true; // False?
-  //   return other == _data;
-  // }
+  // Lesa TypeId frá server fyrir gefna týpu
+  // Nýta TypeId til að búa til readValueId (með nodeid og AttributeId (DATATYPEDEFINITION))
 
-  // @override
-  // int get hashCode =>
-  //     _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode;
+  factory DynamicValue.fromDataTypeDefinition(
+      NodeId root, Map<NodeId, raw.UA_StructureDefinition> defs) {
+    DynamicValue tree = DynamicValue(typeId: root);
+
+    // Base case
+    if (root.isNumeric()) {
+      return tree;
+    }
+
+    // Assert after trivial return
+    assert(defs.containsKey(root));
+
+    // Object case & Array case
+    for (int i = 0; i < defs[root]!.fieldsSize; i++) {
+      final field = defs[root]!.fields[i];
+
+      if (field.dimensions.isEmpty) {
+        tree[field.fieldName] = DynamicValue.fromDataTypeDefinition(
+            field.dataType.toNodeId(), defs);
+      } else {
+        // Don't support multi dimensional fields for now
+        assert(field.dimensions.length == 1);
+        var collection = [];
+        for (int i = 0; i < field.dimensions[0]; i++) {
+          collection.add(DynamicValue.fromDataTypeDefinition(
+              field.dataType.toNodeId(), defs));
+        }
+        tree[field.fieldName] = DynamicValue.fromList(collection,
+            typeId: field.dataType.toNodeId());
+      }
+      tree[field.fieldName]._description = field.fieldDescription;
+    }
+    return tree;
+  }
 
   @override
-  DynamicValue get(ByteReader reader,
-      [Endian? endian, Map<String, String>? structure]) {
-    // if (elementType != null) {
-    //   return DynamicValue(
-    //       value: elementType!.get(reader, endian), description: description);
+  DynamicValue get(ByteReader reader, [Endian? endian]) {
+    // Assume we are in a structure of DynamicValue where typeId is set but alll values are null
+    // {
+    // { }
+    // [DynamicValue([DynamicValue(null, typeId)], )]
     // }
-    // DynamicValue result = DynamicValue(description: description);
-    // for (final field in fields) {
-    //   result[field.fieldName] = field.get(reader, endian);
-    // }
-    // return result;
-    return DynamicValue();
+
+    // Trivial case ( bool, int, etc )
+    if (!isArray && !isObject) {
+      _data = nodeIdToPayloadType(typeId).get(reader, endian);
+    }
+
+    // We are a object case
+    if (isObject) {
+      for (final key in _data.keys) {
+        _data[key] = _data[key].get(reader, endian);
+      }
+    }
+
+    // We are a array case
+    if (isArray) {
+      // Read the size of the stack to increment the
+      // read pointer
+      final _ = reader.int32(endian);
+      for (int i = 0; i < asArray.length; i++) {
+        _data[i] = _data[i].get(reader, endian);
+      }
+    }
+    return this;
   }
 
   @override
