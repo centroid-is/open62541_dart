@@ -2,7 +2,6 @@ import 'package:open62541_bindings/src/dynamic_value.dart';
 import 'package:open62541_bindings/src/library.dart';
 import 'package:open62541_bindings/src/nodeId.dart';
 import 'package:open62541_bindings/src/types/create_type.dart';
-import 'package:open62541_bindings/src/types/schema.dart';
 import 'package:test/test.dart';
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
@@ -113,26 +112,6 @@ void main() {
     var strings = ["jbb", "ohg", "monkey see monkey do", "☎☎♇♇"];
     testSimpleTypes(DynamicValue.fromList(strings, typeId: NodeId.uastring));
   });
-
-  final schema = StructureSchema(
-    'SpeedBatcher',
-    structureName: 'ST_SpeedBatcher',
-  )
-    ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field1', []))
-    ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field2', []))
-    ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field3', []))
-    ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field4', []))
-    ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field5', []))
-    ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'field6', []))
-    ..addField(createPredefinedType(NodeId.fromNumeric(0, 4), 'field7', []))
-    ..addField(StructureSchema('field8', structureName: 'ST_FP')
-      ..addField(
-          createPredefinedType(NodeId.fromNumeric(0, 1), 'subfield1', []))
-      ..addField(
-          createPredefinedType(NodeId.fromNumeric(0, 1), 'subfield2', []))
-      ..addField(createPredefinedType(NodeId.fromNumeric(0, 1), 'subfield3',
-          [2]))); // Array<DynamicValue> of size 2
-  // Populate a struct type
 
   test('Encode structs', () {
     var myMap = <String, dynamic>{

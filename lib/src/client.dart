@@ -6,13 +6,11 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:logger/logger.dart';
 import 'package:binarize/binarize.dart' as binarize;
-import 'package:open62541_bindings/src/types/payloads.dart';
 
 import 'generated/open62541_bindings.dart' as raw;
 import 'nodeId.dart';
 import 'extensions.dart';
 import 'dynamic_value.dart';
-import 'types/schema.dart';
 import 'types/create_type.dart';
 
 class Result<T, E> {
@@ -105,7 +103,6 @@ class Client {
     _clientConfig = ClientConfig(config);
   }
 
-  KnownStructures get knownStructures => _knownStructures;
   ClientConfig get config => _clientConfig;
 
   int connect(String url, {String? username, String? password}) {
@@ -155,9 +152,7 @@ class Client {
       //TODO: Array
       ffi.Pointer<raw.UA_ExtensionObject> ext =
           calloc<raw.UA_ExtensionObject>();
-      ext.ref.content.encoded.typeId =
-          NodeId.fromString(4, "<StructuredDataType>:ST_Simple__DefaultBinary")
-              .toRaw(lib);
+      ext.ref.content.encoded.typeId = value.typeId!.toRaw(lib);
       ext.ref.content.encoded.body.length = bytes.length;
       ext.ref.content.encoded.body.data = pointer;
       ext.ref.encoding = 1;
@@ -239,12 +234,14 @@ class Client {
       throw 'Bad status code $statusCode name: ${statusCodeName.cast<Utf8>().toDartString()}';
     }
 
-    final typeKind = data.ref.type.ref.typeKind;
-    if (typeKind == TypeKindEnum.extensionObject) {
-      // Populate missing structure definition, todo dont fetch already fetched items
-      variableToSchema(nodeId);
+    Map<NodeId, raw.UA_StructureDefinition>? defs;
+    if (data.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
+      // Cast the data to extension object
+      final ext = data.ref.data.cast<raw.UA_ExtensionObject>();
+      final typeId = ext.ref.content.encoded.typeId.toNodeId();
+      defs = readDataTypeDefinition(typeId);
     }
-    final retVal = variantToValue(data, structs: _knownStructures);
+    final retVal = variantToValue(data, defs: defs);
     calloc.free(data);
     return retVal;
   }
@@ -272,7 +269,7 @@ class Client {
                 ffi.Pointer<ffi.Void>)>.isolateLocal(
         (ffi.Pointer<raw.UA_Client> client, int subid,
                 ffi.Pointer<ffi.Void> somedata) =>
-            print("Subscription deleted $subid"));
+            stderr.write("Subscription deleted $subid"));
     raw.UA_CreateSubscriptionResponse response =
         _lib.UA_Client_Subscriptions_create(_client, request.ref, ffi.nullptr,
             ffi.nullptr, deleteCallback.nativeFunction);
@@ -331,16 +328,23 @@ class Client {
       variantPointer.ref = value.ref.value;
       DynamicValue data = DynamicValue();
       try {
-        data = _uaVariantToType(variantPointer);
+        Map<NodeId, raw.UA_StructureDefinition>? defs;
+        if (variantPointer.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
+          // Cast the data to extension object
+          final ext = variantPointer.ref.data.cast<raw.UA_ExtensionObject>();
+          final typeId = ext.ref.content.encoded.typeId.toNodeId();
+          defs = readDataTypeDefinition(typeId);
+        }
+        data = variantToValue(variantPointer, defs: defs);
       } catch (e) {
-        print("Error converting data to type $DynamicValue: $e");
+        stderr.write("Error converting data to type $DynamicValue: $e");
       } finally {
         calloc.free(variantPointer);
       }
       try {
         callback(data);
       } catch (e) {
-        print("Error calling callback: $e");
+        stderr.write("Error calling callback: $e");
       }
     });
     raw.UA_MonitoredItemCreateResult monResponse =
@@ -394,89 +398,60 @@ class Client {
     return controller.stream;
   }
 
-  // This is reading a DataTypeDefinition from namespace 0
-  StructureSchema readDataTypeDefinition(
-      raw.UA_NodeId nodeIdType, String fieldName) {
+  Map<NodeId, raw.UA_StructureDefinition> readDataTypeDefinition(
+      NodeId nodeIdType) {
     ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>();
     _lib.UA_ReadValueId_init(readValueId);
     raw.UA_DataValue res;
-    StructureSchema schema;
+    var map = <NodeId, raw.UA_StructureDefinition>{};
     try {
-      readValueId.ref.nodeId = nodeIdType;
+      readValueId.ref.nodeId = nodeIdType.toRaw(_lib);
       readValueId.ref.attributeId =
           raw.UA_AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION;
       res = _lib.UA_Client_read(_client, readValueId);
 
       if (res.status != raw.UA_STATUSCODE_GOOD) {
-        throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code ${res.status} ${statusCodeToString(res.status)}';
+        throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code ${res.status} ${statusCodeToString(res.status)}, NodeID: $nodeIdType';
       }
       if (res.value.type.ref.typeKind != TypeKindEnum.structure) {
         throw 'UA_Client_read[DATATYPEDEFINITION]: Expected structure type, got ${res.value.type.ref.typeKind}';
       }
       if (!nodeIdType.isString()) {
-        throw 'UA_Client_read[DATATYPEDEFINITION]: Expected string type, got ${nodeIdType.format()}';
+        throw 'UA_Client_read[DATATYPEDEFINITION]: Expected string type, got $nodeIdType';
       }
 
-      // TODO: get this to work
-      // rvi.ref.attributeId = raw.UA_AttributeId.UA_ATTRIBUTEID_DESCRIPTION;
-      // final descriptionRes = _lib.UA_Client_read(_client, rvi);
-      // if (descriptionRes.status == raw.UA_STATUSCODE_GOOD) {
-
-      //   print(
-      //       'Description: ${descriptionRes.value.data.cast<raw.UA_LocalizedText>().ref.text.value}');
-      // }
-
-      schema = StructureSchema(fieldName,
-          structureName: nodeIdType.string!, typeId: nodeIdType.toNodeId());
+      // Read our current structure
       final structDef = res.value.data.cast<raw.UA_StructureDefinition>().ref;
+      map[nodeIdType] = structDef;
+
+      // Crawl the structure for sub structures recursivly
       for (var i = 0; i < structDef.fieldsSize; i++) {
         final field = structDef.fields[i];
         raw.UA_NodeId dataType = field.dataType;
-        StructureSchema fieldSchema;
-        List<int> arrayDimensions = field.dimensions;
         if (dataType.isNumeric()) {
-          fieldSchema = createPredefinedType(
-              dataType.toNodeId(), field.fieldName, arrayDimensions);
-        } else if (dataType.isString()) {
+          continue;
+        }
+        if (dataType.isString()) {
           // recursively read the nested structure type
-          fieldSchema = readDataTypeDefinition(dataType, field.fieldName);
+          final mp = readDataTypeDefinition(dataType.toNodeId());
+          for (var subId in mp.keys) {
+            map[subId] = mp[subId]!;
+          }
         } else {
           throw 'Unsupported field type: $dataType';
         }
-        // print('fieldName: ${field.fieldName}');
-        fieldSchema.description = field.fieldDescription;
-        schema.addField(fieldSchema);
       }
     } catch (e) {
-      print("Error reading DataTypeDefinition: $e");
+      stderr.write("Error reading DataTypeDefinition: $e");
       rethrow;
     } finally {
       _lib.UA_ReadValueId_delete(readValueId);
     }
-    return schema;
-  }
-
-  StructureSchema variableToSchema(NodeId nodeId) {
-    ffi.Pointer<raw.UA_NodeId> output = calloc<raw.UA_NodeId>();
-    int statusCode = _lib.UA_Client_readDataTypeAttribute(
-        _client, nodeId.toRaw(_lib), output);
-    if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      _lib.UA_NodeId_delete(output);
-      throw 'UA_Client_readDataTypeAttribute: Bad status code $statusCode ${statusCodeToString(statusCode)}';
-    }
-    StructureSchema result;
-    try {
-      result = readDataTypeDefinition(output.ref, StructureSchema.schemaRootId);
-    } finally {
-      // todo the node is released by delete of readvalueid
-      // _lib.UA_NodeId_delete(output);
-    }
-    _knownStructures.add(result);
-    return result;
+    return map;
   }
 
   static DynamicValue variantToValue(ffi.Pointer<raw.UA_Variant> data,
-      {KnownStructures? structs}) {
+      {Map<NodeId, raw.UA_StructureDefinition>? defs}) {
     // Check if the variant contains no data
     if (data.ref.data == ffi.nullptr) {
       return DynamicValue();
@@ -522,57 +497,26 @@ class Client {
         }
 
       case TypeKindEnum.extensionObject:
-        if (structs == null) {
-          throw 'Structs needs to be provided';
-        }
-        final dimensions =
-            ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
-        if (dimensions.isEmpty) {
-          final extObj = ref.data.cast<raw.UA_ExtensionObject>().ref;
-          return extObj.toDynamicValue(structs);
-        }
-        if (dimensions.length == 1) {
-          final result = <DynamicValue>[];
-          for (var i = 0; i < dimensions[0]; i++) {
-            final extObj = ref.data.cast<raw.UA_ExtensionObject>()[i];
-            result.add(extObj.toDynamicValue(structs));
-          }
-          return DynamicValue.fromList(result);
-        }
-        final result = <List<DynamicValue>>[];
-        for (var dimension in dimensions) {
-          final innerResult = <DynamicValue>[];
-          for (var i = 0; i < dimension; i++) {
-            final extObj = ref.data.cast<raw.UA_ExtensionObject>()[i];
-            innerResult.add(extObj.toDynamicValue(structs));
-          }
-          result.add(innerResult);
-        }
-        return DynamicValue.fromList(result);
+        // Read structure from opc-ua server
+        assert(defs != null);
 
+        final ext = ref.data.cast<raw.UA_ExtensionObject>().ref.content.encoded;
+        var tt = ext.typeId;
+        DynamicValue object =
+            DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs!);
+
+        //TODO: I want raw.UA_String to implemnt TypedData s.t. no copy is needed here
+        var buffer = <int>[];
+        for (int i = 0; i < ext.body.length; i++) {
+          buffer.add(ext.body.data[i]);
+        }
+        var reader = binarize.ByteReader(Uint8List.fromList(buffer));
+        object.get(reader, Endian.little);
+
+        return object;
       default:
         throw 'Unsupported variant type: $typeKind';
     }
-  }
-
-  DynamicValue _uaVariantToType<T>(ffi.Pointer<raw.UA_Variant> data) {
-    if (data.ref.data == ffi.nullptr) {
-      if (null is T) {
-        return DynamicValue();
-      }
-      throw 'Null value cannot be converted to non-nullable type $T';
-    }
-
-    final value = variantToValue(data, structs: _knownStructures);
-
-    // For specific types
-    if (value is T) {
-      return value;
-    }
-    // todo: handle lists
-    _logger
-        .e('Expected type $T but got ${value.runtimeType} with value $value');
-    throw 'Expected type $T but got ${value.runtimeType} with value $value';
   }
 
   String statusCodeToString(int statusCode) {
@@ -612,7 +556,6 @@ class Client {
   final raw.open62541 _lib;
   final ffi.Pointer<raw.UA_Client> _client;
   late final ClientConfig _clientConfig;
-  final _knownStructures = KnownStructures();
   Map<int, raw.UA_CreateSubscriptionResponse> subscriptionIds = {};
   List<raw.UA_MonitoredItemCreateResult> monitoredItems = [];
 }

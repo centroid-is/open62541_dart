@@ -15,8 +15,12 @@ class NodeId {
 
   factory NodeId.fromRaw(raw.UA_NodeId nodeId) {
     if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
-      return NodeId._internal(nodeId.namespaceIndex,
-          id: nodeId.identifier.string.value);
+      // Drop the __DefaultBinary if attached to string, don't know why it is there
+      var str = nodeId.identifier.string.value;
+      if (str.endsWith('__DefaultBinary')) {
+        str = str.substring(0, str.length - 15);
+      }
+      return NodeId._internal(nodeId.namespaceIndex, id: str);
     } else if (nodeId.identifierType ==
         raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
       return NodeId._internal(nodeId.namespaceIndex,
@@ -85,6 +89,10 @@ class NodeId {
 
   static NodeId get sbyte {
     return NodeId.fromNumeric(0, Namespace0Id.sbyte.value);
+  }
+
+  static NodeId get structure {
+    return NodeId.fromNumeric(0, Namespace0Id.structure.value);
   }
 
   raw.UA_NodeId toRaw(raw.open62541 lib) {

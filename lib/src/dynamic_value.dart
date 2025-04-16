@@ -5,7 +5,6 @@ import 'package:open62541_bindings/src/extensions.dart';
 import 'package:open62541_bindings/src/generated/open62541_bindings.dart';
 import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
     as raw;
-import 'package:open62541_bindings/src/types/schema.dart';
 import 'types/create_type.dart';
 import 'nodeId.dart';
 
@@ -265,7 +264,6 @@ class DynamicValue extends PayloadType<DynamicValue> {
     // { }
     // [DynamicValue([DynamicValue(null, typeId)], )]
     // }
-
     // Trivial case ( bool, int, etc )
     if (!isArray && !isObject) {
       _data = nodeIdToPayloadType(typeId).get(reader, endian);

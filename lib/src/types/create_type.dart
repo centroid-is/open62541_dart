@@ -1,6 +1,5 @@
 import 'package:binarize/binarize.dart';
 import 'package:open62541_bindings/src/dynamic_value.dart';
-import 'schema.dart';
 import '../nodeId.dart';
 import 'payloads.dart';
 import '../extensions.dart';
@@ -34,21 +33,6 @@ PayloadType wrapInArray(PayloadType payloadType, List<int> arrayDimensions) {
   return payloadType;
 }
 
-StructureSchema createFromPayload(PayloadType payloadType, String fieldName,
-    List<int> arrayDimensions, NodeId typeId,
-    {String? structureName}) {
-  for (var dimension in arrayDimensions) {
-    // wrap the payload type in an array payload with StructureSchema which will make it a Array<DynamicValue>
-    payloadType = ArrayPayload(StructureSchema(fieldName,
-        elementType: payloadType,
-        structureName: structureName,
-        typeId: typeId));
-    // payloadType = ArrayPayload(payloadType /*, dimension*/);
-  }
-  return StructureSchema(fieldName,
-      structureName: structureName, elementType: payloadType, typeId: typeId);
-}
-
 PayloadType nodeIdToPayloadType(NodeId? nodeIdType) {
   if (nodeIdType == null || !nodeIdType.isNumeric()) {
     throw ArgumentError('NodeId is not numeric: $nodeIdType');
@@ -58,10 +42,4 @@ PayloadType nodeIdToPayloadType(NodeId? nodeIdType) {
     throw 'Unsupported field type: $nodeIdType';
   }
   return retValue as PayloadType;
-}
-
-StructureSchema createPredefinedType(
-    NodeId typeId, String fieldName, List<int> arrayDimensions) {
-  final payloadType = nodeIdToPayloadType(typeId);
-  return createFromPayload(payloadType, fieldName, arrayDimensions, typeId);
 }

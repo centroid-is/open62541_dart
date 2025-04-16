@@ -7,7 +7,6 @@ import 'package:binarize/binarize.dart' as binarize;
 import 'dynamic_value.dart';
 import 'nodeId.dart';
 import 'generated/open62541_bindings.dart' as raw;
-import 'types/schema.dart';
 
 // ignore: camel_case_types
 enum TypeKindEnum {
@@ -527,35 +526,5 @@ extension UA_ExtensionObjectExtension on raw.UA_ExtensionObject {
       return typeId.identifier.string.value;
     }
     return null;
-  }
-
-  DynamicValue toDynamicValue(KnownStructures knownStructures) {
-    if (encoding ==
-        raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_NOBODY) {
-      return DynamicValue();
-    }
-
-    final name = encodedName;
-    if (name == null) {
-      throw ArgumentError("Extension object has no encoded name");
-    }
-
-    final schema = knownStructures.get(name);
-    if (schema == null) {
-      throw ArgumentError("Unknown structure type: $name");
-    }
-
-    final iter = content.encoded.body.dataIterable;
-    final buffer = Uint8List.fromList(iter.toList());
-
-    final reader = binarize.ByteReader(buffer, endian: binarize.Endian.little);
-
-    DynamicValue data = schema.get(reader);
-
-    if (reader.isNotDone) {
-      throw StateError('Reader is not done reading where value is\n $data');
-    }
-
-    return data;
   }
 }
