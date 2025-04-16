@@ -75,8 +75,6 @@ void main() {
   test('Encode DateTime variant', () {
     var firstArg = DateTime.utc(2025, 10, 5, 18, 30, 15, 150);
     var dfirstArg = DynamicValue(value: firstArg);
-    print(firstArg);
-    print(dfirstArg.asDateTime);
     testSimpleTypes(DynamicValue(value: firstArg, typeId: NodeId.datetime));
     testSimpleTypes(DynamicValue(
         value: DateTime.utc(2024, 10, 5, 18, 30, 15, 150),
