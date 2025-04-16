@@ -1,7 +1,6 @@
 import 'package:open62541_bindings/src/dynamic_value.dart';
 import 'package:open62541_bindings/src/library.dart';
-import 'package:open62541_bindings/src/nodeId.dart';
-import 'package:open62541_bindings/src/types/create_type.dart';
+import 'package:open62541_bindings/src/node_id.dart';
 import 'package:test/test.dart';
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';

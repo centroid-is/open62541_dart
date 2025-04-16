@@ -2,11 +2,10 @@ import 'dart:collection' show LinkedHashMap;
 import 'dart:ffi';
 import 'package:binarize/binarize.dart';
 import 'package:open62541_bindings/src/extensions.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart';
 import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
     as raw;
 import 'types/create_type.dart';
-import 'nodeId.dart';
+import 'node_id.dart';
 
 enum DynamicType {
   object,

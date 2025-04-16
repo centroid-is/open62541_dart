@@ -3,14 +3,13 @@
 import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:open62541_bindings/src/client.dart';
 import 'package:open62541_bindings/src/dynamic_value.dart';
 import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
     as raw;
-import 'package:open62541_bindings/src/nodeId.dart';
+import 'package:open62541_bindings/src/node_id.dart';
 import 'package:open62541_bindings/src/library.dart';
 import 'package:open62541_bindings/src/extensions.dart';
 
@@ -69,8 +68,8 @@ void clientIsolate(SendPort mainSendPort) async {
     // boolean
     NodeId toWrite =
         NodeId.fromString(4, "MAIN.lines[1][1].xInUse"); // The bool to write
-    final current_value = c.readValue(toWrite);
-    print("Current value : $current_value");
+    final currentValue = c.readValue(toWrite);
+    print("Current value : $currentValue");
     c.writeValue(toWrite, DynamicValue(value: false, typeId: NodeId.boolean));
 
     // int16

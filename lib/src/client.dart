@@ -8,34 +8,10 @@ import 'package:logger/logger.dart';
 import 'package:binarize/binarize.dart' as binarize;
 
 import 'generated/open62541_bindings.dart' as raw;
-import 'nodeId.dart';
+import 'node_id.dart';
 import 'extensions.dart';
 import 'dynamic_value.dart';
 import 'types/create_type.dart';
-
-class Result<T, E> {
-  final T? _ok;
-  final E? _err;
-  final bool isOk;
-
-  Result.ok(this._ok)
-      : isOk = true,
-        _err = null;
-  Result.error(this._err)
-      : isOk = false,
-        _ok = null;
-  T unwrap() {
-    return _ok!;
-  }
-
-  E error() {
-    return _err!;
-  }
-
-  R match<R>({required R Function(T) ok, required R Function(E) err}) {
-    return isOk ? ok(_ok!) : err(_err!);
-  }
-}
 
 class ClientState {
   int channelState;

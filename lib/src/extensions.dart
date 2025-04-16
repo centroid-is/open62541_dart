@@ -1,11 +1,9 @@
 import 'package:ffi/ffi.dart';
 import 'dart:convert';
 import 'dart:ffi';
-import 'dart:typed_data';
-import 'package:binarize/binarize.dart' as binarize;
 
 import 'dynamic_value.dart';
-import 'nodeId.dart';
+import 'node_id.dart';
 import 'generated/open62541_bindings.dart' as raw;
 
 // ignore: camel_case_types
@@ -407,7 +405,7 @@ extension UA_DataTypeExtension on raw.UA_DataType {
     final ts = typeName.cast<Utf8>().toDartString();
     final tId = typeId.format();
     final tk = typeKind;
-    return 'TypeId: $tId\nTypeName: $ts\nBinaryEncodingId: $nId';
+    return 'TypeId: $tId\nTypeName: $ts\nBinaryEncodingId: $nId\nType Kind: $tk';
   }
 }
 

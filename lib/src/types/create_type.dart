@@ -1,8 +1,6 @@
 import 'package:binarize/binarize.dart';
-import 'package:open62541_bindings/src/dynamic_value.dart';
-import '../nodeId.dart';
+import '../node_id.dart';
 import 'payloads.dart';
-import '../extensions.dart';
 
 final _payloadTypes = {
   NodeId.boolean: BooleanPayload(),

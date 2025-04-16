@@ -1,6 +1,4 @@
-import 'dart:collection';
 import 'dart:ffi';
-import 'dart:typed_data';
 
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
@@ -10,7 +8,7 @@ import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
     as raw;
 import 'package:open62541_bindings/src/library.dart';
 import 'package:test/test.dart';
-import 'package:open62541_bindings/src/nodeId.dart';
+import 'package:open62541_bindings/src/node_id.dart';
 
 void main() {
   test('dynamic value', () {
