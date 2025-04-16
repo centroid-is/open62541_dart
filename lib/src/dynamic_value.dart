@@ -4,6 +4,7 @@ import 'package:binarize/binarize.dart';
 import 'package:open62541_bindings/src/extensions.dart';
 import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
     as raw;
+import 'package:open62541_bindings/src/types/payloads.dart';
 import 'types/create_type.dart';
 import 'node_id.dart';
 
@@ -23,6 +24,8 @@ class MemberDescription {
   final String locale;
   MemberDescription(this.value, this.locale);
 }
+
+typedef Schema = Map<NodeId, raw.UA_StructureDefinition>;
 
 class DynamicValue extends PayloadType<DynamicValue> {
   dynamic _data;
@@ -221,8 +224,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   // Lesa TypeId frá server fyrir gefna týpu
   // Nýta TypeId til að búa til readValueId (með nodeid og AttributeId (DATATYPEDEFINITION))
 
-  factory DynamicValue.fromDataTypeDefinition(
-      NodeId root, Map<NodeId, raw.UA_StructureDefinition> defs) {
+  factory DynamicValue.fromDataTypeDefinition(NodeId root, Schema defs) {
     DynamicValue tree = DynamicValue(typeId: root);
 
     // Base case
@@ -257,7 +259,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   }
 
   @override
-  DynamicValue get(ByteReader reader, [Endian? endian]) {
+  DynamicValue get(ByteReader reader, [Endian? endian, insideStruct = false]) {
     // Assume we are in a structure of DynamicValue where typeId is set but alll values are null
     // {
     // { }
@@ -265,13 +267,18 @@ class DynamicValue extends PayloadType<DynamicValue> {
     // }
     // Trivial case ( bool, int, etc )
     if (!isArray && !isObject) {
-      _data = nodeIdToPayloadType(typeId).get(reader, endian);
+      // Special case for strings, encoded differetly for structs here then UA_String
+      if (typeId == NodeId.uastring && insideStruct) {
+        _data = ContiguousStringPayload().get(reader, endian);
+      } else {
+        _data = nodeIdToPayloadType(typeId).get(reader, endian);
+      }
     }
 
     // We are a object case
     if (isObject) {
       for (final key in _data.keys) {
-        _data[key] = _data[key].get(reader, endian);
+        _data[key] = _data[key].get(reader, endian, true);
       }
     }
 
@@ -288,20 +295,28 @@ class DynamicValue extends PayloadType<DynamicValue> {
   }
 
   @override
-  void set(ByteWriter writer, DynamicValue value, [Endian? endian]) {
+  void set(ByteWriter writer, DynamicValue value,
+      [Endian? endian, bool insideStruct = false]) {
     if (value.isArray) {
       writer.int32(value._data.length, endian);
       for (var i = 0; i < value._data.length; i++) {
         value._data[i].set(writer, value._data[i], endian);
       }
     } else if (value.isObject) {
-      value._data.forEach((key, value) => value.set(writer, value, endian));
+      value._data
+          .forEach((key, value) => value.set(writer, value, endian, true));
     } else {
       if (value.isNull) {
         throw StateError('Element type is not set for where value is\n $value');
       }
-      nodeIdToPayloadType(value.typeId ?? autoDeduceType(value._data))
-          .set(writer, value.asDynamic, endian);
+      //Special case for strings, they are different the UA_Strings when
+      // encoded inside of a struct
+      if (typeId == NodeId.uastring && insideStruct) {
+        ContiguousStringPayload().set(writer, value.asDynamic, endian);
+      } else {
+        nodeIdToPayloadType(value.typeId ?? autoDeduceType(value._data))
+            .set(writer, value.asDynamic, endian);
+      }
     }
   }
 }

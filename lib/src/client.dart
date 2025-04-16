@@ -133,7 +133,6 @@ class Client {
       ext.ref.content.encoded.body.data = pointer;
       ext.ref.encoding = 1;
       pointer = ext.cast();
-      raw.UA_TYPES_BOOLEAN;
     }
 
     Namespace0Id id;
@@ -160,20 +159,6 @@ class Client {
     return future.future;
   }
 
-  bool rawWrite(NodeId nodeId, ffi.Pointer<raw.UA_Variant> variant) {
-    // Write value
-    final retValue = _lib.UA_Client_writeValueAttribute(
-        _client, nodeId.toRaw(_lib), variant);
-    if (retValue != raw.UA_STATUSCODE_GOOD) {
-      stderr.write(
-          'Write off $nodeId to failed with $retValue, name: ${statusCodeToString(retValue)}');
-    }
-
-    // Use variant delete to delete the internal data pointer as well
-    //_lib.UA_Variant_delete(variant);
-    return retValue == raw.UA_STATUSCODE_GOOD;
-  }
-
   bool writeValue(NodeId nodeId, DynamicValue value) {
     final variant = valueToVariant(value, _lib);
 
@@ -190,17 +175,6 @@ class Client {
     return retValue == raw.UA_STATUSCODE_GOOD;
   }
 
-  ffi.Pointer<raw.UA_Variant> rawRead(NodeId nodeId) {
-    ffi.Pointer<raw.UA_Variant> data = calloc<raw.UA_Variant>();
-    int statusCode =
-        _lib.UA_Client_readValueAttribute(_client, nodeId.toRaw(_lib), data);
-    if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      final statusCodeName = _lib.UA_StatusCode_name(statusCode);
-      throw 'Bad status code $statusCode name: ${statusCodeName.cast<Utf8>().toDartString()}';
-    }
-    return data;
-  }
-
   dynamic readValue(NodeId nodeId) {
     ffi.Pointer<raw.UA_Variant> data = calloc<raw.UA_Variant>();
     int statusCode =
@@ -210,14 +184,7 @@ class Client {
       throw 'Bad status code $statusCode name: ${statusCodeName.cast<Utf8>().toDartString()}';
     }
 
-    Map<NodeId, raw.UA_StructureDefinition>? defs;
-    if (data.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
-      // Cast the data to extension object
-      final ext = data.ref.data.cast<raw.UA_ExtensionObject>();
-      final typeId = ext.ref.content.encoded.typeId.toNodeId();
-      defs = readDataTypeDefinition(typeId);
-    }
-    final retVal = variantToValue(data, defs: defs);
+    final retVal = _variantToValueAutoSchema(data);
     calloc.free(data);
     return retVal;
   }
@@ -304,14 +271,7 @@ class Client {
       variantPointer.ref = value.ref.value;
       DynamicValue data = DynamicValue();
       try {
-        Map<NodeId, raw.UA_StructureDefinition>? defs;
-        if (variantPointer.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
-          // Cast the data to extension object
-          final ext = variantPointer.ref.data.cast<raw.UA_ExtensionObject>();
-          final typeId = ext.ref.content.encoded.typeId.toNodeId();
-          defs = readDataTypeDefinition(typeId);
-        }
-        data = variantToValue(variantPointer, defs: defs);
+        data = _variantToValueAutoSchema(variantPointer);
       } catch (e) {
         stderr.write("Error converting data to type $DynamicValue: $e");
       } finally {
@@ -374,12 +334,11 @@ class Client {
     return controller.stream;
   }
 
-  Map<NodeId, raw.UA_StructureDefinition> readDataTypeDefinition(
-      NodeId nodeIdType) {
+  Schema readDataTypeDefinition(NodeId nodeIdType) {
     ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>();
     _lib.UA_ReadValueId_init(readValueId);
     raw.UA_DataValue res;
-    var map = <NodeId, raw.UA_StructureDefinition>{};
+    var map = Schema();
     try {
       readValueId.ref.nodeId = nodeIdType.toRaw(_lib);
       readValueId.ref.attributeId =
@@ -426,8 +385,19 @@ class Client {
     return map;
   }
 
+  DynamicValue _variantToValueAutoSchema(ffi.Pointer<raw.UA_Variant> data) {
+    Schema? defs;
+    if (data.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
+      // Cast the data to extension object
+      final ext = data.ref.data.cast<raw.UA_ExtensionObject>();
+      final typeId = ext.ref.content.encoded.typeId.toNodeId();
+      defs = readDataTypeDefinition(typeId);
+    }
+    return variantToValue(data, defs: defs);
+  }
+
   static DynamicValue variantToValue(ffi.Pointer<raw.UA_Variant> data,
-      {Map<NodeId, raw.UA_StructureDefinition>? defs}) {
+      {Schema? defs}) {
     // Check if the variant contains no data
     if (data.ref.data == ffi.nullptr) {
       return DynamicValue();
@@ -478,6 +448,14 @@ class Client {
 
         final ext = ref.data.cast<raw.UA_ExtensionObject>().ref.content.encoded;
         var tt = ext.typeId;
+        //TODO: Delete
+        // Debug primative dump the answer from the server
+        var bytes = <int>[];
+        for (int i = 0; i < ext.body.length; i++) {
+          bytes.add(ext.body.data[i]);
+        }
+        printBytes("some_name", Uint8List.fromList(bytes));
+
         DynamicValue object =
             DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs!);
 

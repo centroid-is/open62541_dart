@@ -263,4 +263,113 @@ void main() {
     expect(schema["field8"]["subfield3"][0].typeId, NodeId.boolean);
     expect(schema["field8"]["subfield3"][1].typeId, NodeId.boolean);
   });
+  test('Struct of strings', () {
+    // Layout and data
+    // ST_SimpleStrings
+    // field1: Centroid
+    // field2: Omar
+    // field3: JBB
+    // field4: ARNI
+    // bigfield1: ☓
+    // bigfield2: ☔
+    // bigfield3: ☕
+    // bigfield4: ☘
+    var data = [
+      0x08,
+      0x00,
+      0x00,
+      0x00,
+      0x43,
+      0x65,
+      0x6e,
+      0x74,
+      0x72,
+      0x6f,
+      0x69,
+      0x64,
+      0x04,
+      0x00,
+      0x00,
+      0x00,
+      0x4f,
+      0x6d,
+      0x61,
+      0x72,
+      0x03,
+      0x00,
+      0x00,
+      0x00,
+      0x4a,
+      0x42,
+      0x42,
+      0x04,
+      0x00,
+      0x00,
+      0x00,
+      0x41,
+      0x52,
+      0x4e,
+      0x49,
+      0x03,
+      0x00,
+      0x00,
+      0x00,
+      0xe2,
+      0x98,
+      0x93,
+      0x03,
+      0x00,
+      0x00,
+      0x00,
+      0xe2,
+      0x98,
+      0x94,
+      0x03,
+      0x00,
+      0x00,
+      0x00,
+      0xe2,
+      0x98,
+      0x95,
+      0x03,
+      0x00,
+      0x00,
+      0x00,
+      0xe2,
+      0x98,
+      0x98
+    ];
+
+    // Create a dynamic value with the structure
+    DynamicValue test = DynamicValue(
+        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    test["field1"] = DynamicValue(typeId: NodeId.uastring);
+    test["field2"] = DynamicValue(typeId: NodeId.uastring);
+    test["field3"] = DynamicValue(typeId: NodeId.uastring);
+    test["field4"] = DynamicValue(typeId: NodeId.uastring);
+    test["bigfield1"] = DynamicValue(typeId: NodeId.uastring);
+    test["bigfield2"] = DynamicValue(typeId: NodeId.uastring);
+    test["bigfield3"] = DynamicValue(typeId: NodeId.uastring);
+    test["bigfield4"] = DynamicValue(typeId: NodeId.uastring);
+
+    final bytes = Uint8List.fromList(data);
+    ByteReader reader = ByteReader(bytes, endian: Endian.little);
+    test.get(reader, Endian.little);
+    expect(test["field1"].asString, "Centroid");
+    expect(test["field2"].asString, "Omar");
+    expect(test["field3"].asString, "JBB");
+    expect(test["field4"].asString, "ARNI");
+    expect(test["bigfield1"].asString, "☓");
+    expect(test["bigfield2"].asString, "☔");
+    expect(test["bigfield3"].asString, "☕");
+    expect(test["bigfield4"].asString, "☘");
+
+    ByteWriter writer = ByteWriter(endian: Endian.little);
+    test.set(writer, test, Endian.little);
+    final b = writer.toBytes();
+    expect(bytes.length, b.length);
+    for (int i = 0; i < bytes.length; i++) {
+      expect(bytes[i], b[i]);
+    }
+  });
 }

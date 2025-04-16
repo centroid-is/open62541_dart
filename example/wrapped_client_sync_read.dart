@@ -155,56 +155,49 @@ void clientIsolate(SendPort mainSendPort) async {
     NodeId dId = NodeId.fromString(4, "GVL_HMI.d");
     print("Date: ${c.readValue(dId)}");
 
-    void printVariant(ffi.Pointer<raw.UA_Variant> lval) {
-      print(lval.ref.type.ref.typeName.cast<Utf8>().toDartString());
-      print(lval.ref.type.ref.typeId.format());
-      print((lval.ref.type.address -
-              Open62541Singleton().lib.addresses.UA_TYPES.address) /
-          ffi.sizeOf<raw.UA_DataType>());
-      print(lval.ref.type.ref.members);
-      print(lval.ref.storageType);
-      print(lval.ref.arrayLength);
+    // void printVariant(ffi.Pointer<raw.UA_Variant> lval) {
+    //   print(lval.ref.type.ref.typeName.cast<Utf8>().toDartString());
+    //   print(lval.ref.type.ref.typeId.format());
+    //   print((lval.ref.type.address -
+    //           Open62541Singleton().lib.addresses.UA_TYPES.address) /
+    //       ffi.sizeOf<raw.UA_DataType>());
+    //   print(lval.ref.type.ref.members);
+    //   print(lval.ref.storageType);
+    //   print(lval.ref.arrayLength);
 
-      print("Substitute");
-      raw.UA_DataType t = lval.ref.type.ref;
-      print(lval.ref.type.ref.substitute);
-      print(t.memSize);
-      print(t.typeKind);
-      print(t.pointerFree);
-      print(t.overlayable);
-      print(t.membersSize);
+    //   print("Substitute");
+    //   raw.UA_DataType t = lval.ref.type.ref;
+    //   print(lval.ref.type.ref.substitute);
+    //   print(t.memSize);
+    //   print(t.typeKind);
+    //   print(t.pointerFree);
+    //   print(t.overlayable);
+    //   print(t.membersSize);
 
-      print("Ext");
-      final ext = lval.ref.data.cast<raw.UA_ExtensionObject>();
-      print(ext.ref.encoding);
-      final length = ext.ref.content.encoded.body.length;
-      print(length);
-      var bytes = [];
-      for (int i = 0; i < length; i++) {
-        bytes.add(ext.ref.content.encoded.body.data[i]);
-      }
-      print(bytes);
-      print(ext.ref.content.encoded.typeId.format());
-    }
+    //   print("Ext");
+    //   final ext = lval.ref.data.cast<raw.UA_ExtensionObject>();
+    //   print(ext.ref.encoding);
+    //   final length = ext.ref.content.encoded.body.length;
+    //   print(length);
+    //   var bytes = [];
+    //   for (int i = 0; i < length; i++) {
+    //     bytes.add(ext.ref.content.encoded.body.data[i]);
+    //   }
+    //   print(bytes);
+    //   print(ext.ref.content.encoded.typeId.format());
+    // }
 
     NodeId lId = NodeId.fromString(4, "GVL_HMI.k");
-    ffi.Pointer<raw.UA_Variant> lval = c.rawRead(lId);
-    print("################################### done");
-    print(c.rawWrite(lId, lval));
 
-    print("OPC-UA sourced variant value");
-    printVariant(lval);
+    print("Flipping");
+    DynamicValue rr = c.readValue(lId);
+    rr["bool1"] = !rr["bool1"].asBool;
+    rr["bool2"] = !rr["bool2"].asBool;
+    c.writeValue(lId, rr);
+    await Future.delayed(Duration(milliseconds: 150));
 
-    print("Our sourced variant value");
-
-    for (int i = 0; i < 1000; i++) {
-      print("Flipping");
-      DynamicValue rr = c.readValue(lId);
-      rr["bool1"] = !rr["bool1"].asBool;
-      rr["bool2"] = !rr["bool2"].asBool;
-      c.writeValue(lId, rr);
-      await Future.delayed(Duration(milliseconds: 150));
-    }
+    NodeId sId = NodeId.fromString(4, "GVL_HMI.m");
+    print(c.readValue(sId));
 
     //    print(curr_real);
     //    c.writeValue(nreal, curr_real + 0.1337);

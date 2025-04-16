@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:ffi/ffi.dart';
 import 'dart:convert';
 import 'dart:ffi';
@@ -525,4 +527,15 @@ extension UA_ExtensionObjectExtension on raw.UA_ExtensionObject {
     }
     return null;
   }
+}
+
+void printBytes(String var_name, Uint8List bytes) {
+  final buffer = StringBuffer();
+  buffer.write('$var_name = [');
+  for (var i = 0; i < bytes.length; i++) {
+    if (i > 0) buffer.write(', ');
+    buffer.write('0x${bytes[i].toRadixString(16).padLeft(2, '0')}');
+  }
+  buffer.write('];');
+  print(buffer.toString());
 }
