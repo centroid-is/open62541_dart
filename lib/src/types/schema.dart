@@ -1,6 +1,7 @@
 import 'package:binarize/binarize.dart';
 import 'package:collection/collection.dart';
 import '../dynamic_value.dart';
+import '../extensions.dart';
 
 class StructureSchema extends PayloadType<DynamicValue> {
   static const schemaRootId = '__root';
@@ -10,20 +11,23 @@ class StructureSchema extends PayloadType<DynamicValue> {
   MemberDescription? description;
   List<StructureSchema> fields = [];
   final PayloadType? elementType;
+  final TypeKindEnum? tKind;
   // this would be nice to have, assert that the reader/writer length is the same as the schema
   // could fail faster
   // int size = 0;
 
   StructureSchema(this.fieldName,
-      {this.elementType, this.structureName, this.description});
+      {this.elementType, this.structureName, this.description, this.tKind});
 
   @override
   DynamicValue get(ByteReader reader, [Endian? endian]) {
     if (elementType != null) {
       return DynamicValue(
-          value: elementType!.get(reader, endian), description: description);
+          value: elementType!.get(reader, endian),
+          description: description,
+          tKind: tKind);
     }
-    DynamicValue result = DynamicValue(description: description);
+    DynamicValue result = DynamicValue(description: description, tKind: tKind);
     for (final field in fields) {
       result[field.fieldName] = field.get(reader, endian);
     }

@@ -150,6 +150,19 @@ class Client {
       pointer[i - offset] = bytes[i];
     }
 
+    if (TypeKindEnum.extensionObject == tKind) {
+      //TODO: Array
+      ffi.Pointer<raw.UA_ExtensionObject> ext =
+          calloc<raw.UA_ExtensionObject>();
+      ext.ref.content.encoded.typeId =
+          NodeId.string(4, "<StructuredDataType>:ST_Simple__DefaultBinary")
+              .toRaw(lib);
+      ext.ref.content.encoded.body.length = bytes.length;
+      ext.ref.content.encoded.body.data = pointer;
+      ext.ref.encoding = 1;
+      pointer = ext.cast();
+    }
+
     if (value is List) {
       lib.UA_Variant_setArray(
           variant, pointer.cast(), value.length, getType(tKind.value, lib));
@@ -168,6 +181,20 @@ class Client {
     return future.future;
   }
 
+  bool rawWrite(NodeId nodeId, ffi.Pointer<raw.UA_Variant> variant) {
+    // Write value
+    final retValue = _lib.UA_Client_writeValueAttribute(
+        _client, nodeId.toRaw(_lib), variant);
+    if (retValue != raw.UA_STATUSCODE_GOOD) {
+      stderr.write(
+          'Write off $nodeId to failed with $retValue, name: ${statusCodeToString(retValue)}');
+    }
+
+    // Use variant delete to delete the internal data pointer as well
+    //_lib.UA_Variant_delete(variant);
+    return retValue == raw.UA_STATUSCODE_GOOD;
+  }
+
   bool writeValue(NodeId nodeId, dynamic value, TypeKindEnum tKind) {
     final variant = valueToVariant(value, tKind, _lib);
 
@@ -180,8 +207,19 @@ class Client {
     }
 
     // Use variant delete to delete the internal data pointer as well
-    _lib.UA_Variant_delete(variant);
+    //_lib.UA_Variant_delete(variant);
     return retValue == raw.UA_STATUSCODE_GOOD;
+  }
+
+  ffi.Pointer<raw.UA_Variant> rawRead(NodeId nodeId) {
+    ffi.Pointer<raw.UA_Variant> data = calloc<raw.UA_Variant>();
+    int statusCode =
+        _lib.UA_Client_readValueAttribute(_client, nodeId.toRaw(_lib), data);
+    if (statusCode != raw.UA_STATUSCODE_GOOD) {
+      final statusCodeName = _lib.UA_StatusCode_name(statusCode);
+      throw 'Bad status code $statusCode name: ${statusCodeName.cast<Utf8>().toDartString()}';
+    }
+    return data;
   }
 
   dynamic readValue(NodeId nodeId) {
@@ -380,7 +418,9 @@ class Client {
       //       'Description: ${descriptionRes.value.data.cast<raw.UA_LocalizedText>().ref.text.value}');
       // }
 
-      schema = StructureSchema(fieldName, structureName: nodeIdType.string!);
+      schema = StructureSchema(fieldName,
+          structureName: nodeIdType.string!,
+          tKind: res.value.type.ref.typeKind);
       final structDef = res.value.data.cast<raw.UA_StructureDefinition>().ref;
       for (var i = 0; i < structDef.fieldsSize; i++) {
         final field = structDef.fields[i];

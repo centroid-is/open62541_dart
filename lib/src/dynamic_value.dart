@@ -21,11 +21,6 @@ class MemberDescription {
   MemberDescription(this.value, this.locale);
 }
 
-// DynamicValue t = DynamicValue();
-// t.readSchema(SomeOpcuaStructlayouttype); // Populate tKind and metadata
-// t.set(buffer); // Populate data from buffer
-// buffer = t.get(); // Schema in tKind and fellows, information known
-
 class DynamicValue extends PayloadType<DynamicValue> {
   dynamic _data;
   TypeKindEnum? tKind;
@@ -46,7 +41,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     });
     return v;
   }
-  DynamicValue({value, description, tKind})
+  DynamicValue({value, description, this.tKind})
       : _data = value,
         _description = description;
 
@@ -86,6 +81,16 @@ class DynamicValue extends PayloadType<DynamicValue> {
       ? _data
       : throw StateError('DynamicValue is not an object, ${_data.runtimeType}');
 
+  bool contains(dynamic key) {
+    if (key is int && isArray) {
+      final list = _data as List<DynamicValue>;
+      return (key >= 0 && key < list.length);
+    } else if (key is String && isObject) {
+      return (_data as Map<String, DynamicValue>).containsKey(key);
+    }
+    return false;
+  }
+
   DynamicValue operator [](dynamic key) {
     if (key is int && isArray) {
       final list = _data as List<DynamicValue>;
@@ -112,7 +117,8 @@ class DynamicValue extends PayloadType<DynamicValue> {
       } else if (passed is List) {
         value = DynamicValue.fromList(passed);
       } else {
-        value = DynamicValue(value: passed);
+        TypeKindEnum? foundKind = contains(key) ? this[key].tKind : null;
+        value = DynamicValue(value: passed, tKind: foundKind);
       }
     }
     if (key is int) {
@@ -192,11 +198,11 @@ class DynamicValue extends PayloadType<DynamicValue> {
     return null;
   }
 
-  TypeKindEnum autoDeduceType<T>(dynamic _) {
+  TypeKindEnum autoDeduceType<T>(dynamic data) {
     if (T is bool) return TypeKindEnum.boolean;
     if (T is String) return TypeKindEnum.string;
     if (T is int) throw 'Unable to auto deduce type';
-    throw 'Unable to deduce type $T';
+    throw 'Unable to deduce type $T for $data';
   }
 
   Iterable<MapEntry<String, DynamicValue>> get entries {

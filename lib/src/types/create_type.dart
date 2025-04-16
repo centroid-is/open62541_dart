@@ -21,6 +21,7 @@ final _payloadTypes = {
   TypeKindEnum.string: UA_StringPayload(),
   TypeKindEnum.outOfSpecContiguousString: ContiguousStringPayload(),
   TypeKindEnum.extensionObject: DynamicValue(),
+  TypeKindEnum.structure: DynamicValue(),
 };
 
 // Wraps the payload type in an array payload with the given dimensions
@@ -33,17 +34,17 @@ PayloadType wrapInArray(PayloadType payloadType, List<int> arrayDimensions) {
   return payloadType;
 }
 
-StructureSchema createFromPayload(
-    PayloadType payloadType, String fieldName, List<int> arrayDimensions,
+StructureSchema createFromPayload(PayloadType payloadType, String fieldName,
+    List<int> arrayDimensions, TypeKindEnum tKind,
     {String? structureName}) {
   for (var dimension in arrayDimensions) {
     // wrap the payload type in an array payload with StructureSchema which will make it a Array<DynamicValue>
     payloadType = ArrayPayload(StructureSchema(fieldName,
-        elementType: payloadType, structureName: structureName));
+        elementType: payloadType, structureName: structureName, tKind: tKind));
     // payloadType = ArrayPayload(payloadType /*, dimension*/);
   }
   return StructureSchema(fieldName,
-      structureName: structureName, elementType: payloadType);
+      structureName: structureName, elementType: payloadType, tKind: tKind);
 }
 
 PayloadType typeKindToPayloadType(TypeKindEnum typeKind) {
@@ -65,5 +66,6 @@ PayloadType nodeIdToPayloadType(NodeId nodeIdType) {
 StructureSchema createPredefinedType(
     NodeId nodeIdType, String fieldName, List<int> arrayDimensions) {
   final payloadType = nodeIdToPayloadType(nodeIdType);
-  return createFromPayload(payloadType, fieldName, arrayDimensions);
+  final tKind = Namespace0Id.fromInt(nodeIdType.numeric).toTypeKind();
+  return createFromPayload(payloadType, fieldName, arrayDimensions, tKind);
 }

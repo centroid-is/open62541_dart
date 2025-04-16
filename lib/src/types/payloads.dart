@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
+import 'package:open62541_bindings/src/extensions.dart';
 
 import '../dynamic_value.dart';
 import '../generated/open62541_bindings.dart' as raw;
