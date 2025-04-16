@@ -31,7 +31,7 @@ void main() {
   test('set value', () {
     final dynamicValue = DynamicValue();
     dynamicValue.value = 42.2;
-    expect(dynamicValue.type, DynamicType.float);
+    expect(dynamicValue.type, DynamicType.double);
   });
   test('set sub values', () {
     var values = <String, dynamic>{

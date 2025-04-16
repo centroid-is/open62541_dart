@@ -20,8 +20,8 @@ final _payloadTypes = {
   NodeId.datetime: UA_DateTimePayload(),
   NodeId.uastring: UA_StringPayload(),
   // NodeId.: ContiguousStringPayload(),
-  TypeKindEnum.extensionObject: DynamicValue(),
-  TypeKindEnum.structure: DynamicValue(),
+  // TypeKindEnum.extensionObject: DynamicValue(),
+  // TypeKindEnum.structure: DynamicValue(),
 };
 
 // Wraps the payload type in an array payload with the given dimensions
@@ -53,11 +53,11 @@ PayloadType nodeIdToPayloadType(NodeId? nodeIdType) {
   if (nodeIdType == null || !nodeIdType.isNumeric()) {
     throw ArgumentError('NodeId is not numeric: $nodeIdType');
   }
-  final payloadType = _payloadTypes[nodeIdType];
-  if (payloadType == null) {
+  final retValue = _payloadTypes[nodeIdType];
+  if (retValue == null) {
     throw 'Unsupported field type: $nodeIdType';
   }
-  return payloadType as PayloadType;
+  return retValue as PayloadType;
 }
 
 StructureSchema createPredefinedType(

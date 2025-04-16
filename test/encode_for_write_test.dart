@@ -1,8 +1,4 @@
-import 'dart:collection';
-import 'dart:convert';
-import 'dart:ffi';
 import 'package:open62541_bindings/src/dynamic_value.dart';
-import 'package:open62541_bindings/src/extensions.dart';
 import 'package:open62541_bindings/src/library.dart';
 import 'package:open62541_bindings/src/nodeId.dart';
 import 'package:open62541_bindings/src/types/create_type.dart';
@@ -10,81 +6,83 @@ import 'package:open62541_bindings/src/types/schema.dart';
 import 'package:test/test.dart';
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
-
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
-    as raw;
 import 'package:open62541_bindings/src/client.dart';
 
 void main() {
   final lib = Open62541Singleton().lib;
-  void testSimpleTypes(dynamic value, NodeId kind) {
+  void testSimpleTypes(DynamicValue value) {
     final variant = Client.valueToVariant(value, lib);
     final decoded = Client.variantToValue(variant);
-    if (value is List) {
-      expect(decoded is List, true);
-      expect(decoded.length, value.length);
-      for (int i = 0; i < value.length; i++) {
-        if (value[i] is double) {
-          expect(decoded[i], closeTo(value[i], 1e-5));
+    expect(value.isArray, decoded.isArray);
+    if (value.isArray) {
+      expect(decoded.asArray.length, value.asArray.length);
+      for (int i = 0; i < value.asArray.length; i++) {
+        if (value[i].isDouble) {
+          expect(value[i].asDouble, closeTo(decoded[i].asDouble, 1e-5));
         } else {
-          expect(decoded[i], value[i]);
+          expect(value[i].asDynamic, decoded[i].asDynamic);
         }
       }
     } else {
-      if (value is double) {
-        expect(decoded, closeTo(value, 1e-5));
+      if (value.isDouble) {
+        expect(value.asDouble, closeTo(decoded.asDouble, 1e-5));
       } else {
-        expect(decoded, value);
+        expect(value.asDynamic, decoded.asDynamic);
       }
     }
     calloc.free(variant);
   }
 
   test('Encode boolean variant', () {
-    testSimpleTypes(true, NodeId.boolean);
-    testSimpleTypes(false, NodeId.boolean);
+    testSimpleTypes(DynamicValue(value: true, typeId: NodeId.boolean));
+    testSimpleTypes(DynamicValue(value: false, typeId: NodeId.boolean));
   });
 
   test('Encode int variant', () {
-    testSimpleTypes(10, NodeId.int16);
-    testSimpleTypes(25, NodeId.uint16);
-    testSimpleTypes(1337, NodeId.int32);
-    testSimpleTypes(2556, NodeId.uint32);
-    testSimpleTypes(10516, NodeId.int64);
-    testSimpleTypes(11213, NodeId.uint64);
+    testSimpleTypes(DynamicValue(value: 10, typeId: NodeId.int16));
+    testSimpleTypes(DynamicValue(value: 25, typeId: NodeId.uint16));
+    testSimpleTypes(DynamicValue(value: 1337, typeId: NodeId.int32));
+    testSimpleTypes(DynamicValue(value: 2556, typeId: NodeId.uint32));
+    testSimpleTypes(DynamicValue(value: 10516, typeId: NodeId.int64));
+    testSimpleTypes(DynamicValue(value: 11213, typeId: NodeId.uint64));
 
     // Test the min and max values of the integer types
-    testSimpleTypes(-32768, NodeId.int16);
-    testSimpleTypes(32767, NodeId.int16);
+    testSimpleTypes(DynamicValue(value: -32768, typeId: NodeId.int16));
+    testSimpleTypes(DynamicValue(value: 32767, typeId: NodeId.int16));
 
-    testSimpleTypes(0, NodeId.uint16);
-    testSimpleTypes(65535, NodeId.uint16);
-
-    testSimpleTypes(-2147483648, NodeId.int32);
-    testSimpleTypes(2147483647, NodeId.int32);
-
-    testSimpleTypes(0, NodeId.uint32);
-    testSimpleTypes(4294967295, NodeId.uint32);
-
-    testSimpleTypes(0, NodeId.uint64);
+    testSimpleTypes(DynamicValue(value: 0, typeId: NodeId.uint16));
+    testSimpleTypes(DynamicValue(value: 65535, typeId: NodeId.uint16));
+    testSimpleTypes(DynamicValue(value: -2147483648, typeId: NodeId.int32));
+    testSimpleTypes(DynamicValue(value: 2147483647, typeId: NodeId.int32));
+    testSimpleTypes(DynamicValue(value: 0, typeId: NodeId.uint32));
+    testSimpleTypes(DynamicValue(value: 4294967295, typeId: NodeId.uint32));
+    testSimpleTypes(DynamicValue(value: 0, typeId: NodeId.uint64));
     // There is not a native type in flutter to test this.
     // testSimpleTypes(18446744073709551615, NodeId.uint64);
 
-    testSimpleTypes(-9223372036854775808, NodeId.int64);
-    testSimpleTypes(9223372036854775807, NodeId.int64);
+    testSimpleTypes(
+        DynamicValue(value: -9223372036854775808, typeId: NodeId.int64));
+    testSimpleTypes(
+        DynamicValue(value: 9223372036854775807, typeId: NodeId.int64));
   });
   test('Encode float variant', () {
-    testSimpleTypes(0.5, NodeId.float);
-    testSimpleTypes(1.5, NodeId.double);
-    testSimpleTypes(-0.5, NodeId.float);
-    testSimpleTypes(-1.5, NodeId.double);
+    testSimpleTypes(DynamicValue(value: 0.5, typeId: NodeId.float));
+    testSimpleTypes(DynamicValue(value: 1.5, typeId: NodeId.double));
+    testSimpleTypes(DynamicValue(value: -0.5, typeId: NodeId.float));
+    testSimpleTypes(DynamicValue(value: -1.5, typeId: NodeId.double));
   });
   test('Encode string variant', () {
-    testSimpleTypes("asdfasdf", NodeId.uastring);
+    testSimpleTypes(DynamicValue(value: "asdfasdf", typeId: NodeId.uastring));
   });
   test('Encode DateTime variant', () {
-    testSimpleTypes(DateTime.utc(2025, 10, 5, 18, 30, 150), NodeId.datetime);
-    testSimpleTypes(DateTime.utc(2024, 10, 5, 18, 30, 150), NodeId.datetime);
+    var firstArg = DateTime.utc(2025, 10, 5, 18, 30, 15, 150);
+    var dfirstArg = DynamicValue(value: firstArg);
+    print(firstArg);
+    print(dfirstArg.asDateTime);
+    testSimpleTypes(DynamicValue(value: firstArg, typeId: NodeId.datetime));
+    testSimpleTypes(DynamicValue(
+        value: DateTime.utc(2024, 10, 5, 18, 30, 15, 150),
+        typeId: NodeId.datetime));
   });
   //TODO: Implement duration
   // test('Encode Duration variant', () {
@@ -93,27 +91,27 @@ void main() {
 
   test('Encode arrays variant', () {
     var values = [false, false, true, true];
-    testSimpleTypes(values, NodeId.boolean);
+    testSimpleTypes(DynamicValue.fromList(values, typeId: NodeId.boolean));
 
     var uintValues = [15, 25, 26, 27, 32, 99];
     var intValues = [15, 25, 26, 27, 32, 99, -11, -25, -99];
-    testSimpleTypes(intValues, NodeId.int16);
-    testSimpleTypes(intValues, NodeId.int32);
-    testSimpleTypes(intValues, NodeId.int64);
+    testSimpleTypes(DynamicValue.fromList(intValues, typeId: NodeId.int16));
+    testSimpleTypes(DynamicValue.fromList(intValues, typeId: NodeId.int32));
+    testSimpleTypes(DynamicValue.fromList(intValues, typeId: NodeId.int64));
 
-    testSimpleTypes(uintValues, NodeId.uint16);
-    testSimpleTypes(uintValues, NodeId.uint32);
-    testSimpleTypes(uintValues, NodeId.uint64);
+    testSimpleTypes(DynamicValue.fromList(uintValues, typeId: NodeId.uint16));
+    testSimpleTypes(DynamicValue.fromList(uintValues, typeId: NodeId.uint32));
+    testSimpleTypes(DynamicValue.fromList(uintValues, typeId: NodeId.uint64));
 
     var floatValues = [15.34, 25.12, 26.77, 27.82, 32.1, 99.0, -14.32];
-    testSimpleTypes(floatValues, NodeId.float);
-    testSimpleTypes(floatValues, NodeId.double);
+    testSimpleTypes(DynamicValue.fromList(floatValues, typeId: NodeId.float));
+    testSimpleTypes(DynamicValue.fromList(floatValues, typeId: NodeId.double));
 
     var dateTimes = [DateTime.utc(2023), DateTime.utc(2022)];
-    testSimpleTypes(dateTimes, NodeId.datetime);
+    testSimpleTypes(DynamicValue.fromList(dateTimes, typeId: NodeId.datetime));
 
     var strings = ["jbb", "ohg", "monkey see monkey do", "☎☎♇♇"];
-    testSimpleTypes(strings, NodeId.uastring);
+    testSimpleTypes(DynamicValue.fromList(strings, typeId: NodeId.uastring));
   });
 
   final schema = StructureSchema(

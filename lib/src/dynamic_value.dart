@@ -12,7 +12,7 @@ enum DynamicType {
   nullValue,
   unknown,
   integer,
-  float,
+  double,
 }
 
 class MemberDescription {
@@ -32,12 +32,16 @@ class DynamicValue extends PayloadType<DynamicValue> {
     return v;
   }
 
-  factory DynamicValue.fromList(List<dynamic> entries) {
-    DynamicValue v = DynamicValue();
+  factory DynamicValue.fromList(List<dynamic> entries, {NodeId? typeId}) {
+    DynamicValue v = DynamicValue(typeId: typeId);
     var counter = 0;
-    entries.forEach((value) {
-      v[counter++] = value;
-    });
+    for (var value in entries) {
+      v[counter] = value;
+      if (typeId != null) {
+        v[counter].typeId = typeId;
+      }
+      counter = counter + 1;
+    }
     return v;
   }
   DynamicValue({value, description, this.typeId})
@@ -50,7 +54,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     if (_data is List<DynamicValue>) return DynamicType.array;
     if (_data is String) return DynamicType.string;
     if (_data is int) return DynamicType.integer;
-    if (_data is double) return DynamicType.float;
+    if (_data is double) return DynamicType.double;
     if (_data is bool) return DynamicType.boolean;
     return DynamicType.unknown;
   }
@@ -61,7 +65,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   bool get isArray => type == DynamicType.array;
   bool get isString => type == DynamicType.string;
   bool get isInteger => type == DynamicType.integer;
-  bool get isFloat => type == DynamicType.float;
+  bool get isDouble => type == DynamicType.double;
   bool get isBoolean => type == DynamicType.boolean;
 
   double get asDouble => _parseDouble(_data) ?? 0.0;
@@ -210,6 +214,22 @@ class DynamicValue extends PayloadType<DynamicValue> {
     }
     return (_data as LinkedHashMap<String, DynamicValue>).entries;
   }
+
+  // @override
+  // bool operator ==(Object other) {
+  //   if (other is DynamicValue) {
+  //     return _namespaceIndex == other._namespaceIndex &&
+  //         _stringId == other._stringId &&
+  //         _numericId == other._numericId;
+  //   }
+  //   // DynamicValue(value: true) == true; // False?
+  //   // DynamicValue(value: true) == true; // False?
+  //   return other == _data;
+  // }
+
+  // @override
+  // int get hashCode =>
+  //     _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode;
 
   @override
   DynamicValue get(ByteReader reader,

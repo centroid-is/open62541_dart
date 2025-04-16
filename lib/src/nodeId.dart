@@ -64,7 +64,7 @@ class NodeId {
   }
 
   static NodeId get uastring {
-    return NodeId.fromNumeric(0, Namespace0Id.int64.value);
+    return NodeId.fromNumeric(0, Namespace0Id.string.value);
   }
 
   static NodeId get double {

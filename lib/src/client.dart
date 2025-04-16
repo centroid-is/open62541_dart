@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:logger/logger.dart';
 import 'package:binarize/binarize.dart' as binarize;
+import 'package:open62541_bindings/src/types/payloads.dart';
 
 import 'generated/open62541_bindings.dart' as raw;
 import 'nodeId.dart';
@@ -124,13 +125,8 @@ class Client {
   }
 
   static ffi.Pointer<raw.UA_DataType> getType(
-      NodeId typeId, raw.open62541 lib) {
-    int type = 0;
-    if (typeId.isString()) {
-      type = raw.UA_TYPES_EXTENSIONOBJECT;
-    } else {
-      type = typeId.numeric;
-    }
+      UaTypes uaType, raw.open62541 lib) {
+    int type = uaType.value;
     if (type < 0 || type > raw.UA_TYPES_COUNT) {
       throw 'Type out of boundary $type';
     }
@@ -145,9 +141,13 @@ class Client {
     binarize.ByteWriter wr = binarize.ByteWriter();
     value.set(wr, value, Endian.little);
     final bytes = wr.toBytes();
+    int offset = 0;
+    if (value.isArray) {
+      offset = 4;
+    }
     ffi.Pointer<ffi.Uint8> pointer = calloc<ffi.Uint8>(bytes.length);
-    for (int i = 0; i < bytes.length; i++) {
-      pointer[i] = bytes[i];
+    for (int i = offset; i < bytes.length; i++) {
+      pointer[i - offset] = bytes[i];
     }
 
     //TODO: This is propably not correct, do this for now
@@ -162,14 +162,21 @@ class Client {
       ext.ref.content.encoded.body.data = pointer;
       ext.ref.encoding = 1;
       pointer = ext.cast();
+      raw.UA_TYPES_BOOLEAN;
     }
 
+    Namespace0Id id;
+    if (value.typeId!.isNumeric()) {
+      id = Namespace0Id.fromInt(value.typeId!.numeric);
+    } else {
+      id = Namespace0Id.structure;
+    }
     if (value.isArray) {
       lib.UA_Variant_setArray(variant, pointer.cast(), value.asArray.length,
-          getType(value.typeId!, lib));
+          getType(id.toUaTypes(), lib));
     } else {
       lib.UA_Variant_setScalar(
-          variant, pointer.cast(), getType(value.typeId!, lib));
+          variant, pointer.cast(), getType(id.toUaTypes(), lib));
     }
 
     return variant;
@@ -208,7 +215,7 @@ class Client {
     }
 
     // Use variant delete to delete the internal data pointer as well
-    //_lib.UA_Variant_delete(variant);
+    _lib.UA_Variant_delete(variant);
     return retValue == raw.UA_STATUSCODE_GOOD;
   }
 
@@ -288,8 +295,8 @@ class Client {
     subscriptionIds.remove(subId);
   }
 
-  int monitoredItemCreate<T>(
-      NodeId nodeid, int subscriptionId, void Function(T data) callback,
+  int monitoredItemCreate(NodeId nodeid, int subscriptionId,
+      void Function(DynamicValue data) callback,
       {int attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
       int monitoringMode = raw.UA_MonitoringMode.UA_MONITORINGMODE_REPORTING,
       Duration samplingInterval = const Duration(milliseconds: 250),
@@ -322,11 +329,11 @@ class Client {
             ffi.Pointer<raw.UA_DataValue> value) {
       ffi.Pointer<raw.UA_Variant> variantPointer = calloc<raw.UA_Variant>();
       variantPointer.ref = value.ref.value;
-      late final T data;
+      DynamicValue data = DynamicValue();
       try {
-        data = _uaVariantToType<T>(variantPointer);
+        data = _uaVariantToType(variantPointer);
       } catch (e) {
-        print("Error converting data to type $T: $e");
+        print("Error converting data to type $DynamicValue: $e");
       } finally {
         calloc.free(variantPointer);
       }
@@ -354,7 +361,7 @@ class Client {
     return monId;
   }
 
-  Stream<T> monitoredItemStream<T>(
+  Stream<DynamicValue> monitoredItemStream(
     NodeId nodeId,
     int subscriptionId, {
     int attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
@@ -364,9 +371,9 @@ class Client {
     int queueSize = 1,
   }) {
     // force the stream to be synchronous and run in the same isolate as the callback
-    final controller = StreamController<T>(sync: true);
+    final controller = StreamController<DynamicValue>(sync: true);
 
-    int monitoredItemId = monitoredItemCreate<T>(
+    int monitoredItemId = monitoredItemCreate(
       nodeId,
       subscriptionId,
       (data) => controller.add(data),
@@ -468,11 +475,11 @@ class Client {
     return result;
   }
 
-  static dynamic variantToValue(ffi.Pointer<raw.UA_Variant> data,
+  static DynamicValue variantToValue(ffi.Pointer<raw.UA_Variant> data,
       {KnownStructures? structs}) {
     // Check if the variant contains no data
     if (data.ref.data == ffi.nullptr) {
-      return null;
+      return DynamicValue();
     }
 
     final typeKind = data.ref.type.ref.typeKind;
@@ -503,12 +510,16 @@ class Client {
             ref.data.cast<ffi.Uint8>().asTypedList(bufferLength),
             endian: binarize.Endian.little);
 
-        final value = payloadType.get(reader);
+        final value = payloadType.get(reader, Endian.little);
         if (reader.isNotDone) {
           throw StateError(
               'Reader is not done reading where value is\n $value');
         }
-        return value;
+        if (value is List) {
+          return DynamicValue.fromList(value, typeId: typeId.toNodeId());
+        } else {
+          return DynamicValue(value: value, typeId: typeId.toNodeId());
+        }
 
       case TypeKindEnum.extensionObject:
         if (structs == null) {
@@ -526,7 +537,7 @@ class Client {
             final extObj = ref.data.cast<raw.UA_ExtensionObject>()[i];
             result.add(extObj.toDynamicValue(structs));
           }
-          return result;
+          return DynamicValue.fromList(result);
         }
         final result = <List<DynamicValue>>[];
         for (var dimension in dimensions) {
@@ -537,27 +548,22 @@ class Client {
           }
           result.add(innerResult);
         }
-        return result;
+        return DynamicValue.fromList(result);
 
       default:
         throw 'Unsupported variant type: $typeKind';
     }
   }
 
-  T _uaVariantToType<T>(ffi.Pointer<raw.UA_Variant> data) {
+  DynamicValue _uaVariantToType<T>(ffi.Pointer<raw.UA_Variant> data) {
     if (data.ref.data == ffi.nullptr) {
       if (null is T) {
-        return null as T;
+        return DynamicValue();
       }
       throw 'Null value cannot be converted to non-nullable type $T';
     }
 
     final value = variantToValue(data, structs: _knownStructures);
-
-    // Special case for dynamic type
-    if (T == dynamic) {
-      return value as T;
-    }
 
     // For specific types
     if (value is T) {

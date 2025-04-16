@@ -261,6 +261,137 @@ enum Namespace0Id {
   NodeId toNodeId() {
     return NodeId.fromNumeric(0, value);
   }
+
+  UaTypes toUaTypes() {
+    switch (this) {
+      case Namespace0Id.boolean:
+        return UaTypes.boolean;
+      case Namespace0Id.sbyte:
+        return UaTypes.sbyte;
+      case Namespace0Id.byte:
+        return UaTypes.byte;
+      case Namespace0Id.int16:
+        return UaTypes.int16;
+      case Namespace0Id.uint16:
+        return UaTypes.uint16;
+      case Namespace0Id.int32:
+        return UaTypes.int32;
+      case Namespace0Id.uint32:
+        return UaTypes.uint32;
+      case Namespace0Id.int64:
+        return UaTypes.int64;
+      case Namespace0Id.uint64:
+        return UaTypes.uint64;
+      case Namespace0Id.float:
+        return UaTypes.float;
+      case Namespace0Id.double:
+        return UaTypes.double;
+      case Namespace0Id.string:
+        return UaTypes.string;
+      case Namespace0Id.datetime:
+        return UaTypes.dateTime;
+      case Namespace0Id.guid:
+        return UaTypes.guid;
+      case Namespace0Id.byteString:
+        return UaTypes.byteString;
+      case Namespace0Id.xmlElement:
+        return UaTypes.xmlElement;
+      case Namespace0Id.nodeId:
+        return UaTypes.nodeId;
+      case Namespace0Id.expandedNodeId:
+        return UaTypes.expandedNodeId;
+      case Namespace0Id.statusCode:
+        return UaTypes.statusCode;
+      case Namespace0Id.qualifiedName:
+        return UaTypes.qualifiedName;
+      case Namespace0Id.localizedText:
+        return UaTypes.localizedText;
+      case Namespace0Id.structure:
+        return UaTypes.extensionObject;
+      case Namespace0Id.dataValue:
+        return UaTypes.dataValue;
+      case Namespace0Id.diagnosticInfo:
+        return UaTypes.diagnosticInfo;
+      default:
+        throw ArgumentError('Cannot convert Namespace0Id $this to UaTypes');
+    }
+  }
+}
+
+// ignore: camel_case_types
+enum UaTypes {
+  boolean(raw.UA_TYPES_BOOLEAN),
+  sbyte(raw.UA_TYPES_SBYTE),
+  byte(raw.UA_TYPES_BYTE),
+  int16(raw.UA_TYPES_INT16),
+  uint16(raw.UA_TYPES_UINT16),
+  int32(raw.UA_TYPES_INT32),
+  uint32(raw.UA_TYPES_UINT32),
+  int64(raw.UA_TYPES_INT64),
+  uint64(raw.UA_TYPES_UINT64),
+  float(raw.UA_TYPES_FLOAT),
+  double(raw.UA_TYPES_DOUBLE),
+  string(raw.UA_TYPES_STRING),
+  dateTime(raw.UA_TYPES_DATETIME),
+  guid(raw.UA_TYPES_GUID),
+  byteString(raw.UA_TYPES_BYTESTRING),
+  xmlElement(raw.UA_TYPES_XMLELEMENT),
+  nodeId(raw.UA_TYPES_NODEID),
+  expandedNodeId(raw.UA_TYPES_EXPANDEDNODEID),
+  statusCode(raw.UA_TYPES_STATUSCODE),
+  qualifiedName(raw.UA_TYPES_QUALIFIEDNAME),
+  localizedText(raw.UA_TYPES_LOCALIZEDTEXT),
+  extensionObject(raw.UA_TYPES_EXTENSIONOBJECT),
+  dataValue(raw.UA_TYPES_DATAVALUE),
+  variant(raw.UA_TYPES_VARIANT),
+  diagnosticInfo(raw.UA_TYPES_DIAGNOSTICINFO),
+  namingRuleType(raw.UA_TYPES_NAMINGRULETYPE),
+  enumeration(raw.UA_TYPES_ENUMERATION),
+  imageBmp(raw.UA_TYPES_IMAGEBMP),
+  imageGif(raw.UA_TYPES_IMAGEGIF),
+  imageJpg(raw.UA_TYPES_IMAGEJPG),
+  imagePng(raw.UA_TYPES_IMAGEPNG),
+  audioDataType(raw.UA_TYPES_AUDIODATATYPE),
+  uriString(raw.UA_TYPES_URISTRING),
+  bitFieldMaskDataType(raw.UA_TYPES_BITFIELDMASKDATATYPE),
+  semanticVersionString(raw.UA_TYPES_SEMANTICVERSIONSTRING),
+  keyValuePair(raw.UA_TYPES_KEYVALUEPAIR),
+  additionalParametersType(raw.UA_TYPES_ADDITIONALPARAMETERSTYPE),
+  ephemeralKeyType(raw.UA_TYPES_EPHEMERALKEYTYPE),
+  rationalNumber(raw.UA_TYPES_RATIONALNUMBER),
+  threeDVector(raw.UA_TYPES_THREEDVECTOR),
+  threeDCartesianCoordinates(raw.UA_TYPES_THREEDCARTESIANCOORDINATES),
+  threeDOrientation(raw.UA_TYPES_THREEDORIENTATION),
+  threeDFrame(raw.UA_TYPES_THREEDFRAME),
+  openFileMode(raw.UA_TYPES_OPENFILEMODE),
+  identityCriteriaType(raw.UA_TYPES_IDENTITYCRITERIATYPE),
+  identityMappingRuleType(raw.UA_TYPES_IDENTITYMAPPINGRULETYPE),
+  currencyUnitType(raw.UA_TYPES_CURRENCYUNITTYPE),
+  trustListMasks(raw.UA_TYPES_TRUSTLISTMASKS),
+  trustListDataType(raw.UA_TYPES_TRUSTLISTDATATYPE),
+  decimalDataType(raw.UA_TYPES_DECIMALDATATYPE),
+  dataTypeDescription(raw.UA_TYPES_DATATYPEDESCRIPTION),
+  simpleTypeDescription(raw.UA_TYPES_SIMPLETYPEDESCRIPTION),
+  portableQualifiedName(raw.UA_TYPES_PORTABLEQUALIFIEDNAME),
+  portableNodeId(raw.UA_TYPES_PORTABLENODEID),
+  unsignedRationalNumber(raw.UA_TYPES_UNSIGNEDRATIONALNUMBER),
+  pubSubState(raw.UA_TYPES_PUBSUBSTATE),
+  dataSetFieldFlags(raw.UA_TYPES_DATASETFIELDFLAGS),
+  configurationVersionDataType(raw.UA_TYPES_CONFIGURATIONVERSIONDATATYPE),
+  publishedVariableDataType(raw.UA_TYPES_PUBLISHEDVARIABLEDATATYPE),
+  publishedDataItemsDataType(raw.UA_TYPES_PUBLISHEDDATAITEMSDATATYPE),
+  publishedDataSetCustomSourceDataType(
+      raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE);
+
+  final int value;
+  const UaTypes(this.value);
+
+  static UaTypes fromValue(int value) {
+    return UaTypes.values.firstWhere(
+      (type) => type.value == value,
+      orElse: () => throw ArgumentError('Invalid UaTypes value: $value'),
+    );
+  }
 }
 
 // ignore: camel_case_extensions
@@ -271,6 +402,14 @@ extension UA_DataTypeExtension on raw.UA_DataType {
   bool get pointerFree => ((substitute >> 22) & 0x1) == 1; // Next 1 bit
   bool get overlayable => ((substitute >> 23) & 0x1) == 1; // Next 1 bit
   int get membersSize => (substitute >> 24) & 0xFF; // Last 8 bits
+
+  String format() {
+    final nId = binaryEncodingId.format();
+    final ts = typeName.cast<Utf8>().toDartString();
+    final tId = typeId.format();
+    final tk = typeKind;
+    return 'TypeId: $tId\nTypeName: $ts\nBinaryEncodingId: $nId';
+  }
 }
 
 // ignore: camel_case_extensions
