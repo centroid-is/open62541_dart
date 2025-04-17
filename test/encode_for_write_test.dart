@@ -249,6 +249,11 @@ void main() {
     expect(value[2][1].asInt, 6);
     expect(value[3][0].asInt, 7);
     expect(value[3][1].asInt, 8);
+
+    final variantEncoded = Client.valueToVariant(value, lib);
+    final variantData =
+        variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
+    expect(variantData, data);
     lib.UA_Variant_delete(variant);
   });
   test('4x4x2 boolean array', () {
@@ -300,65 +305,76 @@ void main() {
     variant.ref.arrayDimensions[1] = 4;
     variant.ref.arrayDimensions[2] = 2;
     variant.ref.type = Client.getType(UaTypes.boolean, lib);
-    final value = Client.variantToValue(variant);
-    // print(value);
-    expect(value.isArray, true);
-    expect(value[0].isArray, true);
-    expect(value[0].asArray.length, 4);
-    expect(value[1].isArray, true);
-    expect(value[1].asArray.length, 4);
-    expect(value[2].isArray, true);
-    expect(value[2].asArray.length, 4);
-    expect(value[3].isArray, true);
-    expect(value[3].asArray.length, 4);
-    expect(value[0][0].isArray, true);
-    expect(value[0][1].isArray, true);
-    expect(value[0][2].isArray, true);
-    expect(value[0][3].isArray, true);
-    expect(value[1][0].isArray, true);
-    expect(value[1][1].isArray, true);
-    expect(value[1][2].isArray, true);
-    expect(value[1][3].isArray, true);
-    expect(value[2][0].isArray, true);
-    expect(value[2][1].isArray, true);
-    expect(value[2][2].isArray, true);
-    expect(value[2][3].isArray, true);
-    expect(value[3][0].isArray, true);
-    expect(value[3][1].isArray, true);
-    expect(value[3][2].isArray, true);
-    expect(value[3][3].isArray, true);
-    expect(value[0][0][0].asBool, true);
-    expect(value[0][0][1].asBool, false);
-    expect(value[0][1][0].asBool, true);
-    expect(value[0][1][1].asBool, false);
-    expect(value[0][2][0].asBool, true);
-    expect(value[0][2][1].asBool, false);
-    expect(value[0][3][0].asBool, true);
-    expect(value[0][3][1].asBool, false);
-    expect(value[1][0][0].asBool, true);
-    expect(value[1][0][1].asBool, false);
-    expect(value[1][1][0].asBool, true);
-    expect(value[1][1][1].asBool, false);
-    expect(value[1][2][0].asBool, true);
-    expect(value[1][2][1].asBool, false);
-    expect(value[1][3][0].asBool, true);
-    expect(value[1][3][1].asBool, false);
-    expect(value[2][0][0].asBool, true);
-    expect(value[2][0][1].asBool, false);
-    expect(value[2][1][0].asBool, true);
-    expect(value[2][1][1].asBool, false);
-    expect(value[2][2][0].asBool, true);
-    expect(value[2][2][1].asBool, false);
-    expect(value[2][3][0].asBool, true);
-    expect(value[2][3][1].asBool, false);
-    expect(value[3][0][0].asBool, true);
-    expect(value[3][0][1].asBool, false);
-    expect(value[3][1][0].asBool, true);
-    expect(value[3][1][1].asBool, false);
-    expect(value[3][2][0].asBool, true);
-    expect(value[3][2][1].asBool, false);
-    expect(value[3][3][0].asBool, true);
-    expect(value[3][3][1].asBool, false);
+    void expectArrayDyn(DynamicValue value) {
+      expect(value.isArray, true);
+      expect(value[0].isArray, true);
+      expect(value[0].asArray.length, 4);
+      expect(value[1].isArray, true);
+      expect(value[1].asArray.length, 4);
+      expect(value[2].isArray, true);
+      expect(value[2].asArray.length, 4);
+      expect(value[3].isArray, true);
+      expect(value[3].asArray.length, 4);
+      expect(value[0][0].isArray, true);
+      expect(value[0][1].isArray, true);
+      expect(value[0][2].isArray, true);
+      expect(value[0][3].isArray, true);
+      expect(value[1][0].isArray, true);
+      expect(value[1][1].isArray, true);
+      expect(value[1][2].isArray, true);
+      expect(value[1][3].isArray, true);
+      expect(value[2][0].isArray, true);
+      expect(value[2][1].isArray, true);
+      expect(value[2][2].isArray, true);
+      expect(value[2][3].isArray, true);
+      expect(value[3][0].isArray, true);
+      expect(value[3][1].isArray, true);
+      expect(value[3][2].isArray, true);
+      expect(value[3][3].isArray, true);
+      expect(value[0][0][0].asBool, true);
+      expect(value[0][0][1].asBool, false);
+      expect(value[0][1][0].asBool, true);
+      expect(value[0][1][1].asBool, false);
+      expect(value[0][2][0].asBool, true);
+      expect(value[0][2][1].asBool, false);
+      expect(value[0][3][0].asBool, true);
+      expect(value[0][3][1].asBool, false);
+      expect(value[1][0][0].asBool, true);
+      expect(value[1][0][1].asBool, false);
+      expect(value[1][1][0].asBool, true);
+      expect(value[1][1][1].asBool, false);
+      expect(value[1][2][0].asBool, true);
+      expect(value[1][2][1].asBool, false);
+      expect(value[1][3][0].asBool, true);
+      expect(value[1][3][1].asBool, false);
+      expect(value[2][0][0].asBool, true);
+      expect(value[2][0][1].asBool, false);
+      expect(value[2][1][0].asBool, true);
+      expect(value[2][1][1].asBool, false);
+      expect(value[2][2][0].asBool, true);
+      expect(value[2][2][1].asBool, false);
+      expect(value[2][3][0].asBool, true);
+      expect(value[2][3][1].asBool, false);
+      expect(value[3][0][0].asBool, true);
+      expect(value[3][0][1].asBool, false);
+      expect(value[3][1][0].asBool, true);
+      expect(value[3][1][1].asBool, false);
+      expect(value[3][2][0].asBool, true);
+      expect(value[3][2][1].asBool, false);
+      expect(value[3][3][0].asBool, true);
+      expect(value[3][3][1].asBool, false);
+    }
+
+    final dynValueFromBuffer = Client.variantToValue(variant);
+    expectArrayDyn(dynValueFromBuffer);
+
+    final variantEncoded = Client.valueToVariant(dynValueFromBuffer, lib);
+    final variantData =
+        variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
+    expect(variantData, data);
+
+    final decoded = Client.variantToValue(variantEncoded);
+    expectArrayDyn(decoded);
     lib.UA_Variant_delete(variant);
   });
 
@@ -511,7 +527,7 @@ void main() {
 
     lib.UA_StructureDefinition_delete(sp);
     lib.UA_Variant_delete(variant);
-  });
+  }, skip: "Todo: make this test from real data");
 
   // TODO: Multi dimensional arrays inside structs
 }

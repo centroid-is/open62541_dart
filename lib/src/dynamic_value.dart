@@ -311,7 +311,9 @@ class DynamicValue extends PayloadType<DynamicValue> {
         writer.int32(value._data.length, endian);
       }
       for (var i = 0; i < value._data.length; i++) {
-        value._data[i].set(writer, value._data[i], endian);
+        // if array is root and subsequent type is array we should treat that also as root
+        // as in not read the subsequent array length
+        value._data[i].set(writer, value._data[i], endian, false, root);
       }
     } else if (value.isObject) {
       value._data
