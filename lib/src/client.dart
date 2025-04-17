@@ -478,6 +478,7 @@ class Client {
       for (int i = 1; i < dimensionsMultiplied; i++) {
         retValue[i] = DynamicValue(typeId: typeId.toNodeId());
       }
+      printBytes(data.ref.data.cast<ffi.Uint8>().asTypedList(bufferLength));
       retValue.get(reader, Endian.little, false, true);
     }
 

@@ -218,11 +218,15 @@ void clientIsolate(SendPort mainSendPort) async {
     //    await Future.delayed(Duration(milliseconds: 100));
     //  }
     //  c.writeValue(nreal, 1000.0);
-    // NodeId arr = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xSpare2");
-    // final arrMonId = c.monitoredItemCreate<dynamic>(arr, subId, (data) {
-    //   print('print arr DATA: $data');
-    //   mainSendPort.send('Arr DATA: $data');
-    // });
+    NodeId arr = NodeId.fromString(4, "GVL_IO.single_SB.a_struct.i_xSpare2");
+    print("Multidimension baby");
+    print(c.readValue(arr));
+    print("Multidimension baby");
+
+    NodeId marr = NodeId.fromString(4, "GVL_IO.single_SB.a_struct.i_xSpare3");
+    print("Multidimension baby");
+    print(c.readValue(marr));
+    print("Multidimension baby");
 
     // NodeId outSignal = NodeId.string(4, "GVL_IO.single_SB.i_xBatchReady");
     // final outSignalMonId =

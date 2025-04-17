@@ -198,4 +198,169 @@ void main() {
     // expect(val3["s2"].asString, decoded[2]["s2"].asString);
     // expect(val3["s3"].asString, decoded[2]["s3"].asString);
   });
+  test('4x2 multi dimensional array', () {
+    var data = [
+      0x01,
+      0x00,
+      0x02,
+      0x00,
+      0x03,
+      0x00,
+      0x04,
+      0x00,
+      0x05,
+      0x00,
+      0x06,
+      0x00,
+      0x07,
+      0x00,
+      0x08,
+      0x00
+    ];
+    Pointer<UA_Variant> variant = calloc();
+    variant.ref.data = calloc<Uint8>(data.length).cast();
+    variant.ref.data
+        .cast<Uint8>()
+        .asTypedList(data.length)
+        .setRange(0, data.length, data);
+
+    variant.ref.arrayLength = 0;
+    variant.ref.arrayDimensionsSize = 2;
+    variant.ref.arrayDimensions = calloc(2);
+    variant.ref.arrayDimensions[0] = 2;
+    variant.ref.arrayDimensions[1] = 4;
+    variant.ref.type = Client.getType(UaTypes.int16, lib);
+    final value = Client.variantToValue(variant);
+    print(value);
+    expect(value.isArray, true);
+    expect(value[0].isArray, true);
+    expect(value[0].asArray.length, 2);
+    expect(value[1].isArray, true);
+    expect(value[1].asArray.length, 2);
+    expect(value[2].isArray, true);
+    expect(value[2].asArray.length, 2);
+    expect(value[3].isArray, true);
+    expect(value[3].asArray.length, 2);
+    expect(value[0][0].asInt, 1);
+    expect(value[0][1].asInt, 2);
+    expect(value[1][0].asInt, 3);
+    expect(value[1][1].asInt, 4);
+    expect(value[2][0].asInt, 5);
+    expect(value[2][1].asInt, 6);
+    expect(value[3][0].asInt, 7);
+    expect(value[3][1].asInt, 8);
+    lib.UA_Variant_delete(variant);
+  });
+  test('4x4x2 boolean array', () {
+    var data = [
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00
+    ];
+    Pointer<UA_Variant> variant = calloc();
+    variant.ref.data = calloc<Uint8>(data.length).cast();
+    variant.ref.data
+        .cast<Uint8>()
+        .asTypedList(data.length)
+        .setRange(0, data.length, data);
+
+    variant.ref.arrayLength = 0;
+    variant.ref.arrayDimensionsSize = 3;
+    variant.ref.arrayDimensions = calloc(3);
+    variant.ref.arrayDimensions[0] = 4;
+    variant.ref.arrayDimensions[1] = 4;
+    variant.ref.arrayDimensions[2] = 2;
+    variant.ref.type = Client.getType(UaTypes.boolean, lib);
+    final value = Client.variantToValue(variant);
+    print(value);
+    expect(value.isArray, true);
+    expect(value[0].isArray, true);
+    expect(value[0].asArray.length, 4);
+    expect(value[1].isArray, true);
+    expect(value[1].asArray.length, 4);
+    expect(value[2].isArray, true);
+    expect(value[2].asArray.length, 4);
+    expect(value[3].isArray, true);
+    expect(value[3].asArray.length, 4);
+    expect(value[0][0].isArray, true);
+    expect(value[0][1].isArray, true);
+    expect(value[0][2].isArray, true);
+    expect(value[0][3].isArray, true);
+    expect(value[1][0].isArray, true);
+    expect(value[1][1].isArray, true);
+    expect(value[1][2].isArray, true);
+    expect(value[1][3].isArray, true);
+    expect(value[2][0].isArray, true);
+    expect(value[2][1].isArray, true);
+    expect(value[2][2].isArray, true);
+    expect(value[2][3].isArray, true);
+    expect(value[3][0].isArray, true);
+    expect(value[3][1].isArray, true);
+    expect(value[3][2].isArray, true);
+    expect(value[3][3].isArray, true);
+    expect(value[0][0][0].asBool, true);
+    expect(value[0][0][1].asBool, false);
+    expect(value[0][1][0].asBool, true);
+    expect(value[0][1][1].asBool, false);
+    expect(value[0][2][0].asBool, true);
+    expect(value[0][2][1].asBool, false);
+    expect(value[0][3][0].asBool, true);
+    expect(value[0][3][1].asBool, false);
+    expect(value[1][0][0].asBool, true);
+    expect(value[1][0][1].asBool, false);
+    expect(value[1][1][0].asBool, true);
+    expect(value[1][1][1].asBool, false);
+    expect(value[1][2][0].asBool, true);
+    expect(value[1][2][1].asBool, false);
+    expect(value[1][3][0].asBool, true);
+    expect(value[1][3][1].asBool, false);
+    expect(value[2][0][0].asBool, true);
+    expect(value[2][0][1].asBool, false);
+    expect(value[2][1][0].asBool, true);
+    expect(value[2][1][1].asBool, false);
+    expect(value[2][2][0].asBool, true);
+    expect(value[2][2][1].asBool, false);
+    expect(value[2][3][0].asBool, true);
+    expect(value[2][3][1].asBool, false);
+    expect(value[3][0][0].asBool, true);
+    expect(value[3][0][1].asBool, false);
+    expect(value[3][1][0].asBool, true);
+    expect(value[3][1][1].asBool, false);
+    expect(value[3][2][0].asBool, true);
+    expect(value[3][2][1].asBool, false);
+    expect(value[3][3][0].asBool, true);
+    expect(value[3][3][1].asBool, false);
+    lib.UA_Variant_delete(variant);
+  });
+
+  // TODO: Multi dimensional arrays inside structs
 }
