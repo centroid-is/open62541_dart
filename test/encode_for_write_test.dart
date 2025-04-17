@@ -183,20 +183,20 @@ void main() {
     var defs = {
       spNodeId: sp.ref,
     };
-    // final decoded = Client.variantToValue(variant, defs: defs);
+    final decoded = Client.variantToValue(variant, defs: defs);
 
-    // expect(val1["s1"].asString, "some string");
-    // expect(val1["s2"].asString, "other string");
-    // expect(val1["s3"].asString, "third string");
-    // expect(val1["s1"].asString, decoded[0]["s1"].asString);
-    // expect(val1["s2"].asString, decoded[0]["s2"].asString);
-    // expect(val1["s3"].asString, decoded[0]["s3"].asString);
-    // expect(val2["s1"].asString, decoded[1]["s1"].asString);
-    // expect(val2["s2"].asString, decoded[1]["s2"].asString);
-    // expect(val2["s3"].asString, decoded[1]["s3"].asString);
-    // expect(val3["s1"].asString, decoded[2]["s1"].asString);
-    // expect(val3["s2"].asString, decoded[2]["s2"].asString);
-    // expect(val3["s3"].asString, decoded[2]["s3"].asString);
+    expect(val1["s1"].asString, "some string");
+    expect(val1["s2"].asString, "other string");
+    expect(val1["s3"].asString, "third string");
+    expect(val1["s1"].asString, decoded[0]["s1"].asString);
+    expect(val1["s2"].asString, decoded[0]["s2"].asString);
+    expect(val1["s3"].asString, decoded[0]["s3"].asString);
+    expect(val2["s1"].asString, decoded[1]["s1"].asString);
+    expect(val2["s2"].asString, decoded[1]["s2"].asString);
+    expect(val2["s3"].asString, decoded[1]["s3"].asString);
+    expect(val3["s1"].asString, decoded[2]["s1"].asString);
+    expect(val3["s2"].asString, decoded[2]["s2"].asString);
+    expect(val3["s3"].asString, decoded[2]["s3"].asString);
   });
   test('4x2 multi dimensional array', () {
     var data = [
@@ -359,6 +359,157 @@ void main() {
     expect(value[3][2][1].asBool, false);
     expect(value[3][3][0].asBool, true);
     expect(value[3][3][1].asBool, false);
+    lib.UA_Variant_delete(variant);
+  });
+
+  // BIG TODO generated test, verify its correctness
+  test('2x3x4 array of string structs', () {
+    var data = [
+      // [0][0][0] - Position A
+      2, 0, 0, 0, 97, 65, 0, // aA
+      2, 0, 0, 0, 98, 65, 0, // bA
+      2, 0, 0, 0, 99, 65, 0, // cA
+      // [0][0][1] - Position B
+      2, 0, 0, 0, 97, 66, 0, // aB
+      2, 0, 0, 0, 98, 66, 0, // bB
+      2, 0, 0, 0, 99, 66, 0, // cB
+      // [0][0][2] - Position C
+      2, 0, 0, 0, 97, 67, 0, // aC
+      2, 0, 0, 0, 98, 67, 0, // bC
+      2, 0, 0, 0, 99, 67, 0, // cC
+      // [0][0][3] - Position D
+      2, 0, 0, 0, 97, 68, 0, // aD
+      2, 0, 0, 0, 98, 68, 0, // bD
+      2, 0, 0, 0, 99, 68, 0, // cD
+      // [0][1][0] - Position E
+      2, 0, 0, 0, 97, 69, 0, // aE
+      2, 0, 0, 0, 98, 69, 0, // bE
+      2, 0, 0, 0, 99, 69, 0, // cE
+      // [0][1][1] - Position F
+      2, 0, 0, 0, 97, 70, 0, // aF
+      2, 0, 0, 0, 98, 70, 0, // bF
+      2, 0, 0, 0, 99, 70, 0, // cF
+      // [0][1][2] - Position G
+      2, 0, 0, 0, 97, 71, 0, // aG
+      2, 0, 0, 0, 98, 71, 0, // bG
+      2, 0, 0, 0, 99, 71, 0, // cG
+      // [0][1][3] - Position H
+      2, 0, 0, 0, 97, 72, 0, // aH
+      2, 0, 0, 0, 98, 72, 0, // bH
+      2, 0, 0, 0, 99, 72, 0, // cH
+      // [0][2][0] - Position I
+      2, 0, 0, 0, 97, 73, 0, // aI
+      2, 0, 0, 0, 98, 73, 0, // bI
+      2, 0, 0, 0, 99, 73, 0, // cI
+      // [0][2][1] - Position J
+      2, 0, 0, 0, 97, 74, 0, // aJ
+      2, 0, 0, 0, 98, 74, 0, // bJ
+      2, 0, 0, 0, 99, 74, 0, // cJ
+      // [0][2][2] - Position K
+      2, 0, 0, 0, 97, 75, 0, // aK
+      2, 0, 0, 0, 98, 75, 0, // bK
+      2, 0, 0, 0, 99, 75, 0, // cK
+      // [0][2][3] - Position L
+      2, 0, 0, 0, 97, 76, 0, // aL
+      2, 0, 0, 0, 98, 76, 0, // bL
+      2, 0, 0, 0, 99, 76, 0, // cL
+      // [1][0][0] - Position M
+      2, 0, 0, 0, 97, 77, 0, // aM
+      2, 0, 0, 0, 98, 77, 0, // bM
+      2, 0, 0, 0, 99, 77, 0, // cM
+      // [1][0][1] - Position N
+      2, 0, 0, 0, 97, 78, 0, // aN
+      2, 0, 0, 0, 98, 78, 0, // bN
+      2, 0, 0, 0, 99, 78, 0, // cN
+      // [1][0][2] - Position O
+      2, 0, 0, 0, 97, 79, 0, // aO
+      2, 0, 0, 0, 98, 79, 0, // bO
+      2, 0, 0, 0, 99, 79, 0, // cO
+      // [1][0][3] - Position P
+      2, 0, 0, 0, 97, 80, 0, // aP
+      2, 0, 0, 0, 98, 80, 0, // bP
+      2, 0, 0, 0, 99, 80, 0, // cP
+      // [1][1][0] - Position Q
+      2, 0, 0, 0, 97, 81, 0, // aQ
+      2, 0, 0, 0, 98, 81, 0, // bQ
+      2, 0, 0, 0, 99, 81, 0, // cQ
+      // [1][1][1] - Position R
+      2, 0, 0, 0, 97, 82, 0, // aR
+      2, 0, 0, 0, 98, 82, 0, // bR
+      2, 0, 0, 0, 99, 82, 0, // cR
+      // [1][1][2] - Position S
+      2, 0, 0, 0, 97, 83, 0, // aS
+      2, 0, 0, 0, 98, 83, 0, // bS
+      2, 0, 0, 0, 99, 83, 0, // cS
+      // [1][1][3] - Position T
+      2, 0, 0, 0, 97, 84, 0, // aT
+      2, 0, 0, 0, 98, 84, 0, // bT
+      2, 0, 0, 0, 99, 84, 0, // cT
+      // [1][2][0] - Position U
+      2, 0, 0, 0, 97, 85, 0, // aU
+      2, 0, 0, 0, 98, 85, 0, // bU
+      2, 0, 0, 0, 99, 85, 0, // cU
+      // [1][2][1] - Position V
+      2, 0, 0, 0, 97, 86, 0, // aV
+      2, 0, 0, 0, 98, 86, 0, // bV
+      2, 0, 0, 0, 99, 86, 0, // cV
+      // [1][2][2] - Position W
+      2, 0, 0, 0, 97, 87, 0, // aW
+      2, 0, 0, 0, 98, 87, 0, // bW
+      2, 0, 0, 0, 99, 87, 0, // cW
+      // [1][2][3] - Position X
+      2, 0, 0, 0, 97, 88, 0, // aX
+      2, 0, 0, 0, 98, 88, 0, // bX
+      2, 0, 0, 0, 99, 88, 0, // cX
+    ];
+
+    Pointer<UA_Variant> variant = calloc();
+    variant.ref.data = calloc<Uint8>(data.length).cast();
+    variant.ref.data
+        .cast<Uint8>()
+        .asTypedList(data.length)
+        .setRange(0, data.length, data);
+
+    variant.ref.arrayLength = 0;
+    variant.ref.arrayDimensionsSize = 3;
+    variant.ref.arrayDimensions = calloc(3);
+    variant.ref.arrayDimensions[0] = 2;
+    variant.ref.arrayDimensions[1] = 3;
+    variant.ref.arrayDimensions[2] = 4;
+    variant.ref.type = Client.getType(UaTypes.int16, lib);
+
+    var spNodeId = NodeId.fromString(4, "Omars string struct");
+    List<Pointer<raw.UA_StructureField>> spFields = [
+      buildField(NodeId.uastring, "s1", [], "ff"),
+      buildField(NodeId.uastring, "s2", [], "ff"),
+      buildField(NodeId.uastring, "s3", [], "ff"),
+    ];
+    var sp = buildDef(spFields);
+    var defs = {spNodeId: sp.ref};
+
+    final value = Client.variantToValue(variant, defs: defs);
+
+    expect(value.isArray, true);
+    expect(value.asArray.length, 2);
+    expect(value[0].asArray.length, 3);
+    expect(value[0][0].asArray.length, 4);
+
+    // Test first struct
+    expect(value[0][0][0]["s1"].asString, "aA");
+    expect(value[0][0][0]["s2"].asString, "bA");
+    expect(value[0][0][0]["s3"].asString, "cA");
+
+    // Test last struct
+    expect(value[1][2][3]["s1"].asString, "aX");
+    expect(value[1][2][3]["s2"].asString, "bX");
+    expect(value[1][2][3]["s3"].asString, "cX");
+
+    // Test middle position
+    expect(value[1][0][0]["s1"].asString, "aM");
+    expect(value[1][0][0]["s2"].asString, "bM");
+    expect(value[1][0][0]["s3"].asString, "cM");
+
+    lib.UA_StructureDefinition_delete(sp);
     lib.UA_Variant_delete(variant);
   });
 
