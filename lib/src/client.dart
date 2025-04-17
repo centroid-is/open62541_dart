@@ -157,6 +157,7 @@ class Client {
       id = Namespace0Id.structure;
     }
     if (value.isArray) {
+      // todo this is not correct for multi dimensional arrays
       lib.UA_Variant_setArray(variant, pointer.cast(), value.asArray.length,
           getType(id.toUaTypes(), lib));
     } else {
