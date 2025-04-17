@@ -294,7 +294,9 @@ class DynamicValue extends PayloadType<DynamicValue> {
         }
       }
       for (int i = 0; i < asArray.length; i++) {
-        _data[i] = _data[i].get(reader, endian);
+        // if array is root and subsequent type is array we should treat that also as root
+        // as in not read the subsequent array length
+        _data[i] = _data[i].get(reader, endian, false, root);
       }
     }
     return this;

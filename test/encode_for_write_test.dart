@@ -227,11 +227,11 @@ void main() {
     variant.ref.arrayLength = 0;
     variant.ref.arrayDimensionsSize = 2;
     variant.ref.arrayDimensions = calloc(2);
-    variant.ref.arrayDimensions[0] = 2;
-    variant.ref.arrayDimensions[1] = 4;
+    variant.ref.arrayDimensions[0] = 4;
+    variant.ref.arrayDimensions[1] = 2;
     variant.ref.type = Client.getType(UaTypes.int16, lib);
     final value = Client.variantToValue(variant);
-    print(value);
+    // print(value);
     expect(value.isArray, true);
     expect(value[0].isArray, true);
     expect(value[0].asArray.length, 2);
@@ -301,7 +301,7 @@ void main() {
     variant.ref.arrayDimensions[2] = 2;
     variant.ref.type = Client.getType(UaTypes.boolean, lib);
     final value = Client.variantToValue(variant);
-    print(value);
+    // print(value);
     expect(value.isArray, true);
     expect(value[0].isArray, true);
     expect(value[0].asArray.length, 4);

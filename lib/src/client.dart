@@ -467,18 +467,29 @@ class Client {
       printBytes(bytes);
       retValue = firstDyn;
     } else {
-      // // We are a trivial type or an array of trivials
-      retValue = DynamicValue(typeId: typeId.toNodeId());
+      DynamicValue createNestedArray(List<int> dims) {
+        if (dims.isEmpty) {
+          return DynamicValue(typeId: typeId.toNodeId());
+        }
+
+        DynamicValue list = DynamicValue(typeId: typeId.toNodeId());
+        if (dims.length == 1) {
+          // Base case: create array of the final dimension
+          for (int i = 0; i < dims[0]; i++) {
+            list[i] = DynamicValue(typeId: typeId.toNodeId());
+          }
+        } else {
+          for (int i = 0; i < dims[0]; i++) {
+            list[i] = createNestedArray(dims.sublist(1));
+          }
+        }
+        return list;
+      }
+
+      retValue = createNestedArray(dimensions.toList());
       final reader = binarize.ByteReader(
           data.ref.data.cast<ffi.Uint8>().asTypedList(bufferLength));
-      // Always get at least one value
-      if (dimensionsMultiplied > 1) {
-        retValue = DynamicValue.fromList([retValue], typeId: typeId.toNodeId());
-      }
-      for (int i = 1; i < dimensionsMultiplied; i++) {
-        retValue[i] = DynamicValue(typeId: typeId.toNodeId());
-      }
-      printBytes(data.ref.data.cast<ffi.Uint8>().asTypedList(bufferLength));
+      // printBytes(data.ref.data.cast<ffi.Uint8>().asTypedList(bufferLength));
       retValue.get(reader, Endian.little, false, true);
     }
 
