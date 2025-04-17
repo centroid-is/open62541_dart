@@ -259,7 +259,8 @@ class DynamicValue extends PayloadType<DynamicValue> {
   }
 
   @override
-  DynamicValue get(ByteReader reader, [Endian? endian, insideStruct = false]) {
+  DynamicValue get(ByteReader reader,
+      [Endian? endian, insideStruct = false, root = false]) {
     // Assume we are in a structure of DynamicValue where typeId is set but alll values are null
     // {
     // { }
@@ -285,8 +286,13 @@ class DynamicValue extends PayloadType<DynamicValue> {
     // We are a array case
     if (isArray) {
       // Read the size of the stack to increment the
-      // read pointer
-      final _ = reader.int32(endian);
+      // read pointer but only if we are not the root
+      if (!root) {
+        final arrayLength = reader.int32(endian);
+        if (arrayLength != asArray.length) {
+          throw 'Structure definition and array length from buffer dont match';
+        }
+      }
       for (int i = 0; i < asArray.length; i++) {
         _data[i] = _data[i].get(reader, endian);
       }
@@ -296,9 +302,12 @@ class DynamicValue extends PayloadType<DynamicValue> {
 
   @override
   void set(ByteWriter writer, DynamicValue value,
-      [Endian? endian, bool insideStruct = false]) {
+      [Endian? endian, bool insideStruct = false, root = false]) {
     if (value.isArray) {
-      writer.int32(value._data.length, endian);
+      // Don't encode the array length if we are the root
+      if (!root) {
+        writer.int32(value._data.length, endian);
+      }
       for (var i = 0; i < value._data.length; i++) {
         value._data[i].set(writer, value._data[i], endian);
       }

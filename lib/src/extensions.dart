@@ -563,12 +563,13 @@ extension UA_ExtensionObjectExtension on raw.UA_ExtensionObject {
   }
 }
 
-void printBytes(String var_name, Uint8List bytes) {
+void printBytes(TypedData bytes) {
   final buffer = StringBuffer();
-  buffer.write('var $var_name = [');
-  for (var i = 0; i < bytes.length; i++) {
+  buffer.write('var data = [');
+  for (var i = 0; i < bytes.lengthInBytes; i++) {
     if (i > 0) buffer.write(', ');
-    buffer.write('0x${bytes[i].toRadixString(16).padLeft(2, '0')}');
+    buffer.write(
+        '0x${bytes.buffer.asUint8List()[i].toRadixString(16).padLeft(2, '0')}');
   }
   buffer.write('];');
   print(buffer.toString());

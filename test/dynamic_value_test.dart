@@ -372,7 +372,7 @@ void main() {
       expect(bytes[i], b[i]);
     }
   });
-  test('Struct of strings', () {
+  test('Array of structs', () {
     // Layout and data
     // Array [4] of ST_SimpleStrings
     // field1:
@@ -425,14 +425,6 @@ void main() {
       0x00,
       0x00,
       0x68,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
       0x01,
       0x00,
       0x00,
@@ -473,14 +465,6 @@ void main() {
       0x00,
       0x00,
       0x70,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
       0x01,
       0x00,
       0x00,
@@ -521,62 +505,46 @@ void main() {
       0x00,
       0x00,
       0x64,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0xc0,
-      0xef,
-      0x35,
-      0x3d,
       0x01,
       0x00,
       0x00,
       0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x04,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x80,
-      0x9d,
+      0x65,
       0x01,
       0x00,
-      0x60,
+      0x00,
+      0x00,
+      0x66,
+      0x01,
       0x00,
       0x00,
       0x00,
+      0x67,
+      0x01,
       0x00,
       0x00,
       0x00,
+      0x68,
+      0x01,
       0x00,
       0x00,
       0x00,
+      0x69,
+      0x01,
       0x00,
       0x00,
       0x00,
+      0x6a,
+      0x01,
       0x00,
       0x00,
       0x00,
+      0x6b,
+      0x01,
       0x00,
       0x00,
-      0x00
+      0x00,
+      0x6c
     ];
 
     // Create a dynamic value with the structure
@@ -628,22 +596,49 @@ void main() {
 
     final bytes = Uint8List.fromList(data);
     ByteReader reader = ByteReader(bytes, endian: Endian.little);
-    parent.get(reader, Endian.little);
-    // expect(test["field1"].asString, "Centroid");
-    // expect(test["field2"].asString, "Omar");
-    // expect(test["field3"].asString, "JBB");
-    // expect(test["field4"].asString, "ARNI");
-    // expect(test["bigfield1"].asString, "☓");
-    // expect(test["bigfield2"].asString, "☔");
-    // expect(test["bigfield3"].asString, "☕");
-    // expect(test["bigfield4"].asString, "☘");
+    parent.get(reader, Endian.little, false, true);
+    expect(parent[0]["field1"].asString, "a");
+    expect(parent[0]["field2"].asString, "b");
+    expect(parent[0]["field3"].asString, "c");
+    expect(parent[0]["field4"].asString, "d");
+    expect(parent[0]["bigfield1"].asString, "e");
+    expect(parent[0]["bigfield2"].asString, "f");
+    expect(parent[0]["bigfield3"].asString, "g");
+    expect(parent[0]["bigfield4"].asString, "h");
 
-    // ByteWriter writer = ByteWriter(endian: Endian.little);
-    // test.set(writer, test, Endian.little);
-    // final b = writer.toBytes();
-    // expect(bytes.length, b.length);
-    // for (int i = 0; i < bytes.length; i++) {
-    //   expect(bytes[i], b[i]);
-    // }
+    expect(parent[1]["field1"].asString, "i");
+    expect(parent[1]["field2"].asString, "j");
+    expect(parent[1]["field3"].asString, "k");
+    expect(parent[1]["field4"].asString, "l");
+    expect(parent[1]["bigfield1"].asString, "m");
+    expect(parent[1]["bigfield2"].asString, "n");
+    expect(parent[1]["bigfield3"].asString, "o");
+    expect(parent[1]["bigfield4"].asString, "p");
+
+    expect(parent[2]["field1"].asString, "q");
+    expect(parent[2]["field2"].asString, "r");
+    expect(parent[2]["field3"].asString, "s");
+    expect(parent[2]["field4"].asString, "t");
+    expect(parent[2]["bigfield1"].asString, "a");
+    expect(parent[2]["bigfield2"].asString, "b");
+    expect(parent[2]["bigfield3"].asString, "c");
+    expect(parent[2]["bigfield4"].asString, "d");
+
+    expect(parent[3]["field1"].asString, "e");
+    expect(parent[3]["field2"].asString, "f");
+    expect(parent[3]["field3"].asString, "g");
+    expect(parent[3]["field4"].asString, "h");
+    expect(parent[3]["bigfield1"].asString, "i");
+    expect(parent[3]["bigfield2"].asString, "j");
+    expect(parent[3]["bigfield3"].asString, "k");
+    expect(parent[3]["bigfield4"].asString, "l");
+
+    ByteWriter writer = ByteWriter(endian: Endian.little);
+    parent.set(writer, parent, Endian.little, false, true);
+    final b = writer.toBytes();
+    expect(bytes.length, b.length);
+    for (int i = 0; i < bytes.length; i++) {
+      expect(bytes[i], b[i]);
+    }
   });
 }

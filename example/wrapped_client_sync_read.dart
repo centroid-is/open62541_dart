@@ -191,6 +191,7 @@ void clientIsolate(SendPort mainSendPort) async {
 
     print("Flipping");
     DynamicValue rr = c.readValue(lId);
+    print(rr);
     rr["bool1"] = !rr["bool1"].asBool;
     rr["bool2"] = !rr["bool2"].asBool;
     c.writeValue(lId, rr);

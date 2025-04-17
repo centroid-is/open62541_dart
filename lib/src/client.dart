@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:math';
 
 import 'package:ffi/ffi.dart';
 import 'package:logger/logger.dart';
@@ -450,21 +451,40 @@ class Client {
         assert(defs != null);
 
         final ext = ref.data.cast<raw.UA_ExtensionObject>().ref.content.encoded;
-        var tt = ext.typeId;
+        final arr = ref.data.cast<raw.UA_ExtensionObject>();
+        final tt = ext.typeId;
+
+        // We always have at least 1
+        final first = arr[0].content.encoded;
+        var firstBytes = first.body.data.asTypedList(first.body.length);
         //TODO: Delete
-        // Debug primative dump the answer from the server
-        var bytes = <int>[];
-        for (int i = 0; i < bufferLength; i++) {
-          bytes.add(ext.body.data[i]);
-        }
-        printBytes("data", Uint8List.fromList(bytes));
-        DynamicValue object =
+        var typeLists = <int>[];
+        typeLists.addAll(firstBytes);
+
+        DynamicValue firstDyn =
             DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs!);
+        var reader = binarize.ByteReader(firstBytes);
+        firstDyn.get(reader, Endian.little);
 
-        var reader = binarize.ByteReader(Uint8List.fromList(bytes));
-        object.get(reader, Endian.little);
+        if (dimensionsMultiplied > 1) {
+          firstDyn = DynamicValue.fromList([firstDyn], typeId: tt.toNodeId());
+        }
+        for (int i = 1; i < dimensionsMultiplied; i++) {
+          final ref = arr[i].content.encoded;
+          var typedList = ref.body.data.asTypedList(ref.body.length);
+          DynamicValue element =
+              DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs!);
+          var reader = binarize.ByteReader(typedList);
+          element.get(reader, Endian.little);
+          firstDyn[i] = element;
+          typeLists.addAll(typedList);
+        }
 
-        return object;
+        //TODO: Delete
+        final bytes = Uint8List.fromList(typeLists);
+        printBytes(bytes);
+
+        return firstDyn;
       default:
         throw 'Unsupported variant type: $typeKind';
     }
