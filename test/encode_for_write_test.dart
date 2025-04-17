@@ -2,12 +2,16 @@ import 'dart:ffi';
 
 import 'package:open62541_bindings/src/dynamic_value.dart';
 import 'package:open62541_bindings/src/generated/open62541_bindings.dart';
+import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
+    as raw;
 import 'package:open62541_bindings/src/library.dart';
 import 'package:open62541_bindings/src/node_id.dart';
+import 'package:open62541_bindings/src/extensions.dart';
 import 'package:test/test.dart';
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
 import 'package:open62541_bindings/src/client.dart';
+import 'schema_util.dart';
 
 void main() {
   final lib = Open62541Singleton().lib;
@@ -113,55 +117,85 @@ void main() {
     testSimpleTypes(DynamicValue.fromList(strings, typeId: NodeId.uastring));
   });
 
-  test('Encode structs', () {
-    var myMap = <String, dynamic>{
-      "field1": true,
-      "field2": false,
-      "field3": true,
-      "field4": false,
-      "field5": true,
-      "field6": false,
-      "field7": 42,
-      "field8": {
-        "subfield1": false,
-        "subfield2": true,
-        "subfield3": [false, true],
-      }
-    };
-    var myVal = DynamicValue.fromMap(myMap);
-    myVal.typeId = NodeId.fromString(4, "<StructuredDataType>:ST_SpeedBatcher");
-    myVal["field1"].typeId = NodeId.boolean;
-    myVal["field2"].typeId = NodeId.boolean;
-    myVal["field3"].typeId = NodeId.boolean;
-    myVal["field4"].typeId = NodeId.boolean;
-    myVal["field5"].typeId = NodeId.boolean;
-    myVal["field6"].typeId = NodeId.boolean;
-    myVal["field7"].typeId = NodeId.int16;
-    myVal["field8"].typeId = NodeId.fromString(4, "<StructuredDataType>:ST_FP");
-    myVal["field8"]["subfield1"].typeId = NodeId.boolean;
-    myVal["field8"]["subfield2"].typeId = NodeId.boolean;
-    myVal["field8"]["subfield3"].typeId = NodeId.boolean;
-    myVal["field8"]["subfield3"][0].typeId = NodeId.boolean;
-    myVal["field8"]["subfield3"][1].typeId = NodeId.boolean;
-    final variant = Client.valueToVariant(myVal, lib);
+  test('struct of strings variant to value and back', () {
+    final DynamicValue val =
+        DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
+    val["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
+    val["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
+    val["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
+    final variant = Client.valueToVariant(val, lib);
 
-    ByteWriter writer = ByteWriter();
-    myVal.set(writer, myVal, Endian.little);
-    final bytes = writer.toBytes();
-    ByteReader reader = ByteReader(bytes, endian: Endian.little);
-    final decoded = myVal.get(reader, Endian.little);
-    expect(decoded['field1'].asBool, true);
-    expect(decoded['field2'].asBool, false);
-    expect(decoded['field3'].asBool, true);
-    expect(decoded['field4'].asBool, false);
-    expect(decoded['field5'].asBool, true);
-    expect(decoded['field6'].asBool, false);
-    expect(decoded['field7'].asInt, 42);
-    expect(decoded['field8']['subfield1'].asBool, false);
-    expect(decoded['field8']['subfield2'].asBool, true);
-    expect(decoded['field8']['subfield3'].asArray.length, 2);
-    expect(decoded['field8']['subfield3'][0].asBool, false);
-    expect(decoded['field8']['subfield3'][1].asBool, true);
-    calloc.free(variant);
+    var spNodeId = NodeId.fromString(4, "Omars string struct");
+    List<Pointer<raw.UA_StructureField>> spFields = [
+      buildField(NodeId.uastring, "s1", [], "ff"),
+      buildField(NodeId.uastring, "s2", [], "ff"),
+      buildField(NodeId.uastring, "s3", [], "ff"),
+    ];
+    var sp = buildDef(spFields);
+
+    var defs = {
+      spNodeId: sp.ref,
+    };
+    final decoded = Client.variantToValue(variant, defs: defs);
+    lib.UA_StructureDefinition_delete(sp);
+
+    expect(val["s1"].asString, "some string");
+    expect(val["s2"].asString, "other string");
+    expect(val["s3"].asString, "third string");
+    expect(val["s1"].asString, decoded["s1"].asString);
+    expect(val["s2"].asString, decoded["s2"].asString);
+    expect(val["s3"].asString, decoded["s3"].asString);
+  });
+
+  test('Array of structs variant to value and back', () {
+    final DynamicValue val1 =
+        DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
+    val1["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
+    val1["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
+    val1["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
+
+    final DynamicValue val2 =
+        DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
+    val2["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
+    val2["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
+    val2["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
+
+    final DynamicValue val3 =
+        DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
+    val3["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
+    val3["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
+    val3["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
+
+    DynamicValue parent =
+        DynamicValue.fromList([val1, val2, val3], typeId: val1.typeId);
+    final variant = Client.valueToVariant(parent, lib);
+
+    print(variant.ref.format());
+
+    var spNodeId = NodeId.fromString(4, "Omars string struct");
+    List<Pointer<raw.UA_StructureField>> spFields = [
+      buildField(NodeId.uastring, "s1", [], "ff"),
+      buildField(NodeId.uastring, "s2", [], "ff"),
+      buildField(NodeId.uastring, "s3", [], "ff"),
+    ];
+    var sp = buildDef(spFields);
+
+    var defs = {
+      spNodeId: sp.ref,
+    };
+    // final decoded = Client.variantToValue(variant, defs: defs);
+
+    // expect(val1["s1"].asString, "some string");
+    // expect(val1["s2"].asString, "other string");
+    // expect(val1["s3"].asString, "third string");
+    // expect(val1["s1"].asString, decoded[0]["s1"].asString);
+    // expect(val1["s2"].asString, decoded[0]["s2"].asString);
+    // expect(val1["s3"].asString, decoded[0]["s3"].asString);
+    // expect(val2["s1"].asString, decoded[1]["s1"].asString);
+    // expect(val2["s2"].asString, decoded[1]["s2"].asString);
+    // expect(val2["s3"].asString, decoded[1]["s3"].asString);
+    // expect(val3["s1"].asString, decoded[2]["s1"].asString);
+    // expect(val3["s2"].asString, decoded[2]["s2"].asString);
+    // expect(val3["s3"].asString, decoded[2]["s3"].asString);
   });
 }

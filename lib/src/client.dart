@@ -112,28 +112,42 @@ class Client {
       DynamicValue value, raw.open62541 lib) {
     ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
 
-    binarize.ByteWriter wr = binarize.ByteWriter();
-    value.set(wr, value, Endian.little);
-    final bytes = wr.toBytes();
-    int offset = 0;
-    if (value.isArray) {
-      offset = 4;
-    }
-    ffi.Pointer<ffi.Uint8> pointer = calloc<ffi.Uint8>(bytes.length);
-    for (int i = offset; i < bytes.length; i++) {
-      pointer[i - offset] = bytes[i];
-    }
+    ffi.Pointer<ffi.Uint8> pointer;
 
     //TODO: This is propably not correct, do this for now
     if (value.typeId != null && value.typeId!.isString()) {
-      //TODO: Array
-      ffi.Pointer<raw.UA_ExtensionObject> ext =
-          calloc<raw.UA_ExtensionObject>();
-      ext.ref.content.encoded.typeId = value.typeId!.toRaw(lib);
-      ext.ref.content.encoded.body.length = bytes.length;
-      ext.ref.content.encoded.body.data = pointer;
-      ext.ref.encoding = 1;
+      ffi.Pointer<raw.UA_ExtensionObject> ext = calloc<raw.UA_ExtensionObject>(
+          value.isArray ? value.asArray.length : 1);
+      if (value.isArray) {
+        for (int i = 0; i < value.asArray.length; i++) {
+          final ref = ext[i];
+          binarize.ByteWriter wr = binarize.ByteWriter();
+          ref.content.encoded.typeId = value.asArray[i].typeId!.toRaw(lib);
+          value.asArray[i]
+              .set(wr, value.asArray[i], Endian.little, false, false);
+          ref.content.encoded.body.length = wr.length;
+          final element = calloc<ffi.Uint8>(wr.length);
+          element.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
+          ref.content.encoded.body.data = element;
+          ref.encoding = 1;
+        }
+      } else {
+        binarize.ByteWriter wr = binarize.ByteWriter();
+        value.set(wr, value, Endian.little, false, true);
+        final element = calloc<ffi.Uint8>(wr.length);
+        element.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
+        ext.ref.content.encoded.typeId = value.typeId!.toRaw(lib);
+        ext.ref.content.encoded.body.length = wr.length;
+        ext.ref.content.encoded.body.data = element;
+        ext.ref.encoding = 1;
+      }
+
       pointer = ext.cast();
+    } else {
+      binarize.ByteWriter wr = binarize.ByteWriter();
+      value.set(wr, value, Endian.little, false, true);
+      pointer = calloc<ffi.Uint8>(wr.length);
+      pointer.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
     }
 
     Namespace0Id id;
@@ -407,87 +421,67 @@ class Client {
       return DynamicValue();
     }
 
-    final typeKind = data.ref.type.ref.typeKind;
     final typeId = data.ref.type.ref.typeId;
     final ref = data.ref;
 
     final dimensions = ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
     final dimensionsMultiplied = dimensions.fold(1, (a, b) => a * b);
     final bufferLength = dimensionsMultiplied * ref.type.ref.memSize;
+    DynamicValue retValue;
 
-    switch (typeKind) {
-      case TypeKindEnum.boolean:
-      case TypeKindEnum.sbyte:
-      case TypeKindEnum.byte:
-      case TypeKindEnum.int16:
-      case TypeKindEnum.uint16:
-      case TypeKindEnum.int32:
-      case TypeKindEnum.uint32:
-      case TypeKindEnum.int64:
-      case TypeKindEnum.uint64:
-      case TypeKindEnum.float:
-      case TypeKindEnum.double:
-      case TypeKindEnum.datetime:
-      case TypeKindEnum.string:
-        final payloadType =
-            wrapInArray(nodeIdToPayloadType(typeId.toNodeId()), dimensions);
-        final reader = binarize.ByteReader(
-            ref.data.cast<ffi.Uint8>().asTypedList(bufferLength),
-            endian: binarize.Endian.little);
+    // Read structure from opc-ua server
+    if (typeId.toNodeId() == NodeId.structure) {
+      assert(defs! != null);
 
-        final value = payloadType.get(reader, Endian.little);
-        if (reader.isNotDone) {
-          throw StateError(
-              'Reader is not done reading where value is\n $value');
-        }
-        if (value is List) {
-          return DynamicValue.fromList(value, typeId: typeId.toNodeId());
-        } else {
-          return DynamicValue(value: value, typeId: typeId.toNodeId());
-        }
+      final ext = ref.data.cast<raw.UA_ExtensionObject>().ref.content.encoded;
+      final arr = ref.data.cast<raw.UA_ExtensionObject>();
+      final tt = ext.typeId;
 
-      case TypeKindEnum.extensionObject:
-        // Read structure from opc-ua server
-        assert(defs != null);
+      // We always have at least 1
+      final first = arr[0].content.encoded;
+      var firstBytes = first.body.data.asTypedList(first.body.length);
+      //TODO: Delete
+      var typeLists = <int>[];
+      typeLists.addAll(firstBytes);
 
-        final ext = ref.data.cast<raw.UA_ExtensionObject>().ref.content.encoded;
-        final arr = ref.data.cast<raw.UA_ExtensionObject>();
-        final tt = ext.typeId;
+      DynamicValue firstDyn =
+          DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs!);
+      var reader = binarize.ByteReader(firstBytes);
+      firstDyn.get(reader, Endian.little, false, true);
 
-        // We always have at least 1
-        final first = arr[0].content.encoded;
-        var firstBytes = first.body.data.asTypedList(first.body.length);
-        //TODO: Delete
-        var typeLists = <int>[];
-        typeLists.addAll(firstBytes);
-
-        DynamicValue firstDyn =
-            DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs!);
-        var reader = binarize.ByteReader(firstBytes);
-        firstDyn.get(reader, Endian.little);
-
-        if (dimensionsMultiplied > 1) {
-          firstDyn = DynamicValue.fromList([firstDyn], typeId: tt.toNodeId());
-        }
-        for (int i = 1; i < dimensionsMultiplied; i++) {
-          final ref = arr[i].content.encoded;
-          var typedList = ref.body.data.asTypedList(ref.body.length);
-          DynamicValue element =
-              DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs!);
-          var reader = binarize.ByteReader(typedList);
-          element.get(reader, Endian.little);
-          firstDyn[i] = element;
-          typeLists.addAll(typedList);
-        }
-
-        //TODO: Delete
-        final bytes = Uint8List.fromList(typeLists);
-        printBytes(bytes);
-
-        return firstDyn;
-      default:
-        throw 'Unsupported variant type: $typeKind';
+      if (dimensionsMultiplied > 1) {
+        firstDyn = DynamicValue.fromList([firstDyn], typeId: tt.toNodeId());
+      }
+      for (int i = 1; i < dimensionsMultiplied; i++) {
+        final ref = arr[i].content.encoded;
+        var typedList = ref.body.data.asTypedList(ref.body.length);
+        DynamicValue element =
+            DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs);
+        var reader = binarize.ByteReader(typedList);
+        element.get(reader, Endian.little);
+        firstDyn[i] = element;
+        typeLists.addAll(typedList);
+      }
+      //TODO: Delete
+      final bytes = Uint8List.fromList(typeLists);
+      printBytes(bytes);
+      retValue = firstDyn;
+    } else {
+      // // We are a trivial type or an array of trivials
+      retValue = DynamicValue(typeId: typeId.toNodeId());
+      final reader = binarize.ByteReader(
+          data.ref.data.cast<ffi.Uint8>().asTypedList(bufferLength));
+      // Always get at least one value
+      if (dimensionsMultiplied > 1) {
+        retValue = DynamicValue.fromList([retValue], typeId: typeId.toNodeId());
+      }
+      for (int i = 1; i < dimensionsMultiplied; i++) {
+        retValue[i] = DynamicValue(typeId: typeId.toNodeId());
+      }
+      retValue.get(reader, Endian.little, false, true);
     }
+
+    return retValue;
   }
 
   String statusCodeToString(int statusCode) {

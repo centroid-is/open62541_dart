@@ -274,37 +274,3 @@ class ContiguousStringPayload extends PayloadType<String?> {
     }
   }
 }
-
-class ArrayPayload<T> extends PayloadType<List<T>?> {
-  final PayloadType<T> elementType;
-  int? length;
-  // Supplying length will skip decoding it from the binary buffer,
-  // When an array is monitored directly, the length is not supplied in the binary buffer.
-  // Dont ask me why.
-  ArrayPayload(this.elementType, [this.length]);
-
-  @override
-  List<T>? get(ByteReader reader, [Endian? endian]) {
-    // BIG TODO, IS THIS CORRECT? I dont like this
-    final len = length ?? UA_Int32Payload().get(reader, endian);
-    if (len == -1) return null;
-    if (len == 0) return [];
-    List<T> elements = [];
-    for (int i = 0; i < len; i++) {
-      elements.add(elementType.get(reader, endian));
-    }
-    return elements;
-  }
-
-  @override
-  void set(ByteWriter writer, List<T>? value, [Endian? endian]) {
-    if (value == null) {
-      UA_Int32Payload().set(writer, -1, endian);
-    } else {
-      UA_Int32Payload().set(writer, value.length, endian);
-      for (var element in value) {
-        elementType.set(writer, element, endian);
-      }
-    }
-  }
-}

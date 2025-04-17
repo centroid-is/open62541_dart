@@ -131,7 +131,7 @@ void clientIsolate(SendPort mainSendPort) async {
     var dArray = c.readValue(dIntArray);
     // Invert bArray
     for (int i = 0; i < dArray.asArray.length; i++) {
-      dArray[i] = i + dArray[i].asInt;
+      dArray[i] = 1 + dArray[i].asInt;
     }
     c.writeValue(dIntArray, dArray);
 
@@ -200,7 +200,17 @@ void clientIsolate(SendPort mainSendPort) async {
     NodeId sId = NodeId.fromString(4, "GVL_HMI.m");
     print(c.readValue(sId));
     NodeId s2Id = NodeId.fromString(4, "GVL_HMI.n");
-    print(c.readValue(s2Id));
+    var n = c.readValue(s2Id);
+    print(n);
+    n[0]["field1"] = "JBB";
+    n[1]["field1"] = "JBB2";
+    n[2]["field1"] = "JBB3";
+    n[0]["bigfield1"] = "BIGBIGJBB";
+    n[1]["bigfield1"] = "BIGBIGJBB2";
+    n[2]["bigfield1"] = "BIGBIGJBB3";
+    c.writeValue(s2Id, n);
+    n = c.readValue(s2Id);
+    print(n);
 
     //    print(curr_real);
     //    c.writeValue(nreal, curr_real + 0.1337);

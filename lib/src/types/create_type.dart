@@ -16,20 +16,7 @@ final _payloadTypes = {
   NodeId.double: UA_DoublePayload(),
   NodeId.datetime: UA_DateTimePayload(),
   NodeId.uastring: UA_StringPayload(),
-  // NodeId.: ContiguousStringPayload(),
-  // TypeKindEnum.extensionObject: DynamicValue(),
-  // TypeKindEnum.structure: DynamicValue(),
 };
-
-// Wraps the payload type in an array payload with the given dimensions
-// It will set length to the dimension.
-// If length is set, the length is not read from the binary buffer.
-PayloadType wrapInArray(PayloadType payloadType, List<int> arrayDimensions) {
-  for (var dimension in arrayDimensions) {
-    payloadType = ArrayPayload(payloadType, dimension);
-  }
-  return payloadType;
-}
 
 PayloadType nodeIdToPayloadType(NodeId? nodeIdType) {
   if (nodeIdType == null || !nodeIdType.isNumeric()) {

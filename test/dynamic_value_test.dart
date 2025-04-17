@@ -9,6 +9,7 @@ import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
 import 'package:open62541_bindings/src/library.dart';
 import 'package:test/test.dart';
 import 'package:open62541_bindings/src/node_id.dart';
+import 'schema_util.dart';
 
 void main() {
   test('dynamic value', () {
@@ -110,6 +111,55 @@ void main() {
     expect(d[0].typeId, NodeId.boolean);
     expect(d[1].typeId, NodeId.boolean);
   });
+  test('Encode struct and substruct', () {
+    var myMap = <String, dynamic>{
+      "field1": true,
+      "field2": false,
+      "field3": true,
+      "field4": false,
+      "field5": true,
+      "field6": false,
+      "field7": 42,
+      "field8": {
+        "subfield1": false,
+        "subfield2": true,
+        "subfield3": [false, true],
+      }
+    };
+    var myVal = DynamicValue.fromMap(myMap);
+    myVal.typeId = NodeId.fromString(4, "<StructuredDataType>:ST_SpeedBatcher");
+    myVal["field1"].typeId = NodeId.boolean;
+    myVal["field2"].typeId = NodeId.boolean;
+    myVal["field3"].typeId = NodeId.boolean;
+    myVal["field4"].typeId = NodeId.boolean;
+    myVal["field5"].typeId = NodeId.boolean;
+    myVal["field6"].typeId = NodeId.boolean;
+    myVal["field7"].typeId = NodeId.int16;
+    myVal["field8"].typeId = NodeId.fromString(4, "<StructuredDataType>:ST_FP");
+    myVal["field8"]["subfield1"].typeId = NodeId.boolean;
+    myVal["field8"]["subfield2"].typeId = NodeId.boolean;
+    myVal["field8"]["subfield3"].typeId = NodeId.boolean;
+    myVal["field8"]["subfield3"][0].typeId = NodeId.boolean;
+    myVal["field8"]["subfield3"][1].typeId = NodeId.boolean;
+
+    ByteWriter writer = ByteWriter();
+    myVal.set(writer, myVal, Endian.little);
+    final bytes = writer.toBytes();
+    ByteReader reader = ByteReader(bytes, endian: Endian.little);
+    final decoded = myVal.get(reader, Endian.little);
+    expect(decoded['field1'].asBool, true);
+    expect(decoded['field2'].asBool, false);
+    expect(decoded['field3'].asBool, true);
+    expect(decoded['field4'].asBool, false);
+    expect(decoded['field5'].asBool, true);
+    expect(decoded['field6'].asBool, false);
+    expect(decoded['field7'].asInt, 42);
+    expect(decoded['field8']['subfield1'].asBool, false);
+    expect(decoded['field8']['subfield2'].asBool, true);
+    expect(decoded['field8']['subfield3'].asArray.length, 2);
+    expect(decoded['field8']['subfield3'][0].asBool, false);
+    expect(decoded['field8']['subfield3'][1].asBool, true);
+  });
 
   test('Build dynamic Value from buffer', () {
     const data = [
@@ -171,36 +221,6 @@ void main() {
       assert(bytes[i] == data[i]);
     }
   });
-
-  Pointer<raw.UA_StructureDefinition> buildDef(
-      List<Pointer<raw.UA_StructureField>> fields) {
-    Pointer<raw.UA_StructureDefinition> retValue =
-        calloc<raw.UA_StructureDefinition>();
-    retValue.ref.fields = calloc(fields.length);
-    retValue.ref.fieldsSize = fields.length;
-
-    for (var i = 0; i < fields.length; i++) {
-      retValue.ref.fields[i] = fields[i].ref;
-      calloc.free(fields[i]);
-    }
-
-    return retValue;
-  }
-
-  Pointer<raw.UA_StructureField> buildField(NodeId typeId, String name,
-      List<int> arrayDimensions, String description) {
-    Pointer<raw.UA_StructureField> field = calloc();
-    field.ref.dataType = typeId.toRaw(Open62541Singleton().lib);
-    field.ref.name.set(name);
-    field.ref.description.text.set(description);
-    field.ref.description.locale.set("IS-is");
-    field.ref.arrayDimensionsSize = arrayDimensions.length;
-    field.ref.arrayDimensions = calloc(arrayDimensions.length);
-    for (int i = 0; i < arrayDimensions.length; i++) {
-      field.ref.arrayDimensions[i] = arrayDimensions[i];
-    }
-    return field;
-  }
 
   test('Create DynamicValue schema', () {
     var fpNodeId = NodeId.fromString(4, "fp");

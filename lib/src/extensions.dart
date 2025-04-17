@@ -546,6 +546,11 @@ extension UA_VariantExtension on raw.UA_Variant {
     }
     return arrayDimensions.asTypedList(arrayDimensionsSize);
   }
+
+  String format() {
+    String mytype = type == nullptr ? "" : type.ref.format();
+    return "Type: $mytype\n StorageType: $storageType\n ArrayLength: $arrayLength";
+  }
 }
 
 // ignore: camel_case_extensions
