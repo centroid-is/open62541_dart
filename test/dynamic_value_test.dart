@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:ffi';
 
 import 'package:binarize/binarize.dart';
@@ -61,7 +62,7 @@ void main() {
         }
       }
     };
-    final d = DynamicValue.fromMap(values);
+    final d = DynamicValue.fromMap(LinkedHashMap.from(values));
     expect(d["ohg"].asBool, true);
     expect(d["jbb"].asBool, false);
     expect(d["w"]["jbb"].asBool, true);
@@ -92,7 +93,7 @@ void main() {
     var values = <String, dynamic>{
       "jbb": false,
     };
-    final d = DynamicValue.fromMap(values);
+    final d = DynamicValue.fromMap(LinkedHashMap.from(values));
     d["jbb"].typeId = NodeId.boolean;
     expect(d["jbb"].typeId, NodeId.boolean);
     d["jbb"] = true;
@@ -126,7 +127,7 @@ void main() {
         "subfield3": [false, true],
       }
     };
-    var myVal = DynamicValue.fromMap(myMap);
+    final myVal = DynamicValue.fromMap(LinkedHashMap.from(myMap));
     myVal.typeId = NodeId.fromString(4, "<StructuredDataType>:ST_SpeedBatcher");
     myVal["field1"].typeId = NodeId.boolean;
     myVal["field2"].typeId = NodeId.boolean;

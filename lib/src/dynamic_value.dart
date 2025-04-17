@@ -32,7 +32,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   NodeId? typeId;
   MemberDescription? _description;
 
-  factory DynamicValue.fromMap(Map<String, dynamic> entries) {
+  factory DynamicValue.fromMap(LinkedHashMap<String, dynamic> entries) {
     DynamicValue v = DynamicValue();
     entries.forEach((key, value) => v[key] = value);
     return v;
@@ -119,10 +119,10 @@ class DynamicValue extends PayloadType<DynamicValue> {
     if (passed is DynamicValue) {
       value = passed;
     } else {
-      if (passed is Map<String, dynamic>) {
+      if (passed is LinkedHashMap<String, dynamic>) {
         value = DynamicValue.fromMap(passed);
-      } else if (passed is Map<dynamic, dynamic>) {
-        throw 'Please dont do this';
+      } else if (passed is Map) {
+        throw 'Unstable ordering, will not result in correct structures.';
       } else if (passed is List) {
         value = DynamicValue.fromList(passed);
       } else {
