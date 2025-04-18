@@ -224,7 +224,7 @@ void main() {
         .asTypedList(data.length)
         .setRange(0, data.length, data);
 
-    variant.ref.arrayLength = 0;
+    variant.ref.arrayLength = 8;
     variant.ref.arrayDimensionsSize = 2;
     variant.ref.arrayDimensions = calloc(2);
     variant.ref.arrayDimensions[0] = 4;
@@ -251,10 +251,12 @@ void main() {
     expect(value[3][1].asInt, 8);
 
     final variantEncoded = Client.valueToVariant(value, lib);
+    expect(variantEncoded.ref.arrayLength, 8);
     final variantData =
         variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
     expect(variantData, data);
     lib.UA_Variant_delete(variant);
+    lib.UA_Variant_delete(variantEncoded);
   });
   test('4x4x2 boolean array', () {
     var data = [
@@ -298,7 +300,7 @@ void main() {
         .asTypedList(data.length)
         .setRange(0, data.length, data);
 
-    variant.ref.arrayLength = 0;
+    variant.ref.arrayLength = 32;
     variant.ref.arrayDimensionsSize = 3;
     variant.ref.arrayDimensions = calloc(3);
     variant.ref.arrayDimensions[0] = 4;
@@ -369,6 +371,7 @@ void main() {
     expectArrayDyn(dynValueFromBuffer);
 
     final variantEncoded = Client.valueToVariant(dynValueFromBuffer, lib);
+    expect(variantEncoded.ref.arrayLength, 32);
     final variantData =
         variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
     expect(variantData, data);
@@ -376,6 +379,7 @@ void main() {
     final decoded = Client.variantToValue(variantEncoded);
     expectArrayDyn(decoded);
     lib.UA_Variant_delete(variant);
+    lib.UA_Variant_delete(variantEncoded);
   });
 
   // BIG TODO generated test, verify its correctness
@@ -486,7 +490,7 @@ void main() {
         .asTypedList(data.length)
         .setRange(0, data.length, data);
 
-    variant.ref.arrayLength = 0;
+    variant.ref.arrayLength = 24;
     variant.ref.arrayDimensionsSize = 3;
     variant.ref.arrayDimensions = calloc(3);
     variant.ref.arrayDimensions[0] = 2;

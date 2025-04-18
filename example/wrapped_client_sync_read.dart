@@ -202,6 +202,7 @@ void clientIsolate(SendPort mainSendPort) async {
     NodeId s2Id = NodeId.fromString(4, "GVL_HMI.n");
     var n = c.readValue(s2Id);
     print(n);
+    // todo should we throw if typeid is not declared during assignment?
     n[0]["field1"] = "JBB";
     n[1]["field1"] = "JBB2";
     n[2]["field1"] = "JBB3";

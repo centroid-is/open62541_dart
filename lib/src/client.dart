@@ -174,9 +174,10 @@ class Client {
     lib.UA_Variant_init(variant); // todo is this needed?
     variant.ref.data = pointer.cast();
     variant.ref.type = getType(id.toUaTypes(), lib);
-    if (dimensions.length == 1) {
-      variant.ref.arrayLength = dimensions[0];
-    } else if (dimensions.length > 1) {
+    if (dimensions.isNotEmpty) {
+      variant.ref.arrayLength = dimensions.fold(1, (a, b) => a * b);
+    }
+    if (dimensions.length > 1) {
       variant.ref.arrayDimensions = calloc<ffi.Uint32>(dimensions.length);
       variant.ref.arrayDimensions
           .asTypedList(dimensions.length)
@@ -444,7 +445,7 @@ class Client {
     final typeId = data.ref.type.ref.typeId;
     final ref = data.ref;
 
-    final dimensions = ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
+    final dimensions = ref.dimensions;
     final dimensionsMultiplied = dimensions.fold(1, (a, b) => a * b);
     final bufferLength = dimensionsMultiplied * ref.type.ref.memSize;
     DynamicValue retValue;

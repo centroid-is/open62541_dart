@@ -540,10 +540,17 @@ extension UA_StructureFieldExtension on raw.UA_StructureField {
 
 // ignore: camel_case_extensions
 extension UA_VariantExtension on raw.UA_Variant {
+  // please note that the memory for the return type is freed
+  // when the variant is freed
   List<int> get dimensions {
     if (arrayDimensionsSize == 0 || arrayDimensions == nullptr) {
+      // single dimension
+      if (arrayLength > 0) {
+        return [arrayLength];
+      }
       return [];
     }
+    // multi dimension
     return arrayDimensions.asTypedList(arrayDimensionsSize);
   }
 
