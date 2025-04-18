@@ -110,8 +110,6 @@ class Client {
 
   static ffi.Pointer<raw.UA_Variant> valueToVariant(
       DynamicValue value, raw.open62541 lib) {
-    ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
-
     ffi.Pointer<ffi.Uint8> pointer;
 
     //TODO: This is propably not correct, do this for now
@@ -156,13 +154,34 @@ class Client {
     } else {
       id = Namespace0Id.structure;
     }
-    if (value.isArray) {
-      // todo this is not correct for multi dimensional arrays
-      lib.UA_Variant_setArray(variant, pointer.cast(), value.asArray.length,
-          getType(id.toUaTypes(), lib));
-    } else {
-      lib.UA_Variant_setScalar(
-          variant, pointer.cast(), getType(id.toUaTypes(), lib));
+    List<int> getDimensions(DynamicValue value) {
+      if (!value.isArray) {
+        return [];
+      }
+      if (value.asArray.isEmpty) {
+        // I would like this to be an error case
+        throw ArgumentError('Empty array');
+      }
+      var dims = [value.asArray.length];
+      if (value[0].isArray) {
+        dims.addAll(getDimensions(value[0]));
+      }
+      return dims;
+    }
+
+    final dimensions = getDimensions(value);
+    ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
+    lib.UA_Variant_init(variant); // todo is this needed?
+    variant.ref.data = pointer.cast();
+    variant.ref.type = getType(id.toUaTypes(), lib);
+    if (dimensions.length == 1) {
+      variant.ref.arrayLength = dimensions[0];
+    } else if (dimensions.length > 1) {
+      variant.ref.arrayDimensions = calloc<ffi.Uint32>(dimensions.length);
+      variant.ref.arrayDimensions
+          .asTypedList(dimensions.length)
+          .setRange(0, dimensions.length, dimensions);
+      variant.ref.arrayDimensionsSize = dimensions.length;
     }
 
     return variant;
