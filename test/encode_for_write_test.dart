@@ -134,7 +134,7 @@ void main() {
     var sp = buildDef(spFields);
 
     var defs = {
-      spNodeId: sp.ref,
+      spNodeId: sp,
     };
     final decoded = Client.variantToValue(variant, defs: defs);
     lib.UA_StructureDefinition_delete(sp);
@@ -181,7 +181,7 @@ void main() {
     var sp = buildDef(spFields);
 
     var defs = {
-      spNodeId: sp.ref,
+      spNodeId: sp,
     };
     final decoded = Client.variantToValue(variant, defs: defs);
 
@@ -505,7 +505,7 @@ void main() {
       buildField(NodeId.uastring, "s3", [], "ff"),
     ];
     var sp = buildDef(spFields);
-    var defs = {spNodeId: sp.ref};
+    var defs = {spNodeId: sp};
 
     final value = Client.variantToValue(variant, defs: defs);
 
@@ -941,8 +941,8 @@ void main() {
     var hmi = buildDef(hmiFields);
 
     var defs = {
-      atvId: atv.ref,
-      hmiNodeId: hmi.ref,
+      atvId: atv,
+      hmiNodeId: hmi,
     };
 
     final value = Client.variantToValue(variant, defs: defs);

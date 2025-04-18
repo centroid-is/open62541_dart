@@ -392,12 +392,12 @@ class Client {
       }
 
       // Read our current structure
-      final structDef = res.value.data.cast<raw.UA_StructureDefinition>().ref;
+      final structDef = res.value.data.cast<raw.UA_StructureDefinition>();
       map[nodeIdType] = structDef;
 
       // Crawl the structure for sub structures recursivly
-      for (var i = 0; i < structDef.fieldsSize; i++) {
-        final field = structDef.fields[i];
+      for (var i = 0; i < structDef.ref.fieldsSize; i++) {
+        final field = structDef.ref.fields[i];
         raw.UA_NodeId dataType = field.dataType;
         if (dataType.isNumeric()) {
           continue;
@@ -422,17 +422,22 @@ class Client {
   }
 
   DynamicValue _variantToValueAutoSchema(ffi.Pointer<raw.UA_Variant> data) {
-    Schema? defs;
+    Schema defs = {};
     if (data.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
       // Cast the data to extension object
       final ext = data.ref.data.cast<raw.UA_ExtensionObject>();
       final typeId = ext.ref.content.encoded.typeId.toNodeId();
       defs = readDataTypeDefinition(typeId);
       for (var def in defs.keys) {
-        print(defs[def]!.format());
+        print(defs[def]!.ref.format());
       }
     }
-    return variantToValue(data, defs: defs);
+    final retValue = variantToValue(data, defs: defs);
+    // Cleanup the defs pointers if any
+    for (final ptr in defs.values) {
+      _lib.UA_StructureDefinition_delete(ptr);
+    }
+    return retValue;
   }
 
   static DynamicValue variantToValue(ffi.Pointer<raw.UA_Variant> data,

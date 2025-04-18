@@ -244,8 +244,8 @@ void main() {
 
     var spNodeId = NodeId.fromString(4, "sp");
     var defs = {
-      spNodeId: sp.ref,
-      fpNodeId: fp.ref,
+      spNodeId: sp,
+      fpNodeId: fp,
     };
     var schema =
         DynamicValue.fromDataTypeDefinition(NodeId.fromString(4, "sp"), defs);

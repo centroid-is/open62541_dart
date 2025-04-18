@@ -1,5 +1,5 @@
 import 'dart:collection' show LinkedHashMap;
-import 'dart:ffi';
+import 'dart:ffi' as ffi;
 import 'package:binarize/binarize.dart';
 import 'package:open62541_bindings/src/extensions.dart';
 import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
@@ -25,7 +25,7 @@ class MemberDescription {
   MemberDescription(this.value, this.locale);
 }
 
-typedef Schema = Map<NodeId, raw.UA_StructureDefinition>;
+typedef Schema = Map<NodeId, ffi.Pointer<raw.UA_StructureDefinition>>;
 
 class DynamicValue extends PayloadType<DynamicValue> {
   dynamic _data;
@@ -236,8 +236,8 @@ class DynamicValue extends PayloadType<DynamicValue> {
     assert(defs.containsKey(root));
 
     // Object case & Array case
-    for (int i = 0; i < defs[root]!.fieldsSize; i++) {
-      final field = defs[root]!.fields[i];
+    for (int i = 0; i < defs[root]!.ref.fieldsSize; i++) {
+      final field = defs[root]!.ref.fields[i];
 
       if (field.dimensions.isEmpty) {
         tree[field.fieldName] = DynamicValue.fromDataTypeDefinition(
