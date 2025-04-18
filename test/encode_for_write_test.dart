@@ -533,5 +533,508 @@ void main() {
     lib.UA_Variant_delete(variant);
   }, skip: "Todo: make this test from real data");
 
+  test('Array of nested struct', () {
+    var data = <List<int>>[
+      <int>[
+        0x01,
+        0x00,
+        0x00,
+        0x0e,
+        0x42,
+        0x00,
+        0x01,
+        0x00,
+        0x9a,
+        0x99,
+        0x0d,
+        0x42,
+        0x00,
+        0x13,
+        0x00,
+        0x00,
+        0x00,
+        0x4e,
+        0x6f,
+        0x74,
+        0x68,
+        0x69,
+        0x6e,
+        0x67,
+        0x20,
+        0x68,
+        0x65,
+        0x72,
+        0x65,
+        0x20,
+        0x74,
+        0x6f,
+        0x20,
+        0x73,
+        0x65,
+        0x65,
+        0x00,
+        0x01,
+        0x00,
+        0x01,
+        0x00,
+        0x01,
+        0x00,
+        0x01,
+        0x0c,
+        0x00,
+        0x00,
+        0x00,
+        0x52,
+        0x75,
+        0x6e,
+        0x6e,
+        0x69,
+        0x6e,
+        0x67,
+        0x20,
+        0x62,
+        0x61,
+        0x62,
+        0x79,
+        0x11,
+        0x00,
+        0x00,
+        0x00,
+        0x4e,
+        0x6f,
+        0x74,
+        0x68,
+        0x69,
+        0x6e,
+        0x67,
+        0x20,
+        0x74,
+        0x6f,
+        0x20,
+        0x72,
+        0x65,
+        0x70,
+        0x6f,
+        0x72,
+        0x74,
+        0x00,
+        0xe0,
+        0xf6,
+        0x45,
+        0xe1,
+        0x7a,
+        0x7c,
+        0x41,
+        0xdc,
+        0x05,
+        0x00,
+        0x00
+      ],
+      <int>[
+        0x00,
+        0x85,
+        0xeb,
+        0x97,
+        0x41,
+        0x00,
+        0x01,
+        0x00,
+        0xae,
+        0x47,
+        0xcd,
+        0x41,
+        0x01,
+        0x11,
+        0x00,
+        0x00,
+        0x00,
+        0x67,
+        0x65,
+        0x74,
+        0x20,
+        0x6d,
+        0x65,
+        0x20,
+        0x73,
+        0x6f,
+        0x6d,
+        0x65,
+        0x20,
+        0x77,
+        0x6f,
+        0x72,
+        0x64,
+        0x73,
+        0x00,
+        0x01,
+        0x00,
+        0x01,
+        0x00,
+        0x01,
+        0x00,
+        0x01,
+        0x19,
+        0x00,
+        0x00,
+        0x00,
+        0x69,
+        0x74,
+        0x20,
+        0x69,
+        0x73,
+        0x20,
+        0x68,
+        0x61,
+        0x72,
+        0x64,
+        0x20,
+        0x6d,
+        0x61,
+        0x6b,
+        0x69,
+        0x6e,
+        0x67,
+        0x20,
+        0x75,
+        0x70,
+        0x20,
+        0x64,
+        0x61,
+        0x74,
+        0x61,
+        0x15,
+        0x00,
+        0x00,
+        0x00,
+        0x68,
+        0x6f,
+        0x77,
+        0x20,
+        0x69,
+        0x73,
+        0x20,
+        0x79,
+        0x6f,
+        0x75,
+        0x72,
+        0x20,
+        0x64,
+        0x61,
+        0x79,
+        0x20,
+        0x67,
+        0x6f,
+        0x69,
+        0x6e,
+        0x67,
+        0xe1,
+        0xfa,
+        0xc7,
+        0x42,
+        0x14,
+        0xae,
+        0xc8,
+        0x42,
+        0xc4,
+        0x09,
+        0x00,
+        0x00
+      ],
+      <int>[
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x12,
+        0x00,
+        0x00,
+        0x00,
+        0x4c,
+        0x61,
+        0x73,
+        0x74,
+        0x20,
+        0x6f,
+        0x6e,
+        0x65,
+        0x20,
+        0x69,
+        0x20,
+        0x70,
+        0x72,
+        0x6f,
+        0x6d,
+        0x69,
+        0x73,
+        0x65,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+        0x01,
+        0x00,
+        0x18,
+        0x00,
+        0x00,
+        0x00,
+        0x68,
+        0x65,
+        0x72,
+        0x65,
+        0x20,
+        0x69,
+        0x73,
+        0x20,
+        0x6d,
+        0x65,
+        0x20,
+        0x61,
+        0x6e,
+        0x64,
+        0x20,
+        0x69,
+        0x20,
+        0x61,
+        0x6d,
+        0x20,
+        0x68,
+        0x65,
+        0x72,
+        0x65,
+        0x1a,
+        0x00,
+        0x00,
+        0x00,
+        0x74,
+        0x68,
+        0x69,
+        0x73,
+        0x20,
+        0x73,
+        0x74,
+        0x72,
+        0x69,
+        0x6e,
+        0x67,
+        0x20,
+        0x6e,
+        0x65,
+        0x65,
+        0x64,
+        0x73,
+        0x20,
+        0x61,
+        0x20,
+        0x76,
+        0x61,
+        0x6c,
+        0x75,
+        0x65,
+        0x20,
+        0xcd,
+        0xa0,
+        0x8c,
+        0x45,
+        0x66,
+        0x36,
+        0x11,
+        0x45,
+        0x40,
+        0x06,
+        0x00,
+        0x00
+      ],
+    ];
+
+    var atvId = NodeId.fromString(4, "FB_ATV");
+
+    Pointer<UA_Variant> variant = calloc();
+    Pointer<raw.UA_ExtensionObject> ext = calloc(3);
+    // Set encoding
+    ext[0].encoding = 1;
+    ext[1].encoding = 1;
+    ext[2].encoding = 1;
+
+    // Set types
+    ext[0].content.encoded.typeId = atvId.toRaw(lib);
+    ext[1].content.encoded.typeId = atvId.toRaw(lib);
+    ext[2].content.encoded.typeId = atvId.toRaw(lib);
+
+    // Set the data
+    ext[0].content.encoded.body.length = data[0].length;
+    ext[1].content.encoded.body.length = data[1].length;
+    ext[2].content.encoded.body.length = data[2].length;
+
+    // Allocate buffers
+    ext[0].content.encoded.body.data = calloc(data[0].length);
+    ext[1].content.encoded.body.data = calloc(data[1].length);
+    ext[2].content.encoded.body.data = calloc(data[2].length);
+
+    // Copy the data into buffers
+    ext[0]
+        .content
+        .encoded
+        .body
+        .data
+        .asTypedList(data[0].length)
+        .setRange(0, data[0].length, data[0]);
+    ext[1]
+        .content
+        .encoded
+        .body
+        .data
+        .asTypedList(data[1].length)
+        .setRange(0, data[1].length, data[1]);
+    ext[2]
+        .content
+        .encoded
+        .body
+        .data
+        .asTypedList(data[2].length)
+        .setRange(0, data[2].length, data[2]);
+
+    variant.ref.data = ext.cast();
+    variant.ref.arrayLength = 3;
+    variant.ref.arrayDimensionsSize = 0;
+    variant.ref.type = Client.getType(UaTypes.extensionObject, lib);
+
+    var hmiNodeId = NodeId.fromString(4, "FB_ATV.HMI");
+    List<Pointer<raw.UA_StructureField>> hmiFields = [
+      buildField(NodeId.boolean, "p_cmd_JogFwd", [], "ff"),
+      buildField(NodeId.boolean, "p_cmd_JogBwd", [], "ff"),
+      buildField(NodeId.boolean, "p_cmd_ResetRunHours", [], "ff"),
+      buildField(NodeId.boolean, "p_cmd_ManualStopOnRelease", [], "ff"),
+      buildField(NodeId.boolean, "p_stat_JogFwd", [], "ff"),
+      buildField(NodeId.boolean, "p_stat_JogBwd", [], "ff"),
+      buildField(NodeId.boolean, "p_stat_xResetRunHours", [], "ff"),
+      buildField(NodeId.boolean, "p_stat_StopOnRelease", [], "ff"),
+      buildField(NodeId.uastring, "p_stat_State", [], "ff"),
+      buildField(NodeId.uastring, "p_stat_LastFault", [], "ff"),
+      buildField(NodeId.float, "p_stat_rFrequency", [], "ff"),
+      buildField(NodeId.float, "p_stat_rCurrent", [], "ff"),
+      buildField(NodeId.uint32, "p_stat_duRunMinutes", [], "ff"),
+    ];
+
+    List<Pointer<raw.UA_StructureField>> atvFields = [
+      buildField(NodeId.boolean, "i_xRun", [], "ff"),
+      buildField(NodeId.float, "i_rFreq", [], "ff"),
+      buildField(NodeId.boolean, "q_xRunning", [], "ff"),
+      buildField(NodeId.boolean, "q_xFwd", [], "ff"),
+      buildField(NodeId.boolean, "q_xBwd", [], "ff"),
+      buildField(NodeId.float, "q_rFreq", [], "ff"),
+      buildField(NodeId.boolean, "q_xError", [], "ff"),
+      buildField(NodeId.uastring, "q_sError", [], "ff"),
+      buildField(NodeId.fromString(4, "FB_ATV.HMI"), "HMI", [], "ff"),
+    ];
+    var atv = buildDef(atvFields);
+    var hmi = buildDef(hmiFields);
+
+    var defs = {
+      atvId: atv.ref,
+      hmiNodeId: hmi.ref,
+    };
+
+    final value = Client.variantToValue(variant, defs: defs);
+
+    // Validate array length
+    expect(value.isArray, true);
+    expect(value.asArray.length, 3);
+    expect(value[0].isObject, true);
+    expect(value[0]["i_xRun"].asDynamic, true);
+    expect(value[0]["i_rFreq"].asDynamic, 35.5);
+    expect(value[0]["q_xRunning"].asDynamic, false);
+    expect(value[0]["q_xFwd"].asDynamic, true);
+    expect(value[0]["q_xBwd"].asDynamic, false);
+    expect(value[0]["q_rFreq"].asDynamic, closeTo(35.4, 1e-5));
+    expect(value[0]["q_xError"].asDynamic, false);
+    expect(value[0]["q_sError"].asDynamic, "Nothing here to see");
+    expect(value[0]["HMI"].isObject, true);
+
+    expect(value[0]["HMI"]["p_cmd_JogFwd"].asDynamic, false);
+    expect(value[0]["HMI"]["p_cmd_JogBwd"].asDynamic, true);
+    expect(value[0]["HMI"]["p_cmd_ResetRunHours"].asDynamic, false);
+    expect(value[0]["HMI"]["p_cmd_ManualStopOnRelease"].asDynamic, true);
+    expect(value[0]["HMI"]["p_stat_JogFwd"].asDynamic, false);
+    expect(value[0]["HMI"]["p_stat_JogBwd"].asDynamic, true);
+    expect(value[0]["HMI"]["p_stat_xResetRunHours"].asDynamic, false);
+    expect(value[0]["HMI"]["p_stat_StopOnRelease"].asDynamic, true);
+    expect(value[0]["HMI"]["p_stat_State"].asDynamic, "Running baby");
+    expect(value[0]["HMI"]["p_stat_LastFault"].asDynamic, "Nothing to report");
+    expect(value[0]["HMI"]["p_stat_rFrequency"].asDynamic, 7900);
+    expect(value[0]["HMI"]["p_stat_rCurrent"].asDynamic, closeTo(15.78, 1e-5));
+    expect(value[0]["HMI"]["p_stat_duRunMinutes"].asDynamic, 1500);
+
+    expect(value[1].isObject, true);
+    expect(value[1]["i_xRun"].asDynamic, false);
+    expect(value[1]["i_rFreq"].asDynamic, closeTo(18.99, 1e-5));
+    expect(value[1]["q_xRunning"].asDynamic, false);
+    expect(value[1]["q_xFwd"].asDynamic, true);
+    expect(value[1]["q_xBwd"].asDynamic, false);
+    expect(value[1]["q_rFreq"].asDynamic, closeTo(25.66, 1e-5));
+    expect(value[1]["q_xError"].asDynamic, true);
+    expect(value[1]["q_sError"].asDynamic, "get me some words");
+    expect(value[1]["HMI"].isObject, true);
+
+    expect(value[1]["HMI"]["p_cmd_JogFwd"].asDynamic, false);
+    expect(value[1]["HMI"]["p_cmd_JogBwd"].asDynamic, true);
+    expect(value[1]["HMI"]["p_cmd_ResetRunHours"].asDynamic, false);
+    expect(value[1]["HMI"]["p_cmd_ManualStopOnRelease"].asDynamic, true);
+    expect(value[1]["HMI"]["p_stat_JogFwd"].asDynamic, false);
+    expect(value[1]["HMI"]["p_stat_JogBwd"].asDynamic, true);
+    expect(value[1]["HMI"]["p_stat_xResetRunHours"].asDynamic, false);
+    expect(value[1]["HMI"]["p_stat_StopOnRelease"].asDynamic, true);
+    expect(
+        value[1]["HMI"]["p_stat_State"].asDynamic, "it is hard making up data");
+    expect(
+        value[1]["HMI"]["p_stat_LastFault"].asDynamic, "how is your day going");
+    expect(
+        value[1]["HMI"]["p_stat_rFrequency"].asDynamic, closeTo(99.99, 1e-5));
+    expect(value[1]["HMI"]["p_stat_rCurrent"].asDynamic, closeTo(100.34, 1e-5));
+    expect(value[1]["HMI"]["p_stat_duRunMinutes"].asDynamic, 2500);
+
+    expect(value[2].isObject, true);
+    expect(value[2]["i_xRun"].asDynamic, true);
+    expect(value[2]["i_rFreq"].asDynamic, 0);
+    expect(value[2]["q_xRunning"].asDynamic, false);
+    expect(value[2]["q_xFwd"].asDynamic, true);
+    expect(value[2]["q_xBwd"].asDynamic, false);
+    expect(value[2]["q_rFreq"].asDynamic, closeTo(0, 1e-5));
+    expect(value[2]["q_xError"].asDynamic, false);
+    expect(value[2]["q_sError"].asDynamic, "Last one i promise");
+    expect(value[2]["HMI"].isObject, true);
+
+    expect(value[2]["HMI"]["p_cmd_JogFwd"].asDynamic, false);
+    expect(value[2]["HMI"]["p_cmd_JogBwd"].asDynamic, true);
+    expect(value[2]["HMI"]["p_cmd_ResetRunHours"].asDynamic, false);
+    expect(value[2]["HMI"]["p_cmd_ManualStopOnRelease"].asDynamic, false);
+    expect(value[2]["HMI"]["p_stat_JogFwd"].asDynamic, true);
+    expect(value[2]["HMI"]["p_stat_JogBwd"].asDynamic, false);
+    expect(value[2]["HMI"]["p_stat_xResetRunHours"].asDynamic, true);
+    expect(value[2]["HMI"]["p_stat_StopOnRelease"].asDynamic, false);
+    expect(
+        value[2]["HMI"]["p_stat_State"].asDynamic, "here is me and i am here");
+    expect(value[2]["HMI"]["p_stat_LastFault"].asDynamic,
+        "this string needs a value ");
+    expect(
+        value[2]["HMI"]["p_stat_rFrequency"].asDynamic, closeTo(4500.1, 1e-4));
+    expect(value[2]["HMI"]["p_stat_rCurrent"].asDynamic, closeTo(2323.4, 1e-4));
+    expect(value[2]["HMI"]["p_stat_duRunMinutes"].asDynamic, 1600);
+
+    lib.UA_StructureDefinition_delete(hmi);
+    lib.UA_StructureDefinition_delete(atv);
+    lib.UA_Variant_delete(variant);
+  });
+
   // TODO: Multi dimensional arrays inside structs
 }

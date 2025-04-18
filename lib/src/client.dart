@@ -452,8 +452,6 @@ class Client {
 
     // Read structure from opc-ua server
     if (typeId.toNodeId() == NodeId.structure) {
-      assert(defs! != null);
-
       final ext = ref.data.cast<raw.UA_ExtensionObject>().ref.content.encoded;
       final arr = ref.data.cast<raw.UA_ExtensionObject>();
       final tt = ext.typeId;
@@ -461,9 +459,6 @@ class Client {
       // We always have at least 1
       final first = arr[0].content.encoded;
       var firstBytes = first.body.data.asTypedList(first.body.length);
-      //TODO: Delete
-      var typeLists = <int>[];
-      typeLists.addAll(firstBytes);
 
       DynamicValue firstDyn =
           DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs!);
@@ -481,11 +476,7 @@ class Client {
         var reader = binarize.ByteReader(typedList);
         element.get(reader, Endian.little);
         firstDyn[i] = element;
-        typeLists.addAll(typedList);
       }
-      //TODO: Delete
-      final bytes = Uint8List.fromList(typeLists);
-      printBytes(bytes);
       retValue = firstDyn;
     } else {
       DynamicValue createNestedArray(List<int> dims) {
@@ -510,7 +501,6 @@ class Client {
       retValue = createNestedArray(dimensions.toList());
       final reader = binarize.ByteReader(
           data.ref.data.cast<ffi.Uint8>().asTypedList(bufferLength));
-      // printBytes(data.ref.data.cast<ffi.Uint8>().asTypedList(bufferLength));
       retValue.get(reader, Endian.little, false, true);
     }
 

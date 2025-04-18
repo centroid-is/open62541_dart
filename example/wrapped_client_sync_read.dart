@@ -1,17 +1,12 @@
 // TODO: Put public facing types in this file.
 // import 'dart:ffi';
-import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:isolate';
 
-import 'package:ffi/ffi.dart';
 import 'package:open62541_bindings/src/client.dart';
 import 'package:open62541_bindings/src/dynamic_value.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
-    as raw;
 import 'package:open62541_bindings/src/node_id.dart';
 import 'package:open62541_bindings/src/library.dart';
-import 'package:open62541_bindings/src/extensions.dart';
 
 void clientIsolate(SendPort mainSendPort) async {
   Client c = Client(Open62541Singleton().lib);
@@ -228,6 +223,9 @@ void clientIsolate(SendPort mainSendPort) async {
     print("Multidimension baby");
     print(c.readValue(marr));
     print("Multidimension baby");
+
+    NodeId driveLine2 = NodeId.fromString(4, "GVL_HMI.Drives_Line2");
+    print(c.readValue(driveLine2));
 
     // NodeId outSignal = NodeId.string(4, "GVL_IO.single_SB.i_xBatchReady");
     // final outSignalMonId =
