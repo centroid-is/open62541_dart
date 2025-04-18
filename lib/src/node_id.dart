@@ -15,8 +15,12 @@ class NodeId {
 
   factory NodeId.fromRaw(raw.UA_NodeId nodeId) {
     if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
-      return NodeId._internal(nodeId.namespaceIndex,
-          id: nodeId.identifier.string.value);
+      // Drop the __DefaultBinary if attached to string, don't know why it is there
+      var str = nodeId.identifier.string.value;
+      if (str.endsWith('__DefaultBinary')) {
+        str = str.substring(0, str.length - 15);
+      }
+      return NodeId._internal(nodeId.namespaceIndex, id: str);
     } else if (nodeId.identifierType ==
         raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
       return NodeId._internal(nodeId.namespaceIndex,
@@ -26,12 +30,69 @@ class NodeId {
     }
   }
 
-  factory NodeId.numeric(int nsIndex, int identifier) {
+  factory NodeId.fromNumeric(int nsIndex, int identifier) {
     return NodeId._internal(nsIndex, id: identifier);
   }
 
-  factory NodeId.string(int nsIndex, String chars) {
+  factory NodeId.fromString(int nsIndex, String chars) {
     return NodeId._internal(nsIndex, id: chars);
+  }
+
+  // Handy methods for namespace 0 types
+  static NodeId get boolean {
+    return NodeId.fromNumeric(0, Namespace0Id.boolean.value);
+  }
+
+  static NodeId get uint16 {
+    return NodeId.fromNumeric(0, Namespace0Id.uint16.value);
+  }
+
+  static NodeId get int16 {
+    return NodeId.fromNumeric(0, Namespace0Id.int16.value);
+  }
+
+  static NodeId get uint32 {
+    return NodeId.fromNumeric(0, Namespace0Id.uint32.value);
+  }
+
+  static NodeId get int32 {
+    return NodeId.fromNumeric(0, Namespace0Id.int32.value);
+  }
+
+  static NodeId get uint64 {
+    return NodeId.fromNumeric(0, Namespace0Id.uint64.value);
+  }
+
+  static NodeId get int64 {
+    return NodeId.fromNumeric(0, Namespace0Id.int64.value);
+  }
+
+  static NodeId get uastring {
+    return NodeId.fromNumeric(0, Namespace0Id.string.value);
+  }
+
+  static NodeId get double {
+    return NodeId.fromNumeric(0, Namespace0Id.double.value);
+  }
+
+  static NodeId get float {
+    return NodeId.fromNumeric(0, Namespace0Id.float.value);
+  }
+
+  static NodeId get datetime {
+    return NodeId.fromNumeric(0, Namespace0Id.datetime.value);
+  }
+
+  static NodeId get byte {
+    return NodeId.fromNumeric(0, Namespace0Id.byte.value);
+  }
+
+  static NodeId get sbyte {
+    return NodeId.fromNumeric(0, Namespace0Id.sbyte.value);
+  }
+
+  static NodeId get structure {
+    return NodeId.fromNumeric(0, Namespace0Id.structure.value);
   }
 
   raw.UA_NodeId toRaw(raw.open62541 lib) {
@@ -51,6 +112,7 @@ class NodeId {
     return nodeId;
   }
 
+  int get namespace => _namespaceIndex;
   int get numeric => _numericId!;
   String get string => _stringId!;
   // GUID

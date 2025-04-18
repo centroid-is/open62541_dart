@@ -231,14 +231,6 @@ class UA_StringPayload extends PayloadType<String> {
     final ptr = ffi.Pointer<raw.UA_Byte>.fromAddress(ptrValue);
     final buffer = ptr.asTypedList(length);
     return utf8.decode(buffer);
-    // final ptr = calloc<raw.UA_String>();
-    // final lengthSize = sizeOf<Size>();
-    // ptr.ref.length =
-    //     lengthSize == 4 ? reader.int32(endian) : reader.int64(endian);
-    // final buffer = reader.read(ptr.ref.length);
-    // ptr.ref.data = calloc<raw.UA_Byte>(buffer.length);
-    // ptr.ref.data.asTypedList(buffer.length).setAll(0, buffer);
-    // return ptr;
   }
 
   @override
@@ -250,10 +242,10 @@ class UA_StringPayload extends PayloadType<String> {
     }
     final lengthSize = ffi.sizeOf<ffi.Size>();
     if (lengthSize == 4) {
-      writer.int32(value.length, endian);
+      writer.int32(buffer.length, endian);
       writer.int32(heap.address, endian);
     } else {
-      writer.int64(value.length, endian);
+      writer.int64(buffer.length, endian);
       writer.int64(heap.address, endian);
     }
   }
@@ -279,40 +271,6 @@ class ContiguousStringPayload extends PayloadType<String?> {
       final bytes = utf8.encode(value);
       UA_Int32Payload().set(writer, bytes.length, endian);
       writer.write(bytes);
-    }
-  }
-}
-
-class ArrayPayload<T> extends PayloadType<List<T>?> {
-  final PayloadType<T> elementType;
-  int? length;
-  // Supplying length will skip decoding it from the binary buffer,
-  // When an array is monitored directly, the length is not supplied in the binary buffer.
-  // Dont ask me why.
-  ArrayPayload(this.elementType, [this.length]);
-
-  @override
-  List<T>? get(ByteReader reader, [Endian? endian]) {
-    // BIG TODO, IS THIS CORRECT? I dont like this
-    final len = length ?? UA_Int32Payload().get(reader, endian);
-    if (len == -1) return null;
-    if (len == 0) return [];
-    List<T> elements = [];
-    for (int i = 0; i < len; i++) {
-      elements.add(elementType.get(reader, endian));
-    }
-    return elements;
-  }
-
-  @override
-  void set(ByteWriter writer, List<T>? value, [Endian? endian]) {
-    if (value == null) {
-      UA_Int32Payload().set(writer, -1, endian);
-    } else {
-      UA_Int32Payload().set(writer, value.length, endian);
-      for (var element in value) {
-        elementType.set(writer, element, endian);
-      }
     }
   }
 }

@@ -119,32 +119,6 @@ void main() {
     expect(convertedDate.millisecond, 535);
   });
 
-  // Array
-  test('Array payload', () {
-    // Test integer array
-    final intArrayPayload = ArrayPayload(UA_Int32Payload());
-    final intList = [1, 2, 3, 4, 5];
-
-    final writer = ByteWriter();
-    intArrayPayload.set(writer, intList);
-
-    final reader = ByteReader(writer.toBytes());
-    final result = intArrayPayload.get(reader);
-
-    expect(result, intList);
-
-    // Test empty array
-    testPayloadImpl('Array empty', ArrayPayload(UA_Int32Payload()), <int>[]);
-
-    // Test null array
-    testPayloadImpl('Array null', ArrayPayload(UA_Int32Payload()), null);
-
-    // Test string array
-    final stringArrayPayload = ArrayPayload(ContiguousStringPayload());
-    final stringList = ['Hello', 'World', '🌟'];
-    testPayloadImpl('Array strings', stringArrayPayload, stringList);
-  });
-
   test('UA_String payload', () {
     final payload = UA_StringPayload();
     final writer = ByteWriter();

@@ -4,9 +4,9 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:open62541_bindings/src/client.dart';
-import 'package:open62541_bindings/src/nodeId.dart';
+import 'package:open62541_bindings/src/dynamic_value.dart';
+import 'package:open62541_bindings/src/node_id.dart';
 import 'package:open62541_bindings/src/library.dart';
-import 'package:open62541_bindings/src/extensions.dart';
 
 void clientIsolate(SendPort mainSendPort) async {
   Client c = Client(Open62541Singleton().lib);
@@ -39,24 +39,22 @@ void clientIsolate(SendPort mainSendPort) async {
     // print("definition: $definition");
     //<StructuredDataType>:ST_SpeedBatcher
 
-    final schema = c.variableToSchema(NodeId.string(4, "GVL_HMI.Drives_Line2"));
-    print("got schema: $schema");
-
     // // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB"));
     // c.readDataTypeAttribute(NodeId.string(4, "GVL_IO.single_SB.a_struct"));
 
-    NodeId sb = NodeId.string(4, "GVL_IO.single_SB");
-    final monId = c.monitoredItemCreate<dynamic>(sb, subId, (data) {
-      print('print data: $data');
-      mainSendPort.send('DATA: $data');
-    });
-    NodeId foo = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xStrings");
-    final fooMonId = c.monitoredItemCreate<List<dynamic>>(foo, subId, (data) {
-      print('print foo DATA: $data');
-      mainSendPort.send('foo DATA: $data');
-    });
-    // NodeId sb = NodeId.string(4, "GVL_HMI.Drives_Line2");
-    // final monId = c.monitoredItemCreate<dynamic>(sb, subId, (data) {
+    // NodeId sb = NodeId.fromString(4, "GVL_IO.single_SB");
+    // final monId = c.monitoredItemCreate(sb, subId, (data) {
+    //   print('print data: $data');
+    //   mainSendPort.send('DATA: $data');
+    // });
+    // NodeId foo = NodeId.fromString(4, "GVL_IO.single_SB.a_struct.i_xStrings");
+    // final fooMonId = c.monitoredItemCreate(foo, subId, (data) {
+    //   print('print foo DATA: $data');
+    //   mainSendPort.send('foo DATA: $data');
+    // });
+
+    // NodeId sb2 = NodeId.fromString(4, "GVL_HMI.Drives_Line2");
+    // final monId2 = c.monitoredItemCreate(sb2, subId, (data) {
     //   print('print data: $data');
     //   mainSendPort.send('DATA: $data');
     // });
@@ -64,21 +62,23 @@ void clientIsolate(SendPort mainSendPort) async {
     // Test writing value attribute
     // boolean
     NodeId toWrite =
-        NodeId.string(4, "MAIN.lines[1][1].xInUse"); // The bool to write
-    final current_value = c.readValue(toWrite);
-    print("Current value : $current_value");
-    c.writeValue(toWrite, false, TypeKindEnum.boolean);
+        NodeId.fromString(4, "MAIN.lines[1][1].xInUse"); // The bool to write
+    final currentValue = c.readValue(toWrite);
+    print("Current value : $currentValue");
+    c.writeValue(toWrite, DynamicValue(value: false, typeId: NodeId.boolean));
 
     // int16
-    int curr = 0;
+    DynamicValue curr;
     NodeId int16ToWrite =
-        NodeId.string(4, "MAIN.nCounter"); // The bool to write
+        NodeId.fromString(4, "MAIN.nCounter"); // The bool to write
     curr = c.readValue(int16ToWrite);
-    c.writeValue(int16ToWrite, curr + 1, TypeKindEnum.int16);
+    c.writeValue(int16ToWrite,
+        DynamicValue(value: curr.asInt + 1, typeId: NodeId.int16));
 
-    NodeId nreal = NodeId.string(4, "GVL_HMI.Drives_Line1[1].i_rFreq");
+    NodeId nreal = NodeId.fromString(4, "GVL_HMI.Drives_Line1[1].i_rFreq");
     var currReal = c.readValue(nreal);
-    c.writeValue(nreal, currReal + 0.1337, TypeKindEnum.float);
+    c.writeValue(nreal,
+        DynamicValue(value: currReal.asDouble + 0.1337, typeId: NodeId.float));
 
     var arrayReadTest = [
       "GVL_HMI.bool_array",
@@ -90,78 +90,142 @@ void clientIsolate(SendPort mainSendPort) async {
 
     print("Arrays begin");
     for (var value in arrayReadTest) {
-      NodeId id = NodeId.string(4, value);
+      NodeId id = NodeId.fromString(4, value);
       print(c.readValue(id));
     }
     print("Arrays end");
 
     print("Bool array write things");
-    NodeId nBoolArray = NodeId.string(4, "GVL_HMI.bool_array");
-    List<dynamic> bArray = c.readValue(nBoolArray);
+    NodeId nBoolArray = NodeId.fromString(4, "GVL_HMI.bool_array");
+    var bArray = c.readValue(nBoolArray);
     // Invert bArray
-    for (int i = 0; i < bArray.length; i++) {
-      bArray[i] = !bArray[i];
+    for (int i = 0; i < bArray.asArray.length; i++) {
+      bArray[i] = !bArray[i].asBool;
     }
-    c.writeValue(nBoolArray, bArray, TypeKindEnum.boolean);
+    c.writeValue(nBoolArray, bArray);
 
     print("int array write things");
-    NodeId nIntArray = NodeId.string(4, "GVL_HMI.int_array");
-    List<dynamic> iArray = c.readValue(nIntArray);
+    NodeId nIntArray = NodeId.fromString(4, "GVL_HMI.int_array");
+    var iArray = c.readValue(nIntArray);
     // Invert bArray
-    for (int i = 0; i < iArray.length; i++) {
-      iArray[i] = iArray[i] + i;
+    for (int i = 0; i < iArray.asArray.length; i++) {
+      iArray[i] = iArray[i].asInt + i;
     }
-    c.writeValue(nIntArray, iArray, TypeKindEnum.int16);
+    c.writeValue(nIntArray, iArray);
 
     print("uint array write things");
-    NodeId unIntArray = NodeId.string(4, "GVL_HMI.uint_array");
-    List<dynamic> uArray = c.readValue(unIntArray);
+    NodeId unIntArray = NodeId.fromString(4, "GVL_HMI.uint_array");
+    var uArray = c.readValue(unIntArray);
     // Invert bArray
-    for (int i = 0; i < uArray.length; i++) {
-      uArray[i] = uArray[i] + i;
+    for (int i = 0; i < uArray.asArray.length; i++) {
+      uArray[i] = uArray[i].asInt + i;
     }
-    c.writeValue(unIntArray, uArray, TypeKindEnum.uint16);
+    c.writeValue(unIntArray, uArray);
 
-    print("dint array write things");
-    NodeId dIntArray = NodeId.string(4, "GVL_HMI.dint_array");
-    List<dynamic> dArray = c.readValue(dIntArray);
+    NodeId dIntArray = NodeId.fromString(4, "GVL_HMI.dint_array");
+    var dArray = c.readValue(dIntArray);
     // Invert bArray
-    for (int i = 0; i < dArray.length; i++) {
-      dArray[i] = i + dArray[i];
+    for (int i = 0; i < dArray.asArray.length; i++) {
+      dArray[i] = 1 + dArray[i].asInt;
     }
-    c.writeValue(dIntArray, dArray, TypeKindEnum.int32);
+    c.writeValue(dIntArray, dArray);
 
     print("udint array write things");
-    NodeId udIntArray = NodeId.string(4, "GVL_HMI.udint_array");
-    List<dynamic> udArray = c.readValue(udIntArray);
+    NodeId udIntArray = NodeId.fromString(4, "GVL_HMI.udint_array");
+    var udArray = c.readValue(udIntArray);
     // Invert bArray
-    for (int i = 0; i < udArray.length; i++) {
-      udArray[i] = i + udArray[i];
+    for (int i = 0; i < udArray.asArray.length; i++) {
+      udArray[i] = i + udArray[i].asInt;
     }
-    c.writeValue(udIntArray, udArray, TypeKindEnum.uint32);
+    c.writeValue(udIntArray, udArray);
 
-    print("writing struct and stuff");
-    NodeId sId = NodeId.string(4, "GVL_IO.single_SB");
-    var value = c.readValue(sId);
-    print(value);
+    // print("writing struct and stuff");
+    // NodeId sId = NodeId.fromString(4, "GVL_IO.single_SB");
+    // var value = c.readValue(sId);
+    // print(value);
 
-    NodeId tId = NodeId.string(4, "GVL_HMI.t");
+    NodeId tId = NodeId.fromString(4, "GVL_HMI.t");
     print("Time: ${c.readValue(tId)}");
 
-    NodeId dId = NodeId.string(4, "GVL_HMI.d");
+    NodeId dId = NodeId.fromString(4, "GVL_HMI.d");
     print("Date: ${c.readValue(dId)}");
-    //  while (curr_real < 25){
+
+    // void printVariant(ffi.Pointer<raw.UA_Variant> lval) {
+    //   print(lval.ref.type.ref.typeName.cast<Utf8>().toDartString());
+    //   print(lval.ref.type.ref.typeId.format());
+    //   print((lval.ref.type.address -
+    //           Open62541Singleton().lib.addresses.UA_TYPES.address) /
+    //       ffi.sizeOf<raw.UA_DataType>());
+    //   print(lval.ref.type.ref.members);
+    //   print(lval.ref.storageType);
+    //   print(lval.ref.arrayLength);
+
+    //   print("Substitute");
+    //   raw.UA_DataType t = lval.ref.type.ref;
+    //   print(lval.ref.type.ref.substitute);
+    //   print(t.memSize);
+    //   print(t.typeKind);
+    //   print(t.pointerFree);
+    //   print(t.overlayable);
+    //   print(t.membersSize);
+
+    //   print("Ext");
+    //   final ext = lval.ref.data.cast<raw.UA_ExtensionObject>();
+    //   print(ext.ref.encoding);
+    //   final length = ext.ref.content.encoded.body.length;
+    //   print(length);
+    //   var bytes = [];
+    //   for (int i = 0; i < length; i++) {
+    //     bytes.add(ext.ref.content.encoded.body.data[i]);
+    //   }
+    //   print(bytes);
+    //   print(ext.ref.content.encoded.typeId.format());
+    // }
+
+    NodeId lId = NodeId.fromString(4, "GVL_HMI.k");
+
+    print("Flipping");
+    DynamicValue rr = c.readValue(lId);
+    print(rr);
+    rr["bool1"] = !rr["bool1"].asBool;
+    rr["bool2"] = !rr["bool2"].asBool;
+    c.writeValue(lId, rr);
+    await Future.delayed(Duration(milliseconds: 150));
+
+    NodeId sId = NodeId.fromString(4, "GVL_HMI.m");
+    print(c.readValue(sId));
+    NodeId s2Id = NodeId.fromString(4, "GVL_HMI.n");
+    var n = c.readValue(s2Id);
+    print(n);
+    // todo should we throw if typeid is not declared during assignment?
+    n[0]["field1"] = "JBB";
+    n[1]["field1"] = "JBB2";
+    n[2]["field1"] = "JBB3";
+    n[0]["bigfield1"] = "BIGBIGJBB";
+    n[1]["bigfield1"] = "BIGBIGJBB2";
+    n[2]["bigfield1"] = "BIGBIGJBB3";
+    c.writeValue(s2Id, n);
+    n = c.readValue(s2Id);
+    print(n);
+
     //    print(curr_real);
     //    c.writeValue(nreal, curr_real + 0.1337);
     //    curr_real = c.readValue(nreal);
     //    await Future.delayed(Duration(milliseconds: 100));
     //  }
     //  c.writeValue(nreal, 1000.0);
-    // NodeId arr = NodeId.string(4, "GVL_IO.single_SB.a_struct.i_xSpare2");
-    // final arrMonId = c.monitoredItemCreate<dynamic>(arr, subId, (data) {
-    //   print('print arr DATA: $data');
-    //   mainSendPort.send('Arr DATA: $data');
-    // });
+    NodeId arr = NodeId.fromString(4, "GVL_IO.single_SB.a_struct.i_xSpare2");
+    print("Multidimension baby");
+    print(c.readValue(arr));
+    print("Multidimension baby");
+
+    NodeId marr = NodeId.fromString(4, "GVL_IO.single_SB.a_struct.i_xSpare3");
+    print("Multidimension baby");
+    print(c.readValue(marr));
+    print("Multidimension baby");
+
+    NodeId driveLine2 = NodeId.fromString(4, "GVL_HMI.Drives_Line2");
+    print(c.readValue(driveLine2));
 
     // NodeId outSignal = NodeId.string(4, "GVL_IO.single_SB.i_xBatchReady");
     // final outSignalMonId =

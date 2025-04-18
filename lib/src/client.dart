@@ -2,41 +2,17 @@ import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:math';
 
 import 'package:ffi/ffi.dart';
 import 'package:logger/logger.dart';
 import 'package:binarize/binarize.dart' as binarize;
 
 import 'generated/open62541_bindings.dart' as raw;
-import 'nodeId.dart';
+import 'node_id.dart';
 import 'extensions.dart';
-import '../dynamic_value.dart';
-import 'types/schema.dart';
+import 'dynamic_value.dart';
 import 'types/create_type.dart';
-
-class Result<T, E> {
-  final T? _ok;
-  final E? _err;
-  final bool isOk;
-
-  Result.ok(this._ok)
-      : isOk = true,
-        _err = null;
-  Result.error(this._err)
-      : isOk = false,
-        _ok = null;
-  T unwrap() {
-    return _ok!;
-  }
-
-  E error() {
-    return _err!;
-  }
-
-  R match<R>({required R Function(T) ok, required R Function(E) err}) {
-    return isOk ? ok(_ok!) : err(_err!);
-  }
-}
 
 class ClientState {
   int channelState;
@@ -104,7 +80,6 @@ class Client {
     _clientConfig = ClientConfig(config);
   }
 
-  KnownStructures get knownStructures => _knownStructures;
   ClientConfig get config => _clientConfig;
 
   int connect(String url, {String? username, String? password}) {
@@ -123,7 +98,9 @@ class Client {
     _lib.UA_Client_run_iterate(_client, ms);
   }
 
-  static ffi.Pointer<raw.UA_DataType> getType(int type, raw.open62541 lib) {
+  static ffi.Pointer<raw.UA_DataType> getType(
+      UaTypes uaType, raw.open62541 lib) {
+    int type = uaType.value;
     if (type < 0 || type > raw.UA_TYPES_COUNT) {
       throw 'Type out of boundary $type';
     }
@@ -132,37 +109,94 @@ class Client {
   }
 
   static ffi.Pointer<raw.UA_Variant> valueToVariant(
-      dynamic value, TypeKindEnum tKind, raw.open62541 lib) {
-    ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
+      DynamicValue value, raw.open62541 lib) {
+    ffi.Pointer<ffi.Uint8> pointer;
 
-    var pload = typeKindToPayloadType(tKind);
-    var offset = 0;
-    if (value is List) {
-      pload = wrapInArray(pload, [value.length]);
-      offset = 4; // Size encoded in the front
-    }
+    //TODO: This is propably not correct, do this for now
+    if (value.typeId != null && value.typeId!.isString()) {
+      ffi.Pointer<raw.UA_ExtensionObject> ext = calloc<raw.UA_ExtensionObject>(
+          value.isArray ? value.asArray.length : 1);
+      if (value.isArray) {
+        for (int i = 0; i < value.asArray.length; i++) {
+          final ref = ext[i];
+          binarize.ByteWriter wr = binarize.ByteWriter();
+          ref.content.encoded.typeId = value.asArray[i].typeId!.toRaw(lib);
+          value.asArray[i]
+              .set(wr, value.asArray[i], Endian.little, false, false);
+          ref.content.encoded.body.length = wr.length;
+          final element = calloc<ffi.Uint8>(wr.length);
+          element.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
+          ref.content.encoded.body.data = element;
+          ref.encoding = 1;
+        }
+      } else {
+        binarize.ByteWriter wr = binarize.ByteWriter();
+        value.set(wr, value, Endian.little, false, true);
+        final element = calloc<ffi.Uint8>(wr.length);
+        element.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
+        ext.ref.content.encoded.typeId = value.typeId!.toRaw(lib);
+        ext.ref.content.encoded.body.length = wr.length;
+        ext.ref.content.encoded.body.data = element;
+        ext.ref.encoding = 1;
+      }
 
-    binarize.ByteWriter wr = binarize.ByteWriter();
-    pload.set(wr, value, Endian.little);
-    final bytes = wr.toBytes();
-    ffi.Pointer<ffi.Uint8> pointer = calloc<ffi.Uint8>(bytes.length);
-    for (int i = offset; i < bytes.length; i++) {
-      pointer[i - offset] = bytes[i];
-    }
-
-    if (value is List) {
-      lib.UA_Variant_setArray(
-          variant, pointer.cast(), value.length, getType(tKind.value, lib));
+      pointer = ext.cast();
     } else {
-      lib.UA_Variant_setScalar(
-          variant, pointer.cast(), getType(tKind.value, lib));
+      binarize.ByteWriter wr = binarize.ByteWriter();
+      value.set(wr, value, Endian.little, false, true);
+      pointer = calloc<ffi.Uint8>(wr.length);
+      pointer.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
+    }
+
+    Namespace0Id id;
+    if (value.typeId!.isNumeric()) {
+      id = Namespace0Id.fromInt(value.typeId!.numeric);
+    } else {
+      id = Namespace0Id.structure;
+    }
+    List<int> getDimensions(DynamicValue value) {
+      if (!value.isArray) {
+        return [];
+      }
+      if (value.asArray.isEmpty) {
+        // I would like this to be an error case
+        throw ArgumentError('Empty array');
+      }
+      var dims = [value.asArray.length];
+      if (value[0].isArray) {
+        dims.addAll(getDimensions(value[0]));
+      }
+      return dims;
+    }
+
+    final dimensions = getDimensions(value);
+    ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
+    lib.UA_Variant_init(variant); // todo is this needed?
+    variant.ref.data = pointer.cast();
+    variant.ref.type = getType(id.toUaTypes(), lib);
+    if (dimensions.isNotEmpty) {
+      variant.ref.arrayLength = dimensions.fold(1, (a, b) => a * b);
+    }
+    if (dimensions.length > 1) {
+      variant.ref.arrayDimensions = calloc<ffi.Uint32>(dimensions.length);
+      variant.ref.arrayDimensions
+          .asTypedList(dimensions.length)
+          .setRange(0, dimensions.length, dimensions);
+      variant.ref.arrayDimensionsSize = dimensions.length;
     }
 
     return variant;
   }
 
-  bool writeValue(NodeId nodeId, dynamic value, TypeKindEnum tKind) {
-    final variant = valueToVariant(value, tKind, _lib);
+  Future<bool> asyncWriteValue(
+      NodeId nodeId, dynamic value, TypeKindEnum tKind) {
+    Completer<bool> future = Completer<bool>();
+    throw 'unimplemented';
+    return future.future;
+  }
+
+  bool writeValue(NodeId nodeId, DynamicValue value) {
+    final variant = valueToVariant(value, _lib);
 
     // Write value
     final retValue = _lib.UA_Client_writeValueAttribute(
@@ -186,12 +220,7 @@ class Client {
       throw 'Bad status code $statusCode name: ${statusCodeName.cast<Utf8>().toDartString()}';
     }
 
-    final typeKind = data.ref.type.ref.typeKind;
-    if (typeKind == TypeKindEnum.extensionObject) {
-      // Populate missing structure definition, todo dont fetch already fetched items
-      variableToSchema(nodeId);
-    }
-    final retVal = variantToValue(data, structs: _knownStructures);
+    final retVal = _variantToValueAutoSchema(data);
     calloc.free(data);
     return retVal;
   }
@@ -219,7 +248,7 @@ class Client {
                 ffi.Pointer<ffi.Void>)>.isolateLocal(
         (ffi.Pointer<raw.UA_Client> client, int subid,
                 ffi.Pointer<ffi.Void> somedata) =>
-            print("Subscription deleted $subid"));
+            stderr.write("Subscription deleted $subid"));
     raw.UA_CreateSubscriptionResponse response =
         _lib.UA_Client_Subscriptions_create(_client, request.ref, ffi.nullptr,
             ffi.nullptr, deleteCallback.nativeFunction);
@@ -242,8 +271,8 @@ class Client {
     subscriptionIds.remove(subId);
   }
 
-  int monitoredItemCreate<T>(
-      NodeId nodeid, int subscriptionId, void Function(T data) callback,
+  int monitoredItemCreate(NodeId nodeid, int subscriptionId,
+      void Function(DynamicValue data) callback,
       {int attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
       int monitoringMode = raw.UA_MonitoringMode.UA_MONITORINGMODE_REPORTING,
       Duration samplingInterval = const Duration(milliseconds: 250),
@@ -276,18 +305,18 @@ class Client {
             ffi.Pointer<raw.UA_DataValue> value) {
       ffi.Pointer<raw.UA_Variant> variantPointer = calloc<raw.UA_Variant>();
       variantPointer.ref = value.ref.value;
-      late final T data;
+      DynamicValue data = DynamicValue();
       try {
-        data = _uaVariantToType<T>(variantPointer);
+        data = _variantToValueAutoSchema(variantPointer);
       } catch (e) {
-        print("Error converting data to type $T: $e");
+        stderr.write("Error converting data to type $DynamicValue: $e");
       } finally {
         calloc.free(variantPointer);
       }
       try {
         callback(data);
       } catch (e) {
-        print("Error calling callback: $e");
+        stderr.write("Error calling callback: $e");
       }
     });
     raw.UA_MonitoredItemCreateResult monResponse =
@@ -308,7 +337,7 @@ class Client {
     return monId;
   }
 
-  Stream<T> monitoredItemStream<T>(
+  Stream<DynamicValue> monitoredItemStream(
     NodeId nodeId,
     int subscriptionId, {
     int attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
@@ -318,9 +347,9 @@ class Client {
     int queueSize = 1,
   }) {
     // force the stream to be synchronous and run in the same isolate as the callback
-    final controller = StreamController<T>(sync: true);
+    final controller = StreamController<DynamicValue>(sync: true);
 
-    int monitoredItemId = monitoredItemCreate<T>(
+    int monitoredItemId = monitoredItemCreate(
       nodeId,
       subscriptionId,
       (data) => controller.add(data),
@@ -341,184 +370,146 @@ class Client {
     return controller.stream;
   }
 
-  // This is reading a DataTypeDefinition from namespace 0
-  StructureSchema readDataTypeDefinition(
-      raw.UA_NodeId nodeIdType, String fieldName) {
+  Schema readDataTypeDefinition(NodeId nodeIdType) {
     ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>();
     _lib.UA_ReadValueId_init(readValueId);
     raw.UA_DataValue res;
-    StructureSchema schema;
+    var map = Schema();
     try {
-      readValueId.ref.nodeId = nodeIdType;
+      readValueId.ref.nodeId = nodeIdType.toRaw(_lib);
       readValueId.ref.attributeId =
           raw.UA_AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION;
       res = _lib.UA_Client_read(_client, readValueId);
 
       if (res.status != raw.UA_STATUSCODE_GOOD) {
-        throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code ${res.status} ${statusCodeToString(res.status)}';
+        throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code ${res.status} ${statusCodeToString(res.status)}, NodeID: $nodeIdType';
       }
       if (res.value.type.ref.typeKind != TypeKindEnum.structure) {
         throw 'UA_Client_read[DATATYPEDEFINITION]: Expected structure type, got ${res.value.type.ref.typeKind}';
       }
       if (!nodeIdType.isString()) {
-        throw 'UA_Client_read[DATATYPEDEFINITION]: Expected string type, got ${nodeIdType.format()}';
+        throw 'UA_Client_read[DATATYPEDEFINITION]: Expected string type, got $nodeIdType';
       }
 
-      // TODO: get this to work
-      // rvi.ref.attributeId = raw.UA_AttributeId.UA_ATTRIBUTEID_DESCRIPTION;
-      // final descriptionRes = _lib.UA_Client_read(_client, rvi);
-      // if (descriptionRes.status == raw.UA_STATUSCODE_GOOD) {
+      // Read our current structure
+      final structDef = res.value.data.cast<raw.UA_StructureDefinition>();
+      map[nodeIdType] = structDef;
 
-      //   print(
-      //       'Description: ${descriptionRes.value.data.cast<raw.UA_LocalizedText>().ref.text.value}');
-      // }
-
-      schema = StructureSchema(fieldName, structureName: nodeIdType.string!);
-      final structDef = res.value.data.cast<raw.UA_StructureDefinition>().ref;
-      for (var i = 0; i < structDef.fieldsSize; i++) {
-        final field = structDef.fields[i];
+      // Crawl the structure for sub structures recursivly
+      for (var i = 0; i < structDef.ref.fieldsSize; i++) {
+        final field = structDef.ref.fields[i];
         raw.UA_NodeId dataType = field.dataType;
-        StructureSchema fieldSchema;
-        List<int> arrayDimensions = field.dimensions;
         if (dataType.isNumeric()) {
-          fieldSchema = createPredefinedType(
-              dataType.toNodeId(), field.fieldName, arrayDimensions);
-        } else if (dataType.isString()) {
+          continue;
+        }
+        if (dataType.isString()) {
           // recursively read the nested structure type
-          fieldSchema = readDataTypeDefinition(dataType, field.fieldName);
+          final mp = readDataTypeDefinition(dataType.toNodeId());
+          for (var subId in mp.keys) {
+            map[subId] = mp[subId]!;
+          }
         } else {
           throw 'Unsupported field type: $dataType';
         }
-        // print('fieldName: ${field.fieldName}');
-        fieldSchema.description = field.fieldDescription;
-        schema.addField(fieldSchema);
       }
     } catch (e) {
-      print("Error reading DataTypeDefinition: $e");
+      stderr.write("Error reading DataTypeDefinition: $e");
       rethrow;
     } finally {
       _lib.UA_ReadValueId_delete(readValueId);
     }
-    return schema;
+    return map;
   }
 
-  StructureSchema variableToSchema(NodeId nodeId) {
-    ffi.Pointer<raw.UA_NodeId> output = calloc<raw.UA_NodeId>();
-    int statusCode = _lib.UA_Client_readDataTypeAttribute(
-        _client, nodeId.toRaw(_lib), output);
-    if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      _lib.UA_NodeId_delete(output);
-      throw 'UA_Client_readDataTypeAttribute: Bad status code $statusCode ${statusCodeToString(statusCode)}';
+  DynamicValue _variantToValueAutoSchema(ffi.Pointer<raw.UA_Variant> data) {
+    Schema defs = {};
+    if (data.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
+      // Cast the data to extension object
+      final ext = data.ref.data.cast<raw.UA_ExtensionObject>();
+      final typeId = ext.ref.content.encoded.typeId.toNodeId();
+      defs = readDataTypeDefinition(typeId);
+      for (var def in defs.keys) {
+        print(defs[def]!.ref.format());
+      }
     }
-    StructureSchema result;
-    try {
-      result = readDataTypeDefinition(output.ref, StructureSchema.schemaRootId);
-    } finally {
-      // todo the node is released by delete of readvalueid
-      // _lib.UA_NodeId_delete(output);
+    final retValue = variantToValue(data, defs: defs);
+    // Cleanup the defs pointers if any
+    for (final ptr in defs.values) {
+      _lib.UA_StructureDefinition_delete(ptr);
     }
-    _knownStructures.add(result);
-    return result;
+    return retValue;
   }
 
-  static dynamic variantToValue(ffi.Pointer<raw.UA_Variant> data,
-      {KnownStructures? structs}) {
+  static DynamicValue variantToValue(ffi.Pointer<raw.UA_Variant> data,
+      {Schema? defs}) {
     // Check if the variant contains no data
     if (data.ref.data == ffi.nullptr) {
-      return null;
+      return DynamicValue();
     }
 
-    final typeKind = data.ref.type.ref.typeKind;
+    final typeId = data.ref.type.ref.typeId;
     final ref = data.ref;
 
-    switch (typeKind) {
-      case TypeKindEnum.boolean:
-      case TypeKindEnum.sbyte:
-      case TypeKindEnum.byte:
-      case TypeKindEnum.int16:
-      case TypeKindEnum.uint16:
-      case TypeKindEnum.int32:
-      case TypeKindEnum.uint32:
-      case TypeKindEnum.int64:
-      case TypeKindEnum.uint64:
-      case TypeKindEnum.float:
-      case TypeKindEnum.double:
-      case TypeKindEnum.dateTime:
-      case TypeKindEnum.string:
-        final dimensions =
-            ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
-        final payloadType =
-            wrapInArray(typeKindToPayloadType(typeKind), dimensions);
-        final dimensionsMultiplied = dimensions.fold(1, (a, b) => a * b);
-        final bufferLength = dimensionsMultiplied * ref.type.ref.memSize;
-        final reader = binarize.ByteReader(
-            ref.data.cast<ffi.Uint8>().asTypedList(bufferLength),
-            endian: binarize.Endian.little);
+    final dimensions = ref.dimensions;
+    final dimensionsMultiplied = dimensions.fold(1, (a, b) => a * b);
+    final bufferLength = dimensionsMultiplied * ref.type.ref.memSize;
+    DynamicValue retValue;
 
-        final value = payloadType.get(reader);
-        if (reader.isNotDone) {
-          throw StateError(
-              'Reader is not done reading where value is\n $value');
-        }
-        return value;
+    // Read structure from opc-ua server
+    if (typeId.toNodeId() == NodeId.structure) {
+      final ext = ref.data.cast<raw.UA_ExtensionObject>().ref.content.encoded;
+      final arr = ref.data.cast<raw.UA_ExtensionObject>();
+      final tt = ext.typeId;
 
-      case TypeKindEnum.extensionObject:
-        if (structs == null) {
-          throw 'Structs needs to be provided';
-        }
-        final dimensions =
-            ref.arrayLength > 0 ? [ref.arrayLength] : ref.dimensions;
-        if (dimensions.isEmpty) {
-          final extObj = ref.data.cast<raw.UA_ExtensionObject>().ref;
-          return extObj.toDynamicValue(structs);
-        }
-        if (dimensions.length == 1) {
-          final result = <DynamicValue>[];
-          for (var i = 0; i < dimensions[0]; i++) {
-            final extObj = ref.data.cast<raw.UA_ExtensionObject>()[i];
-            result.add(extObj.toDynamicValue(structs));
-          }
-          return result;
-        }
-        final result = <List<DynamicValue>>[];
-        for (var dimension in dimensions) {
-          final innerResult = <DynamicValue>[];
-          for (var i = 0; i < dimension; i++) {
-            final extObj = ref.data.cast<raw.UA_ExtensionObject>()[i];
-            innerResult.add(extObj.toDynamicValue(structs));
-          }
-          result.add(innerResult);
-        }
-        return result;
+      // We always have at least 1
+      final first = arr[0].content.encoded;
+      var firstBytes = first.body.data.asTypedList(first.body.length);
 
-      default:
-        throw 'Unsupported variant type: $typeKind';
-    }
-  }
+      DynamicValue firstDyn =
+          DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs!);
+      var reader = binarize.ByteReader(firstBytes);
+      firstDyn.get(reader, Endian.little, false, true);
 
-  T _uaVariantToType<T>(ffi.Pointer<raw.UA_Variant> data) {
-    if (data.ref.data == ffi.nullptr) {
-      if (null is T) {
-        return null as T;
+      if (dimensionsMultiplied > 1) {
+        firstDyn = DynamicValue.fromList([firstDyn], typeId: tt.toNodeId());
       }
-      throw 'Null value cannot be converted to non-nullable type $T';
+      for (int i = 1; i < dimensionsMultiplied; i++) {
+        final ref = arr[i].content.encoded;
+        var typedList = ref.body.data.asTypedList(ref.body.length);
+        DynamicValue element =
+            DynamicValue.fromDataTypeDefinition(tt.toNodeId(), defs);
+        var reader = binarize.ByteReader(typedList);
+        element.get(reader, Endian.little);
+        firstDyn[i] = element;
+      }
+      retValue = firstDyn;
+    } else {
+      DynamicValue createNestedArray(List<int> dims) {
+        if (dims.isEmpty) {
+          return DynamicValue(typeId: typeId.toNodeId());
+        }
+
+        DynamicValue list = DynamicValue(typeId: typeId.toNodeId());
+        if (dims.length == 1) {
+          // Base case: create array of the final dimension
+          for (int i = 0; i < dims[0]; i++) {
+            list[i] = DynamicValue(typeId: typeId.toNodeId());
+          }
+        } else {
+          for (int i = 0; i < dims[0]; i++) {
+            list[i] = createNestedArray(dims.sublist(1));
+          }
+        }
+        return list;
+      }
+
+      retValue = createNestedArray(dimensions.toList());
+      final reader = binarize.ByteReader(
+          data.ref.data.cast<ffi.Uint8>().asTypedList(bufferLength));
+      retValue.get(reader, Endian.little, false, true);
     }
 
-    final value = variantToValue(data, structs: _knownStructures);
-
-    // Special case for dynamic type
-    if (T == dynamic) {
-      return value as T;
-    }
-
-    // For specific types
-    if (value is T) {
-      return value;
-    }
-    // todo: handle lists
-    _logger
-        .e('Expected type $T but got ${value.runtimeType} with value $value');
-    throw 'Expected type $T but got ${value.runtimeType} with value $value';
+    return retValue;
   }
 
   String statusCodeToString(int statusCode) {
@@ -558,7 +549,6 @@ class Client {
   final raw.open62541 _lib;
   final ffi.Pointer<raw.UA_Client> _client;
   late final ClientConfig _clientConfig;
-  final _knownStructures = KnownStructures();
   Map<int, raw.UA_CreateSubscriptionResponse> subscriptionIds = {};
   List<raw.UA_MonitoredItemCreateResult> monitoredItems = [];
 }
