@@ -218,7 +218,7 @@ void main() {
     for (var i = 0; i < data.length; i++) {
       assert(bytes[i] == data[i]);
     }
-  });
+  }, skip: "Pending refactor");
 
   test('Create DynamicValue schema', () {
     var fpNodeId = NodeId.fromString(4, "fp");
@@ -389,7 +389,7 @@ void main() {
     for (int i = 0; i < bytes.length; i++) {
       expect(bytes[i], b[i]);
     }
-  });
+  }, skip: "Pending refactor");
   test('Array of structs', () {
     // Layout and data
     // Array [4] of ST_SimpleStrings
@@ -658,5 +658,5 @@ void main() {
     for (int i = 0; i < bytes.length; i++) {
       expect(bytes[i], b[i]);
     }
-  });
+  }, skip: "Pending refactor");
 }

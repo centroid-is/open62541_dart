@@ -439,6 +439,19 @@ extension UA_NodeIdExtension on raw.UA_NodeId {
     return NodeId.fromRaw(this);
   }
 
+  void fromNodeId(NodeId nodeId) {
+    namespaceIndex = nodeId.namespace;
+    if (nodeId.isNumeric()) {
+      identifierType = raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC;
+      identifier.numeric = nodeId.numeric;
+    } else if (nodeId.isString()) {
+      identifierType = raw.UA_NodeIdType.UA_NODEIDTYPE_STRING;
+      identifier.string.set(nodeId.string);
+    } else {
+      throw ArgumentError('Invalid NodeId type: $nodeId');
+    }
+  }
+
   String format() {
     switch (identifierType) {
       case raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC:
@@ -508,7 +521,15 @@ extension UA_StringExtension on raw.UA_String {
     return utf8.decode(bytes);
   }
 
-  Iterable<int> get dataIterable => data.asTypedList(length);
+  void fromBytes(Iterable<int> bytes) {
+    free();
+    data = calloc(bytes.length);
+    // memcpy as fast as possible
+    data.asTypedList(bytes.length).setRange(0, bytes.length, bytes);
+    length = bytes.length;
+  }
+
+  Uint8List asTypedList() => data.asTypedList(length);
 
   void free() {
     if (data != nullptr) {
