@@ -23,13 +23,12 @@ class ClientConfig {
   ClientConfig(this._clientConfig) {
     // Intercept callbacks
     final state = ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Client> client,
-        ffi.UnsignedInt channelState,
-        ffi.UnsignedInt sessionState,
-        raw.UA_StatusCode connectStatus,
-      )
-    >.isolateLocal(
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.UnsignedInt channelState,
+          ffi.UnsignedInt sessionState,
+          raw.UA_StatusCode connectStatus,
+        )>.isolateLocal(
       (ffi.Pointer<raw.UA_Client> client, int channelState, int sessionState, int recoveryStatus) => _stateStream.add(
         ClientState(
           channelState: raw.UA_SecureChannelState.fromValue(channelState),
@@ -40,8 +39,7 @@ class ClientConfig {
     );
     _clientConfig.ref.stateCallback = state.nativeFunction;
     final inactivity = ffi.NativeCallable<
-      ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
-    >.isolateLocal(
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal(
       (ffi.Pointer<raw.UA_Client> client, int subId, ffi.Pointer<ffi.Void> subContext) =>
           _subscriptionInactivity.add(subId),
     );
@@ -67,7 +65,9 @@ class ClientConfig {
 }
 
 class Client {
-  Client(raw.open62541 lib) : _lib = lib, _client = lib.UA_Client_new() {
+  Client(raw.open62541 lib)
+      : _lib = lib,
+        _client = lib.UA_Client_new() {
     final config = lib.UA_Client_getConfig(_client);
     _clientConfig = ClientConfig(config);
   }
@@ -151,13 +151,12 @@ class Client {
 
     // Create callback for this specific write request
     final callback = ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Client>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Uint32,
-        ffi.Pointer<raw.UA_WriteResponse>,
-      )
-    >.isolateLocal((
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Uint32,
+          ffi.Pointer<raw.UA_WriteResponse>,
+        )>.isolateLocal((
       ffi.Pointer<raw.UA_Client> client,
       ffi.Pointer<ffi.Void> userdata,
       int reqId,
@@ -211,14 +210,13 @@ class Client {
 
     // Create callback for this specific read request
     final callback = ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Client>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Uint32,
-        raw.UA_StatusCode,
-        ffi.Pointer<raw.UA_DataValue>,
-      )
-    >.isolateLocal((
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Uint32,
+          raw.UA_StatusCode,
+          ffi.Pointer<raw.UA_DataValue>,
+        )>.isolateLocal((
       ffi.Pointer<raw.UA_Client> client,
       ffi.Pointer<ffi.Void> userdata,
       int reqId,
@@ -283,9 +281,8 @@ class Client {
     request.ref.publishingEnabled = publishingEnabled;
     request.ref.priority = priority;
 
-    final deleteCallback = ffi.NativeCallable<
-      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)
-    >.isolateLocal(
+    final deleteCallback = ffi
+        .NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)>.isolateLocal(
       (ffi.Pointer<raw.UA_Client> client, int subid, ffi.Pointer<ffi.Void> somedata) =>
           stderr.write("Subscription deleted $subid"),
     );
@@ -334,15 +331,14 @@ class Client {
     monRequest.ref.requestedParameters.queueSize = queueSize;
 
     final monitorCallback = ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Client>,
-        ffi.Uint32,
-        ffi.Pointer<ffi.Void>,
-        ffi.Uint32,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<raw.UA_DataValue>,
-      )
-    >.isolateLocal((
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client>,
+          ffi.Uint32,
+          ffi.Pointer<ffi.Void>,
+          ffi.Uint32,
+          ffi.Pointer<ffi.Void>,
+          ffi.Pointer<raw.UA_DataValue>,
+        )>.isolateLocal((
       ffi.Pointer<raw.UA_Client> client,
       int subId,
       ffi.Pointer<ffi.Void> subContext,
@@ -414,6 +410,90 @@ class Client {
     };
 
     return controller.stream;
+  }
+
+  Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args,
+      {Duration timeout = const Duration(seconds: 10)}) async {
+    final len = args.length;
+    var inputArgs = calloc<raw.UA_Variant>(len);
+    var ptrs = <ffi.Pointer<raw.UA_Variant>>[];
+    final argsIter = args.iterator;
+
+    for (var i = 0; i < len; i++) {
+      argsIter.moveNext();
+      final ptr = valueToVariant(argsIter.current, _lib);
+      ptrs.add(ptr);
+      inputArgs[i] = ptr.ref;
+    }
+    final completer = Completer<List<DynamicValue>>();
+    final callbackInner = ffi.NativeCallable<
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
+            ffi.Pointer<raw.UA_CallResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
+        ffi.Pointer<ffi.Void> userdata, int requestId, ffi.Pointer<raw.UA_CallResponse> cr) {
+      try {
+        final ref = cr.ref;
+        if (ref.resultsSize == 0) {
+          return completer.completeError("No results for call to $objectId $methodId", StackTrace.current);
+        }
+        if (ref.resultsSize > 1) {
+          return completer.completeError(
+              "Unsupported, multiple results for call to $objectId $methodId", StackTrace.current);
+        }
+        final results = ref.results.ref;
+        if (results.statusCode != raw.UA_STATUSCODE_GOOD) {
+          return completer.completeError(
+              "Results error on call to $objectId $methodId failed with ${statusCodeToString(results.statusCode)}",
+              StackTrace.current);
+        }
+        if (ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+          return completer.completeError(
+              "Header error on call to $objectId $methodId failed with ${statusCodeToString(ref.responseHeader.serviceResult)}",
+              StackTrace.current);
+        }
+        if (results.outputArgumentsSize == 0) {
+          completer.complete([]);
+        } else {
+          final result = <DynamicValue>[];
+          for (var i = 0; i < results.outputArgumentsSize; i++) {
+            result.add(_variantToValueAutoSchema(results.outputArguments[i]));
+          }
+          completer.complete(result);
+        }
+      } catch (e) {
+        print("Error calling callback: $e");
+        completer.completeError(e, StackTrace.current);
+      } finally {
+        // cleanup input arguments
+        for (var ptr in ptrs) {
+          _lib.UA_Variant_delete(ptr);
+        }
+        // it doesnt like it when we delete the call response
+        // _lib.UA_CallResponse_delete(cr);
+      }
+    });
+
+    final statusCode = _lib.UA_Client_call_async(
+        _client,
+        objectId.toRaw(_lib),
+        methodId.toRaw(_lib),
+        len,
+        inputArgs,
+        callbackInner.nativeFunction,
+        ffi.nullptr, // todo set context?
+        ffi.nullptr);
+    if (statusCode != raw.UA_STATUSCODE_GOOD) {
+      throw 'Unable to call method: $statusCode ${statusCodeToString(statusCode)}';
+    }
+    Future.delayed(timeout, () {
+      // Dont complete if already completed
+      if (!completer.isCompleted) {
+        completer.completeError('Timeout calling $objectId $methodId');
+        for (var ptr in ptrs) {
+          _lib.UA_Variant_delete(ptr);
+        }
+      }
+    });
+    return completer.future;
   }
 
   Schema readDataTypeDefinition(NodeId nodeIdType) {
@@ -496,11 +576,10 @@ class Client {
       final ext = data.data.cast<raw.UA_ExtensionObject>();
       typeId = ext.ref.content.encoded.typeId.toNodeId();
     }
-    final ref = data;
 
-    final dimensions = ref.dimensions;
+    final dimensions = data.dimensions;
     final dimensionsMultiplied = dimensions.fold(1, (a, b) => a * b);
-    final bufferLength = dimensionsMultiplied * ref.type.ref.memSize;
+    final bufferLength = dimensionsMultiplied * data.type.ref.memSize;
     DynamicValue retValue;
 
     // Read structure from opc-ua server
