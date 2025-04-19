@@ -80,7 +80,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   String get asString => _data?.toString() ?? '';
   bool get asBool => _parseBool(_data) ?? false;
   DateTime? get asDateTime => _parseDateTime(_data);
-  dynamic get asDynamic => _data;
+  dynamic get value => _data;
   MemberDescription? get description => _description;
 
   List<DynamicValue> get asArray => isArray
@@ -360,10 +360,10 @@ class DynamicValue extends PayloadType<DynamicValue> {
       //Special case for strings, they are different the UA_Strings when
       // encoded inside of a struct
       if (typeId == NodeId.uastring && insideStruct) {
-        ContiguousStringPayload().set(writer, value.asDynamic, endian);
+        ContiguousStringPayload().set(writer, value.value, endian);
       } else {
         nodeIdToPayloadType(value.typeId ?? autoDeduceType(value._data))
-            .set(writer, value.asDynamic, endian);
+            .set(writer, value.value, endian);
       }
     }
   }
