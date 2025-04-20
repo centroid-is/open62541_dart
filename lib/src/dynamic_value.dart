@@ -279,17 +279,22 @@ class DynamicValue extends PayloadType<DynamicValue> {
 
     // We are a object case
     if (isObject) {
-      final objBytes = reader.read(ffi.sizeOf<raw.UA_ExtensionObject>());
-      ffi.Pointer<raw.UA_ExtensionObject> obj = calloc();
-      obj
-          .cast<ffi.Uint8>()
-          .asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>())
-          .setRange(0, ffi.sizeOf<raw.UA_ExtensionObject>(), objBytes);
-      // Todo only support encoded byte string for now
-      assert(obj.ref.encoding ==
-          raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING);
-      final bodyBytes = obj.ref.content.encoded.body.asTypedList();
-      final bodyReader = ByteReader(bodyBytes, endian: endian ?? Endian.little);
+      ByteReader bodyReader = reader;
+      if (root) {
+        final objBytes = reader.read(ffi.sizeOf<raw.UA_ExtensionObject>());
+        ffi.Pointer<raw.UA_ExtensionObject> obj = calloc();
+        final ref = obj.ref;
+        obj
+            .cast<ffi.Uint8>()
+            .asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>())
+            .setRange(0, ffi.sizeOf<raw.UA_ExtensionObject>(), objBytes);
+        // Todo only support encoded byte string for now
+        assert(ref.encoding ==
+            raw.UA_ExtensionObjectEncoding
+                .UA_EXTENSIONOBJECT_ENCODED_BYTESTRING);
+        final bodyBytes = obj.ref.content.encoded.body.asTypedList();
+        bodyReader = ByteReader(bodyBytes, endian: endian ?? Endian.little);
+      }
       for (final key in _data.keys) {
         _data[key] = _data[key].get(bodyReader, endian, true);
       }
@@ -327,7 +332,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
         // as in not read the subsequent array length
         value._data[i].set(writer, value._data[i], endian, false, root);
       }
-    } else if (value.isObject) {
+    } else if (value.isObject && root) {
       ffi.Pointer<raw.UA_ExtensionObject> obj =
           calloc<raw.UA_ExtensionObject>();
       obj.ref.content.encoded.typeId.fromNodeId(value.typeId!);
@@ -345,6 +350,9 @@ class DynamicValue extends PayloadType<DynamicValue> {
       // here we have made a view into the ext object on the C heap
       // I would like to believe that this is freed when the variant is freed
       writer.write(extObjView);
+    } else if (value.isObject) {
+      value._data
+          .forEach((key, value) => value.set(writer, value, endian, true));
     } else {
       if (value.isNull) {
         throw StateError('Element type is not set for where value is\n $value');
