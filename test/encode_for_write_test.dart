@@ -1046,7 +1046,9 @@ void main() {
 
     lib.UA_StructureDefinition_delete(hmi);
     lib.UA_StructureDefinition_delete(atv);
+    // I presume this erases the data correctly
     lib.UA_Variant_delete(variant);
+    lib.UA_Variant_delete(variantEncoded);
   });
 
   // TODO: Multi dimensional arrays inside structs

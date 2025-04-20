@@ -1,8 +1,11 @@
 import 'dart:collection';
 import 'dart:ffi';
 
+import 'package:collection/collection.dart';
+import 'package:ffi/ffi.dart';
 import 'package:binarize/binarize.dart';
 import 'package:open62541_bindings/src/dynamic_value.dart';
+import 'package:open62541_bindings/src/extensions.dart';
 import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
     as raw;
 import 'package:test/test.dart';
@@ -218,7 +221,7 @@ void main() {
     for (var i = 0; i < data.length; i++) {
       assert(bytes[i] == data[i]);
     }
-  }, skip: "Pending refactor");
+  });
 
   test('Create DynamicValue schema', () {
     var fpNodeId = NodeId.fromString(4, "fp");
@@ -389,7 +392,7 @@ void main() {
     for (int i = 0; i < bytes.length; i++) {
       expect(bytes[i], b[i]);
     }
-  }, skip: "Pending refactor");
+  });
   test('Array of structs', () {
     // Layout and data
     // Array [4] of ST_SimpleStrings
@@ -403,166 +406,50 @@ void main() {
     // bigfield4
 
     var data = [
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x61,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x62,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x63,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x64,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x65,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x66,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x67,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x68,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x69,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x6a,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x6b,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x6c,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x6d,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x6e,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x6f,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x70,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x71,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x72,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x73,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x74,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x61,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x62,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x63,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x64,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x65,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x66,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x67,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x68,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x69,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x6a,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x6b,
-      0x01,
-      0x00,
-      0x00,
-      0x00,
-      0x6c
+      // First struct
+      [
+        0x01, 0x00, 0x00, 0x00, 0x61, // "a"
+        0x01, 0x00, 0x00, 0x00, 0x62, // "b"
+        0x01, 0x00, 0x00, 0x00, 0x63, // "c"
+        0x01, 0x00, 0x00, 0x00, 0x64, // "d"
+        0x01, 0x00, 0x00, 0x00, 0x65, // "e"
+        0x01, 0x00, 0x00, 0x00, 0x66, // "f"
+        0x01, 0x00, 0x00, 0x00, 0x67, // "g"
+        0x01, 0x00, 0x00, 0x00, 0x68 // "h"
+      ],
+      // Second struct
+      [
+        0x01, 0x00, 0x00, 0x00, 0x69, // "i"
+        0x01, 0x00, 0x00, 0x00, 0x6a, // "j"
+        0x01, 0x00, 0x00, 0x00, 0x6b, // "k"
+        0x01, 0x00, 0x00, 0x00, 0x6c, // "l"
+        0x01, 0x00, 0x00, 0x00, 0x6d, // "m"
+        0x01, 0x00, 0x00, 0x00, 0x6e, // "n"
+        0x01, 0x00, 0x00, 0x00, 0x6f, // "o"
+        0x01, 0x00, 0x00, 0x00, 0x70 // "p"
+      ],
+      // Third struct
+      [
+        0x01, 0x00, 0x00, 0x00, 0x71, // "q"
+        0x01, 0x00, 0x00, 0x00, 0x72, // "r"
+        0x01, 0x00, 0x00, 0x00, 0x73, // "s"
+        0x01, 0x00, 0x00, 0x00, 0x74, // "t"
+        0x01, 0x00, 0x00, 0x00, 0x61, // "a"
+        0x01, 0x00, 0x00, 0x00, 0x62, // "b"
+        0x01, 0x00, 0x00, 0x00, 0x63, // "c"
+        0x01, 0x00, 0x00, 0x00, 0x64 // "d"
+      ],
+      // Fourth struct
+      [
+        0x01, 0x00, 0x00, 0x00, 0x65, // "e"
+        0x01, 0x00, 0x00, 0x00, 0x66, // "f"
+        0x01, 0x00, 0x00, 0x00, 0x67, // "g"
+        0x01, 0x00, 0x00, 0x00, 0x68, // "h"
+        0x01, 0x00, 0x00, 0x00, 0x69, // "i"
+        0x01, 0x00, 0x00, 0x00, 0x6a, // "j"
+        0x01, 0x00, 0x00, 0x00, 0x6b, // "k"
+        0x01, 0x00, 0x00, 0x00, 0x6c // "l"
+      ]
     ];
 
     // Create a dynamic value with the structure
@@ -612,7 +499,22 @@ void main() {
 
     final parent = DynamicValue.fromList([test1, test2, test3, test4]);
 
-    final bytes = Uint8List.fromList(data);
+    Pointer<raw.UA_ExtensionObject> obj = calloc(4);
+    final encoding =
+        raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+    obj[0].encoding = encoding;
+    obj[1].encoding = encoding;
+    obj[2].encoding = encoding;
+    obj[3].encoding = encoding;
+
+    obj[0].content.encoded.body.fromBytes(data[0]);
+    obj[1].content.encoded.body.fromBytes(data[1]);
+    obj[2].content.encoded.body.fromBytes(data[2]);
+    obj[3].content.encoded.body.fromBytes(data[3]);
+
+    final bytes =
+        obj.cast<Uint8>().asTypedList(sizeOf<raw.UA_ExtensionObject>() * 4);
+
     ByteReader reader = ByteReader(bytes, endian: Endian.little);
     parent.get(reader, Endian.little, false, true);
     expect(parent[0]["field1"].asString, "a");
@@ -655,8 +557,20 @@ void main() {
     parent.set(writer, parent, Endian.little, false, true);
     final b = writer.toBytes();
     expect(bytes.length, b.length);
-    for (int i = 0; i < bytes.length; i++) {
-      expect(bytes[i], b[i]);
+    for (int i = 0; i < 4; i++) {
+      final chunk = bytes.sublist(i * sizeOf<raw.UA_ExtensionObject>(),
+          (i + 1) * sizeOf<raw.UA_ExtensionObject>());
+      Pointer<raw.UA_ExtensionObject> obj = calloc();
+      obj
+          .cast<Uint8>()
+          .asTypedList(sizeOf<raw.UA_ExtensionObject>())
+          .setRange(0, sizeOf<raw.UA_ExtensionObject>(), chunk);
+      final innerBytes = obj.ref.content.encoded.body.asTypedList();
+      for (int j = 0; j < data[i].length; j++) {
+        expect(data[i][j], innerBytes[j]);
+      }
+      obj.ref.content.encoded.body.free();
+      calloc.free(obj);
     }
-  }, skip: "Pending refactor");
+  });
 }
