@@ -24,7 +24,7 @@ void clientIsolate(SendPort mainSendPort) async {
   if (statusCode == 0) {
     mainSendPort.send('Client connected!');
   } else {
-    c.close();
+    c.delete();
     mainSendPort.send('EXIT');
     return;
   }
@@ -235,7 +235,7 @@ void clientIsolate(SendPort mainSendPort) async {
     // });
   } catch (error) {
     mainSendPort.send('ERROR: $error');
-    c.close();
+    c.delete();
     mainSendPort.send('EXIT');
     return;
   }
@@ -243,7 +243,7 @@ void clientIsolate(SendPort mainSendPort) async {
   // Add signal handler
   ProcessSignal.sigint.watch().listen((signal) {
     print('Shutting down client gracefully...');
-    c.close();
+    c.delete();
     mainSendPort.send('EXIT');
   });
 
@@ -258,7 +258,7 @@ void clientIsolate(SendPort mainSendPort) async {
     }
   }
 
-  c.close();
+  c.delete();
   mainSendPort.send('EXIT');
 }
 

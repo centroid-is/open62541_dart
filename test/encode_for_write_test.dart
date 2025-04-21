@@ -8,7 +8,6 @@ import 'package:open62541_bindings/src/library.dart';
 import 'package:open62541_bindings/src/node_id.dart';
 import 'package:open62541_bindings/src/extensions.dart';
 import 'package:test/test.dart';
-import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
 import 'package:open62541_bindings/src/client.dart';
 import 'schema_util.dart';
@@ -81,7 +80,6 @@ void main() {
   });
   test('Encode DateTime variant', () {
     var firstArg = DateTime.utc(2025, 10, 5, 18, 30, 15, 150);
-    var dfirstArg = DynamicValue(value: firstArg);
     testSimpleTypes(DynamicValue(value: firstArg, typeId: NodeId.datetime));
     testSimpleTypes(DynamicValue(
         value: DateTime.utc(2024, 10, 5, 18, 30, 15, 150),

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:math';
 
 import 'package:ffi/ffi.dart';
 import 'package:logger/logger.dart';
@@ -12,16 +11,15 @@ import 'generated/open62541_bindings.dart' as raw;
 import 'node_id.dart';
 import 'extensions.dart';
 import 'dynamic_value.dart';
-import 'types/create_type.dart';
 
 class ClientState {
-  int channelState;
-  int sessionState;
-  int connectStatus;
+  UaSecureChannelState channelState;
+  UaSessionState sessionState;
+  int recoveryStatus;
   ClientState(
       {required this.channelState,
       required this.sessionState,
-      required this.connectStatus});
+      required this.recoveryStatus});
 }
 
 class ClientConfig {
@@ -34,11 +32,11 @@ class ClientConfig {
                 ffi.Int32 sessionState,
                 raw.UA_StatusCode connectStatus)>.isolateLocal(
         (ffi.Pointer<raw.UA_Client> client, int channelState, int sessionState,
-                int connectStatus) =>
+                int recoveryStatus) =>
             _stateStream.add(ClientState(
-                channelState: channelState,
-                sessionState: sessionState,
-                connectStatus: connectStatus)));
+                channelState: UaSecureChannelState.fromValue(channelState),
+                sessionState: UaSessionState.fromValue(sessionState),
+                recoveryStatus: recoveryStatus)));
     _clientConfig.ref.stateCallback = state.nativeFunction;
     final inactivity = ffi.NativeCallable<
             ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32,
@@ -94,8 +92,11 @@ class Client {
   }
 
   void runIterate(Duration iterate) {
-    int ms = iterate.inMilliseconds;
-    _lib.UA_Client_run_iterate(_client, ms);
+    if (_client != ffi.nullptr) {
+      // Get the client state
+      int ms = iterate.inMilliseconds;
+      _lib.UA_Client_run_iterate(_client, ms);
+    }
   }
 
   static ffi.Pointer<raw.UA_DataType> getType(
@@ -157,7 +158,8 @@ class Client {
     return variant;
   }
 
-  Future<void> asyncWriteValue(NodeId nodeId, DynamicValue value) {
+  Future<void> asyncWriteValue(NodeId nodeId, DynamicValue value,
+      {Duration timeout = const Duration(seconds: 10)}) {
     Completer<void> completer = Completer<void>();
 
     // Create callback for this specific write request
@@ -166,6 +168,9 @@ class Client {
                 ffi.Uint32, ffi.Pointer<raw.UA_WriteResponse>)>.isolateLocal(
         (ffi.Pointer<raw.UA_Client> client, ffi.Pointer<ffi.Void> userdata,
             int reqId, ffi.Pointer<raw.UA_WriteResponse> response) {
+      if (completer.isCompleted) {
+        return; // Request timed out already
+      }
       if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
         completer.completeError(
             'Failed to write value: ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
@@ -176,6 +181,12 @@ class Client {
     final variant = valueToVariant(value, _lib);
     _lib.UA_Client_writeValueAttribute_async(_client, nodeId.toRaw(_lib),
         variant, callback.nativeFunction, ffi.nullptr, ffi.nullptr);
+    Future.delayed(timeout, () {
+      // Dont complete if already completed
+      if (!completer.isCompleted) {
+        completer.completeError('Timeout writing value');
+      }
+    });
     return completer.future;
   }
 
@@ -195,7 +206,8 @@ class Client {
     return retValue == raw.UA_STATUSCODE_GOOD;
   }
 
-  Future<DynamicValue> asyncReadValue(NodeId nodeId) {
+  Future<DynamicValue> asyncReadValue(NodeId nodeId,
+      {Duration timeout = const Duration(seconds: 10)}) {
     Completer<DynamicValue> completer = Completer<DynamicValue>();
 
     // Create callback for this specific read request
@@ -208,6 +220,9 @@ class Client {
                 ffi.Pointer<raw.UA_DataValue>)>.isolateLocal(
         (ffi.Pointer<raw.UA_Client> client, ffi.Pointer<ffi.Void> userdata,
             int reqId, int status, ffi.Pointer<raw.UA_DataValue> value) {
+      if (completer.isCompleted) {
+        return; // Request timed out already
+      }
       if (status != raw.UA_STATUSCODE_GOOD) {
         completer.completeError(
             'Failed to read value: ${statusCodeToString(status)}');
@@ -218,6 +233,14 @@ class Client {
     });
     _lib.UA_Client_readValueAttribute_async(_client, nodeId.toRaw(_lib),
         callback.nativeFunction, ffi.nullptr, ffi.nullptr);
+
+    // Create a timeout to avoid deadlocks
+    Future.delayed(timeout, () {
+      // Dont complete if already completed
+      if (!completer.isCompleted) {
+        completer.completeError('Timeout reading value');
+      }
+    });
     return completer.future;
   }
 
@@ -521,19 +544,6 @@ class Client {
   void delete() {
     _lib.UA_Client_delete(_client);
     _logger.t("Deleted client");
-  }
-
-  void close() {
-    for (var subId in List.from(subscriptionIds.keys)) {
-      subscriptionDelete(subId);
-    }
-    assert(subscriptionIds.isEmpty);
-    disconnect();
-    Future.delayed(Duration(seconds: 1), () {
-      _logger.t("Deleting client");
-      // idk why but the client may not be deleted immediately, it segfaults if we delete it immediately
-      delete();
-    });
   }
 
   final Logger _logger = Logger(

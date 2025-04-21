@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:open62541_bindings/open62541_bindings.dart';
+import 'package:open62541_bindings/src/generated/open62541_bindings.dart';
 
 Future<int> main(List<String> arguments) async {
   Client c = Client(Open62541Singleton().lib);
@@ -17,40 +20,46 @@ Future<int> main(List<String> arguments) async {
     print('Usage: async_client <endpoint_url>');
     return -1;
   }
-  var statusCode = c.connect(endpointUrl);
+
   print('Endpoint url: $endpointUrl');
 
-  if (statusCode == 0) {
-    print('Client connected!');
-  } else {
-    c.close();
-    print('EXIT');
-    return -1;
-  }
+  // Run the c execution loop from the same isolate
+  () async {
+    while (true) {
+      var statusCode = c.connect(endpointUrl);
+      if (statusCode != UA_STATUSCODE_GOOD) {
+        stderr.write("Not connected. retrying in 10 milliseconds");
+      }
+      c.runIterate(Duration(milliseconds: 10));
+      await Future.delayed(Duration(milliseconds: 10));
+    }
+  }();
 
+  final start = DateTime.now();
   final counterId = NodeId.fromString(4, "MAIN.nCounter");
-  Future<DynamicValue> value = c.asyncReadValue(counterId);
-  value.then((value) {
-    print('Value: ${value.value}');
-    value.value = value.value + 1;
-    c.asyncWriteValue(counterId, value).then((_) {
-      print('Wrote value: ${value.value}');
-    });
+
+  final subscriptionId = c.subscriptionCreate(
+      requestedPublishingInterval: Duration(milliseconds: 10));
+  final subscription = c.monitoredItemStream(counterId, subscriptionId,
+      samplingInterval: Duration(milliseconds: 10));
+
+  subscription.listen((event) {
+    print('Subscription event: $event');
   });
 
-  // Run for 1 seconds
-  final start = DateTime.now();
-  while (DateTime.now().difference(start).inSeconds < 1) {
+  while (start.isAfter(DateTime.now().subtract(Duration(seconds: 10)))) {
     try {
-      c.runIterate(Duration(milliseconds: 150));
-      // Add small delay to allow event loop to process
-      await Future.delayed(Duration(milliseconds: 1));
-    } catch (error) {
-      print('Error: $error');
-      break;
+      DynamicValue value = await c.asyncReadValue(counterId);
+      print('Read value: $value');
+
+      // write a new value to trigger the subscription
+      value.value = value.value + 1;
+      await c.asyncWriteValue(counterId, value);
+    } catch (e) {
+      print(e);
     }
   }
 
-  c.close();
+  c.delete();
   return 0;
 }
