@@ -30,7 +30,7 @@ jobs:
       - name: Build open62541 library
         run: |
           sudo apt install libmbedtls-dev
-          ./build_lib.sh
+          ./open62541_tooling/build_lib.sh
 
       - name: Run tests
         run: dart test
