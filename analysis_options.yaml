@@ -2,6 +2,6 @@ include: package:lints/recommended.yaml
 
 analyzer:
   exclude:
-
+    - '**/generated/*.dart'
 formatter:
   page_width: 120
