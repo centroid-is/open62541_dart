@@ -502,10 +502,10 @@ void main() {
     Pointer<raw.UA_ExtensionObject> obj = calloc(4);
     final encoding =
         raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
-    obj[0].encoding = encoding;
-    obj[1].encoding = encoding;
-    obj[2].encoding = encoding;
-    obj[3].encoding = encoding;
+    obj[0].encodingAsInt = encoding.value;
+    obj[1].encodingAsInt = encoding.value;
+    obj[2].encodingAsInt = encoding.value;
+    obj[3].encodingAsInt = encoding.value;
 
     obj[0].content.encoded.body.fromBytes(data[0]);
     obj[1].content.encoded.body.fromBytes(data[1]);

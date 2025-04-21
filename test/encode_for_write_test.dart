@@ -858,9 +858,12 @@ void main() {
     Pointer<UA_Variant> variant = calloc();
     Pointer<raw.UA_ExtensionObject> ext = calloc(3);
     // Set encoding
-    ext[0].encoding = 1;
-    ext[1].encoding = 1;
-    ext[2].encoding = 1;
+    ext[0].encodingAsInt = raw
+        .UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
+    ext[1].encodingAsInt = raw
+        .UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
+    ext[2].encodingAsInt = raw
+        .UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
 
     // Set types
     ext[0].content.encoded.typeId = atvId.toRaw(lib);

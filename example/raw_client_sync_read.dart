@@ -11,8 +11,9 @@ import 'package:open62541_bindings/src/generated/open62541_bindings.dart';
 //
 late open62541 lib;
 //
-void stateCallback(Pointer<UA_Client> client, int channelState, int sessionState, int connectStatus) {
-  switch (channelState) {
+void stateCallback(Pointer<UA_Client> client, int channelState,
+    int sessionState, int connectStatus) {
+  switch (UA_SecureChannelState.fromValue(channelState)) {
     case UA_SecureChannelState.UA_SECURECHANNELSTATE_CLOSED:
       print('Channel disconnected');
       break;
@@ -25,9 +26,12 @@ void stateCallback(Pointer<UA_Client> client, int channelState, int sessionState
     case UA_SecureChannelState.UA_SECURECHANNELSTATE_OPEN:
       print('Channel A Secure channel to server is open');
       break;
+    default:
+      print('Unknown secure channel state: $channelState');
+      break;
   }
 
-  switch (sessionState) {
+  switch (UA_SessionState.fromValue(sessionState)) {
     case UA_SessionState.UA_SESSIONSTATE_ACTIVATED:
       print('Session activated');
       break;
@@ -39,11 +43,18 @@ void stateCallback(Pointer<UA_Client> client, int channelState, int sessionState
   }
 }
 
-void deleteCallback(Pointer<UA_Client> client, int subscriptionId, Pointer<Void> subscriptionContext) {
+void deleteCallback(Pointer<UA_Client> client, int subscriptionId,
+    Pointer<Void> subscriptionContext) {
   print('Subscription deleted $subscriptionId');
 }
 
-void handlerCurrentTimeChanged(Pointer<UA_Client> client, int subId, Pointer<Void> subContext, int monId, Pointer<Void> monContext, Pointer<UA_DataValue> value) {
+void handlerCurrentTimeChanged(
+    Pointer<UA_Client> client,
+    int subId,
+    Pointer<Void> subContext,
+    int monId,
+    Pointer<Void> monContext,
+    Pointer<UA_DataValue> value) {
   Pointer<UA_Variant> variantPointer = malloc<UA_Variant>();
   variantPointer.ref = value.ref.value;
 
@@ -52,12 +63,14 @@ void handlerCurrentTimeChanged(Pointer<UA_Client> client, int subId, Pointer<Voi
   // if (lib.UA_Variant_hasScalarType(variantPointer, datetPointer)) {
   int val = variantPointer.ref.data.cast<UA_DateTime>().value;
   UA_DateTimeStruct dts = lib.UA_DateTime_toStruct(val);
-  DateTime dt = DateTime(dts.year, dts.month, dts.day, dts.hour, dts.min, dts.sec, dts.milliSec);
+  DateTime dt = DateTime(
+      dts.year, dts.month, dts.day, dts.hour, dts.min, dts.sec, dts.milliSec);
   print(dt);
   //}
 }
 
-void subscriptionInactivityCallback(Pointer<UA_Client> client, int subId, Pointer<Void> subContext) {
+void subscriptionInactivityCallback(
+    Pointer<UA_Client> client, int subId, Pointer<Void> subContext) {
   print('Subscription inactivity callback $subId');
 }
 
@@ -68,7 +81,8 @@ Uri? objectPath() {
   } else if (Platform.isWindows) {
     ending = 'dll';
   }
-  return Isolate.resolvePackageUriSync(Uri.parse('package:open62541_bindings/libopen62541.$ending'));
+  return Isolate.resolvePackageUriSync(
+      Uri.parse('package:open62541_bindings/libopen62541.$ending'));
 }
 
 int main() {
@@ -76,16 +90,20 @@ int main() {
   print(location);
   lib = open62541(DynamicLibrary.open(location!.path));
   Pointer<UA_Client> client = lib.UA_Client_new();
-  Pointer<UA_ClientConfig> clientConfigPointer = lib.UA_Client_getConfig(client);
+  Pointer<UA_ClientConfig> clientConfigPointer =
+      lib.UA_Client_getConfig(client);
   lib.UA_ClientConfig_setDefault(clientConfigPointer);
 
   // clientConfigPointer.ref.stateCallback = Pointer.fromFunction<Void Function(Pointer<UA_Client>, Int32, Int32, UA_StatusCode)>(stateCallback);
 
-  clientConfigPointer.ref.subscriptionInactivityCallback = Pointer.fromFunction<Void Function(Pointer<UA_Client>, UA_UInt32, Pointer<Void>)>(subscriptionInactivityCallback);
+  clientConfigPointer.ref.subscriptionInactivityCallback = Pointer.fromFunction<
+      Void Function(Pointer<UA_Client>, UA_UInt32,
+          Pointer<Void>)>(subscriptionInactivityCallback);
 
   // Pointer<Pointer<UA_EndpointDescription>> endpointDescription = nullptr;
   String endpointUrl = 'opc.tcp://localhost:4840';
-  var statusCode = lib.UA_Client_connect(client, endpointUrl.toNativeUtf8().cast());
+  var statusCode =
+      lib.UA_Client_connect(client, endpointUrl.toNativeUtf8().cast());
   print('Endpoint url: $endpointUrl');
   if (statusCode == 0) {
     print('Client connected!');
@@ -95,16 +113,19 @@ int main() {
   }
 
   print("Starting read loop");
-  UA_NodeId currentTimeNode = lib.UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERSTATUS_CURRENTTIME);
+  UA_NodeId currentTimeNode =
+      lib.UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERSTATUS_CURRENTTIME);
   for (int i = 0; i < 10; i++) {
     Pointer<UA_Variant> value = malloc<UA_Variant>();
     lib.UA_Variant_init(value);
-    var retvalue = lib.UA_Client_readValueAttribute(client, currentTimeNode, value);
+    var retvalue =
+        lib.UA_Client_readValueAttribute(client, currentTimeNode, value);
     if (retvalue == UA_STATUSCODE_GOOD) {
       // lib.UA_Variant_hasScalarType(value, lib.UA_TYPES[UA_TYPES_DATETIME]); TODO: Find figure out how to do this
       int val = value.ref.data.cast<UA_DateTime>().value;
       UA_DateTimeStruct dts = lib.UA_DateTime_toStruct(val);
-      DateTime dt = DateTime(dts.year, dts.month, dts.day, dts.hour, dts.min, dts.sec, dts.milliSec);
+      DateTime dt = DateTime(dts.year, dts.month, dts.day, dts.hour, dts.min,
+          dts.sec, dts.milliSec);
       print(dt);
     } else {
       print('Failed to read current time');
@@ -120,7 +141,8 @@ int main() {
   print('Subscription!');
 
   //TODO: handlerCurrentTimeChanged is not being called. No errors. Need to investigate
-  Pointer<UA_CreateSubscriptionRequest> request = malloc<UA_CreateSubscriptionRequest>();
+  Pointer<UA_CreateSubscriptionRequest> request =
+      malloc<UA_CreateSubscriptionRequest>();
   lib.UA_CreateSubscriptionRequest_init(request);
   request.ref.requestedPublishingInterval = 500.0;
   request.ref.requestedLifetimeCount = 10000;
@@ -129,8 +151,14 @@ int main() {
   request.ref.publishingEnabled = true;
   request.ref.priority = 0;
 
-  UA_CreateSubscriptionResponse response =
-      lib.UA_Client_Subscriptions_create(client, request.ref, nullptr, nullptr, Pointer.fromFunction<Void Function(Pointer<UA_Client>, Uint32, Pointer<Void>)>(deleteCallback));
+  UA_CreateSubscriptionResponse response = lib.UA_Client_Subscriptions_create(
+      client,
+      request.ref,
+      nullptr,
+      nullptr,
+      Pointer.fromFunction<
+          Void Function(
+              Pointer<UA_Client>, Uint32, Pointer<Void>)>(deleteCallback));
   if (response.responseHeader.serviceResult == UA_STATUSCODE_GOOD) {
     print("Subscription created id: ${response.subscriptionId}");
   } else {
@@ -138,17 +166,34 @@ int main() {
     lib.UA_Client_delete(client);
     exit(-1);
   }
-  Pointer<UA_MonitoredItemCreateRequest> monRequest = malloc<UA_MonitoredItemCreateRequest>();
+  Pointer<UA_MonitoredItemCreateRequest> monRequest =
+      malloc<UA_MonitoredItemCreateRequest>();
   lib.UA_MonitoredItemCreateRequest_init(monRequest);
   monRequest.ref.itemToMonitor.nodeId = currentTimeNode;
-  monRequest.ref.itemToMonitor.attributeId = UA_AttributeId.UA_ATTRIBUTEID_VALUE;
-  monRequest.ref.monitoringMode = UA_MonitoringMode.UA_MONITORINGMODE_REPORTING;
+  monRequest.ref.itemToMonitor.attributeId =
+      UA_AttributeId.UA_ATTRIBUTEID_VALUE.value;
+  monRequest.ref.monitoringModeAsInt =
+      UA_MonitoringMode.UA_MONITORINGMODE_REPORTING.value;
   monRequest.ref.requestedParameters.samplingInterval = 250;
   monRequest.ref.requestedParameters.discardOldest = true;
   monRequest.ref.requestedParameters.queueSize = 1;
 
-  UA_MonitoredItemCreateResult monResponse = lib.UA_Client_MonitoredItems_createDataChange(client, response.subscriptionId, UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH, monRequest.ref, nullptr,
-      Pointer.fromFunction<Void Function(Pointer<UA_Client>, Uint32, Pointer<Void>, Uint32, Pointer<Void>, Pointer<UA_DataValue>)>(handlerCurrentTimeChanged), nullptr);
+  UA_MonitoredItemCreateResult monResponse =
+      lib.UA_Client_MonitoredItems_createDataChange(
+          client,
+          response.subscriptionId,
+          UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH,
+          monRequest.ref,
+          nullptr,
+          Pointer.fromFunction<
+              Void Function(
+                  Pointer<UA_Client>,
+                  Uint32,
+                  Pointer<Void>,
+                  Uint32,
+                  Pointer<Void>,
+                  Pointer<UA_DataValue>)>(handlerCurrentTimeChanged),
+          nullptr);
   if (monResponse.statusCode == UA_STATUSCODE_GOOD) {
     print('Monitored item created id: ${monResponse.monitoredItemId}');
   } else {

@@ -341,8 +341,8 @@ class DynamicValue extends PayloadType<DynamicValue> {
           .forEach((key, value) => value.set(bodyWriter, value, endian, true));
       obj.ref.content.encoded.body.fromBytes(bodyWriter.toBytes());
       // todo support other encodings
-      obj.ref.encoding =
-          raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+      obj.ref.encodingAsInt = raw.UA_ExtensionObjectEncoding
+          .UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
       // write the extension object to the writer
       final extObjView = obj
           .cast<ffi.Uint8>()
