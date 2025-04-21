@@ -1,7 +1,6 @@
 import 'dart:collection';
 import 'dart:ffi';
 
-import 'package:collection/collection.dart';
 import 'package:ffi/ffi.dart';
 import 'package:binarize/binarize.dart';
 import 'package:open62541_bindings/src/dynamic_value.dart';
