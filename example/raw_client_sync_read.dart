@@ -46,8 +46,14 @@ void deleteCallback(Pointer<UA_Client> client, int subscriptionId, Pointer<Void>
   print('Subscription deleted $subscriptionId');
 }
 
-void handlerCurrentTimeChanged(Pointer<UA_Client> client, int subId, Pointer<Void> subContext, int monId,
-    Pointer<Void> monContext, Pointer<UA_DataValue> value) {
+void handlerCurrentTimeChanged(
+  Pointer<UA_Client> client,
+  int subId,
+  Pointer<Void> subContext,
+  int monId,
+  Pointer<Void> monContext,
+  Pointer<UA_DataValue> value,
+) {
   Pointer<UA_Variant> variantPointer = malloc<UA_Variant>();
   variantPointer.ref = value.ref.value;
 
@@ -134,8 +140,13 @@ int main() {
   request.ref.publishingEnabled = true;
   request.ref.priority = 0;
 
-  UA_CreateSubscriptionResponse response = lib.UA_Client_Subscriptions_create(client, request.ref, nullptr, nullptr,
-      Pointer.fromFunction<Void Function(Pointer<UA_Client>, Uint32, Pointer<Void>)>(deleteCallback));
+  UA_CreateSubscriptionResponse response = lib.UA_Client_Subscriptions_create(
+    client,
+    request.ref,
+    nullptr,
+    nullptr,
+    Pointer.fromFunction<Void Function(Pointer<UA_Client>, Uint32, Pointer<Void>)>(deleteCallback),
+  );
   if (response.responseHeader.serviceResult == UA_STATUSCODE_GOOD) {
     print("Subscription created id: ${response.subscriptionId}");
   } else {
@@ -153,15 +164,16 @@ int main() {
   monRequest.ref.requestedParameters.queueSize = 1;
 
   UA_MonitoredItemCreateResult monResponse = lib.UA_Client_MonitoredItems_createDataChange(
-      client,
-      response.subscriptionId,
-      UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH,
-      monRequest.ref,
-      nullptr,
-      Pointer.fromFunction<
-          Void Function(Pointer<UA_Client>, Uint32, Pointer<Void>, Uint32, Pointer<Void>,
-              Pointer<UA_DataValue>)>(handlerCurrentTimeChanged),
-      nullptr);
+    client,
+    response.subscriptionId,
+    UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH,
+    monRequest.ref,
+    nullptr,
+    Pointer.fromFunction<
+      Void Function(Pointer<UA_Client>, Uint32, Pointer<Void>, Uint32, Pointer<Void>, Pointer<UA_DataValue>)
+    >(handlerCurrentTimeChanged),
+    nullptr,
+  );
   if (monResponse.statusCode == UA_STATUSCODE_GOOD) {
     print('Monitored item created id: ${monResponse.monitoredItemId}');
   } else {

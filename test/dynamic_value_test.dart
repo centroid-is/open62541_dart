@@ -53,13 +53,13 @@ void main() {
               "ohg": [
                 {"final_boss": true},
                 [
-                  [1337]
-                ]
-              ]
-            }
-          ]
-        }
-      }
+                  [1337],
+                ],
+              ],
+            },
+          ],
+        },
+      },
     };
     final d = DynamicValue.fromMap(LinkedHashMap.from(values));
     expect(d["ohg"].asBool, true);
@@ -89,9 +89,7 @@ void main() {
     expect(k.typeId, NodeId.boolean);
   });
   test('typeId persistance complex map', () {
-    var values = <String, dynamic>{
-      "jbb": false,
-    };
+    var values = <String, dynamic>{"jbb": false};
     final d = DynamicValue.fromMap(LinkedHashMap.from(values));
     d["jbb"].typeId = NodeId.boolean;
     expect(d["jbb"].typeId, NodeId.boolean);
@@ -124,7 +122,7 @@ void main() {
         "subfield1": false,
         "subfield2": true,
         "subfield3": [false, true],
-      }
+      },
     };
     final myVal = DynamicValue.fromMap(LinkedHashMap.from(myMap));
     myVal.typeId = NodeId.fromString(4, "<StructuredDataType>:ST_SpeedBatcher");
@@ -245,10 +243,7 @@ void main() {
     var fp = buildDef(fpFields);
 
     var spNodeId = NodeId.fromString(4, "sp");
-    var defs = {
-      spNodeId: sp,
-      fpNodeId: fp,
-    };
+    var defs = {spNodeId: sp, fpNodeId: fp};
     var schema = DynamicValue.fromDataTypeDefinition(NodeId.fromString(4, "sp"), defs);
 
     // Expect tree structure was made
@@ -356,7 +351,7 @@ void main() {
       0x00,
       0xe2,
       0x98,
-      0x98
+      0x98,
     ];
 
     // Create a dynamic value with the structure
@@ -412,7 +407,7 @@ void main() {
         0x01, 0x00, 0x00, 0x00, 0x65, // "e"
         0x01, 0x00, 0x00, 0x00, 0x66, // "f"
         0x01, 0x00, 0x00, 0x00, 0x67, // "g"
-        0x01, 0x00, 0x00, 0x00, 0x68 // "h"
+        0x01, 0x00, 0x00, 0x00, 0x68, // "h"
       ],
       // Second struct
       [
@@ -423,7 +418,7 @@ void main() {
         0x01, 0x00, 0x00, 0x00, 0x6d, // "m"
         0x01, 0x00, 0x00, 0x00, 0x6e, // "n"
         0x01, 0x00, 0x00, 0x00, 0x6f, // "o"
-        0x01, 0x00, 0x00, 0x00, 0x70 // "p"
+        0x01, 0x00, 0x00, 0x00, 0x70, // "p"
       ],
       // Third struct
       [
@@ -434,7 +429,7 @@ void main() {
         0x01, 0x00, 0x00, 0x00, 0x61, // "a"
         0x01, 0x00, 0x00, 0x00, 0x62, // "b"
         0x01, 0x00, 0x00, 0x00, 0x63, // "c"
-        0x01, 0x00, 0x00, 0x00, 0x64 // "d"
+        0x01, 0x00, 0x00, 0x00, 0x64, // "d"
       ],
       // Fourth struct
       [
@@ -445,8 +440,8 @@ void main() {
         0x01, 0x00, 0x00, 0x00, 0x69, // "i"
         0x01, 0x00, 0x00, 0x00, 0x6a, // "j"
         0x01, 0x00, 0x00, 0x00, 0x6b, // "k"
-        0x01, 0x00, 0x00, 0x00, 0x6c // "l"
-      ]
+        0x01, 0x00, 0x00, 0x00, 0x6c, // "l"
+      ],
     ];
 
     // Create a dynamic value with the structure
