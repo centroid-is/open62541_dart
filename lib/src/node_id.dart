@@ -21,10 +21,8 @@ class NodeId {
         str = str.substring(0, str.length - 15);
       }
       return NodeId._internal(nodeId.namespaceIndex, id: str);
-    } else if (nodeId.identifierType ==
-        raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
-      return NodeId._internal(nodeId.namespaceIndex,
-          id: nodeId.identifier.numeric);
+    } else if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
+      return NodeId._internal(nodeId.namespaceIndex, id: nodeId.identifier.numeric);
     } else {
       throw 'NodeId todo implement';
     }
@@ -97,8 +95,7 @@ class NodeId {
 
   raw.UA_NodeId toRaw(raw.open62541 lib) {
     if (_stringId != null) {
-      return lib.UA_NODEID_STRING(
-          _namespaceIndex, _stringId!.toNativeUtf8().cast());
+      return lib.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8().cast());
     } else if (_numericId != null) {
       return lib.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
     } else {
@@ -148,16 +145,13 @@ class NodeId {
   @override
   bool operator ==(Object other) {
     if (other is NodeId) {
-      return _namespaceIndex == other._namespaceIndex &&
-          _stringId == other._stringId &&
-          _numericId == other._numericId;
+      return _namespaceIndex == other._namespaceIndex && _stringId == other._stringId && _numericId == other._numericId;
     }
     return false;
   }
 
   @override
-  int get hashCode =>
-      _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode;
+  int get hashCode => _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode;
 
   String? _stringId;
   int? _numericId;

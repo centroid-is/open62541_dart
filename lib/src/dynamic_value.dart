@@ -3,22 +3,12 @@ import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 import 'package:binarize/binarize.dart';
 import 'package:open62541_bindings/src/extensions.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
-    as raw;
+import 'package:open62541_bindings/src/generated/open62541_bindings.dart' as raw;
 import 'package:open62541_bindings/src/types/payloads.dart';
 import 'types/create_type.dart';
 import 'node_id.dart';
 
-enum DynamicType {
-  object,
-  array,
-  string,
-  boolean,
-  nullValue,
-  unknown,
-  integer,
-  double,
-}
+enum DynamicType { object, array, string, boolean, nullValue, unknown, integer, double }
 
 class MemberDescription {
   final String value;
@@ -51,9 +41,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     }
     return v;
   }
-  DynamicValue({value, description, this.typeId})
-      : _data = value,
-        _description = description;
+  DynamicValue({value, description, this.typeId}) : _data = value, _description = description;
 
   DynamicType get type {
     if (_data == null) return DynamicType.nullValue;
@@ -83,13 +71,11 @@ class DynamicValue extends PayloadType<DynamicValue> {
   dynamic get value => _data;
   MemberDescription? get description => _description;
 
-  List<DynamicValue> get asArray => isArray
-      ? _data
-      : throw StateError('DynamicValue is not an array, ${_data.runtimeType}');
+  List<DynamicValue> get asArray =>
+      isArray ? _data : throw StateError('DynamicValue is not an array, ${_data.runtimeType}');
 
-  Map<String, DynamicValue> get asObject => isObject
-      ? _data
-      : throw StateError('DynamicValue is not an object, ${_data.runtimeType}');
+  Map<String, DynamicValue> get asObject =>
+      isObject ? _data : throw StateError('DynamicValue is not an object, ${_data.runtimeType}');
 
   bool contains(dynamic key) {
     if (key is int && isArray) {
@@ -104,12 +90,9 @@ class DynamicValue extends PayloadType<DynamicValue> {
   DynamicValue operator [](dynamic key) {
     if (key is int && isArray) {
       final list = _data as List<DynamicValue>;
-      return (key >= 0 && key < list.length)
-          ? list[key]
-          : throw StateError('Index "$key" out of bounds');
+      return (key >= 0 && key < list.length) ? list[key] : throw StateError('Index "$key" out of bounds');
     } else if (key is String && isObject) {
-      return (_data as Map<String, DynamicValue>)
-          .putIfAbsent(key, () => throw StateError('Key "$key" not found'));
+      return (_data as Map<String, DynamicValue>).putIfAbsent(key, () => throw StateError('Key "$key" not found'));
     }
     throw StateError('Invalid key type: ${key.runtimeType}');
   }
@@ -170,9 +153,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   Map<String, T> toMap<T>(T Function(DynamicValue)? converter) {
     if (!isObject) return {};
     final map = asObject;
-    return converter != null
-        ? map.map((k, v) => MapEntry(k, converter(v)))
-        : {};
+    return converter != null ? map.map((k, v) => MapEntry(k, converter(v))) : {};
   }
 
   @override
@@ -241,18 +222,15 @@ class DynamicValue extends PayloadType<DynamicValue> {
       final field = defs[root]!.ref.fields[i];
 
       if (field.dimensions.isEmpty) {
-        tree[field.fieldName] = DynamicValue.fromDataTypeDefinition(
-            field.dataType.toNodeId(), defs);
+        tree[field.fieldName] = DynamicValue.fromDataTypeDefinition(field.dataType.toNodeId(), defs);
       } else {
         // Don't support multi dimensional fields for now
         assert(field.dimensions.length == 1);
         var collection = [];
         for (int i = 0; i < field.dimensions[0]; i++) {
-          collection.add(DynamicValue.fromDataTypeDefinition(
-              field.dataType.toNodeId(), defs));
+          collection.add(DynamicValue.fromDataTypeDefinition(field.dataType.toNodeId(), defs));
         }
-        tree[field.fieldName] = DynamicValue.fromList(collection,
-            typeId: field.dataType.toNodeId());
+        tree[field.fieldName] = DynamicValue.fromList(collection, typeId: field.dataType.toNodeId());
       }
       tree[field.fieldName]._description = field.fieldDescription;
     }
@@ -260,8 +238,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   }
 
   @override
-  DynamicValue get(ByteReader reader,
-      [Endian? endian, insideStruct = false, root = false]) {
+  DynamicValue get(ByteReader reader, [Endian? endian, insideStruct = false, root = false]) {
     // Assume we are in a structure of DynamicValue where typeId is set but alll values are null
     // {
     // { }
@@ -289,9 +266,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
             .asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>())
             .setRange(0, ffi.sizeOf<raw.UA_ExtensionObject>(), objBytes);
         // Todo only support encoded byte string for now
-        assert(ref.encoding ==
-            raw.UA_ExtensionObjectEncoding
-                .UA_EXTENSIONOBJECT_ENCODED_BYTESTRING);
+        assert(ref.encoding == raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING);
         final bodyBytes = obj.ref.content.encoded.body.asTypedList();
         bodyReader = ByteReader(bodyBytes, endian: endian ?? Endian.little);
       }
@@ -320,8 +295,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   }
 
   @override
-  void set(ByteWriter writer, DynamicValue value,
-      [Endian? endian, bool insideStruct = false, root = false]) {
+  void set(ByteWriter writer, DynamicValue value, [Endian? endian, bool insideStruct = false, root = false]) {
     if (value.isArray) {
       // Don't encode the array length if we are the root
       if (!root) {
@@ -333,26 +307,20 @@ class DynamicValue extends PayloadType<DynamicValue> {
         value._data[i].set(writer, value._data[i], endian, false, root);
       }
     } else if (value.isObject && root) {
-      ffi.Pointer<raw.UA_ExtensionObject> obj =
-          calloc<raw.UA_ExtensionObject>();
+      ffi.Pointer<raw.UA_ExtensionObject> obj = calloc<raw.UA_ExtensionObject>();
       obj.ref.content.encoded.typeId.fromNodeId(value.typeId!);
       ByteWriter bodyWriter = ByteWriter();
-      value._data
-          .forEach((key, value) => value.set(bodyWriter, value, endian, true));
+      value._data.forEach((key, value) => value.set(bodyWriter, value, endian, true));
       obj.ref.content.encoded.body.fromBytes(bodyWriter.toBytes());
       // todo support other encodings
-      obj.ref.encodingAsInt = raw.UA_ExtensionObjectEncoding
-          .UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
+      obj.ref.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
       // write the extension object to the writer
-      final extObjView = obj
-          .cast<ffi.Uint8>()
-          .asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>());
+      final extObjView = obj.cast<ffi.Uint8>().asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>());
       // here we have made a view into the ext object on the C heap
       // I would like to believe that this is freed when the variant is freed
       writer.write(extObjView);
     } else if (value.isObject) {
-      value._data
-          .forEach((key, value) => value.set(writer, value, endian, true));
+      value._data.forEach((key, value) => value.set(writer, value, endian, true));
     } else {
       if (value.isNull) {
         throw StateError('Element type is not set for where value is\n $value');
@@ -362,8 +330,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       if (typeId == NodeId.uastring && insideStruct) {
         ContiguousStringPayload().set(writer, value.value, endian);
       } else {
-        nodeIdToPayloadType(value.typeId ?? autoDeduceType(value._data))
-            .set(writer, value.value, endian);
+        nodeIdToPayloadType(value.typeId ?? autoDeduceType(value._data)).set(writer, value.value, endian);
       }
     }
   }

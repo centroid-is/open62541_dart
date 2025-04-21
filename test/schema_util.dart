@@ -1,16 +1,13 @@
 import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
-    as raw;
+import 'package:open62541_bindings/src/generated/open62541_bindings.dart' as raw;
 import 'package:open62541_bindings/src/library.dart';
 import 'package:open62541_bindings/src/extensions.dart';
 import 'package:open62541_bindings/src/node_id.dart';
 
-Pointer<raw.UA_StructureDefinition> buildDef(
-    List<Pointer<raw.UA_StructureField>> fields) {
-  Pointer<raw.UA_StructureDefinition> retValue =
-      calloc<raw.UA_StructureDefinition>();
+Pointer<raw.UA_StructureDefinition> buildDef(List<Pointer<raw.UA_StructureField>> fields) {
+  Pointer<raw.UA_StructureDefinition> retValue = calloc<raw.UA_StructureDefinition>();
   retValue.ref.fields = calloc(fields.length);
   retValue.ref.fieldsSize = fields.length;
 
@@ -22,8 +19,7 @@ Pointer<raw.UA_StructureDefinition> buildDef(
   return retValue;
 }
 
-Pointer<raw.UA_StructureField> buildField(
-    NodeId typeId, String name, List<int> arrayDimensions, String description) {
+Pointer<raw.UA_StructureField> buildField(NodeId typeId, String name, List<int> arrayDimensions, String description) {
   Pointer<raw.UA_StructureField> field = calloc();
   field.ref.dataType = typeId.toRaw(Open62541Singleton().lib);
   field.ref.name.set(name);

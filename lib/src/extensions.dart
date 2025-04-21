@@ -231,9 +231,7 @@ enum UaTypes {
   configurationVersionDataType(raw.UA_TYPES_CONFIGURATIONVERSIONDATATYPE),
   publishedVariableDataType(raw.UA_TYPES_PUBLISHEDVARIABLEDATATYPE),
   publishedDataItemsDataType(raw.UA_TYPES_PUBLISHEDDATAITEMSDATATYPE),
-  publishedDataSetCustomSourceDataType(
-    raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE,
-  );
+  publishedDataSetCustomSourceDataType(raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE);
 
   final int value;
   const UaTypes(this.value);
@@ -249,8 +247,7 @@ enum UaTypes {
 // ignore: camel_case_extensions
 extension UA_DataTypeExtension on raw.UA_DataType {
   int get memSize => substitute & 0xFFFF; // First 16 bits
-  raw.UA_DataTypeKind get typeKind =>
-      raw.UA_DataTypeKind.fromValue((substitute >> 16) & 0x3F); // Next 6 bits
+  raw.UA_DataTypeKind get typeKind => raw.UA_DataTypeKind.fromValue((substitute >> 16) & 0x3F); // Next 6 bits
   bool get pointerFree => ((substitute >> 22) & 0x1) == 1; // Next 1 bit
   bool get overlayable => ((substitute >> 23) & 0x1) == 1; // Next 1 bit
   int get membersSize => (substitute >> 24) & 0xFF; // Last 8 bits
@@ -439,8 +436,7 @@ extension UA_VariantExtension on raw.UA_Variant {
 // ignore: camel_case_extensions
 extension UA_ExtensionObjectExtension on raw.UA_ExtensionObject {
   String? get encodedName {
-    if (encoding !=
-        raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING) {
+    if (encoding != raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING) {
       return null;
     }
     final typeId = content.encoded.typeId;
@@ -456,9 +452,7 @@ void printBytes(TypedData bytes) {
   buffer.write('var data = [');
   for (var i = 0; i < bytes.lengthInBytes; i++) {
     if (i > 0) buffer.write(', ');
-    buffer.write(
-      '0x${bytes.buffer.asUint8List()[i].toRadixString(16).padLeft(2, '0')}',
-    );
+    buffer.write('0x${bytes.buffer.asUint8List()[i].toRadixString(16).padLeft(2, '0')}');
   }
   buffer.write('];');
   print(buffer.toString());

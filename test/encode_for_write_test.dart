@@ -2,8 +2,7 @@ import 'dart:ffi';
 
 import 'package:open62541_bindings/src/dynamic_value.dart';
 import 'package:open62541_bindings/src/generated/open62541_bindings.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
-    as raw;
+import 'package:open62541_bindings/src/generated/open62541_bindings.dart' as raw;
 import 'package:open62541_bindings/src/library.dart';
 import 'package:open62541_bindings/src/node_id.dart';
 import 'package:open62541_bindings/src/extensions.dart';
@@ -64,10 +63,8 @@ void main() {
     // There is not a native type in flutter to test this.
     // testSimpleTypes(18446744073709551615, NodeId.uint64);
 
-    testSimpleTypes(
-        DynamicValue(value: -9223372036854775808, typeId: NodeId.int64));
-    testSimpleTypes(
-        DynamicValue(value: 9223372036854775807, typeId: NodeId.int64));
+    testSimpleTypes(DynamicValue(value: -9223372036854775808, typeId: NodeId.int64));
+    testSimpleTypes(DynamicValue(value: 9223372036854775807, typeId: NodeId.int64));
   });
   test('Encode float variant', () {
     testSimpleTypes(DynamicValue(value: 0.5, typeId: NodeId.float));
@@ -81,9 +78,7 @@ void main() {
   test('Encode DateTime variant', () {
     var firstArg = DateTime.utc(2025, 10, 5, 18, 30, 15, 150);
     testSimpleTypes(DynamicValue(value: firstArg, typeId: NodeId.datetime));
-    testSimpleTypes(DynamicValue(
-        value: DateTime.utc(2024, 10, 5, 18, 30, 15, 150),
-        typeId: NodeId.datetime));
+    testSimpleTypes(DynamicValue(value: DateTime.utc(2024, 10, 5, 18, 30, 15, 150), typeId: NodeId.datetime));
   });
   //TODO: Implement duration
   // test('Encode Duration variant', () {
@@ -116,8 +111,7 @@ void main() {
   });
 
   test('struct of strings variant to value and back', () {
-    final DynamicValue val =
-        DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
+    final DynamicValue val = DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
     val["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
     val["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
     val["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
@@ -131,9 +125,7 @@ void main() {
     ];
     var sp = buildDef(spFields);
 
-    var defs = {
-      spNodeId: sp,
-    };
+    var defs = {spNodeId: sp};
     final decoded = Client.variantToValue(variant.ref, defs: defs);
     lib.UA_StructureDefinition_delete(sp);
 
@@ -146,26 +138,22 @@ void main() {
   });
 
   test('Array of structs variant to value and back', () {
-    final DynamicValue val1 =
-        DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
+    final DynamicValue val1 = DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
     val1["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
     val1["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
     val1["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
 
-    final DynamicValue val2 =
-        DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
+    final DynamicValue val2 = DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
     val2["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
     val2["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
     val2["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
 
-    final DynamicValue val3 =
-        DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
+    final DynamicValue val3 = DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
     val3["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
     val3["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
     val3["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
 
-    DynamicValue parent =
-        DynamicValue.fromList([val1, val2, val3], typeId: val1.typeId);
+    DynamicValue parent = DynamicValue.fromList([val1, val2, val3], typeId: val1.typeId);
     final variant = Client.valueToVariant(parent, lib);
 
     var spNodeId = NodeId.fromString(4, "Omars string struct");
@@ -176,9 +164,7 @@ void main() {
     ];
     var sp = buildDef(spFields);
 
-    var defs = {
-      spNodeId: sp,
-    };
+    var defs = {spNodeId: sp};
     final decoded = Client.variantToValue(variant.ref, defs: defs);
 
     expect(val1["s1"].asString, "some string");
@@ -195,30 +181,10 @@ void main() {
     expect(val3["s3"].asString, decoded[2]["s3"].asString);
   });
   test('4x2 multi dimensional array', () {
-    var data = [
-      0x01,
-      0x00,
-      0x02,
-      0x00,
-      0x03,
-      0x00,
-      0x04,
-      0x00,
-      0x05,
-      0x00,
-      0x06,
-      0x00,
-      0x07,
-      0x00,
-      0x08,
-      0x00
-    ];
+    var data = [0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00, 0x05, 0x00, 0x06, 0x00, 0x07, 0x00, 0x08, 0x00];
     Pointer<UA_Variant> variant = calloc();
     variant.ref.data = calloc<Uint8>(data.length).cast();
-    variant.ref.data
-        .cast<Uint8>()
-        .asTypedList(data.length)
-        .setRange(0, data.length, data);
+    variant.ref.data.cast<Uint8>().asTypedList(data.length).setRange(0, data.length, data);
 
     variant.ref.arrayLength = 8;
     variant.ref.arrayDimensionsSize = 2;
@@ -248,8 +214,7 @@ void main() {
 
     final variantEncoded = Client.valueToVariant(value, lib);
     expect(variantEncoded.ref.arrayLength, 8);
-    final variantData =
-        variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
+    final variantData = variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
     expect(variantData, data);
     lib.UA_Variant_delete(variant);
     lib.UA_Variant_delete(variantEncoded);
@@ -287,14 +252,11 @@ void main() {
       0x01,
       0x00,
       0x01,
-      0x00
+      0x00,
     ];
     Pointer<UA_Variant> variant = calloc();
     variant.ref.data = calloc<Uint8>(data.length).cast();
-    variant.ref.data
-        .cast<Uint8>()
-        .asTypedList(data.length)
-        .setRange(0, data.length, data);
+    variant.ref.data.cast<Uint8>().asTypedList(data.length).setRange(0, data.length, data);
 
     variant.ref.arrayLength = 32;
     variant.ref.arrayDimensionsSize = 3;
@@ -368,8 +330,7 @@ void main() {
 
     final variantEncoded = Client.valueToVariant(dynValueFromBuffer, lib);
     expect(variantEncoded.ref.arrayLength, 32);
-    final variantData =
-        variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
+    final variantData = variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
     expect(variantData, data);
 
     final decoded = Client.variantToValue(variantEncoded.ref);
@@ -481,10 +442,7 @@ void main() {
 
     Pointer<UA_Variant> variant = calloc();
     variant.ref.data = calloc<Uint8>(data.length).cast();
-    variant.ref.data
-        .cast<Uint8>()
-        .asTypedList(data.length)
-        .setRange(0, data.length, data);
+    variant.ref.data.cast<Uint8>().asTypedList(data.length).setRange(0, data.length, data);
 
     variant.ref.arrayLength = 24;
     variant.ref.arrayDimensionsSize = 3;
@@ -624,7 +582,7 @@ void main() {
         0xdc,
         0x05,
         0x00,
-        0x00
+        0x00,
       ],
       <int>[
         0x00,
@@ -734,7 +692,7 @@ void main() {
         0xc4,
         0x09,
         0x00,
-        0x00
+        0x00,
       ],
       <int>[
         0x01,
@@ -849,7 +807,7 @@ void main() {
         0x40,
         0x06,
         0x00,
-        0x00
+        0x00,
       ],
     ];
 
@@ -858,12 +816,9 @@ void main() {
     Pointer<UA_Variant> variant = calloc();
     Pointer<raw.UA_ExtensionObject> ext = calloc(3);
     // Set encoding
-    ext[0].encodingAsInt = raw
-        .UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
-    ext[1].encodingAsInt = raw
-        .UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
-    ext[2].encodingAsInt = raw
-        .UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
+    ext[0].encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
+    ext[1].encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
+    ext[2].encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
 
     // Set types
     ext[0].content.encoded.typeId = atvId.toRaw(lib);
@@ -881,27 +836,9 @@ void main() {
     ext[2].content.encoded.body.data = calloc(data[2].length);
 
     // Copy the data into buffers
-    ext[0]
-        .content
-        .encoded
-        .body
-        .data
-        .asTypedList(data[0].length)
-        .setRange(0, data[0].length, data[0]);
-    ext[1]
-        .content
-        .encoded
-        .body
-        .data
-        .asTypedList(data[1].length)
-        .setRange(0, data[1].length, data[1]);
-    ext[2]
-        .content
-        .encoded
-        .body
-        .data
-        .asTypedList(data[2].length)
-        .setRange(0, data[2].length, data[2]);
+    ext[0].content.encoded.body.data.asTypedList(data[0].length).setRange(0, data[0].length, data[0]);
+    ext[1].content.encoded.body.data.asTypedList(data[1].length).setRange(0, data[1].length, data[1]);
+    ext[2].content.encoded.body.data.asTypedList(data[2].length).setRange(0, data[2].length, data[2]);
 
     variant.ref.data = ext.cast();
     variant.ref.arrayLength = 3;
@@ -939,10 +876,7 @@ void main() {
     var atv = buildDef(atvFields);
     var hmi = buildDef(hmiFields);
 
-    var defs = {
-      atvId: atv,
-      hmiNodeId: hmi,
-    };
+    var defs = {atvId: atv, hmiNodeId: hmi};
 
     final value = Client.variantToValue(variant.ref, defs: defs);
 
@@ -994,10 +928,8 @@ void main() {
       expect(value[1]["HMI"]["p_stat_JogBwd"].value, true);
       expect(value[1]["HMI"]["p_stat_xResetRunHours"].value, false);
       expect(value[1]["HMI"]["p_stat_StopOnRelease"].value, true);
-      expect(
-          value[1]["HMI"]["p_stat_State"].value, "it is hard making up data");
-      expect(
-          value[1]["HMI"]["p_stat_LastFault"].value, "how is your day going");
+      expect(value[1]["HMI"]["p_stat_State"].value, "it is hard making up data");
+      expect(value[1]["HMI"]["p_stat_LastFault"].value, "how is your day going");
       expect(value[1]["HMI"]["p_stat_rFrequency"].value, closeTo(99.99, 1e-5));
       expect(value[1]["HMI"]["p_stat_rCurrent"].value, closeTo(100.34, 1e-5));
       expect(value[1]["HMI"]["p_stat_duRunMinutes"].value, 2500);
@@ -1022,8 +954,7 @@ void main() {
       expect(value[2]["HMI"]["p_stat_xResetRunHours"].value, true);
       expect(value[2]["HMI"]["p_stat_StopOnRelease"].value, false);
       expect(value[2]["HMI"]["p_stat_State"].value, "here is me and i am here");
-      expect(value[2]["HMI"]["p_stat_LastFault"].value,
-          "this string needs a value ");
+      expect(value[2]["HMI"]["p_stat_LastFault"].value, "this string needs a value ");
       expect(value[2]["HMI"]["p_stat_rFrequency"].value, closeTo(4500.1, 1e-4));
       expect(value[2]["HMI"]["p_stat_rCurrent"].value, closeTo(2323.4, 1e-4));
       expect(value[2]["HMI"]["p_stat_duRunMinutes"].value, 1600);

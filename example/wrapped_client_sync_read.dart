@@ -11,11 +11,9 @@ import 'package:open62541_bindings/src/library.dart';
 void clientIsolate(SendPort mainSendPort) async {
   Client c = Client(Open62541Singleton().lib);
 
-  c.config.stateStream.listen(
-      (event) => mainSendPort.send('Channel state: ${event.channelState}'));
+  c.config.stateStream.listen((event) => mainSendPort.send('Channel state: ${event.channelState}'));
 
-  c.config.subscriptionInactivityStream
-      .listen((event) => mainSendPort.send('inactive subscription $event'));
+  c.config.subscriptionInactivityStream.listen((event) => mainSendPort.send('inactive subscription $event'));
 
   String endpointUrl = 'opc.tcp://172.30.118.23:4840';
   var statusCode = c.connect(endpointUrl);
@@ -30,8 +28,7 @@ void clientIsolate(SendPort mainSendPort) async {
   }
 
   try {
-    int subId = c.subscriptionCreate(
-        requestedPublishingInterval: Duration(milliseconds: 5));
+    int subId = c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 5));
     mainSendPort.send('Created subscription $subId');
 
     // final definition =
@@ -61,25 +58,20 @@ void clientIsolate(SendPort mainSendPort) async {
 
     // Test writing value attribute
     // boolean
-    NodeId toWrite =
-        NodeId.fromString(4, "MAIN.lines[1][1].xInUse"); // The bool to write
+    NodeId toWrite = NodeId.fromString(4, "MAIN.lines[1][1].xInUse"); // The bool to write
     final currentValue = c.syncReadValue(toWrite);
     print("Current value : $currentValue");
-    c.syncWriteValue(
-        toWrite, DynamicValue(value: false, typeId: NodeId.boolean));
+    c.syncWriteValue(toWrite, DynamicValue(value: false, typeId: NodeId.boolean));
 
     // int16
     DynamicValue curr;
-    NodeId int16ToWrite =
-        NodeId.fromString(4, "MAIN.nCounter"); // The bool to write
+    NodeId int16ToWrite = NodeId.fromString(4, "MAIN.nCounter"); // The bool to write
     curr = c.syncReadValue(int16ToWrite);
-    c.syncWriteValue(int16ToWrite,
-        DynamicValue(value: curr.asInt + 1, typeId: NodeId.int16));
+    c.syncWriteValue(int16ToWrite, DynamicValue(value: curr.asInt + 1, typeId: NodeId.int16));
 
     NodeId nreal = NodeId.fromString(4, "GVL_HMI.Drives_Line1[1].i_rFreq");
     var currReal = c.syncReadValue(nreal);
-    c.syncWriteValue(nreal,
-        DynamicValue(value: currReal.asDouble + 0.1337, typeId: NodeId.float));
+    c.syncWriteValue(nreal, DynamicValue(value: currReal.asDouble + 0.1337, typeId: NodeId.float));
 
     var arrayReadTest = [
       "GVL_HMI.bool_array",

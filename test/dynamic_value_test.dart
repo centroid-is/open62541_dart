@@ -6,8 +6,7 @@ import 'package:ffi/ffi.dart';
 import 'package:binarize/binarize.dart';
 import 'package:open62541_bindings/src/dynamic_value.dart';
 import 'package:open62541_bindings/src/extensions.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
-    as raw;
+import 'package:open62541_bindings/src/generated/open62541_bindings.dart' as raw;
 import 'package:test/test.dart';
 import 'package:open62541_bindings/src/node_id.dart';
 import 'schema_util.dart';
@@ -250,8 +249,7 @@ void main() {
       spNodeId: sp,
       fpNodeId: fp,
     };
-    var schema =
-        DynamicValue.fromDataTypeDefinition(NodeId.fromString(4, "sp"), defs);
+    var schema = DynamicValue.fromDataTypeDefinition(NodeId.fromString(4, "sp"), defs);
 
     // Expect tree structure was made
     expect(schema.isObject, true);
@@ -362,8 +360,7 @@ void main() {
     ];
 
     // Create a dynamic value with the structure
-    DynamicValue test = DynamicValue(
-        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    DynamicValue test = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     test["field1"] = DynamicValue(typeId: NodeId.uastring);
     test["field2"] = DynamicValue(typeId: NodeId.uastring);
     test["field3"] = DynamicValue(typeId: NodeId.uastring);
@@ -453,8 +450,7 @@ void main() {
     ];
 
     // Create a dynamic value with the structure
-    DynamicValue test1 = DynamicValue(
-        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    DynamicValue test1 = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     test1["field1"] = DynamicValue(typeId: NodeId.uastring);
     test1["field2"] = DynamicValue(typeId: NodeId.uastring);
     test1["field3"] = DynamicValue(typeId: NodeId.uastring);
@@ -464,8 +460,7 @@ void main() {
     test1["bigfield3"] = DynamicValue(typeId: NodeId.uastring);
     test1["bigfield4"] = DynamicValue(typeId: NodeId.uastring);
 
-    DynamicValue test2 = DynamicValue(
-        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    DynamicValue test2 = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     test2["field1"] = DynamicValue(typeId: NodeId.uastring);
     test2["field2"] = DynamicValue(typeId: NodeId.uastring);
     test2["field3"] = DynamicValue(typeId: NodeId.uastring);
@@ -475,8 +470,7 @@ void main() {
     test2["bigfield3"] = DynamicValue(typeId: NodeId.uastring);
     test2["bigfield4"] = DynamicValue(typeId: NodeId.uastring);
 
-    DynamicValue test3 = DynamicValue(
-        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    DynamicValue test3 = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     test3["field1"] = DynamicValue(typeId: NodeId.uastring);
     test3["field2"] = DynamicValue(typeId: NodeId.uastring);
     test3["field3"] = DynamicValue(typeId: NodeId.uastring);
@@ -486,8 +480,7 @@ void main() {
     test3["bigfield3"] = DynamicValue(typeId: NodeId.uastring);
     test3["bigfield4"] = DynamicValue(typeId: NodeId.uastring);
 
-    DynamicValue test4 = DynamicValue(
-        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    DynamicValue test4 = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     test4["field1"] = DynamicValue(typeId: NodeId.uastring);
     test4["field2"] = DynamicValue(typeId: NodeId.uastring);
     test4["field3"] = DynamicValue(typeId: NodeId.uastring);
@@ -500,8 +493,7 @@ void main() {
     final parent = DynamicValue.fromList([test1, test2, test3, test4]);
 
     Pointer<raw.UA_ExtensionObject> obj = calloc(4);
-    final encoding =
-        raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+    final encoding = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
     obj[0].encodingAsInt = encoding.value;
     obj[1].encodingAsInt = encoding.value;
     obj[2].encodingAsInt = encoding.value;
@@ -512,8 +504,7 @@ void main() {
     obj[2].content.encoded.body.fromBytes(data[2]);
     obj[3].content.encoded.body.fromBytes(data[3]);
 
-    final bytes =
-        obj.cast<Uint8>().asTypedList(sizeOf<raw.UA_ExtensionObject>() * 4);
+    final bytes = obj.cast<Uint8>().asTypedList(sizeOf<raw.UA_ExtensionObject>() * 4);
 
     ByteReader reader = ByteReader(bytes, endian: Endian.little);
     parent.get(reader, Endian.little, false, true);
@@ -558,8 +549,7 @@ void main() {
     final b = writer.toBytes();
     expect(bytes.length, b.length);
     for (int i = 0; i < 4; i++) {
-      final chunk = bytes.sublist(i * sizeOf<raw.UA_ExtensionObject>(),
-          (i + 1) * sizeOf<raw.UA_ExtensionObject>());
+      final chunk = bytes.sublist(i * sizeOf<raw.UA_ExtensionObject>(), (i + 1) * sizeOf<raw.UA_ExtensionObject>());
       Pointer<raw.UA_ExtensionObject> obj = calloc();
       obj
           .cast<Uint8>()
