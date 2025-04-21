@@ -947,93 +947,108 @@ void main() {
 
     final value = Client.variantToValue(variant, defs: defs);
 
-    // Validate array length
-    expect(value.isArray, true);
-    expect(value.asArray.length, 3);
-    expect(value[0].isObject, true);
-    expect(value[0]["i_xRun"].asDynamic, true);
-    expect(value[0]["i_rFreq"].asDynamic, 35.5);
-    expect(value[0]["q_xRunning"].asDynamic, false);
-    expect(value[0]["q_xFwd"].asDynamic, true);
-    expect(value[0]["q_xBwd"].asDynamic, false);
-    expect(value[0]["q_rFreq"].asDynamic, closeTo(35.4, 1e-5));
-    expect(value[0]["q_xError"].asDynamic, false);
-    expect(value[0]["q_sError"].asDynamic, "Nothing here to see");
-    expect(value[0]["HMI"].isObject, true);
+    void expectArrayDyn(DynamicValue value) {
+      // Validate array length
+      expect(value.isArray, true);
+      expect(value.asArray.length, 3);
+      expect(value[0].isObject, true);
+      expect(value[0]["i_xRun"].asDynamic, true);
+      expect(value[0]["i_rFreq"].asDynamic, 35.5);
+      expect(value[0]["q_xRunning"].asDynamic, false);
+      expect(value[0]["q_xFwd"].asDynamic, true);
+      expect(value[0]["q_xBwd"].asDynamic, false);
+      expect(value[0]["q_rFreq"].asDynamic, closeTo(35.4, 1e-5));
+      expect(value[0]["q_xError"].asDynamic, false);
+      expect(value[0]["q_sError"].asDynamic, "Nothing here to see");
+      expect(value[0]["HMI"].isObject, true);
 
-    expect(value[0]["HMI"]["p_cmd_JogFwd"].asDynamic, false);
-    expect(value[0]["HMI"]["p_cmd_JogBwd"].asDynamic, true);
-    expect(value[0]["HMI"]["p_cmd_ResetRunHours"].asDynamic, false);
-    expect(value[0]["HMI"]["p_cmd_ManualStopOnRelease"].asDynamic, true);
-    expect(value[0]["HMI"]["p_stat_JogFwd"].asDynamic, false);
-    expect(value[0]["HMI"]["p_stat_JogBwd"].asDynamic, true);
-    expect(value[0]["HMI"]["p_stat_xResetRunHours"].asDynamic, false);
-    expect(value[0]["HMI"]["p_stat_StopOnRelease"].asDynamic, true);
-    expect(value[0]["HMI"]["p_stat_State"].asDynamic, "Running baby");
-    expect(value[0]["HMI"]["p_stat_LastFault"].asDynamic, "Nothing to report");
-    expect(value[0]["HMI"]["p_stat_rFrequency"].asDynamic, 7900);
-    expect(value[0]["HMI"]["p_stat_rCurrent"].asDynamic, closeTo(15.78, 1e-5));
-    expect(value[0]["HMI"]["p_stat_duRunMinutes"].asDynamic, 1500);
+      expect(value[0]["HMI"]["p_cmd_JogFwd"].asDynamic, false);
+      expect(value[0]["HMI"]["p_cmd_JogBwd"].asDynamic, true);
+      expect(value[0]["HMI"]["p_cmd_ResetRunHours"].asDynamic, false);
+      expect(value[0]["HMI"]["p_cmd_ManualStopOnRelease"].asDynamic, true);
+      expect(value[0]["HMI"]["p_stat_JogFwd"].asDynamic, false);
+      expect(value[0]["HMI"]["p_stat_JogBwd"].asDynamic, true);
+      expect(value[0]["HMI"]["p_stat_xResetRunHours"].asDynamic, false);
+      expect(value[0]["HMI"]["p_stat_StopOnRelease"].asDynamic, true);
+      expect(value[0]["HMI"]["p_stat_State"].asDynamic, "Running baby");
+      expect(
+          value[0]["HMI"]["p_stat_LastFault"].asDynamic, "Nothing to report");
+      expect(value[0]["HMI"]["p_stat_rFrequency"].asDynamic, 7900);
+      expect(
+          value[0]["HMI"]["p_stat_rCurrent"].asDynamic, closeTo(15.78, 1e-5));
+      expect(value[0]["HMI"]["p_stat_duRunMinutes"].asDynamic, 1500);
 
-    expect(value[1].isObject, true);
-    expect(value[1]["i_xRun"].asDynamic, false);
-    expect(value[1]["i_rFreq"].asDynamic, closeTo(18.99, 1e-5));
-    expect(value[1]["q_xRunning"].asDynamic, false);
-    expect(value[1]["q_xFwd"].asDynamic, true);
-    expect(value[1]["q_xBwd"].asDynamic, false);
-    expect(value[1]["q_rFreq"].asDynamic, closeTo(25.66, 1e-5));
-    expect(value[1]["q_xError"].asDynamic, true);
-    expect(value[1]["q_sError"].asDynamic, "get me some words");
-    expect(value[1]["HMI"].isObject, true);
+      expect(value[1].isObject, true);
+      expect(value[1]["i_xRun"].asDynamic, false);
+      expect(value[1]["i_rFreq"].asDynamic, closeTo(18.99, 1e-5));
+      expect(value[1]["q_xRunning"].asDynamic, false);
+      expect(value[1]["q_xFwd"].asDynamic, true);
+      expect(value[1]["q_xBwd"].asDynamic, false);
+      expect(value[1]["q_rFreq"].asDynamic, closeTo(25.66, 1e-5));
+      expect(value[1]["q_xError"].asDynamic, true);
+      expect(value[1]["q_sError"].asDynamic, "get me some words");
+      expect(value[1]["HMI"].isObject, true);
 
-    expect(value[1]["HMI"]["p_cmd_JogFwd"].asDynamic, false);
-    expect(value[1]["HMI"]["p_cmd_JogBwd"].asDynamic, true);
-    expect(value[1]["HMI"]["p_cmd_ResetRunHours"].asDynamic, false);
-    expect(value[1]["HMI"]["p_cmd_ManualStopOnRelease"].asDynamic, true);
-    expect(value[1]["HMI"]["p_stat_JogFwd"].asDynamic, false);
-    expect(value[1]["HMI"]["p_stat_JogBwd"].asDynamic, true);
-    expect(value[1]["HMI"]["p_stat_xResetRunHours"].asDynamic, false);
-    expect(value[1]["HMI"]["p_stat_StopOnRelease"].asDynamic, true);
-    expect(
-        value[1]["HMI"]["p_stat_State"].asDynamic, "it is hard making up data");
-    expect(
-        value[1]["HMI"]["p_stat_LastFault"].asDynamic, "how is your day going");
-    expect(
-        value[1]["HMI"]["p_stat_rFrequency"].asDynamic, closeTo(99.99, 1e-5));
-    expect(value[1]["HMI"]["p_stat_rCurrent"].asDynamic, closeTo(100.34, 1e-5));
-    expect(value[1]["HMI"]["p_stat_duRunMinutes"].asDynamic, 2500);
+      expect(value[1]["HMI"]["p_cmd_JogFwd"].asDynamic, false);
+      expect(value[1]["HMI"]["p_cmd_JogBwd"].asDynamic, true);
+      expect(value[1]["HMI"]["p_cmd_ResetRunHours"].asDynamic, false);
+      expect(value[1]["HMI"]["p_cmd_ManualStopOnRelease"].asDynamic, true);
+      expect(value[1]["HMI"]["p_stat_JogFwd"].asDynamic, false);
+      expect(value[1]["HMI"]["p_stat_JogBwd"].asDynamic, true);
+      expect(value[1]["HMI"]["p_stat_xResetRunHours"].asDynamic, false);
+      expect(value[1]["HMI"]["p_stat_StopOnRelease"].asDynamic, true);
+      expect(value[1]["HMI"]["p_stat_State"].asDynamic,
+          "it is hard making up data");
+      expect(value[1]["HMI"]["p_stat_LastFault"].asDynamic,
+          "how is your day going");
+      expect(
+          value[1]["HMI"]["p_stat_rFrequency"].asDynamic, closeTo(99.99, 1e-5));
+      expect(
+          value[1]["HMI"]["p_stat_rCurrent"].asDynamic, closeTo(100.34, 1e-5));
+      expect(value[1]["HMI"]["p_stat_duRunMinutes"].asDynamic, 2500);
 
-    expect(value[2].isObject, true);
-    expect(value[2]["i_xRun"].asDynamic, true);
-    expect(value[2]["i_rFreq"].asDynamic, 0);
-    expect(value[2]["q_xRunning"].asDynamic, false);
-    expect(value[2]["q_xFwd"].asDynamic, true);
-    expect(value[2]["q_xBwd"].asDynamic, false);
-    expect(value[2]["q_rFreq"].asDynamic, closeTo(0, 1e-5));
-    expect(value[2]["q_xError"].asDynamic, false);
-    expect(value[2]["q_sError"].asDynamic, "Last one i promise");
-    expect(value[2]["HMI"].isObject, true);
+      expect(value[2].isObject, true);
+      expect(value[2]["i_xRun"].asDynamic, true);
+      expect(value[2]["i_rFreq"].asDynamic, 0);
+      expect(value[2]["q_xRunning"].asDynamic, false);
+      expect(value[2]["q_xFwd"].asDynamic, true);
+      expect(value[2]["q_xBwd"].asDynamic, false);
+      expect(value[2]["q_rFreq"].asDynamic, closeTo(0, 1e-5));
+      expect(value[2]["q_xError"].asDynamic, false);
+      expect(value[2]["q_sError"].asDynamic, "Last one i promise");
+      expect(value[2]["HMI"].isObject, true);
 
-    expect(value[2]["HMI"]["p_cmd_JogFwd"].asDynamic, false);
-    expect(value[2]["HMI"]["p_cmd_JogBwd"].asDynamic, true);
-    expect(value[2]["HMI"]["p_cmd_ResetRunHours"].asDynamic, false);
-    expect(value[2]["HMI"]["p_cmd_ManualStopOnRelease"].asDynamic, false);
-    expect(value[2]["HMI"]["p_stat_JogFwd"].asDynamic, true);
-    expect(value[2]["HMI"]["p_stat_JogBwd"].asDynamic, false);
-    expect(value[2]["HMI"]["p_stat_xResetRunHours"].asDynamic, true);
-    expect(value[2]["HMI"]["p_stat_StopOnRelease"].asDynamic, false);
-    expect(
-        value[2]["HMI"]["p_stat_State"].asDynamic, "here is me and i am here");
-    expect(value[2]["HMI"]["p_stat_LastFault"].asDynamic,
-        "this string needs a value ");
-    expect(
-        value[2]["HMI"]["p_stat_rFrequency"].asDynamic, closeTo(4500.1, 1e-4));
-    expect(value[2]["HMI"]["p_stat_rCurrent"].asDynamic, closeTo(2323.4, 1e-4));
-    expect(value[2]["HMI"]["p_stat_duRunMinutes"].asDynamic, 1600);
+      expect(value[2]["HMI"]["p_cmd_JogFwd"].asDynamic, false);
+      expect(value[2]["HMI"]["p_cmd_JogBwd"].asDynamic, true);
+      expect(value[2]["HMI"]["p_cmd_ResetRunHours"].asDynamic, false);
+      expect(value[2]["HMI"]["p_cmd_ManualStopOnRelease"].asDynamic, false);
+      expect(value[2]["HMI"]["p_stat_JogFwd"].asDynamic, true);
+      expect(value[2]["HMI"]["p_stat_JogBwd"].asDynamic, false);
+      expect(value[2]["HMI"]["p_stat_xResetRunHours"].asDynamic, true);
+      expect(value[2]["HMI"]["p_stat_StopOnRelease"].asDynamic, false);
+      expect(value[2]["HMI"]["p_stat_State"].asDynamic,
+          "here is me and i am here");
+      expect(value[2]["HMI"]["p_stat_LastFault"].asDynamic,
+          "this string needs a value ");
+      expect(value[2]["HMI"]["p_stat_rFrequency"].asDynamic,
+          closeTo(4500.1, 1e-4));
+      expect(
+          value[2]["HMI"]["p_stat_rCurrent"].asDynamic, closeTo(2323.4, 1e-4));
+      expect(value[2]["HMI"]["p_stat_duRunMinutes"].asDynamic, 1600);
+    }
+
+    expectArrayDyn(value);
+
+    final variantEncoded = Client.valueToVariant(value, lib);
+    expect(variantEncoded.ref.arrayLength, 3);
+    final dynValueAgain = Client.variantToValue(variantEncoded, defs: defs);
+    expectArrayDyn(dynValueAgain);
 
     lib.UA_StructureDefinition_delete(hmi);
     lib.UA_StructureDefinition_delete(atv);
+    // I presume this erases the data correctly
     lib.UA_Variant_delete(variant);
+    lib.UA_Variant_delete(variantEncoded);
   });
 
   // TODO: Multi dimensional arrays inside structs
