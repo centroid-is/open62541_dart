@@ -184,7 +184,7 @@ class Client {
     Future.delayed(timeout, () {
       // Dont complete if already completed
       if (!completer.isCompleted) {
-        completer.completeError('Timeout writing value');
+        completer.completeError('Timeout writing $nodeId to $value');
       }
     });
     return completer.future;
@@ -238,7 +238,7 @@ class Client {
     Future.delayed(timeout, () {
       // Dont complete if already completed
       if (!completer.isCompleted) {
-        completer.completeError('Timeout reading value');
+        completer.completeError('Timeout reading $nodeId');
       }
     });
     return completer.future;
