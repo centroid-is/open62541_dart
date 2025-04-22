@@ -28,6 +28,36 @@ void clientIsolate(SendPort mainSendPort) async {
   }
 
   try {
+    NodeId objectId = NodeId.fromString(4, "GVL_IO.domeLightGreen");
+    NodeId methodId = NodeId.fromString(4, "GVL_IO.domeLightGreen#force");
+    c
+        .call(objectId, methodId, [DynamicValue(value: true, typeId: NodeId.boolean)])
+        .then((List<DynamicValue> data) {
+          print("2CALL ASYNC data: $data");
+        })
+        .catchError((error) {
+          print("CALL ASYNC error: $error");
+        });
+
+    NodeId callTestObjId = NodeId.fromString(4, "GVL_IO.moverTrip");
+    NodeId callTestMethodId = NodeId.fromString(4, "GVL_IO.moverTrip#FC_Test");
+
+    NodeId singleSBId = NodeId.fromString(4, "GVL_IO.single_SB");
+    final val = c.syncReadValue(singleSBId);
+
+    c
+        .call(callTestObjId, callTestMethodId, [
+          DynamicValue(value: 123, typeId: NodeId.int16),
+          DynamicValue(value: true, typeId: NodeId.boolean),
+          val,
+        ])
+        .then((List<DynamicValue> data) {
+          print("CALL ASYNC data: $data");
+        })
+        .catchError((error) {
+          print("CALL ASYNC error: $error");
+        });
+
     int subId = c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 5));
     mainSendPort.send('Created subscription $subId');
 
@@ -207,15 +237,15 @@ void clientIsolate(SendPort mainSendPort) async {
     //    await Future.delayed(Duration(milliseconds: 100));
     //  }
     //  c.syncWriteValue(nreal, 1000.0);
-    NodeId arr = NodeId.fromString(4, "GVL_IO.single_SB.a_struct.i_xSpare2");
-    print("Multidimension baby");
-    print(c.syncReadValue(arr));
-    print("Multidimension baby");
+    // NodeId arr = NodeId.fromString(4, "GVL_IO.single_SB.a_struct.i_xSpare2");
+    // print("Multidimension baby");
+    // print(c.syncReadValue(arr));
+    // print("Multidimension baby");
 
-    NodeId marr = NodeId.fromString(4, "GVL_IO.single_SB.a_struct.i_xSpare3");
-    print("Multidimension baby");
-    print(c.syncReadValue(marr));
-    print("Multidimension baby");
+    // NodeId marr = NodeId.fromString(4, "GVL_IO.single_SB.a_struct.i_xSpare3");
+    // print("Multidimension baby");
+    // print(c.syncReadValue(marr));
+    // print("Multidimension baby");
 
     NodeId driveLine2 = NodeId.fromString(4, "GVL_HMI.Drives_Line2");
     print(c.syncReadValue(driveLine2));
