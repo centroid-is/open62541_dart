@@ -1,14 +1,14 @@
 import 'dart:ffi';
 
-import 'package:open62541_bindings/src/dynamic_value.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart' as raw;
-import 'package:open62541_bindings/src/library.dart';
-import 'package:open62541_bindings/src/node_id.dart';
-import 'package:open62541_bindings/src/extensions.dart';
+import 'package:open62541/src/dynamic_value.dart';
+import 'package:open62541/src/generated/open62541_bindings.dart';
+import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
+import 'package:open62541/src/library.dart';
+import 'package:open62541/src/node_id.dart';
+import 'package:open62541/src/extensions.dart';
 import 'package:test/test.dart';
 import 'package:ffi/ffi.dart';
-import 'package:open62541_bindings/src/client.dart';
+import 'package:open62541/src/client.dart';
 import 'schema_util.dart';
 
 void main() {

@@ -2,9 +2,9 @@ import 'dart:collection' show LinkedHashMap;
 import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 import 'package:binarize/binarize.dart';
-import 'package:open62541_bindings/src/extensions.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart' as raw;
-import 'package:open62541_bindings/src/types/payloads.dart';
+import 'package:open62541/src/extensions.dart';
+import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
+import 'package:open62541/src/types/payloads.dart';
 import 'types/create_type.dart';
 import 'node_id.dart';
 

@@ -14,7 +14,7 @@ class Open62541 {
     } else if (Platform.isWindows) {
       ending = 'dll';
     }
-    return Isolate.resolvePackageUriSync(Uri.parse('package:open62541_bindings/libopen62541.$ending'));
+    return Isolate.resolvePackageUriSync(Uri.parse('package:open62541/libopen62541.$ending'));
   }
 
   Open62541() {

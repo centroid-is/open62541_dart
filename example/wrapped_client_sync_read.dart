@@ -3,10 +3,10 @@
 import 'dart:io';
 import 'dart:isolate';
 
-import 'package:open62541_bindings/src/client.dart';
-import 'package:open62541_bindings/src/dynamic_value.dart';
-import 'package:open62541_bindings/src/node_id.dart';
-import 'package:open62541_bindings/src/library.dart';
+import 'package:open62541/src/client.dart';
+import 'package:open62541/src/dynamic_value.dart';
+import 'package:open62541/src/node_id.dart';
+import 'package:open62541/src/library.dart';
 
 void clientIsolate(SendPort mainSendPort) async {
   Client c = Client(Open62541Singleton().lib);

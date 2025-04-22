@@ -4,8 +4,8 @@ import 'package:test/test.dart';
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
 
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart' as raw;
-import 'package:open62541_bindings/src/types/payloads.dart';
+import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
+import 'package:open62541/src/types/payloads.dart';
 
 void main() {
   void testPayloadImpl<T>(String name, PayloadType<T> payload, T value) {

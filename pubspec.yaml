@@ -1,7 +1,7 @@
-name: open62541_bindings
-description: OPC UA client, bindings to the open62541 library.
+name: open62541
+description: OPC UA stack, bindings to the open62541 library.
 version: 0.0.0-dev.1
-repository: https://github.com/centroid-is/open62541_bindings
+repository: https://github.com/centroid-is/open62541_dart
 
 environment:
   sdk: ^3.7.0

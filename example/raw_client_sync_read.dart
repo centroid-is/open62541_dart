@@ -4,7 +4,7 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart';
+import 'package:open62541/src/generated/open62541_bindings.dart';
 
 //
 // import 'client.dart';

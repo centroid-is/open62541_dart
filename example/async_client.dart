@@ -1,16 +1,14 @@
 import 'dart:io';
 
-import 'package:open62541_bindings/open62541_bindings.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart';
+import 'package:open62541/open62541.dart';
+import 'package:open62541/src/generated/open62541_bindings.dart';
 
 Future<int> main(List<String> arguments) async {
   Client c = Client(Open62541Singleton().lib);
 
-  c.config.stateStream
-      .listen((event) => print('Channel state: ${event.channelState}'));
+  c.config.stateStream.listen((event) => print('Channel state: ${event.channelState}'));
 
-  c.config.subscriptionInactivityStream
-      .listen((event) => print('inactive subscription $event'));
+  c.config.subscriptionInactivityStream.listen((event) => print('inactive subscription $event'));
 
   // Parse the endpoint url from the command line
   String endpointUrl = '';
@@ -38,10 +36,8 @@ Future<int> main(List<String> arguments) async {
   final start = DateTime.now();
   final counterId = NodeId.fromString(4, "MAIN.nCounter");
 
-  final subscriptionId = c.subscriptionCreate(
-      requestedPublishingInterval: Duration(milliseconds: 10));
-  final subscription = c.monitoredItemStream(counterId, subscriptionId,
-      samplingInterval: Duration(milliseconds: 10));
+  final subscriptionId = c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
+  final subscription = c.monitoredItemStream(counterId, subscriptionId, samplingInterval: Duration(milliseconds: 10));
 
   subscription.listen((event) {
     print('Subscription event: $event');
