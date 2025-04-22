@@ -570,15 +570,9 @@ void main() {
     ByteReader reader = ByteReader(writer.toBytes(), endian: Endian.little);
     final dynExpected = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     dynExpected["a"] = DynamicValue.fromList([
-      DynamicValue(
-        typeId: NodeId.uastring,
-      ),
-      DynamicValue(
-        typeId: NodeId.uastring,
-      ),
-      DynamicValue(
-        typeId: NodeId.uastring,
-      ),
+      DynamicValue(typeId: NodeId.uastring),
+      DynamicValue(typeId: NodeId.uastring),
+      DynamicValue(typeId: NodeId.uastring),
     ], typeId: NodeId.uastring);
     dynExpected.get(reader, Endian.little);
     expect(dynExpected["a"][0].asString, "a");
