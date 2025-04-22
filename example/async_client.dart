@@ -25,11 +25,11 @@ Future<int> main(List<String> arguments) async {
 
   // Run the c execution loop from the same isolate
   () async {
+    var statusCode = c.connect(endpointUrl);
+    if (statusCode != UA_STATUSCODE_GOOD) {
+      stderr.write("Not connected. retrying in 10 milliseconds");
+    }
     while (true) {
-      var statusCode = c.connect(endpointUrl);
-      if (statusCode != UA_STATUSCODE_GOOD) {
-        stderr.write("Not connected. retrying in 10 milliseconds");
-      }
       c.runIterate(Duration(milliseconds: 10));
       await Future.delayed(Duration(milliseconds: 10));
     }
