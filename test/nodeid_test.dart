@@ -1,5 +1,5 @@
 import 'package:test/test.dart';
-import 'package:open62541_bindings/src/node_id.dart';
+import 'package:open62541/src/node_id.dart';
 
 void main() {
   test('Nodeid comparitor test', () {

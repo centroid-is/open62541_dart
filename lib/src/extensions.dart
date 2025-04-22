@@ -9,154 +9,6 @@ import 'node_id.dart';
 import 'generated/open62541_bindings.dart' as raw;
 
 // ignore: camel_case_types
-enum TypeKindEnum {
-  boolean(raw.UA_DataTypeKind.UA_DATATYPEKIND_BOOLEAN),
-  sbyte(raw.UA_DataTypeKind.UA_DATATYPEKIND_SBYTE),
-  byte(raw.UA_DataTypeKind.UA_DATATYPEKIND_BYTE),
-  int16(raw.UA_DataTypeKind.UA_DATATYPEKIND_INT16),
-  uint16(raw.UA_DataTypeKind.UA_DATATYPEKIND_UINT16),
-  int32(raw.UA_DataTypeKind.UA_DATATYPEKIND_INT32),
-  uint32(raw.UA_DataTypeKind.UA_DATATYPEKIND_UINT32),
-  int64(raw.UA_DataTypeKind.UA_DATATYPEKIND_INT64),
-  uint64(raw.UA_DataTypeKind.UA_DATATYPEKIND_UINT64),
-  float(raw.UA_DataTypeKind.UA_DATATYPEKIND_FLOAT),
-  double(raw.UA_DataTypeKind.UA_DATATYPEKIND_DOUBLE),
-  string(raw.UA_DataTypeKind.UA_DATATYPEKIND_STRING),
-  datetime(raw.UA_DataTypeKind.UA_DATATYPEKIND_DATETIME),
-  guid(raw.UA_DataTypeKind.UA_DATATYPEKIND_GUID),
-  byteString(raw.UA_DataTypeKind.UA_DATATYPEKIND_BYTESTRING),
-  xmlElement(raw.UA_DataTypeKind.UA_DATATYPEKIND_XMLELEMENT),
-  nodeId(raw.UA_DataTypeKind.UA_DATATYPEKIND_NODEID),
-  expandedNodeId(raw.UA_DataTypeKind.UA_DATATYPEKIND_EXPANDEDNODEID),
-  statusCode(raw.UA_DataTypeKind.UA_DATATYPEKIND_STATUSCODE),
-  qualifiedName(raw.UA_DataTypeKind.UA_DATATYPEKIND_QUALIFIEDNAME),
-  localizedText(raw.UA_DataTypeKind.UA_DATATYPEKIND_LOCALIZEDTEXT),
-  extensionObject(raw.UA_DataTypeKind.UA_DATATYPEKIND_EXTENSIONOBJECT),
-  dataValue(raw.UA_DataTypeKind.UA_DATATYPEKIND_DATAVALUE),
-  variant(raw.UA_DataTypeKind.UA_DATATYPEKIND_VARIANT),
-  diagnosticInfo(raw.UA_DataTypeKind.UA_DATATYPEKIND_DIAGNOSTICINFO),
-  decimal(raw.UA_DataTypeKind.UA_DATATYPEKIND_DECIMAL),
-  enum_(raw.UA_DataTypeKind.UA_DATATYPEKIND_ENUM),
-  structure(raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE),
-  optStruct(raw.UA_DataTypeKind.UA_DATATYPEKIND_OPTSTRUCT),
-  union(raw.UA_DataTypeKind.UA_DATATYPEKIND_UNION),
-  bitfieldCluster(raw.UA_DataTypeKind.UA_DATATYPEKIND_BITFIELDCLUSTER),
-  outOfSpecContiguousString(
-      99); // I dont like this, but when we use namespace 0 id type string, that will be this value
-
-  final int value;
-  const TypeKindEnum(this.value);
-
-  static TypeKindEnum fromInt(int value) {
-    return TypeKindEnum.values.firstWhere(
-      (kind) => kind.value == value,
-      orElse: () => throw ArgumentError('Unknown DataTypeKind value: $value'),
-    );
-  }
-
-  Namespace0Id toNamespace0Id() {
-    switch (this) {
-      case TypeKindEnum.boolean:
-        return Namespace0Id.boolean;
-      case TypeKindEnum.sbyte:
-        return Namespace0Id.sbyte;
-      case TypeKindEnum.byte:
-        return Namespace0Id.byte;
-      case TypeKindEnum.int16:
-        return Namespace0Id.int16;
-      case TypeKindEnum.uint16:
-        return Namespace0Id.uint16;
-      case TypeKindEnum.int32:
-        return Namespace0Id.int32;
-      case TypeKindEnum.uint32:
-        return Namespace0Id.uint32;
-      case TypeKindEnum.int64:
-        return Namespace0Id.int64;
-      case TypeKindEnum.uint64:
-        return Namespace0Id.uint64;
-      case TypeKindEnum.float:
-        return Namespace0Id.float;
-      case TypeKindEnum.double:
-        return Namespace0Id.double;
-      case TypeKindEnum.string:
-      case TypeKindEnum.outOfSpecContiguousString:
-        return Namespace0Id.string;
-      case TypeKindEnum.datetime:
-        return Namespace0Id.datetime;
-      case TypeKindEnum.guid:
-        return Namespace0Id.guid;
-      case TypeKindEnum.byteString:
-        return Namespace0Id.byteString;
-      case TypeKindEnum.xmlElement:
-        return Namespace0Id.xmlElement;
-      case TypeKindEnum.nodeId:
-        return Namespace0Id.nodeId;
-      case TypeKindEnum.expandedNodeId:
-        return Namespace0Id.expandedNodeId;
-      case TypeKindEnum.statusCode:
-        return Namespace0Id.statusCode;
-      case TypeKindEnum.qualifiedName:
-        return Namespace0Id.qualifiedName;
-      case TypeKindEnum.localizedText:
-        return Namespace0Id.localizedText;
-      case TypeKindEnum.structure:
-        return Namespace0Id.structure;
-      case TypeKindEnum.dataValue:
-        return Namespace0Id.dataValue;
-      // case Namespace0Id.basedataType:
-      //   return TypeKindEnum.basedataType;
-      case TypeKindEnum.diagnosticInfo:
-        return Namespace0Id.diagnosticInfo;
-      default:
-        throw ArgumentError('Unknown TypeKindEnum value: $this');
-    }
-  }
-}
-
-// ignore: camel_case_types
-enum UA_MessageSecurityModeEnum {
-  invalid(raw.UA_MessageSecurityMode.UA_MESSAGESECURITYMODE_INVALID),
-  none(raw.UA_MessageSecurityMode.UA_MESSAGESECURITYMODE_NONE),
-  sign(raw.UA_MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGN),
-  signAndEncrypt(
-      raw.UA_MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT);
-
-  final int value;
-  const UA_MessageSecurityModeEnum(this.value);
-
-  static UA_MessageSecurityModeEnum fromInt(int value) {
-    return UA_MessageSecurityModeEnum.values.firstWhere(
-      (mode) => mode.value == value,
-      orElse: () =>
-          throw ArgumentError('Unknown MessageSecurityMode value: $value'),
-    );
-  }
-}
-
-// ignore: camel_case_types
-enum UA_ExtensionObjectEncodingEnum {
-  encodedNoBody(
-      raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_NOBODY),
-  encodedByteString(
-      raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING),
-  encodedXml(raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_XML),
-  decoded(raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_DECODED),
-  decodedNodelete(
-      raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_DECODED_NODELETE);
-
-  final int value;
-  const UA_ExtensionObjectEncodingEnum(this.value);
-
-  static UA_ExtensionObjectEncodingEnum fromInt(int value) {
-    return UA_ExtensionObjectEncodingEnum.values.firstWhere(
-      (encoding) => encoding.value == value,
-      orElse: () =>
-          throw ArgumentError('Unknown ExtensionObjectEncoding value: $value'),
-    );
-  }
-}
-
-// ignore: camel_case_types
 enum Namespace0Id {
   boolean(raw.UA_NS0ID_BOOLEAN),
   sbyte(raw.UA_NS0ID_SBYTE),
@@ -200,58 +52,58 @@ enum Namespace0Id {
     );
   }
 
-  TypeKindEnum toTypeKind() {
+  raw.UA_DataTypeKind toDataTypeKind() {
     switch (this) {
       case Namespace0Id.boolean:
-        return TypeKindEnum.boolean;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_BOOLEAN;
       case Namespace0Id.sbyte:
-        return TypeKindEnum.sbyte;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_SBYTE;
       case Namespace0Id.byte:
-        return TypeKindEnum.byte;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_BYTE;
       case Namespace0Id.int16:
-        return TypeKindEnum.int16;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_INT16;
       case Namespace0Id.uint16:
-        return TypeKindEnum.uint16;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_UINT16;
       case Namespace0Id.int32:
-        return TypeKindEnum.int32;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_INT32;
       case Namespace0Id.uint32:
-        return TypeKindEnum.uint32;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_UINT32;
       case Namespace0Id.int64:
-        return TypeKindEnum.int64;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_INT64;
       case Namespace0Id.uint64:
-        return TypeKindEnum.uint64;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_UINT64;
       case Namespace0Id.float:
-        return TypeKindEnum.float;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_FLOAT;
       case Namespace0Id.double:
-        return TypeKindEnum.double;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_DOUBLE;
       case Namespace0Id.string:
-        return TypeKindEnum.outOfSpecContiguousString;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_STRING;
       case Namespace0Id.datetime:
-        return TypeKindEnum.datetime;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_DATETIME;
       case Namespace0Id.guid:
-        return TypeKindEnum.guid;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_GUID;
       case Namespace0Id.byteString:
-        return TypeKindEnum.byteString;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_BYTESTRING;
       case Namespace0Id.xmlElement:
-        return TypeKindEnum.xmlElement;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_XMLELEMENT;
       case Namespace0Id.nodeId:
-        return TypeKindEnum.nodeId;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_NODEID;
       case Namespace0Id.expandedNodeId:
-        return TypeKindEnum.expandedNodeId;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_EXPANDEDNODEID;
       case Namespace0Id.statusCode:
-        return TypeKindEnum.statusCode;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_STATUSCODE;
       case Namespace0Id.qualifiedName:
-        return TypeKindEnum.qualifiedName;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_QUALIFIEDNAME;
       case Namespace0Id.localizedText:
-        return TypeKindEnum.localizedText;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_LOCALIZEDTEXT;
       case Namespace0Id.structure:
-        return TypeKindEnum.structure;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
       case Namespace0Id.dataValue:
-        return TypeKindEnum.dataValue;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_DATAVALUE;
       // case Namespace0Id.basedataType:
       //   return TypeKindEnum.basedataType;
       case Namespace0Id.diagnosticInfo:
-        return TypeKindEnum.diagnosticInfo;
+        return raw.UA_DataTypeKind.UA_DATATYPEKIND_DIAGNOSTICINFO;
       default:
         throw ArgumentError('Unknown Namespace0Id value: $this');
     }
@@ -379,8 +231,7 @@ enum UaTypes {
   configurationVersionDataType(raw.UA_TYPES_CONFIGURATIONVERSIONDATATYPE),
   publishedVariableDataType(raw.UA_TYPES_PUBLISHEDVARIABLEDATATYPE),
   publishedDataItemsDataType(raw.UA_TYPES_PUBLISHEDDATAITEMSDATATYPE),
-  publishedDataSetCustomSourceDataType(
-      raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE);
+  publishedDataSetCustomSourceDataType(raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE);
 
   final int value;
   const UaTypes(this.value);
@@ -393,59 +244,10 @@ enum UaTypes {
   }
 }
 
-enum UaSecureChannelState {
-  closed(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CLOSED),
-  helSent(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_HEL_SENT),
-  helReceived(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_HEL_RECEIVED),
-  ackSent(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_ACK_SENT),
-  ackReceived(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_ACK_RECEIVED),
-  opnSent(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_OPN_SENT),
-  open(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_OPEN),
-  closing(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CLOSING),
-  reverseListening(
-      raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_REVERSE_LISTENING),
-  connecting(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CONNECTING),
-  connected(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CONNECTED),
-  reverseConnected(
-      raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_REVERSE_CONNECTED),
-  rheSent(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_RHE_SENT);
-
-  final int value;
-  const UaSecureChannelState(this.value);
-
-  static UaSecureChannelState fromValue(int value) {
-    return UaSecureChannelState.values.firstWhere(
-      (state) => state.value == value,
-      orElse: () =>
-          throw ArgumentError('Invalid UaSecureChannelState value: $value'),
-    );
-  }
-}
-
-enum UaSessionState {
-  activated(raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED),
-  activatedRequested(raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATE_REQUESTED),
-  closed(raw.UA_SessionState.UA_SESSIONSTATE_CLOSED),
-  closing(raw.UA_SessionState.UA_SESSIONSTATE_CLOSING),
-  created(raw.UA_SessionState.UA_SESSIONSTATE_CREATED),
-  createdRequested(raw.UA_SessionState.UA_SESSIONSTATE_CREATE_REQUESTED);
-
-  final int value;
-  const UaSessionState(this.value);
-
-  static UaSessionState fromValue(int value) {
-    return UaSessionState.values.firstWhere(
-      (state) => state.value == value,
-      orElse: () => throw ArgumentError('Invalid UaSessionState value: $value'),
-    );
-  }
-}
-
 // ignore: camel_case_extensions
 extension UA_DataTypeExtension on raw.UA_DataType {
   int get memSize => substitute & 0xFFFF; // First 16 bits
-  TypeKindEnum get typeKind =>
-      TypeKindEnum.fromInt((substitute >> 16) & 0x3F); // Next 6 bits
+  raw.UA_DataTypeKind get typeKind => raw.UA_DataTypeKind.fromValue((substitute >> 16) & 0x3F); // Next 6 bits
   bool get pointerFree => ((substitute >> 22) & 0x1) == 1; // Next 1 bit
   bool get overlayable => ((substitute >> 23) & 0x1) == 1; // Next 1 bit
   int get membersSize => (substitute >> 24) & 0xFF; // Last 8 bits
@@ -490,10 +292,10 @@ extension UA_NodeIdExtension on raw.UA_NodeId {
   void fromNodeId(NodeId nodeId) {
     namespaceIndex = nodeId.namespace;
     if (nodeId.isNumeric()) {
-      identifierType = raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC;
+      identifierTypeAsInt = raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC.value;
       identifier.numeric = nodeId.numeric;
     } else if (nodeId.isString()) {
-      identifierType = raw.UA_NodeIdType.UA_NODEIDTYPE_STRING;
+      identifierTypeAsInt = raw.UA_NodeIdType.UA_NODEIDTYPE_STRING.value;
       identifier.string.set(nodeId.string);
     } else {
       throw ArgumentError('Invalid NodeId type: $nodeId');
@@ -524,9 +326,10 @@ extension UA_StructFieldFormat on raw.UA_StructureDefinition {
       for (int i = 0; i < fields.ref.dimensions.length; i++) {
         fstr += _formatField(fields[i], 1);
       }
-      final fieldsStr = fields.ref.dimensions.isEmpty
-          ? 'fields: []'
-          : '''fields: [
+      final fieldsStr =
+          fields.ref.dimensions.isEmpty
+              ? 'fields: []'
+              : '''fields: [
           $fstr
   ]''';
 
@@ -633,8 +436,7 @@ extension UA_VariantExtension on raw.UA_Variant {
 // ignore: camel_case_extensions
 extension UA_ExtensionObjectExtension on raw.UA_ExtensionObject {
   String? get encodedName {
-    if (encoding !=
-        raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING) {
+    if (encoding != raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING) {
       return null;
     }
     final typeId = content.encoded.typeId;
@@ -650,8 +452,7 @@ void printBytes(TypedData bytes) {
   buffer.write('var data = [');
   for (var i = 0; i < bytes.lengthInBytes; i++) {
     if (i > 0) buffer.write(', ');
-    buffer.write(
-        '0x${bytes.buffer.asUint8List()[i].toRadixString(16).padLeft(2, '0')}');
+    buffer.write('0x${bytes.buffer.asUint8List()[i].toRadixString(16).padLeft(2, '0')}');
   }
   buffer.write('];');
   print(buffer.toString());

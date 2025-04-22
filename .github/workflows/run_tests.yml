@@ -21,10 +21,16 @@ jobs:
       - name: Install dependencies
         run: dart pub get
 
+      - name: Verify formatting
+        run: dart format --set-exit-if-changed . # Line length is set in analysis_options.yaml
+
+      - name: Analyze project source
+        run: dart analyze --fatal-infos --fatal-warnings .
+
       - name: Build open62541 library
         run: |
           sudo apt install libmbedtls-dev
-          ./build_lib.sh
+          ./open62541_tooling/build_lib.sh
 
       - name: Run tests
         run: dart test

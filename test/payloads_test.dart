@@ -4,9 +4,8 @@ import 'package:test/test.dart';
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
 
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
-    as raw;
-import 'package:open62541_bindings/src/types/payloads.dart';
+import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
+import 'package:open62541/src/types/payloads.dart';
 
 void main() {
   void testPayloadImpl<T>(String name, PayloadType<T> payload, T value) {
@@ -53,8 +52,7 @@ void main() {
   testPayload('UInt32 max', UA_UInt32Payload(), 4294967295);
 
   testPayload('UInt64 min', UA_UInt64Payload(), 0);
-  testPayload(
-      'UInt64 (dart) max as in int64', UA_UInt64Payload(), 9223372036854775807);
+  testPayload('UInt64 (dart) max as in int64', UA_UInt64Payload(), 9223372036854775807);
 
   // Floating point
   testPayload('Double positive', UA_DoublePayload(), 3.14159265359);
@@ -106,8 +104,7 @@ void main() {
     final convertedDate = payload.get(reader);
 
     expect(convertedDate, originalDate);
-    expect(convertedDate.millisecondsSinceEpoch,
-        originalDate.millisecondsSinceEpoch);
+    expect(convertedDate.millisecondsSinceEpoch, originalDate.millisecondsSinceEpoch);
 
     // Test specific components
     expect(convertedDate.year, 2024);

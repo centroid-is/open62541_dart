@@ -1,15 +1,13 @@
 import 'dart:collection';
 import 'dart:ffi';
 
-import 'package:collection/collection.dart';
 import 'package:ffi/ffi.dart';
 import 'package:binarize/binarize.dart';
-import 'package:open62541_bindings/src/dynamic_value.dart';
-import 'package:open62541_bindings/src/extensions.dart';
-import 'package:open62541_bindings/src/generated/open62541_bindings.dart'
-    as raw;
+import 'package:open62541/src/dynamic_value.dart';
+import 'package:open62541/src/extensions.dart';
+import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
 import 'package:test/test.dart';
-import 'package:open62541_bindings/src/node_id.dart';
+import 'package:open62541/src/node_id.dart';
 import 'schema_util.dart';
 
 void main() {
@@ -54,13 +52,13 @@ void main() {
               "ohg": [
                 {"final_boss": true},
                 [
-                  [1337]
-                ]
-              ]
-            }
-          ]
-        }
-      }
+                  [1337],
+                ],
+              ],
+            },
+          ],
+        },
+      },
     };
     final d = DynamicValue.fromMap(LinkedHashMap.from(values));
     expect(d["ohg"].asBool, true);
@@ -90,9 +88,7 @@ void main() {
     expect(k.typeId, NodeId.boolean);
   });
   test('typeId persistance complex map', () {
-    var values = <String, dynamic>{
-      "jbb": false,
-    };
+    var values = <String, dynamic>{"jbb": false};
     final d = DynamicValue.fromMap(LinkedHashMap.from(values));
     d["jbb"].typeId = NodeId.boolean;
     expect(d["jbb"].typeId, NodeId.boolean);
@@ -125,7 +121,7 @@ void main() {
         "subfield1": false,
         "subfield2": true,
         "subfield3": [false, true],
-      }
+      },
     };
     final myVal = DynamicValue.fromMap(LinkedHashMap.from(myMap));
     myVal.typeId = NodeId.fromString(4, "<StructuredDataType>:ST_SpeedBatcher");
@@ -246,12 +242,8 @@ void main() {
     var fp = buildDef(fpFields);
 
     var spNodeId = NodeId.fromString(4, "sp");
-    var defs = {
-      spNodeId: sp,
-      fpNodeId: fp,
-    };
-    var schema =
-        DynamicValue.fromDataTypeDefinition(NodeId.fromString(4, "sp"), defs);
+    var defs = {spNodeId: sp, fpNodeId: fp};
+    var schema = DynamicValue.fromDataTypeDefinition(NodeId.fromString(4, "sp"), defs);
 
     // Expect tree structure was made
     expect(schema.isObject, true);
@@ -358,12 +350,11 @@ void main() {
       0x00,
       0xe2,
       0x98,
-      0x98
+      0x98,
     ];
 
     // Create a dynamic value with the structure
-    DynamicValue test = DynamicValue(
-        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    DynamicValue test = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     test["field1"] = DynamicValue(typeId: NodeId.uastring);
     test["field2"] = DynamicValue(typeId: NodeId.uastring);
     test["field3"] = DynamicValue(typeId: NodeId.uastring);
@@ -415,7 +406,7 @@ void main() {
         0x01, 0x00, 0x00, 0x00, 0x65, // "e"
         0x01, 0x00, 0x00, 0x00, 0x66, // "f"
         0x01, 0x00, 0x00, 0x00, 0x67, // "g"
-        0x01, 0x00, 0x00, 0x00, 0x68 // "h"
+        0x01, 0x00, 0x00, 0x00, 0x68, // "h"
       ],
       // Second struct
       [
@@ -426,7 +417,7 @@ void main() {
         0x01, 0x00, 0x00, 0x00, 0x6d, // "m"
         0x01, 0x00, 0x00, 0x00, 0x6e, // "n"
         0x01, 0x00, 0x00, 0x00, 0x6f, // "o"
-        0x01, 0x00, 0x00, 0x00, 0x70 // "p"
+        0x01, 0x00, 0x00, 0x00, 0x70, // "p"
       ],
       // Third struct
       [
@@ -437,7 +428,7 @@ void main() {
         0x01, 0x00, 0x00, 0x00, 0x61, // "a"
         0x01, 0x00, 0x00, 0x00, 0x62, // "b"
         0x01, 0x00, 0x00, 0x00, 0x63, // "c"
-        0x01, 0x00, 0x00, 0x00, 0x64 // "d"
+        0x01, 0x00, 0x00, 0x00, 0x64, // "d"
       ],
       // Fourth struct
       [
@@ -448,13 +439,12 @@ void main() {
         0x01, 0x00, 0x00, 0x00, 0x69, // "i"
         0x01, 0x00, 0x00, 0x00, 0x6a, // "j"
         0x01, 0x00, 0x00, 0x00, 0x6b, // "k"
-        0x01, 0x00, 0x00, 0x00, 0x6c // "l"
-      ]
+        0x01, 0x00, 0x00, 0x00, 0x6c, // "l"
+      ],
     ];
 
     // Create a dynamic value with the structure
-    DynamicValue test1 = DynamicValue(
-        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    DynamicValue test1 = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     test1["field1"] = DynamicValue(typeId: NodeId.uastring);
     test1["field2"] = DynamicValue(typeId: NodeId.uastring);
     test1["field3"] = DynamicValue(typeId: NodeId.uastring);
@@ -464,8 +454,7 @@ void main() {
     test1["bigfield3"] = DynamicValue(typeId: NodeId.uastring);
     test1["bigfield4"] = DynamicValue(typeId: NodeId.uastring);
 
-    DynamicValue test2 = DynamicValue(
-        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    DynamicValue test2 = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     test2["field1"] = DynamicValue(typeId: NodeId.uastring);
     test2["field2"] = DynamicValue(typeId: NodeId.uastring);
     test2["field3"] = DynamicValue(typeId: NodeId.uastring);
@@ -475,8 +464,7 @@ void main() {
     test2["bigfield3"] = DynamicValue(typeId: NodeId.uastring);
     test2["bigfield4"] = DynamicValue(typeId: NodeId.uastring);
 
-    DynamicValue test3 = DynamicValue(
-        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    DynamicValue test3 = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     test3["field1"] = DynamicValue(typeId: NodeId.uastring);
     test3["field2"] = DynamicValue(typeId: NodeId.uastring);
     test3["field3"] = DynamicValue(typeId: NodeId.uastring);
@@ -486,8 +474,7 @@ void main() {
     test3["bigfield3"] = DynamicValue(typeId: NodeId.uastring);
     test3["bigfield4"] = DynamicValue(typeId: NodeId.uastring);
 
-    DynamicValue test4 = DynamicValue(
-        typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    DynamicValue test4 = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     test4["field1"] = DynamicValue(typeId: NodeId.uastring);
     test4["field2"] = DynamicValue(typeId: NodeId.uastring);
     test4["field3"] = DynamicValue(typeId: NodeId.uastring);
@@ -500,20 +487,18 @@ void main() {
     final parent = DynamicValue.fromList([test1, test2, test3, test4]);
 
     Pointer<raw.UA_ExtensionObject> obj = calloc(4);
-    final encoding =
-        raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
-    obj[0].encoding = encoding;
-    obj[1].encoding = encoding;
-    obj[2].encoding = encoding;
-    obj[3].encoding = encoding;
+    final encoding = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+    obj[0].encodingAsInt = encoding.value;
+    obj[1].encodingAsInt = encoding.value;
+    obj[2].encodingAsInt = encoding.value;
+    obj[3].encodingAsInt = encoding.value;
 
     obj[0].content.encoded.body.fromBytes(data[0]);
     obj[1].content.encoded.body.fromBytes(data[1]);
     obj[2].content.encoded.body.fromBytes(data[2]);
     obj[3].content.encoded.body.fromBytes(data[3]);
 
-    final bytes =
-        obj.cast<Uint8>().asTypedList(sizeOf<raw.UA_ExtensionObject>() * 4);
+    final bytes = obj.cast<Uint8>().asTypedList(sizeOf<raw.UA_ExtensionObject>() * 4);
 
     ByteReader reader = ByteReader(bytes, endian: Endian.little);
     parent.get(reader, Endian.little, false, true);
@@ -558,8 +543,7 @@ void main() {
     final b = writer.toBytes();
     expect(bytes.length, b.length);
     for (int i = 0; i < 4; i++) {
-      final chunk = bytes.sublist(i * sizeOf<raw.UA_ExtensionObject>(),
-          (i + 1) * sizeOf<raw.UA_ExtensionObject>());
+      final chunk = bytes.sublist(i * sizeOf<raw.UA_ExtensionObject>(), (i + 1) * sizeOf<raw.UA_ExtensionObject>());
       Pointer<raw.UA_ExtensionObject> obj = calloc();
       obj
           .cast<Uint8>()
