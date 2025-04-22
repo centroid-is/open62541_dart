@@ -557,4 +557,32 @@ void main() {
       calloc.free(obj);
     }
   });
+
+  test('Struct with array of strings', () {
+    DynamicValue test = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    test["a"] = DynamicValue.fromList([
+      DynamicValue(typeId: NodeId.uastring, value: "a"),
+      DynamicValue(typeId: NodeId.uastring, value: "b"),
+      DynamicValue(typeId: NodeId.uastring, value: "c"),
+    ], typeId: NodeId.uastring);
+    ByteWriter writer = ByteWriter(endian: Endian.little);
+    test.set(writer, test, Endian.little);
+    ByteReader reader = ByteReader(writer.toBytes(), endian: Endian.little);
+    final dynExpected = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    dynExpected["a"] = DynamicValue.fromList([
+      DynamicValue(
+        typeId: NodeId.uastring,
+      ),
+      DynamicValue(
+        typeId: NodeId.uastring,
+      ),
+      DynamicValue(
+        typeId: NodeId.uastring,
+      ),
+    ], typeId: NodeId.uastring);
+    dynExpected.get(reader, Endian.little);
+    expect(dynExpected["a"][0].asString, "a");
+    expect(dynExpected["a"][1].asString, "b");
+    expect(dynExpected["a"][2].asString, "c");
+  });
 }

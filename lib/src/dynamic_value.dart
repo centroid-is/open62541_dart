@@ -283,7 +283,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       for (int i = 0; i < asArray.length; i++) {
         // if array is root and subsequent type is array we should treat that also as root
         // as in not read the subsequent array length
-        value[i] = value[i].get(reader, endian, false, root);
+        value[i] = value[i].get(reader, endian, insideStruct, root);
       }
     }
     return this;
@@ -299,7 +299,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       for (var i = 0; i < value.value.length; i++) {
         // if array is root and subsequent type is array we should treat that also as root
         // as in not read the subsequent array length
-        value.value[i].set(writer, value.value[i], endian, false, root);
+        value.value[i].set(writer, value.value[i], endian, insideStruct, root);
       }
     } else if (value.isObject && root) {
       ffi.Pointer<raw.UA_ExtensionObject> obj = calloc<raw.UA_ExtensionObject>();
