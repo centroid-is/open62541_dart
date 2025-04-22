@@ -483,8 +483,6 @@ class Client {
         for (var ptr in ptrs) {
           _lib.UA_Variant_delete(ptr);
         }
-        // it doesnt like it when we delete the call response
-        // _lib.UA_CallResponse_delete(cr);
       }
     });
 
