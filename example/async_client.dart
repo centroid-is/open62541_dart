@@ -49,12 +49,12 @@ Future<int> main(List<String> arguments) async {
 
   while (start.isAfter(DateTime.now().subtract(Duration(seconds: 10)))) {
     try {
-      DynamicValue value = await c.asyncReadValue(counterId);
+      DynamicValue value = await c.readValue(counterId);
       print('Read value: $value');
 
       // write a new value to trigger the subscription
       value.value = value.value + 1;
-      await c.asyncWriteValue(counterId, value);
+      await c.writeValue(counterId, value);
     } catch (e) {
       print(e);
     }

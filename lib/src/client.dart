@@ -158,7 +158,7 @@ class Client {
     return variant;
   }
 
-  Future<void> asyncWriteValue(NodeId nodeId, DynamicValue value,
+  Future<void> writeValue(NodeId nodeId, DynamicValue value,
       {Duration timeout = const Duration(seconds: 10)}) {
     Completer<void> completer = Completer<void>();
 
@@ -190,7 +190,7 @@ class Client {
     return completer.future;
   }
 
-  bool writeValue(NodeId nodeId, DynamicValue value) {
+  bool syncWriteValue(NodeId nodeId, DynamicValue value) {
     final variant = valueToVariant(value, _lib);
 
     // Write value
@@ -206,7 +206,7 @@ class Client {
     return retValue == raw.UA_STATUSCODE_GOOD;
   }
 
-  Future<DynamicValue> asyncReadValue(NodeId nodeId,
+  Future<DynamicValue> readValue(NodeId nodeId,
       {Duration timeout = const Duration(seconds: 10)}) {
     Completer<DynamicValue> completer = Completer<DynamicValue>();
 
@@ -244,7 +244,7 @@ class Client {
     return completer.future;
   }
 
-  dynamic readValue(NodeId nodeId) {
+  dynamic syncReadValue(NodeId nodeId) {
     ffi.Pointer<raw.UA_Variant> data = calloc<raw.UA_Variant>();
     int statusCode =
         _lib.UA_Client_readValueAttribute(_client, nodeId.toRaw(_lib), data);
