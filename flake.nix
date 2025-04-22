@@ -20,7 +20,7 @@ outputs = { self, nixpkgs, flake-utils }:
           allowSetuid = true;
 
           buildInputs = [
-            flutter
+            dart
             pkg-config
             libsecret
             gtk3
