@@ -149,6 +149,8 @@ class Client {
   Future<void> writeValue(NodeId nodeId, DynamicValue value, {Duration timeout = const Duration(seconds: 10)}) {
     Completer<void> completer = Completer<void>();
 
+    final variant = valueToVariant(value, _lib);
+
     // Create callback for this specific write request
     final callback = ffi.NativeCallable<
       ffi.Void Function(
@@ -166,6 +168,7 @@ class Client {
       if (completer.isCompleted) {
         return; // Request timed out already
       }
+      _lib.UA_Variant_delete(variant);
       if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
         completer.completeError(
           'Failed to write value: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
@@ -174,7 +177,6 @@ class Client {
       }
       completer.complete();
     });
-    final variant = valueToVariant(value, _lib);
     _lib.UA_Client_writeValueAttribute_async(
       _client,
       nodeId.toRaw(_lib),
@@ -188,6 +190,7 @@ class Client {
       if (!completer.isCompleted) {
         completer.completeError('Timeout writing $nodeId to $value');
       }
+      _lib.UA_Variant_delete(variant);
     });
     return completer.future;
   }
