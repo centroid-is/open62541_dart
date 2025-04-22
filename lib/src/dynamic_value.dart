@@ -19,7 +19,7 @@ class MemberDescription {
 typedef Schema = Map<NodeId, ffi.Pointer<raw.UA_StructureDefinition>>;
 
 class DynamicValue extends PayloadType<DynamicValue> {
-  dynamic _data;
+  dynamic value;
   NodeId? typeId;
   MemberDescription? _description;
 
@@ -41,16 +41,16 @@ class DynamicValue extends PayloadType<DynamicValue> {
     }
     return v;
   }
-  DynamicValue({value, description, this.typeId}) : _data = value, _description = description;
+  DynamicValue({this.value, description, this.typeId}) : _description = description;
 
   DynamicType get type {
-    if (_data == null) return DynamicType.nullValue;
-    if (_data is LinkedHashMap) return DynamicType.object;
-    if (_data is List<DynamicValue>) return DynamicType.array;
-    if (_data is String) return DynamicType.string;
-    if (_data is int) return DynamicType.integer;
-    if (_data is double) return DynamicType.double;
-    if (_data is bool) return DynamicType.boolean;
+    if (value == null) return DynamicType.nullValue;
+    if (value is LinkedHashMap) return DynamicType.object;
+    if (value is List<DynamicValue>) return DynamicType.array;
+    if (value is String) return DynamicType.string;
+    if (value is int) return DynamicType.integer;
+    if (value is double) return DynamicType.double;
+    if (value is bool) return DynamicType.boolean;
     return DynamicType.unknown;
   }
 
@@ -63,85 +63,80 @@ class DynamicValue extends PayloadType<DynamicValue> {
   bool get isDouble => type == DynamicType.double;
   bool get isBoolean => type == DynamicType.boolean;
 
-  double get asDouble => _parseDouble(_data) ?? 0.0;
-  int get asInt => _parseInt(_data) ?? 0;
-  String get asString => _data?.toString() ?? '';
-  bool get asBool => _parseBool(_data) ?? false;
-  DateTime? get asDateTime => _parseDateTime(_data);
-  dynamic get value => _data;
+  double get asDouble => _parseDouble(value) ?? 0.0;
+  int get asInt => _parseInt(value) ?? 0;
+  String get asString => value?.toString() ?? '';
+  bool get asBool => _parseBool(value) ?? false;
+  DateTime? get asDateTime => _parseDateTime(value);
   MemberDescription? get description => _description;
 
   List<DynamicValue> get asArray =>
-      isArray ? _data : throw StateError('DynamicValue is not an array, ${_data.runtimeType}');
+      isArray ? value : throw StateError('DynamicValue is not an array, ${value.runtimeType}');
 
   Map<String, DynamicValue> get asObject =>
-      isObject ? _data : throw StateError('DynamicValue is not an object, ${_data.runtimeType}');
+      isObject ? value : throw StateError('DynamicValue is not an object, ${value.runtimeType}');
 
   bool contains(dynamic key) {
     if (key is int && isArray) {
-      final list = _data as List<DynamicValue>;
+      final list = value as List<DynamicValue>;
       return (key >= 0 && key < list.length);
     } else if (key is String && isObject) {
-      return (_data as Map<String, DynamicValue>).containsKey(key);
+      return (value as Map<String, DynamicValue>).containsKey(key);
     }
     return false;
   }
 
   DynamicValue operator [](dynamic key) {
     if (key is int && isArray) {
-      final list = _data as List<DynamicValue>;
+      final list = value as List<DynamicValue>;
       return (key >= 0 && key < list.length) ? list[key] : throw StateError('Index "$key" out of bounds');
     } else if (key is String && isObject) {
-      return (_data as Map<String, DynamicValue>).putIfAbsent(key, () => throw StateError('Key "$key" not found'));
+      return (value as Map<String, DynamicValue>).putIfAbsent(key, () => throw StateError('Key "$key" not found'));
     }
     throw StateError('Invalid key type: ${key.runtimeType}');
   }
 
   operator []=(dynamic key, dynamic passed) {
     // Try to acomidate people setting trivial values directly
-    DynamicValue value;
+    DynamicValue innerValue;
     if (passed is DynamicValue) {
-      value = passed;
+      innerValue = passed;
     } else {
       if (passed is LinkedHashMap<String, dynamic>) {
-        value = DynamicValue.fromMap(passed);
+        innerValue = DynamicValue.fromMap(passed);
       } else if (passed is Map) {
         throw 'Unstable ordering, will not result in correct structures.';
       } else if (passed is List) {
-        value = DynamicValue.fromList(passed);
+        innerValue = DynamicValue.fromList(passed);
       } else {
         NodeId? foundType = contains(key) ? this[key].typeId : null;
-        value = DynamicValue(value: passed, typeId: foundType);
+        innerValue = DynamicValue(value: passed, typeId: foundType);
       }
     }
     if (key is int) {
-      if (isNull) _data = <DynamicValue>[];
+      if (isNull) value = <DynamicValue>[];
       if (isArray) {
-        var list = _data as List<DynamicValue>;
+        var list = value as List<DynamicValue>;
         if (key > list.length) {
           throw StateError('Index "$key" out of bounds');
         } else if (key == list.length) {
-          list.add(value);
+          list.add(innerValue);
         } else {
-          list[key] = value;
+          list[key] = innerValue;
         }
       } else {
         throw StateError('DynamicValue is not an array');
       }
     } else if (key is String) {
       if (isNull) {
-        _data = LinkedHashMap<String, DynamicValue>();
+        value = LinkedHashMap<String, DynamicValue>();
       }
       if (isObject) {
-        (_data as LinkedHashMap<String, DynamicValue>)[key] = value;
+        (value as LinkedHashMap<String, DynamicValue>)[key] = innerValue;
       } else {
         throw StateError('DynamicValue is not an object');
       }
     }
-  }
-
-  set value(dynamic value) {
-    _data = value;
   }
 
   List<T> toList<T>(T Function(DynamicValue)? converter) {
@@ -157,7 +152,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   }
 
   @override
-  String toString() => _data?.toString() ?? 'null';
+  String toString() => value?.toString() ?? 'null';
 
   static double? _parseDouble(dynamic val) {
     if (val is double) return val;
@@ -200,7 +195,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     if (!isObject) {
       throw StateError('DynamicValue is not an object');
     }
-    return (_data as LinkedHashMap<String, DynamicValue>).entries;
+    return (value as LinkedHashMap<String, DynamicValue>).entries;
   }
 
   // Lesa TypeId frá server fyrir gefna týpu
@@ -248,9 +243,9 @@ class DynamicValue extends PayloadType<DynamicValue> {
     if (!isArray && !isObject) {
       // Special case for strings, encoded differetly for structs here then UA_String
       if (typeId == NodeId.uastring && insideStruct) {
-        _data = ContiguousStringPayload().get(reader, endian);
+        value = ContiguousStringPayload().get(reader, endian);
       } else {
-        _data = nodeIdToPayloadType(typeId).get(reader, endian);
+        value = nodeIdToPayloadType(typeId).get(reader, endian);
       }
     }
 
@@ -270,8 +265,8 @@ class DynamicValue extends PayloadType<DynamicValue> {
         final bodyBytes = obj.ref.content.encoded.body.asTypedList();
         bodyReader = ByteReader(bodyBytes, endian: endian ?? Endian.little);
       }
-      for (final key in _data.keys) {
-        _data[key] = _data[key].get(bodyReader, endian, true);
+      for (final key in value.keys) {
+        value[key] = value[key].get(bodyReader, endian, true);
       }
     }
 
@@ -288,7 +283,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       for (int i = 0; i < asArray.length; i++) {
         // if array is root and subsequent type is array we should treat that also as root
         // as in not read the subsequent array length
-        _data[i] = _data[i].get(reader, endian, false, root);
+        value[i] = value[i].get(reader, endian, false, root);
       }
     }
     return this;
@@ -299,18 +294,18 @@ class DynamicValue extends PayloadType<DynamicValue> {
     if (value.isArray) {
       // Don't encode the array length if we are the root
       if (!root) {
-        writer.int32(value._data.length, endian);
+        writer.int32(value.value.length, endian);
       }
-      for (var i = 0; i < value._data.length; i++) {
+      for (var i = 0; i < value.value.length; i++) {
         // if array is root and subsequent type is array we should treat that also as root
         // as in not read the subsequent array length
-        value._data[i].set(writer, value._data[i], endian, false, root);
+        value.value[i].set(writer, value.value[i], endian, false, root);
       }
     } else if (value.isObject && root) {
       ffi.Pointer<raw.UA_ExtensionObject> obj = calloc<raw.UA_ExtensionObject>();
       obj.ref.content.encoded.typeId.fromNodeId(value.typeId!);
       ByteWriter bodyWriter = ByteWriter();
-      value._data.forEach((key, value) => value.set(bodyWriter, value, endian, true));
+      value.value.forEach((key, value) => value.set(bodyWriter, value, endian, true));
       obj.ref.content.encoded.body.fromBytes(bodyWriter.toBytes());
       // todo support other encodings
       obj.ref.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
@@ -320,7 +315,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       // I would like to believe that this is freed when the variant is freed
       writer.write(extObjView);
     } else if (value.isObject) {
-      value._data.forEach((key, value) => value.set(writer, value, endian, true));
+      value.value.forEach((key, value) => value.set(writer, value, endian, true));
     } else {
       if (value.isNull) {
         throw StateError('Element type is not set for where value is\n $value');
@@ -330,7 +325,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       if (typeId == NodeId.uastring && insideStruct) {
         ContiguousStringPayload().set(writer, value.value, endian);
       } else {
-        nodeIdToPayloadType(value.typeId ?? autoDeduceType(value._data)).set(writer, value.value, endian);
+        nodeIdToPayloadType(value.typeId ?? autoDeduceType(value.value)).set(writer, value.value, endian);
       }
     }
   }

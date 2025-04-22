@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:open62541/open62541.dart';
-import 'package:open62541/src/generated/open62541_bindings.dart';
 
 Future<int> main(List<String> arguments) async {
   Client c = Client(Open62541Singleton().lib);
