@@ -24,7 +24,7 @@ void clientIsolate(SendPort mainSendPort) async {
   if (statusCode == 0) {
     mainSendPort.send('Client connected!');
   } else {
-    c.close();
+    c.delete();
     mainSendPort.send('EXIT');
     return;
   }
@@ -35,7 +35,7 @@ void clientIsolate(SendPort mainSendPort) async {
     mainSendPort.send('Created subscription $subId');
 
     // final definition =
-    //     c.readValueAttribute(NodeId.string(4, "#Type|ST_SpeedBatcher"));
+    //     c.syncReadValueAttribute(NodeId.string(4, "#Type|ST_SpeedBatcher"));
     // print("definition: $definition");
     //<StructuredDataType>:ST_SpeedBatcher
 
@@ -63,21 +63,22 @@ void clientIsolate(SendPort mainSendPort) async {
     // boolean
     NodeId toWrite =
         NodeId.fromString(4, "MAIN.lines[1][1].xInUse"); // The bool to write
-    final currentValue = c.readValue(toWrite);
+    final currentValue = c.syncReadValue(toWrite);
     print("Current value : $currentValue");
-    c.writeValue(toWrite, DynamicValue(value: false, typeId: NodeId.boolean));
+    c.syncWriteValue(
+        toWrite, DynamicValue(value: false, typeId: NodeId.boolean));
 
     // int16
     DynamicValue curr;
     NodeId int16ToWrite =
         NodeId.fromString(4, "MAIN.nCounter"); // The bool to write
-    curr = c.readValue(int16ToWrite);
-    c.writeValue(int16ToWrite,
+    curr = c.syncReadValue(int16ToWrite);
+    c.syncWriteValue(int16ToWrite,
         DynamicValue(value: curr.asInt + 1, typeId: NodeId.int16));
 
     NodeId nreal = NodeId.fromString(4, "GVL_HMI.Drives_Line1[1].i_rFreq");
-    var currReal = c.readValue(nreal);
-    c.writeValue(nreal,
+    var currReal = c.syncReadValue(nreal);
+    c.syncWriteValue(nreal,
         DynamicValue(value: currReal.asDouble + 0.1337, typeId: NodeId.float));
 
     var arrayReadTest = [
@@ -91,64 +92,64 @@ void clientIsolate(SendPort mainSendPort) async {
     print("Arrays begin");
     for (var value in arrayReadTest) {
       NodeId id = NodeId.fromString(4, value);
-      print(c.readValue(id));
+      print(c.syncReadValue(id));
     }
     print("Arrays end");
 
     print("Bool array write things");
     NodeId nBoolArray = NodeId.fromString(4, "GVL_HMI.bool_array");
-    var bArray = c.readValue(nBoolArray);
+    var bArray = c.syncReadValue(nBoolArray);
     // Invert bArray
     for (int i = 0; i < bArray.asArray.length; i++) {
       bArray[i] = !bArray[i].asBool;
     }
-    c.writeValue(nBoolArray, bArray);
+    c.syncWriteValue(nBoolArray, bArray);
 
     print("int array write things");
     NodeId nIntArray = NodeId.fromString(4, "GVL_HMI.int_array");
-    var iArray = c.readValue(nIntArray);
+    var iArray = c.syncReadValue(nIntArray);
     // Invert bArray
     for (int i = 0; i < iArray.asArray.length; i++) {
       iArray[i] = iArray[i].asInt + i;
     }
-    c.writeValue(nIntArray, iArray);
+    c.syncWriteValue(nIntArray, iArray);
 
     print("uint array write things");
     NodeId unIntArray = NodeId.fromString(4, "GVL_HMI.uint_array");
-    var uArray = c.readValue(unIntArray);
+    var uArray = c.syncReadValue(unIntArray);
     // Invert bArray
     for (int i = 0; i < uArray.asArray.length; i++) {
       uArray[i] = uArray[i].asInt + i;
     }
-    c.writeValue(unIntArray, uArray);
+    c.syncWriteValue(unIntArray, uArray);
 
     NodeId dIntArray = NodeId.fromString(4, "GVL_HMI.dint_array");
-    var dArray = c.readValue(dIntArray);
+    var dArray = c.syncReadValue(dIntArray);
     // Invert bArray
     for (int i = 0; i < dArray.asArray.length; i++) {
       dArray[i] = 1 + dArray[i].asInt;
     }
-    c.writeValue(dIntArray, dArray);
+    c.syncWriteValue(dIntArray, dArray);
 
     print("udint array write things");
     NodeId udIntArray = NodeId.fromString(4, "GVL_HMI.udint_array");
-    var udArray = c.readValue(udIntArray);
+    var udArray = c.syncReadValue(udIntArray);
     // Invert bArray
     for (int i = 0; i < udArray.asArray.length; i++) {
       udArray[i] = i + udArray[i].asInt;
     }
-    c.writeValue(udIntArray, udArray);
+    c.syncWriteValue(udIntArray, udArray);
 
     // print("writing struct and stuff");
     // NodeId sId = NodeId.fromString(4, "GVL_IO.single_SB");
-    // var value = c.readValue(sId);
+    // var value = c.syncReadValue(sId);
     // print(value);
 
     NodeId tId = NodeId.fromString(4, "GVL_HMI.t");
-    print("Time: ${c.readValue(tId)}");
+    print("Time: ${c.syncReadValue(tId)}");
 
     NodeId dId = NodeId.fromString(4, "GVL_HMI.d");
-    print("Date: ${c.readValue(dId)}");
+    print("Date: ${c.syncReadValue(dId)}");
 
     // void printVariant(ffi.Pointer<raw.UA_Variant> lval) {
     //   print(lval.ref.type.ref.typeName.cast<Utf8>().toDartString());
@@ -185,17 +186,17 @@ void clientIsolate(SendPort mainSendPort) async {
     NodeId lId = NodeId.fromString(4, "GVL_HMI.k");
 
     print("Flipping");
-    DynamicValue rr = c.readValue(lId);
+    DynamicValue rr = c.syncReadValue(lId);
     print(rr);
     rr["bool1"] = !rr["bool1"].asBool;
     rr["bool2"] = !rr["bool2"].asBool;
-    c.writeValue(lId, rr);
+    c.syncWriteValue(lId, rr);
     await Future.delayed(Duration(milliseconds: 150));
 
     NodeId sId = NodeId.fromString(4, "GVL_HMI.m");
-    print(c.readValue(sId));
+    print(c.syncReadValue(sId));
     NodeId s2Id = NodeId.fromString(4, "GVL_HMI.n");
-    var n = c.readValue(s2Id);
+    var n = c.syncReadValue(s2Id);
     print(n);
     // todo should we throw if typeid is not declared during assignment?
     n[0]["field1"] = "JBB";
@@ -204,28 +205,28 @@ void clientIsolate(SendPort mainSendPort) async {
     n[0]["bigfield1"] = "BIGBIGJBB";
     n[1]["bigfield1"] = "BIGBIGJBB2";
     n[2]["bigfield1"] = "BIGBIGJBB3";
-    c.writeValue(s2Id, n);
-    n = c.readValue(s2Id);
+    c.syncWriteValue(s2Id, n);
+    n = c.syncReadValue(s2Id);
     print(n);
 
     //    print(curr_real);
-    //    c.writeValue(nreal, curr_real + 0.1337);
-    //    curr_real = c.readValue(nreal);
+    //    c.syncWriteValue(nreal, curr_real + 0.1337);
+    //    curr_real = c.syncReadValue(nreal);
     //    await Future.delayed(Duration(milliseconds: 100));
     //  }
-    //  c.writeValue(nreal, 1000.0);
+    //  c.syncWriteValue(nreal, 1000.0);
     NodeId arr = NodeId.fromString(4, "GVL_IO.single_SB.a_struct.i_xSpare2");
     print("Multidimension baby");
-    print(c.readValue(arr));
+    print(c.syncReadValue(arr));
     print("Multidimension baby");
 
     NodeId marr = NodeId.fromString(4, "GVL_IO.single_SB.a_struct.i_xSpare3");
     print("Multidimension baby");
-    print(c.readValue(marr));
+    print(c.syncReadValue(marr));
     print("Multidimension baby");
 
     NodeId driveLine2 = NodeId.fromString(4, "GVL_HMI.Drives_Line2");
-    print(c.readValue(driveLine2));
+    print(c.syncReadValue(driveLine2));
 
     // NodeId outSignal = NodeId.string(4, "GVL_IO.single_SB.i_xBatchReady");
     // final outSignalMonId =
@@ -235,7 +236,7 @@ void clientIsolate(SendPort mainSendPort) async {
     // });
   } catch (error) {
     mainSendPort.send('ERROR: $error');
-    c.close();
+    c.delete();
     mainSendPort.send('EXIT');
     return;
   }
@@ -243,7 +244,7 @@ void clientIsolate(SendPort mainSendPort) async {
   // Add signal handler
   ProcessSignal.sigint.watch().listen((signal) {
     print('Shutting down client gracefully...');
-    c.close();
+    c.delete();
     mainSendPort.send('EXIT');
   });
 
@@ -258,7 +259,7 @@ void clientIsolate(SendPort mainSendPort) async {
     }
   }
 
-  c.close();
+  c.delete();
   mainSendPort.send('EXIT');
 }
 

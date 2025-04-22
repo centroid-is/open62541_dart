@@ -393,6 +393,54 @@ enum UaTypes {
   }
 }
 
+enum UaSecureChannelState {
+  closed(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CLOSED),
+  helSent(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_HEL_SENT),
+  helReceived(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_HEL_RECEIVED),
+  ackSent(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_ACK_SENT),
+  ackReceived(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_ACK_RECEIVED),
+  opnSent(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_OPN_SENT),
+  open(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_OPEN),
+  closing(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CLOSING),
+  reverseListening(
+      raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_REVERSE_LISTENING),
+  connecting(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CONNECTING),
+  connected(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CONNECTED),
+  reverseConnected(
+      raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_REVERSE_CONNECTED),
+  rheSent(raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_RHE_SENT);
+
+  final int value;
+  const UaSecureChannelState(this.value);
+
+  static UaSecureChannelState fromValue(int value) {
+    return UaSecureChannelState.values.firstWhere(
+      (state) => state.value == value,
+      orElse: () =>
+          throw ArgumentError('Invalid UaSecureChannelState value: $value'),
+    );
+  }
+}
+
+enum UaSessionState {
+  activated(raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED),
+  activatedRequested(raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATE_REQUESTED),
+  closed(raw.UA_SessionState.UA_SESSIONSTATE_CLOSED),
+  closing(raw.UA_SessionState.UA_SESSIONSTATE_CLOSING),
+  created(raw.UA_SessionState.UA_SESSIONSTATE_CREATED),
+  createdRequested(raw.UA_SessionState.UA_SESSIONSTATE_CREATE_REQUESTED);
+
+  final int value;
+  const UaSessionState(this.value);
+
+  static UaSessionState fromValue(int value) {
+    return UaSessionState.values.firstWhere(
+      (state) => state.value == value,
+      orElse: () => throw ArgumentError('Invalid UaSessionState value: $value'),
+    );
+  }
+}
+
 // ignore: camel_case_extensions
 extension UA_DataTypeExtension on raw.UA_DataType {
   int get memSize => substitute & 0xFFFF; // First 16 bits
@@ -468,6 +516,7 @@ extension UA_NodeIdExtension on raw.UA_NodeId {
   }
 }
 
+// ignore: camel_case_extensions
 extension UA_StructFieldFormat on raw.UA_StructureDefinition {
   String format() {
     try {
