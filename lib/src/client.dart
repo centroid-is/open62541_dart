@@ -23,12 +23,13 @@ class ClientConfig {
   ClientConfig(this._clientConfig) {
     // Intercept callbacks
     final state = ffi.NativeCallable<
-        ffi.Void Function(
-          ffi.Pointer<raw.UA_Client> client,
-          ffi.UnsignedInt channelState,
-          ffi.UnsignedInt sessionState,
-          raw.UA_StatusCode connectStatus,
-        )>.isolateLocal(
+      ffi.Void Function(
+        ffi.Pointer<raw.UA_Client> client,
+        ffi.UnsignedInt channelState,
+        ffi.UnsignedInt sessionState,
+        raw.UA_StatusCode connectStatus,
+      )
+    >.isolateLocal(
       (ffi.Pointer<raw.UA_Client> client, int channelState, int sessionState, int recoveryStatus) => _stateStream.add(
         ClientState(
           channelState: raw.UA_SecureChannelState.fromValue(channelState),
@@ -39,7 +40,8 @@ class ClientConfig {
     );
     _clientConfig.ref.stateCallback = state.nativeFunction;
     final inactivity = ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal(
+      ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+    >.isolateLocal(
       (ffi.Pointer<raw.UA_Client> client, int subId, ffi.Pointer<ffi.Void> subContext) =>
           _subscriptionInactivity.add(subId),
     );
@@ -65,9 +67,7 @@ class ClientConfig {
 }
 
 class Client {
-  Client(raw.open62541 lib)
-      : _lib = lib,
-        _client = lib.UA_Client_new() {
+  Client(raw.open62541 lib) : _lib = lib, _client = lib.UA_Client_new() {
     final config = lib.UA_Client_getConfig(_client);
     _clientConfig = ClientConfig(config);
   }
@@ -151,12 +151,13 @@ class Client {
 
     // Create callback for this specific write request
     final callback = ffi.NativeCallable<
-        ffi.Void Function(
-          ffi.Pointer<raw.UA_Client>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Uint32,
-          ffi.Pointer<raw.UA_WriteResponse>,
-        )>.isolateLocal((
+      ffi.Void Function(
+        ffi.Pointer<raw.UA_Client>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Uint32,
+        ffi.Pointer<raw.UA_WriteResponse>,
+      )
+    >.isolateLocal((
       ffi.Pointer<raw.UA_Client> client,
       ffi.Pointer<ffi.Void> userdata,
       int reqId,
@@ -210,13 +211,14 @@ class Client {
 
     // Create callback for this specific read request
     final callback = ffi.NativeCallable<
-        ffi.Void Function(
-          ffi.Pointer<raw.UA_Client>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Uint32,
-          raw.UA_StatusCode,
-          ffi.Pointer<raw.UA_DataValue>,
-        )>.isolateLocal((
+      ffi.Void Function(
+        ffi.Pointer<raw.UA_Client>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Uint32,
+        raw.UA_StatusCode,
+        ffi.Pointer<raw.UA_DataValue>,
+      )
+    >.isolateLocal((
       ffi.Pointer<raw.UA_Client> client,
       ffi.Pointer<ffi.Void> userdata,
       int reqId,
@@ -281,8 +283,9 @@ class Client {
     request.ref.publishingEnabled = publishingEnabled;
     request.ref.priority = priority;
 
-    final deleteCallback = ffi
-        .NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)>.isolateLocal(
+    final deleteCallback = ffi.NativeCallable<
+      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)
+    >.isolateLocal(
       (ffi.Pointer<raw.UA_Client> client, int subid, ffi.Pointer<ffi.Void> somedata) =>
           stderr.write("Subscription deleted $subid"),
     );
@@ -331,14 +334,15 @@ class Client {
     monRequest.ref.requestedParameters.queueSize = queueSize;
 
     final monitorCallback = ffi.NativeCallable<
-        ffi.Void Function(
-          ffi.Pointer<raw.UA_Client>,
-          ffi.Uint32,
-          ffi.Pointer<ffi.Void>,
-          ffi.Uint32,
-          ffi.Pointer<ffi.Void>,
-          ffi.Pointer<raw.UA_DataValue>,
-        )>.isolateLocal((
+      ffi.Void Function(
+        ffi.Pointer<raw.UA_Client>,
+        ffi.Uint32,
+        ffi.Pointer<ffi.Void>,
+        ffi.Uint32,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<raw.UA_DataValue>,
+      )
+    >.isolateLocal((
       ffi.Pointer<raw.UA_Client> client,
       int subId,
       ffi.Pointer<ffi.Void> subContext,
@@ -412,8 +416,12 @@ class Client {
     return controller.stream;
   }
 
-  Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args,
-      {Duration timeout = const Duration(seconds: 10)}) async {
+  Future<List<DynamicValue>> call(
+    NodeId objectId,
+    NodeId methodId,
+    Iterable<DynamicValue> args, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
     final len = args.length;
     var inputArgs = calloc<raw.UA_Variant>(len);
     var ptrs = <ffi.Pointer<raw.UA_Variant>>[];
@@ -427,9 +435,13 @@ class Client {
     }
     final completer = Completer<List<DynamicValue>>();
     final callbackInner = ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
-            ffi.Pointer<raw.UA_CallResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
-        ffi.Pointer<ffi.Void> userdata, int requestId, ffi.Pointer<raw.UA_CallResponse> cr) {
+      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32, ffi.Pointer<raw.UA_CallResponse>)
+    >.isolateLocal((
+      ffi.Pointer<raw.UA_Client> client,
+      ffi.Pointer<ffi.Void> userdata,
+      int requestId,
+      ffi.Pointer<raw.UA_CallResponse> cr,
+    ) {
       try {
         final ref = cr.ref;
         if (ref.resultsSize == 0) {
@@ -437,18 +449,22 @@ class Client {
         }
         if (ref.resultsSize > 1) {
           return completer.completeError(
-              "Unsupported, multiple results for call to $objectId $methodId", StackTrace.current);
+            "Unsupported, multiple results for call to $objectId $methodId",
+            StackTrace.current,
+          );
         }
         final results = ref.results.ref;
         if (results.statusCode != raw.UA_STATUSCODE_GOOD) {
           return completer.completeError(
-              "Results error on call to $objectId $methodId failed with ${statusCodeToString(results.statusCode)}",
-              StackTrace.current);
+            "Results error on call to $objectId $methodId failed with ${statusCodeToString(results.statusCode)}",
+            StackTrace.current,
+          );
         }
         if (ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
           return completer.completeError(
-              "Header error on call to $objectId $methodId failed with ${statusCodeToString(ref.responseHeader.serviceResult)}",
-              StackTrace.current);
+            "Header error on call to $objectId $methodId failed with ${statusCodeToString(ref.responseHeader.serviceResult)}",
+            StackTrace.current,
+          );
         }
         if (results.outputArgumentsSize == 0) {
           completer.complete([]);
@@ -473,14 +489,15 @@ class Client {
     });
 
     final statusCode = _lib.UA_Client_call_async(
-        _client,
-        objectId.toRaw(_lib),
-        methodId.toRaw(_lib),
-        len,
-        inputArgs,
-        callbackInner.nativeFunction,
-        ffi.nullptr, // todo set context?
-        ffi.nullptr);
+      _client,
+      objectId.toRaw(_lib),
+      methodId.toRaw(_lib),
+      len,
+      inputArgs,
+      callbackInner.nativeFunction,
+      ffi.nullptr, // todo set context?
+      ffi.nullptr,
+    );
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Unable to call method: $statusCode ${statusCodeToString(statusCode)}';
     }
