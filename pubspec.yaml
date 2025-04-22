@@ -4,7 +4,7 @@ version: 0.0.0-dev.1
 repository: https://github.com/centroid-is/open62541_dart
 
 environment:
-  sdk: ^3.6.0
+  sdk: ^3.7.0
 dependencies:
   binarize: ^2.0.0
   collection: ^1.19.1
