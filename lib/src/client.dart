@@ -23,13 +23,12 @@ class ClientConfig {
   ClientConfig(this._clientConfig) {
     // Intercept callbacks
     final state = ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Client> client,
-        ffi.UnsignedInt channelState,
-        ffi.UnsignedInt sessionState,
-        raw.UA_StatusCode connectStatus,
-      )
-    >.isolateLocal(
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.UnsignedInt channelState,
+          ffi.UnsignedInt sessionState,
+          raw.UA_StatusCode connectStatus,
+        )>.isolateLocal(
       (ffi.Pointer<raw.UA_Client> client, int channelState, int sessionState, int recoveryStatus) => _stateStream.add(
         ClientState(
           channelState: raw.UA_SecureChannelState.fromValue(channelState),
@@ -40,8 +39,7 @@ class ClientConfig {
     );
     _clientConfig.ref.stateCallback = state.nativeFunction;
     final inactivity = ffi.NativeCallable<
-      ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
-    >.isolateLocal(
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal(
       (ffi.Pointer<raw.UA_Client> client, int subId, ffi.Pointer<ffi.Void> subContext) =>
           _subscriptionInactivity.add(subId),
     );
@@ -67,7 +65,9 @@ class ClientConfig {
 }
 
 class Client {
-  Client(raw.open62541 lib) : _lib = lib, _client = lib.UA_Client_new() {
+  Client(raw.open62541 lib)
+      : _lib = lib,
+        _client = lib.UA_Client_new() {
     final config = lib.UA_Client_getConfig(_client);
     _clientConfig = ClientConfig(config);
   }
@@ -151,13 +151,12 @@ class Client {
 
     // Create callback for this specific write request
     final callback = ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Client>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Uint32,
-        ffi.Pointer<raw.UA_WriteResponse>,
-      )
-    >.isolateLocal((
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Uint32,
+          ffi.Pointer<raw.UA_WriteResponse>,
+        )>.isolateLocal((
       ffi.Pointer<raw.UA_Client> client,
       ffi.Pointer<ffi.Void> userdata,
       int reqId,
@@ -211,14 +210,13 @@ class Client {
 
     // Create callback for this specific read request
     final callback = ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Client>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Uint32,
-        raw.UA_StatusCode,
-        ffi.Pointer<raw.UA_DataValue>,
-      )
-    >.isolateLocal((
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Uint32,
+          raw.UA_StatusCode,
+          ffi.Pointer<raw.UA_DataValue>,
+        )>.isolateLocal((
       ffi.Pointer<raw.UA_Client> client,
       ffi.Pointer<ffi.Void> userdata,
       int reqId,
@@ -283,9 +281,8 @@ class Client {
     request.ref.publishingEnabled = publishingEnabled;
     request.ref.priority = priority;
 
-    final deleteCallback = ffi.NativeCallable<
-      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)
-    >.isolateLocal(
+    final deleteCallback = ffi
+        .NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)>.isolateLocal(
       (ffi.Pointer<raw.UA_Client> client, int subid, ffi.Pointer<ffi.Void> somedata) =>
           stderr.write("Subscription deleted $subid"),
     );
@@ -334,15 +331,14 @@ class Client {
     monRequest.ref.requestedParameters.queueSize = queueSize;
 
     final monitorCallback = ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Client>,
-        ffi.Uint32,
-        ffi.Pointer<ffi.Void>,
-        ffi.Uint32,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<raw.UA_DataValue>,
-      )
-    >.isolateLocal((
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client>,
+          ffi.Uint32,
+          ffi.Pointer<ffi.Void>,
+          ffi.Uint32,
+          ffi.Pointer<ffi.Void>,
+          ffi.Pointer<raw.UA_DataValue>,
+        )>.isolateLocal((
       ffi.Pointer<raw.UA_Client> client,
       int subId,
       ffi.Pointer<ffi.Void> subContext,
