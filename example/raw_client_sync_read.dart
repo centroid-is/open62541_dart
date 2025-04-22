@@ -170,8 +170,8 @@ int main() {
     monRequest.ref,
     nullptr,
     Pointer.fromFunction<
-        Void Function(Pointer<UA_Client>, Uint32, Pointer<Void>, Uint32, Pointer<Void>,
-            Pointer<UA_DataValue>)>(handlerCurrentTimeChanged),
+      Void Function(Pointer<UA_Client>, Uint32, Pointer<Void>, Uint32, Pointer<Void>, Pointer<UA_DataValue>)
+    >(handlerCurrentTimeChanged),
     nullptr,
   );
   if (monResponse.statusCode == UA_STATUSCODE_GOOD) {

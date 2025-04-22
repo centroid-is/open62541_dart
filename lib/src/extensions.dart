@@ -326,9 +326,10 @@ extension UA_StructFieldFormat on raw.UA_StructureDefinition {
       for (int i = 0; i < fields.ref.dimensions.length; i++) {
         fstr += _formatField(fields[i], 1);
       }
-      final fieldsStr = fields.ref.dimensions.isEmpty
-          ? 'fields: []'
-          : '''fields: [
+      final fieldsStr =
+          fields.ref.dimensions.isEmpty
+              ? 'fields: []'
+              : '''fields: [
           $fstr
   ]''';
 
