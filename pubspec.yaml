@@ -1,5 +1,5 @@
 name: open62541_bindings
-description: Bindings to the open62541 library.
+description: OPC UA client, bindings to the open62541 library.
 version: 0.0.0-dev.1
 repository: https://github.com/centroid-is/open62541_bindings
 
