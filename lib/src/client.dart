@@ -72,6 +72,22 @@ class Client {
     _clientConfig = ClientConfig(config);
   }
 
+  /// Creates a Client instance using static linking or dynamic linking based on platform.
+  /// 
+  /// On Android, it uses dynamic linking by loading 'libopen62541.so' since Android
+  /// does not support static linking by design. For all other platforms, it uses
+  /// static linking by loading from the executable itself.
+  /// 
+  /// Returns:
+  ///   A new [Client] instance.
+  factory Client.fromStatic() {
+    if (Platform.isAndroid) { // android cannot support static linking by design
+      return Client(raw.open62541(ffi.DynamicLibrary.open('libopen62541.so')));
+    } else {
+      return Client(raw.open62541(ffi.DynamicLibrary.executable()));
+    }
+  }
+
   ClientConfig get config => _clientConfig;
 
   int connect(String url, {String? username, String? password}) {
