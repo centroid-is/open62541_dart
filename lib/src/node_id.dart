@@ -6,8 +6,8 @@ import 'extensions.dart';
 
 class NodeId {
   NodeId._internal(this._namespaceIndex, {dynamic id})
-    : _stringId = id is String ? id : null,
-      _numericId = id is int ? id : null {
+      : _stringId = id is String ? id : null,
+        _numericId = id is int ? id : null {
     if (_stringId == null && _numericId == null) {
       throw 'NodeId is not initialized or unimplemented';
     }
