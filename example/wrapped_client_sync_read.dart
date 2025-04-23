@@ -30,14 +30,11 @@ void clientIsolate(SendPort mainSendPort) async {
   try {
     NodeId objectId = NodeId.fromString(4, "GVL_IO.domeLightGreen");
     NodeId methodId = NodeId.fromString(4, "GVL_IO.domeLightGreen#force");
-    c
-        .call(objectId, methodId, [DynamicValue(value: true, typeId: NodeId.boolean)])
-        .then((List<DynamicValue> data) {
-          print("2CALL ASYNC data: $data");
-        })
-        .catchError((error) {
-          print("CALL ASYNC error: $error");
-        });
+    c.call(objectId, methodId, [DynamicValue(value: true, typeId: NodeId.boolean)]).then((List<DynamicValue> data) {
+      print("2CALL ASYNC data: $data");
+    }).catchError((error) {
+      print("CALL ASYNC error: $error");
+    });
 
     NodeId callTestObjId = NodeId.fromString(4, "GVL_IO.moverTrip");
     NodeId callTestMethodId = NodeId.fromString(4, "GVL_IO.moverTrip#FC_Test");
@@ -45,18 +42,15 @@ void clientIsolate(SendPort mainSendPort) async {
     NodeId singleSBId = NodeId.fromString(4, "GVL_IO.single_SB");
     final val = c.syncReadValue(singleSBId);
 
-    c
-        .call(callTestObjId, callTestMethodId, [
-          DynamicValue(value: 123, typeId: NodeId.int16),
-          DynamicValue(value: true, typeId: NodeId.boolean),
-          val,
-        ])
-        .then((List<DynamicValue> data) {
-          print("CALL ASYNC data: $data");
-        })
-        .catchError((error) {
-          print("CALL ASYNC error: $error");
-        });
+    c.call(callTestObjId, callTestMethodId, [
+      DynamicValue(value: 123, typeId: NodeId.int16),
+      DynamicValue(value: true, typeId: NodeId.boolean),
+      val,
+    ]).then((List<DynamicValue> data) {
+      print("CALL ASYNC data: $data");
+    }).catchError((error) {
+      print("CALL ASYNC error: $error");
+    });
 
     int subId = c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 5));
     mainSendPort.send('Created subscription $subId');
