@@ -90,7 +90,11 @@ class Client {
 
   ClientConfig get config => _clientConfig;
 
-  int connect(String url, {String? username, String? password}) {
+  int connect(String url) {
+    return _lib.UA_Client_connectAsync(_client, url.toNativeUtf8().cast());
+  }
+
+  int syncConnect(String url, {String? username, String? password}) {
     ffi.Pointer<ffi.Char> urlPointer = url.toNativeUtf8().cast();
     if (username != null && password != null) {
       ffi.Pointer<ffi.Char> usernamePointer = username.toNativeUtf8().cast();
@@ -191,6 +195,12 @@ class Client {
         );
         return;
       }
+      if (response.ref.results.value != raw.UA_STATUSCODE_GOOD) {
+        completer.completeError(
+          'Failed to write value: ${statusCodeToString(response.ref.results.value)}',
+        );
+        return;
+      }
       completer.complete();
     });
     _lib.UA_Client_writeValueAttribute_async(
@@ -248,6 +258,10 @@ class Client {
       }
       if (status != raw.UA_STATUSCODE_GOOD) {
         completer.completeError('Failed to read value: ${statusCodeToString(status)}');
+        return;
+      }
+      if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
+        completer.completeError('Failed to read value: ${statusCodeToString(value.ref.status)}');
         return;
       }
       // Steal the variant pointer from open62541 so they don't delete it
