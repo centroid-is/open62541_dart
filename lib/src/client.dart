@@ -22,7 +22,7 @@ class ClientState {
 class ClientConfig {
   ClientConfig(this._clientConfig) {
     // Intercept callbacks
-    final state = ffi.NativeCallable<
+    _state = ffi.NativeCallable<
         ffi.Void Function(
           ffi.Pointer<raw.UA_Client> client,
           ffi.UnsignedInt channelState,
@@ -37,13 +37,13 @@ class ClientConfig {
         ),
       ),
     );
-    _clientConfig.ref.stateCallback = state.nativeFunction;
-    final inactivity = ffi.NativeCallable<
+    _clientConfig.ref.stateCallback = _state.nativeFunction;
+    _inactivity = ffi.NativeCallable<
         ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal(
       (ffi.Pointer<raw.UA_Client> client, int subId, ffi.Pointer<ffi.Void> subContext) =>
           _subscriptionInactivity.add(subId),
     );
-    _clientConfig.ref.subscriptionInactivityCallback = inactivity.nativeFunction;
+    _clientConfig.ref.subscriptionInactivityCallback = _inactivity.nativeFunction;
   }
   Stream<ClientState> get stateStream => _stateStream.stream;
   Stream<int> get subscriptionInactivityStream => _subscriptionInactivity.stream;
@@ -58,10 +58,26 @@ class ClientConfig {
     _clientConfig.ref.securityPolicyUri.set(uri);
   }
 
+  Future<void> close() async {
+    await _stateStream.close();
+    await _subscriptionInactivity.close();
+    _state.close();
+    _inactivity.close();
+  }
+
   // Private interface
   final ffi.Pointer<raw.UA_ClientConfig> _clientConfig;
   final StreamController<ClientState> _stateStream = StreamController<ClientState>.broadcast();
   final StreamController<int> _subscriptionInactivity = StreamController<int>.broadcast();
+  late ffi.NativeCallable<
+      ffi.Void Function(
+        ffi.Pointer<raw.UA_Client> client,
+        ffi.UnsignedInt channelState,
+        ffi.UnsignedInt sessionState,
+        raw.UA_StatusCode connectStatus,
+      )> _state;
+  late ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>
+      _inactivity;
 }
 
 class Client {
@@ -172,8 +188,15 @@ class Client {
 
     final variant = valueToVariant(value, _lib);
 
+    late ffi.NativeCallable<
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Uint32,
+          ffi.Pointer<raw.UA_WriteResponse>,
+        )> callback;
     // Create callback for this specific write request
-    final callback = ffi.NativeCallable<
+    callback = ffi.NativeCallable<
         ffi.Void Function(
           ffi.Pointer<raw.UA_Client>,
           ffi.Pointer<ffi.Void>,
@@ -202,6 +225,9 @@ class Client {
         return;
       }
       completer.complete();
+
+      // Close our callback so it can be garbage collected
+      callback.close();
     });
     _lib.UA_Client_writeValueAttribute_async(
       _client,
@@ -219,6 +245,21 @@ class Client {
       }
     });
     return completer.future;
+  }
+
+  ClientState get state {
+    ffi.Pointer<ffi.UnsignedInt> state = calloc<ffi.UnsignedInt>();
+    ffi.Pointer<ffi.UnsignedInt> sessionState = calloc<ffi.UnsignedInt>();
+    ffi.Pointer<ffi.Uint32> connectStatus = calloc<ffi.Uint32>();
+    _lib.UA_Client_getState(_client, state, sessionState, connectStatus);
+    final retValue = ClientState(
+        channelState: raw.UA_SecureChannelState.fromValue(state.value),
+        sessionState: raw.UA_SessionState.fromValue(sessionState.value),
+        recoveryStatus: connectStatus.value);
+    calloc.free(state);
+    calloc.free(sessionState);
+    calloc.free(connectStatus);
+    return retValue;
   }
 
   bool syncWriteValue(NodeId nodeId, DynamicValue value) {
@@ -239,7 +280,10 @@ class Client {
     Completer<DynamicValue> completer = Completer<DynamicValue>();
 
     // Create callback for this specific read request
-    final callback = ffi.NativeCallable<
+    late ffi.NativeCallable<
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32, raw.UA_StatusCode,
+            ffi.Pointer<raw.UA_DataValue>)> callback;
+    callback = ffi.NativeCallable<
         ffi.Void Function(
           ffi.Pointer<raw.UA_Client>,
           ffi.Pointer<ffi.Void>,
@@ -274,6 +318,9 @@ class Client {
       _lib.UA_Variant_copy(source, variant);
       calloc.free(source);
       final retVal = await _variantToValueAutoSchema(variant.ref);
+
+      // Close our callback so it can be garbage collected
+      callback.close();
 
       // Delete the variant again that we used to reference the data
       _lib.UA_Variant_delete(variant);
@@ -328,14 +375,22 @@ class Client {
     request.ref.publishingEnabled = publishingEnabled;
     request.ref.priority = priority;
 
-    final deleteCallback = ffi
+    late ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)>
+        deleteCallback;
+
+    deleteCallback = ffi
         .NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)>.isolateLocal(
-      (ffi.Pointer<raw.UA_Client> client, int subid, ffi.Pointer<ffi.Void> somedata) =>
-          stderr.write("Subscription deleted $subid"),
-    );
+        (ffi.Pointer<raw.UA_Client> client, int subid, ffi.Pointer<ffi.Void> somedata) {
+      stderr.write("Subscription deleted $subid");
+      deleteCallback.close();
+    });
 
     final completer = Completer<int>();
-    final callback = ffi.NativeCallable<
+    late ffi.NativeCallable<
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
+            ffi.Pointer<raw.UA_CreateSubscriptionResponse>)> callback;
+
+    callback = ffi.NativeCallable<
         ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
             ffi.Pointer<raw.UA_CreateSubscriptionResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
         ffi.Pointer<ffi.Void> somedata, int requestId, ffi.Pointer<raw.UA_CreateSubscriptionResponse> response) {
@@ -348,6 +403,7 @@ class Client {
       _lib.UA_CreateSubscriptionRequest_delete(request);
       _logger.t("Created subscription ${response.ref.subscriptionId}");
       completer.complete(response.ref.subscriptionId);
+      callback.close();
     });
     _lib.UA_Client_Subscriptions_create_async(
       _client,
@@ -368,15 +424,15 @@ class Client {
     return completer.future;
   }
 
-  void subscriptionDelete(int subId) {
-    final statusCode = _lib.UA_Client_Subscriptions_deleteSingle(_client, subId);
-    if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Unable to delete subscription $subId: $statusCode ${statusCodeToString(statusCode)}';
-    }
-    _logger.t("Deleted subscription $subId");
-  }
+  Future<Stream<DynamicValue>> monitoredItem(
+    NodeId nodeId,
+    int subscriptionId, {
+    raw.UA_AttributeId attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
+    raw.UA_MonitoringMode monitoringMode = raw.UA_MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    Duration samplingInterval = const Duration(milliseconds: 250),
+    bool discardOldest = true,
+    int queueSize = 1,
 
-  Future<int> monitoredItemCreate(
     NodeId nodeid,
     int subscriptionId,
     void Function(DynamicValue data) callback, {
@@ -386,6 +442,26 @@ class Client {
     bool discardOldest = true,
     int queueSize = 1,
   }) async {
+    // force the stream to be synchronous and run in the same isolate as the callback
+    final controller = StreamController<DynamicValue>(sync: true);
+
+    int monitoredItemId = await monitoredItemCreate(
+      nodeId,
+      subscriptionId,
+      (data) => controller.add(data),
+      attr: attr,
+      monitoringMode: monitoringMode,
+      samplingInterval: samplingInterval,
+      discardOldest: discardOldest,
+      queueSize: queueSize,
+    );
+
+    controller.onCancel = () {
+      _logger.t("Cancelling monitored item $monitoredItemId");
+      _lib.UA_Client_MonitoredItems_deleteSingle(_client, subscriptionId, monitoredItemId);
+      controller.close();
+    };
+
     ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = calloc<raw.UA_MonitoredItemCreateRequest>();
     _lib.UA_MonitoredItemCreateRequest_init(monRequest);
     monRequest.ref.itemToMonitor.nodeId = nodeid.toRaw(_lib);
@@ -402,7 +478,11 @@ class Client {
     createRequest.ref.itemsToCreate = monRequest;
     createRequest.ref.itemsToCreateSize = 1;
 
-    final monitorCallback = ffi.NativeCallable<
+    late ffi.NativeCallable<
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>, ffi.Uint32,
+            ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)> monitorCallback;
+
+    monitorCallback = ffi.NativeCallable<
         ffi.Void Function(
           ffi.Pointer<raw.UA_Client>,
           ffi.Uint32,
@@ -450,13 +530,12 @@ class Client {
                     ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)>>>(createRequest.ref.itemsToCreateSize);
     callbacks[0] = monitorCallback.nativeFunction;
 
-    final completer = Completer<int>();
 
     final createCallback = ffi.NativeCallable<
         ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
             ffi.Pointer<raw.UA_CreateMonitoredItemsResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
         ffi.Pointer<ffi.Void> userdata, int requestId, ffi.Pointer<raw.UA_CreateMonitoredItemsResponse> response) {
-      if (completer.isCompleted) {
+      if (controller.isClosed) {
         return;
       }
       if (response.ref.resultsSize == 0) {
@@ -487,42 +566,12 @@ class Client {
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
       _lib.UA_CreateMonitoredItemsRequest_delete(createRequest);
       calloc.free(callbacks);
+      monitorCallback.close();
       throw 'Unable to create monitored item: $statusCode ${statusCodeToString(statusCode)}';
     }
-    return completer.future;
-  }
-
-  Future<Stream<DynamicValue>> monitoredItemStream(
-    NodeId nodeId,
-    int subscriptionId, {
-    raw.UA_AttributeId attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
-    raw.UA_MonitoringMode monitoringMode = raw.UA_MonitoringMode.UA_MONITORINGMODE_REPORTING,
-    Duration samplingInterval = const Duration(milliseconds: 250),
-    bool discardOldest = true,
-    int queueSize = 1,
-  }) async {
-    // force the stream to be synchronous and run in the same isolate as the callback
-    final controller = StreamController<DynamicValue>(sync: true);
-
-    int monitoredItemId = await monitoredItemCreate(
-      nodeId,
-      subscriptionId,
-      (data) => controller.add(data),
-      attr: attr,
-      monitoringMode: monitoringMode,
-      samplingInterval: samplingInterval,
-      discardOldest: discardOldest,
-      queueSize: queueSize,
-    );
-
-    controller.onCancel = () {
-      _logger.t("Cancelling monitored item $monitoredItemId");
-      _lib.UA_Client_MonitoredItems_deleteSingle(_client, subscriptionId, monitoredItemId);
-      controller.close();
-    };
-
     return controller.stream;
   }
+
 
   Future<List<DynamicValue>> call(
     NodeId objectId,
@@ -669,13 +718,6 @@ class Client {
     return map;
   }
 
-  // Future<NodeId> readDataType(NodeId nodeId) async {
-  //   ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>();
-  //   _lib.UA_ReadValueId_init(readValueId);
-  //   readValueId.ref.nodeId = nodeId.toRaw(_lib);
-  //   readValueId.ref.attributeId = raw.UA_AttributeId.UA_ATTRIBUTEID_DATATYPE.value;
-  // }
-
   Future<Schema> readDataTypeDefinition(NodeId nodeIdType) async {
     ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>();
     _lib.UA_ReadValueId_init(readValueId);
@@ -684,7 +726,11 @@ class Client {
     readValueId.ref.nodeId = nodeIdType.toRaw(_lib);
     readValueId.ref.attributeId = raw.UA_AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION.value;
 
-    final callback = ffi.NativeCallable<
+    late ffi.NativeCallable<
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32, raw.UA_StatusCode,
+            ffi.Pointer<raw.UA_DataValue>)> callback;
+
+    callback = ffi.NativeCallable<
         ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32, raw.UA_StatusCode,
             ffi.Pointer<raw.UA_DataValue>)>.isolateLocal((
       ffi.Pointer<raw.UA_Client> client,
@@ -731,6 +777,9 @@ class Client {
         }
       }
       completer.complete(map);
+
+      // Close our callback so it can be garbage collected
+      callback.close();
     });
     _lib.UA_Client_readAttribute_async(
       _client,
@@ -843,6 +892,7 @@ class Client {
 
   void delete() {
     _lib.UA_Client_delete(_client);
+    _clientConfig.close();
     _logger.t("Deleted client");
   }
 
