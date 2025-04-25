@@ -311,7 +311,7 @@ class Client {
   }
 
   Future<int> subscriptionCreate({
-    Duration requestedPublishingInterval = const Duration(milliseconds: 500),
+    Duration requestedPublishingInterval = const Duration(milliseconds: 100),
     int requestedLifetimeCount = 10000,
     int requestedMaxKeepAliveCount = 10,
     int maxNotificationsPerPublish = 0,
