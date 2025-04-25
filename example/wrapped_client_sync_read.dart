@@ -52,7 +52,7 @@ void clientIsolate(SendPort mainSendPort) async {
       print("CALL ASYNC error: $error");
     });
 
-    int subId = c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 5));
+    int subId = await c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 5));
     mainSendPort.send('Created subscription $subId');
 
     // final definition =

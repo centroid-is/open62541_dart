@@ -35,8 +35,9 @@ Future<int> main(List<String> arguments) async {
   final start = DateTime.now();
   final counterId = NodeId.fromString(4, "MAIN.nCounter");
 
-  final subscriptionId = c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-  final subscription = c.monitoredItemStream(counterId, subscriptionId, samplingInterval: Duration(milliseconds: 10));
+  final subscriptionId = await c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
+  final subscription =
+      await c.monitoredItemStream(counterId, subscriptionId, samplingInterval: Duration(milliseconds: 10));
 
   subscription.listen((event) {
     print('Subscription event: $event');
