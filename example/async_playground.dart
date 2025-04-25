@@ -28,15 +28,15 @@ Future<int> main(List<String> arguments) async {
   // final start = DateTime.now();
   // final counterId = NodeId.fromString(4, "MAIN.nCounter");
   print("Start");
-  final hmi_data_type_id = NodeId.fromString(4, "<StructuredDataType>:ST_Drive_HMI");
-  final data_t_definition = await c.readDataTypeDefinition(hmi_data_type_id);
-  c.defs.addAll(data_t_definition);
-  print(data_t_definition);
-  final hmi_struct = NodeId.fromString(4, "GVL_HMI.Drives_Line1[1].HMI");
-  final hmi_struct_value = c.syncReadValue(hmi_struct);
-  print(hmi_struct_value);
-  final hmi_struct_value2 = await c.readValue(hmi_struct);
-  print(hmi_struct_value2);
+  final hmiDataTypeId = NodeId.fromString(4, "<StructuredDataType>:ST_Drive_HMI");
+  final dataTDefinition = await c.readDataTypeDefinition(hmiDataTypeId);
+  c.defs.addAll(dataTDefinition);
+  print(dataTDefinition);
+  final hmiStruct = NodeId.fromString(4, "GVL_HMI.Drives_Line1[1].HMI");
+  final hmiStructValue = c.syncReadValue(hmiStruct);
+  print(hmiStructValue);
+  final hmiStructValue2 = await c.readValue(hmiStruct);
+  print(hmiStructValue2);
   print("End");
 
   await Future.delayed(Duration(seconds: 2));
