@@ -47,12 +47,13 @@ jobs:
       - name: Install dependencies for open62541 library Windows
         if: matrix.os == 'windows-latest'
         run: |
-          wget https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.3/mbedtls-3.6.3.tar.bz2
+          Invoke-WebRequest -Uri "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.3/mbedtls-3.6.3.tar.bz2" -OutFile "mbedtls-3.6.3.tar.bz2"
           tar -xvf mbedtls-3.6.3.tar.bz2
           cd mbedtls-3.6.3
           cmake -B build -S .
           cmake --build build
           cmake --install build
+        shell: pwsh
       
       - name: Build open62541 library
         run: ./open62541_tooling/build_lib.sh
