@@ -432,39 +432,14 @@ class Client {
     Duration samplingInterval = const Duration(milliseconds: 250),
     bool discardOldest = true,
     int queueSize = 1,
-
-    NodeId nodeid,
-    int subscriptionId,
-    void Function(DynamicValue data) callback, {
-    raw.UA_AttributeId attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
-    raw.UA_MonitoringMode monitoringMode = raw.UA_MonitoringMode.UA_MONITORINGMODE_REPORTING,
-    Duration samplingInterval = const Duration(milliseconds: 250),
-    bool discardOldest = true,
-    int queueSize = 1,
   }) async {
     // force the stream to be synchronous and run in the same isolate as the callback
-    final controller = StreamController<DynamicValue>(sync: true);
-
-    int monitoredItemId = await monitoredItemCreate(
-      nodeId,
-      subscriptionId,
-      (data) => controller.add(data),
-      attr: attr,
-      monitoringMode: monitoringMode,
-      samplingInterval: samplingInterval,
-      discardOldest: discardOldest,
-      queueSize: queueSize,
-    );
-
-    controller.onCancel = () {
-      _logger.t("Cancelling monitored item $monitoredItemId");
-      _lib.UA_Client_MonitoredItems_deleteSingle(_client, subscriptionId, monitoredItemId);
-      controller.close();
-    };
+    StreamController<DynamicValue>? controller;
+    final completer = Completer<Stream<DynamicValue>>();
 
     ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = calloc<raw.UA_MonitoredItemCreateRequest>();
     _lib.UA_MonitoredItemCreateRequest_init(monRequest);
-    monRequest.ref.itemToMonitor.nodeId = nodeid.toRaw(_lib);
+    monRequest.ref.itemToMonitor.nodeId = nodeId.toRaw(_lib);
     monRequest.ref.itemToMonitor.attributeId = attr.value;
     monRequest.ref.monitoringModeAsInt = monitoringMode.value;
     monRequest.ref.requestedParameters.samplingInterval = samplingInterval.inMicroseconds / 1000.0;
@@ -482,6 +457,9 @@ class Client {
         ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>, ffi.Uint32,
             ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)> monitorCallback;
 
+    // TODO: Discuss, should we only add a monitored item once someone is listening?
+    // controller.onListen = () {
+    // };
     monitorCallback = ffi.NativeCallable<
         ffi.Void Function(
           ffi.Pointer<raw.UA_Client>,
@@ -517,7 +495,7 @@ class Client {
         _lib.UA_Variant_delete(variant);
       }
       try {
-        callback(data);
+        controller!.add(data);
       } catch (e) {
         stderr.write("Error calling callback: $e");
       }
@@ -530,14 +508,17 @@ class Client {
                     ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)>>>(createRequest.ref.itemsToCreateSize);
     callbacks[0] = monitorCallback.nativeFunction;
 
+    late ffi.NativeCallable<
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
+            ffi.Pointer<raw.UA_CreateMonitoredItemsResponse>)> createCallback;
 
-    final createCallback = ffi.NativeCallable<
+    createCallback = ffi.NativeCallable<
         ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
             ffi.Pointer<raw.UA_CreateMonitoredItemsResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
         ffi.Pointer<ffi.Void> userdata, int requestId, ffi.Pointer<raw.UA_CreateMonitoredItemsResponse> response) {
-      if (controller.isClosed) {
-        return;
-      }
+      // Cleanup the request memory
+      _lib.UA_CreateMonitoredItemsRequest_delete(createRequest);
+
       if (response.ref.resultsSize == 0) {
         completer.completeError('No results for create monitored item');
       }
@@ -549,9 +530,17 @@ class Client {
         completer.completeError(
             'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
       }
-      completer.complete(response.ref.results.ref.monitoredItemId);
-      _lib.UA_CreateMonitoredItemsRequest_delete(createRequest);
-      calloc.free(callbacks);
+      final monId = response.ref.results.ref.monitoredItemId;
+      controller = StreamController<DynamicValue>();
+      // Cleanup the monitor callback
+      controller!.onCancel = () {
+        _lib.UA_Client_MonitoredItems_deleteSingle(_client, subscriptionId, monId);
+        monitorCallback.close();
+        calloc.free(callbacks);
+        print("Cancelling monitored item");
+      };
+      completer.complete(controller!.stream);
+      createCallback.close();
     });
     final statusCode = _lib.UA_Client_MonitoredItems_createDataChanges_async(
       _client,
@@ -569,9 +558,9 @@ class Client {
       monitorCallback.close();
       throw 'Unable to create monitored item: $statusCode ${statusCodeToString(statusCode)}';
     }
-    return controller.stream;
-  }
 
+    return completer.future;
+  }
 
   Future<List<DynamicValue>> call(
     NodeId objectId,

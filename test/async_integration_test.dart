@@ -87,7 +87,7 @@ void main() async {
     print("Creating subscription");
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     print("Subscription created $subscription");
-    final stream = (await client!.monitoredItemStream(boolNodeId, subscription)).map((event) => event.value);
+    final stream = (await client!.monitoredItem(boolNodeId, subscription)).map((event) => event.value);
     print("Stream created");
     final items = [true, false, true, false];
     expect(stream, emitsInOrder(items));
