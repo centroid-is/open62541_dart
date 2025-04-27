@@ -55,6 +55,7 @@ jobs:
       
           Write-Host "Extracting archive…"
           Expand-Archive -Path mbedtls.zip -DestinationPath mbedtls
+          ls mbedtls
       
           Write-Host "Configuring with CMake…"
           cmake -S mbedtls -B mbedtls-build
