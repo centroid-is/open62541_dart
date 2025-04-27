@@ -50,14 +50,14 @@ jobs:
         run: |
           Write-Host "Downloading Mbed TLS 3.6.3…"
           Invoke-WebRequest `
-            -Uri "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.3/mbedtls-3.6.3.tar.bz2" `
-            -OutFile "mbedtls.tar.bz2"
+            -Uri "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/mbedtls-3.6.3.zip" `
+            -OutFile "mbedtls.zip"
       
           Write-Host "Extracting archive…"
-          tar -xf mbedtls.tar.bz2
+          Expand-Archive -Path mbedtls.zip -DestinationPath mbedtls
       
           Write-Host "Configuring with CMake…"
-          cmake -S mbedtls-3.6.3 -B mbedtls-build
+          cmake -S mbedtls -B mbedtls-build
       
           Write-Host "Building (Release)…"
           cmake --build mbedtls-build --config Release
