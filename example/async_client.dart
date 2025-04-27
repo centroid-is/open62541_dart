@@ -22,40 +22,49 @@ Future<int> main(List<String> arguments) async {
 
   // Run the c execution loop from the same isolate
   () async {
-    var statusCode = c.connect(endpointUrl);
-    if (statusCode != UA_STATUSCODE_GOOD) {
-      stderr.write("Not connected. retrying in 10 milliseconds");
-    }
-    while (true) {
-      c.runIterate(Duration(milliseconds: 10));
-      await Future.delayed(Duration(milliseconds: 10));
+    while (c.runIterate(Duration(milliseconds: 0))) {
+      await Future.delayed(Duration(milliseconds: 5));
     }
   }();
 
+  await c.connect(endpointUrl).onError((error, stacktrace) {
+    throw "Error connecting $error";
+  });
+
+  print("Connected");
+
   final start = DateTime.now();
-  final counterId = NodeId.fromString(4, "MAIN.nCounter");
+  final counterId = NodeId.fromString(4, "MAIN.lines[1][1].rLength");
 
   final subscriptionId = await c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-  final subscription =
-      await c.monitoredItemStream(counterId, subscriptionId, samplingInterval: Duration(milliseconds: 10));
+  print(subscriptionId);
+  final subscription = await c.monitoredItem(counterId, subscriptionId, samplingInterval: Duration(milliseconds: 10));
 
-  subscription.listen((event) {
+  subscription.stream.listen((event) {
     print('Subscription event: $event');
   });
 
-  while (start.isAfter(DateTime.now().subtract(Duration(seconds: 10)))) {
-    try {
-      DynamicValue value = await c.readValue(counterId);
-      print('Read value: $value');
+  while (start.isAfter(DateTime.now().subtract(Duration(seconds: 1)))) {
+    DynamicValue value = await c.readValue(counterId).onError((error, stacktrace) {
+      print('Error reading value: $error');
+      return DynamicValue(value: 0, typeId: NodeId.int32);
+    });
 
-      // write a new value to trigger the subscription
-      value.value = value.value + 1;
-      await c.writeValue(counterId, value);
-    } catch (e) {
-      print(e);
-    }
+    print('Value: ${value.value}');
+
+    // write a new value to trigger the subscription
+    value.value = value.value + 1;
+    await c.writeValue(counterId, value).onError((error, stacktrace) {
+      print('Error writing value: $error');
+    });
   }
 
-  c.delete();
+  await Future.delayed(Duration(milliseconds: 10)); // Let the subscription catch up
+
+  stderr.writeln('Closing subscription');
+  await subscription.close();
+  stderr.writeln('Deleting client');
+  await c.delete();
+  stderr.writeln('Deleted client');
   return 0;
 }

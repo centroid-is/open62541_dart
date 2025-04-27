@@ -8,9 +8,10 @@ import 'package:test/test.dart';
 
 void main() async {
   final lib = Open62541Singleton().lib;
-  Pointer<UA_Server> server = Pointer<UA_Server>.fromAddress(0);
+  Pointer<UA_Server> server = nullptr;
   Client? client;
   final boolNodeId = NodeId.fromString(1, "the.bBool");
+  final intNodeId = NodeId.fromString(1, "the.int");
   setUp(() async {
     // Initalize an open62541 server
     server = lib.UA_Server_new();
@@ -33,41 +34,52 @@ void main() async {
       }
     }();
 
-    // Create some boolean variables to read and write
-    DynamicValue boolValue = DynamicValue(value: true, typeId: NodeId.boolean);
-    Pointer<UA_VariableAttributes> attr = calloc<UA_VariableAttributes>();
-    attr.ref = lib.UA_VariableAttributes_default;
-    final variant = Client.valueToVariant(boolValue, lib);
-    attr.ref.value = variant.ref;
-    attr.ref.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
-    attr.ref.dataType = NodeId.boolean.toRaw(lib);
+    {
+      // Create a boolean variable to read and write
+      DynamicValue boolValue = DynamicValue(value: true, typeId: NodeId.boolean);
+      Pointer<UA_VariableAttributes> attr = calloc<UA_VariableAttributes>();
+      attr.ref = lib.UA_VariableAttributes_default;
+      final variant = Client.valueToVariant(boolValue, lib);
+      attr.ref.value = variant.ref;
+      attr.ref.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+      attr.ref.dataType = NodeId.boolean.toRaw(lib);
 
-    UA_QualifiedName name = lib.UA_QUALIFIEDNAME(1, "the bool".toNativeUtf8().cast());
-    UA_NodeId parentNodeId = NodeId.fromNumeric(0, UA_NS0ID_OBJECTSFOLDER).toRaw(lib);
-    UA_NodeId parentReferenceNodeId = NodeId.fromNumeric(0, UA_NS0ID_ORGANIZES).toRaw(lib);
-    UA_NodeId basedatavariableType = NodeId.fromNumeric(0, UA_NS0ID_BASEDATAVARIABLETYPE).toRaw(lib);
-    lib.UA_Server_addVariableNode(server, boolNodeId.toRaw(lib), parentNodeId, parentReferenceNodeId, name,
-        basedatavariableType, attr.ref, nullptr, nullptr);
+      UA_QualifiedName name = lib.UA_QUALIFIEDNAME(1, "the bool".toNativeUtf8().cast());
+      UA_NodeId parentNodeId = NodeId.fromNumeric(0, UA_NS0ID_OBJECTSFOLDER).toRaw(lib);
+      UA_NodeId parentReferenceNodeId = NodeId.fromNumeric(0, UA_NS0ID_ORGANIZES).toRaw(lib);
+      UA_NodeId basedatavariableType = NodeId.fromNumeric(0, UA_NS0ID_BASEDATAVARIABLETYPE).toRaw(lib);
+      lib.UA_Server_addVariableNode(server, boolNodeId.toRaw(lib), parentNodeId, parentReferenceNodeId, name,
+          basedatavariableType, attr.ref, nullptr, nullptr);
+    }
+    {
+      // Create a int variables to read and write
+      DynamicValue intValue = DynamicValue(value: 0, typeId: NodeId.int32);
+      Pointer<UA_VariableAttributes> attr = calloc<UA_VariableAttributes>();
+      attr.ref = lib.UA_VariableAttributes_default;
+      final variant = Client.valueToVariant(intValue, lib);
+      attr.ref.value = variant.ref;
+      attr.ref.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+      attr.ref.dataType = NodeId.int32.toRaw(lib);
+
+      UA_QualifiedName name = lib.UA_QUALIFIEDNAME(1, "the int".toNativeUtf8().cast());
+      UA_NodeId parentNodeId = NodeId.fromNumeric(0, UA_NS0ID_OBJECTSFOLDER).toRaw(lib);
+      UA_NodeId parentReferenceNodeId = NodeId.fromNumeric(0, UA_NS0ID_ORGANIZES).toRaw(lib);
+      UA_NodeId basedatavariableType = NodeId.fromNumeric(0, UA_NS0ID_BASEDATAVARIABLETYPE).toRaw(lib);
+      lib.UA_Server_addVariableNode(server, intNodeId.toRaw(lib), parentNodeId, parentReferenceNodeId, name,
+          basedatavariableType, attr.ref, nullptr, nullptr);
+    }
 
     print("Initializing the client");
     client = Client(lib);
-    if (client!.connect("opc.tcp://localhost:4840") != UA_STATUSCODE_GOOD) {
-      throw Exception("Failed to connect to the server");
-    }
     // Run the client while we connect
     () async {
       while (client!.runIterate(Duration(milliseconds: 10))) {
-        await Future.delayed(Duration(milliseconds: 10));
+        await Future.delayed(Duration(milliseconds: 5));
       }
     }();
-    Future<void> waitForConnected() async {
-      await client!.config.stateStream.firstWhere((event) =>
-          event.channelState == UA_SecureChannelState.UA_SECURECHANNELSTATE_OPEN &&
-          event.sessionState == UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
-      return;
-    }
-
-    await waitForConnected();
+    await client!.connect("opc.tcp://localhost:4840").onError((error, stackTrace) {
+      throw Exception("Failed to connect to the server: $error");
+    });
   });
   test('Basic read and write boolean async', () async {
     expect((await client!.readValue(boolNodeId)).value, true);
@@ -87,19 +99,63 @@ void main() async {
     print("Creating subscription");
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     print("Subscription created $subscription");
-    final stream = (await client!.monitoredItem(boolNodeId, subscription)).map((event) => event.value);
+    final controller = client!.monitoredItem(boolNodeId, subscription);
+    final stream = controller.stream.map<bool>((event) => event.value);
     print("Stream created");
     final items = [true, false, true, false];
     expect(stream, emitsInOrder(items));
     for (var item in items) {
       await client!.writeValue(boolNodeId, DynamicValue(value: item, typeId: NodeId.boolean));
-      await Future.delayed(Duration(milliseconds: 200)); // Give the server and client time to do stuff
+      await Future.delayed(Duration(milliseconds: 100)); // Give the server and client time to do stuff
     }
+    await Future.delayed(Duration(milliseconds: 400)); // Let the subscription catch up
+    await controller.close();
+  });
+  test('Multiple monitored items', () async {
+    // Set current value to false to get a change
+    await client!.writeValue(
+        boolNodeId,
+        DynamicValue(
+            value: true,
+            typeId: NodeId.boolean)); // It seems we get a value straigt away, make it match the first in the list
+    await client!.writeValue(
+        intNodeId,
+        DynamicValue(
+            value: 1,
+            typeId: NodeId.int32)); // It seems we get a value straigt away, make it match the first in the list
+    print("Creating subscription");
+    final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
+    print("Subscription created $subscription");
+    final boolController = client!.monitoredItem(boolNodeId, subscription);
+    final boolStream = boolController.stream.map<bool>((event) => event.value);
+    final intController = client!.monitoredItem(intNodeId, subscription);
+    final intStream = intController.stream.map<int>((event) => event.value);
+    print("Streams created");
+    final items = [true, false, true, false];
+    final intItems = [1, 2, 3, 4];
+    expect(boolStream, emitsInOrder(items));
+    expect(intStream, emitsInOrder(intItems));
+    expect(items.length, intItems.length);
+    for (var i = 0; i < items.length; i++) {
+      await client!.writeValue(boolNodeId, DynamicValue(value: items[i], typeId: NodeId.boolean));
+      await client!.writeValue(intNodeId, DynamicValue(value: intItems[i], typeId: NodeId.int32));
+      await Future.delayed(Duration(milliseconds: 100)); // Give the server and client time to do stuff
+    }
+    await Future.delayed(Duration(milliseconds: 400)); // Let the subscription catch up
+    await intController.close();
+    await boolController.close();
+  });
+
+  test('Creating a subscription and not using it should not hang the process', () async {
+    print("Creating subscription");
+    final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
+    final controller = client!.monitoredItem(boolNodeId, subscription);
+    print("Subscription created $subscription");
+    await Future.delayed(Duration(milliseconds: 100));
   });
 
   tearDown(() async {
-    // print("Disconnecting");
-    client!.delete();
+    await client!.delete();
     lib.UA_Server_run_shutdown(server);
     await Future.delayed(Duration(seconds: 1));
 

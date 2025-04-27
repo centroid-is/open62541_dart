@@ -9,7 +9,6 @@ dependencies:
   binarize: ^2.0.0
   collection: ^1.19.0
   ffi: ^2.1.2
-  logger: ^2.5.0
 platforms:
   linux:
 topics:
