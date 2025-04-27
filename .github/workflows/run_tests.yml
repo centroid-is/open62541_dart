@@ -58,7 +58,7 @@ jobs:
           ls mbedtls
       
           Write-Host "Configuring with CMake…"
-          cmake -S mbedtls -B mbedtls-build
+          cmake -S mbedtls/mbedtls-mbedtls-3.6.3 -B mbedtls-build
       
           Write-Host "Building (Release)…"
           cmake --build mbedtls-build --config Release
