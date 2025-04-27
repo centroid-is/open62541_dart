@@ -8,7 +8,6 @@ import 'package:binarize/binarize.dart' as binarize;
 import 'package:open62541/open62541.dart';
 
 import 'generated/open62541_bindings.dart' as raw;
-import 'node_id.dart';
 import 'extensions.dart';
 import 'dynamic_value.dart';
 

@@ -149,6 +149,7 @@ void main() async {
   test('Creating a subscription and not using it should not hang the process', () async {
     print("Creating subscription");
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
+    // ignore: unused_local_variable
     final controller = client!.monitoredItem(boolNodeId, subscription);
     print("Subscription created $subscription");
     await Future.delayed(Duration(milliseconds: 100));

@@ -38,7 +38,7 @@ Future<int> main(List<String> arguments) async {
 
   final subscriptionId = await c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
   print(subscriptionId);
-  final subscription = await c.monitoredItem(counterId, subscriptionId, samplingInterval: Duration(milliseconds: 10));
+  final subscription = c.monitoredItem(counterId, subscriptionId, samplingInterval: Duration(milliseconds: 10));
 
   subscription.stream.listen((event) {
     print('Subscription event: $event');

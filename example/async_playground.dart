@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:open62541/open62541.dart';
 
 Future<int> main(List<String> arguments) async {
@@ -16,10 +14,9 @@ Future<int> main(List<String> arguments) async {
 
   // Run the c execution loop from the same isolate
   () async {
-    var statusCode = c.connect(endpointUrl);
-    if (statusCode != UA_STATUSCODE_GOOD) {
-      stderr.write("Not connected. retrying in 10 milliseconds");
-    }
+    await c.connect(endpointUrl).onError((error, stacktrace) {
+      throw 'Error connecting: $error';
+    });
     while (c.runIterate(Duration(milliseconds: 10))) {
       await Future.delayed(Duration(milliseconds: 10));
     }
