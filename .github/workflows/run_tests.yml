@@ -44,16 +44,27 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: brew install mbedtls
 
-      - name: Install dependencies for open62541 library Windows
+      - name: Install Mbed TLS on Windows
         if: matrix.os == 'windows-latest'
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.3/mbedtls-3.6.3.tar.bz2" -OutFile "mbedtls-3.6.3.tar.bz2"
-          tar -xvf mbedtls-3.6.3.tar.bz2
-          cd mbedtls-3.6.3
-          cmake -B build -S .
-          cmake --build build
-          cmake --install build
         shell: pwsh
+        run: |
+          Write-Host "Downloading Mbed TLS 3.6.3…"
+          Invoke-WebRequest `
+            -Uri "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.3/mbedtls-3.6.3.tar.bz2" `
+            -OutFile "mbedtls.tar.bz2"
+      
+          Write-Host "Extracting archive…"
+          tar -xf mbedtls.tar.bz2
+      
+          Write-Host "Configuring with CMake…"
+          cmake -S mbedtls-3.6.3 -B mbedtls-build
+      
+          Write-Host "Building (Release)…"
+          cmake --build mbedtls-build --config Release
+      
+          Write-Host "Installing…"
+          cmake --install mbedtls-build --config Release
+      
       
       - name: Build open62541 library
         run: ./open62541_tooling/build_lib.sh
