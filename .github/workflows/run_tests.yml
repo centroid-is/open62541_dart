@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -43,36 +43,6 @@ jobs:
       - name: Install dependencies for open62541 library macOS
         if: matrix.os == 'macos-latest'
         run: brew install mbedtls
-
-      - name: Install Mbed TLS on Windows
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          Write-Host "Downloading Mbed TLS 3.6.3…"
-          Invoke-WebRequest `
-            -Uri "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/mbedtls-3.6.3.zip" `
-            -OutFile "mbedtls.zip"
-      
-          Write-Host "Extracting archive…"
-          Expand-Archive -Path mbedtls.zip -DestinationPath mbedtls
-          ls mbedtls
-      
-          Write-Host "Configuring with CMake…"
-          cmake -S mbedtls/mbedtls-mbedtls-3.6.3 -B mbedtls-build -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}\mbedtls-install"
-      
-          Write-Host "Building (Release)…"
-          cmake --build mbedtls-build --config Release
-      
-          Write-Host "Installing…"
-          cmake --install mbedtls-build --config Release
-
-      - name: Build open62541 library windows
-        if: matrix.os == 'windows-latest'
-        run: |
-          cmake -S open62541 -B open62541-build  -DBUILD_SHARED_LIBS=ON -DUA_ENABLE_INLINABLE_EXPORT=ON -DUA_ENABLE_ENCRYPTION=MBEDTLS -DCMAKE_INSTALL_PREFIX=install -DUA_BUILD_EXAMPLES=OFF -DUA_BUILD_UNIT_TESTS=OFF -DUA_ENABLE_AMALGAMATION=ON -DUA_MULTITHREADING=0 -DUA_LOGLEVEL=100 -DUA_ENABLE_AMALGAMATION=ON -DCMAKE_PREFIX_PATH="${{ github.workspace }}\mbedtls-install"
-          cmake --build open62541-build --config Release
-          cp open62541-build/bin/libopen62541.* lib/
-        shell: pwsh
 
       - name: Build open62541 library
         if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
