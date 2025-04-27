@@ -65,9 +65,17 @@ jobs:
       
           Write-Host "Installing…"
           cmake --install mbedtls-build --config Release
-      
-      
+
+      - name: Build open62541 library windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          cmake -S open62541 -B open62541-build  -DBUILD_SHARED_LIBS=ON -DUA_ENABLE_INLINABLE_EXPORT=ON -DUA_ENABLE_ENCRYPTION=MBEDTLS -DCMAKE_INSTALL_PREFIX=install -DUA_BUILD_EXAMPLES=OFF -DUA_BUILD_UNIT_TESTS=OFF -DUA_ENABLE_AMALGAMATION=ON -DUA_MULTITHREADING=0 -DUA_LOGLEVEL=100 -DUA_ENABLE_AMALGAMATION=ON
+          cmake --build open62541-build --config Release
+          cp open62541-build/bin/libopen62541.* lib/
+        shell: pwsh
+
       - name: Build open62541 library
+        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
         run: ./open62541_tooling/build_lib.sh
 
       - name: Run tests
