@@ -391,7 +391,6 @@ class Client {
             ffi.Pointer<raw.UA_CreateSubscriptionResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
         ffi.Pointer<ffi.Void> somedata, int requestId, ffi.Pointer<raw.UA_CreateSubscriptionResponse> response) {
       _lib.UA_CreateSubscriptionRequest_delete(request);
-      print("Created subscription ${response.ref.subscriptionId}");
       callback.close();
       if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
         completer.completeError(
@@ -443,7 +442,6 @@ class Client {
 
     controller.onCancel = () {
       final completer = Completer<void>();
-      print("Someone cancelled the stream. Delete the monitored item");
       if (monId == null) {
         throw 'No monitored item id to delete, this propably mean the stream was closed before fully created';
       }
@@ -467,7 +465,6 @@ class Client {
           stderr.write(
               "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}");
         }
-        print("Deleted monitored item $nodeId callback");
         _lib.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
         monitorCallback.close();
         calloc.free(callbacks);
@@ -482,13 +479,11 @@ class Client {
         ffi.nullptr,
         ffi.nullptr,
       );
-      print("Cancelling monitored item $nodeId");
 
       return completer.future;
     };
 
     controller.onListen = () {
-      print("Someone listened to the stream. Create the monitored item");
       // Create our request
       ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = calloc<raw.UA_MonitoredItemCreateRequest>();
       _lib.UA_MonitoredItemCreateRequest_init(monRequest);
@@ -681,7 +676,7 @@ class Client {
           completer.complete(result);
         }
       } catch (e) {
-        print("Error calling callback: $e");
+        stderr.write("Error calling callback: $e");
         completer.completeError(e, StackTrace.current);
       } finally {
         // cleanup input arguments
@@ -852,7 +847,6 @@ class Client {
         defs.addAll(readDataTypeDefinitionSync(typeId));
       }
     }
-    print(defs);
     final retValue = variantToValue(data, defs: defs);
     return retValue;
   }

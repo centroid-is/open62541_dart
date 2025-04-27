@@ -69,7 +69,6 @@ void main() async {
           basedatavariableType, attr.ref, nullptr, nullptr);
     }
 
-    print("Initializing the client");
     client = Client(lib);
     // Run the client while we connect
     () async {
@@ -96,12 +95,9 @@ void main() async {
         DynamicValue(
             value: true,
             typeId: NodeId.boolean)); // It seems we get a value straigt away, make it match the first in the list
-    print("Creating subscription");
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-    print("Subscription created $subscription");
     final controller = client!.monitoredItem(boolNodeId, subscription);
     final stream = controller.stream.map<bool>((event) => event.value);
-    print("Stream created");
     final items = [true, false, true, false];
     expect(stream, emitsInOrder(items));
     for (var item in items) {
@@ -123,14 +119,11 @@ void main() async {
         DynamicValue(
             value: 1,
             typeId: NodeId.int32)); // It seems we get a value straigt away, make it match the first in the list
-    print("Creating subscription");
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-    print("Subscription created $subscription");
     final boolController = client!.monitoredItem(boolNodeId, subscription);
     final boolStream = boolController.stream.map<bool>((event) => event.value);
     final intController = client!.monitoredItem(intNodeId, subscription);
     final intStream = intController.stream.map<int>((event) => event.value);
-    print("Streams created");
     final items = [true, false, true, false];
     final intItems = [1, 2, 3, 4];
     expect(boolStream, emitsInOrder(items));
@@ -147,11 +140,9 @@ void main() async {
   });
 
   test('Creating a subscription and not using it should not hang the process', () async {
-    print("Creating subscription");
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     // ignore: unused_local_variable
     final controller = client!.monitoredItem(boolNodeId, subscription);
-    print("Subscription created $subscription");
     await Future.delayed(Duration(milliseconds: 100));
   });
 
@@ -160,9 +151,6 @@ void main() async {
     lib.UA_Server_run_shutdown(server);
     await Future.delayed(Duration(seconds: 1));
 
-    print("Clearing memory");
     lib.UA_Server_delete(server);
-
-    print("Done");
   });
 }
