@@ -109,9 +109,9 @@ class Client {
   Future<void> connect(String url) async {
     final completer = Completer<void>();
     Future<void> waitForConnected() async {
-      while (state.sessionState != raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
-        await Future.delayed(const Duration(milliseconds: 10));
-      }
+      //TODO: This does not return if the client does not connect
+      await config.stateStream
+          .firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
       completer.complete();
     }
 
