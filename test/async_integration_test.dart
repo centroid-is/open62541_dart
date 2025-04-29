@@ -13,6 +13,7 @@ void main() async {
   final boolNodeId = NodeId.fromString(1, "the.bBool");
   final intNodeId = NodeId.fromString(1, "the.int");
   setUp(() async {
+    print("Setting up");
     // Initalize an open62541 server
     server = lib.UA_Server_new();
     lib.UA_Server_run_startup(server);
@@ -69,7 +70,12 @@ void main() async {
           basedatavariableType, attr.ref, nullptr, nullptr);
     }
 
+    print("Creating client");
     client = Client(lib);
+    // Print the state of the client connection
+    client!.config.stateStream.listen((state) {
+      print("Client state: $state");
+    });
     // Run the client while we connect
     () async {
       while (client!.runIterate(Duration(milliseconds: 10))) {
@@ -79,6 +85,7 @@ void main() async {
     await client!.connect("opc.tcp://localhost:4840").onError((error, stackTrace) {
       throw Exception("Failed to connect to the server: $error");
     });
+    print("Client connected!");
   });
   test('Basic read and write boolean async', () async {
     expect((await client!.readValue(boolNodeId)).value, true);

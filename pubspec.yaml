@@ -43,3 +43,4 @@ ffigen:
     - '-I/lib/clang/19/include/'
     - '-Wno-nullability-completeness'
     - '-Wno-expansion-to-defined'
+    - '-DUA_ENABLE_ENCRYPTION' 

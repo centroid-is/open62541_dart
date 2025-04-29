@@ -85,7 +85,6 @@ class Client {
         _client = lib.UA_Client_new() {
     final config = lib.UA_Client_getConfig(_client);
     lib.UA_ClientConfig_setDefault(config);
-    print(config.ref.authSecurityPolicyUri.data);
     _clientConfig = ClientConfig(config);
   }
 
@@ -937,14 +936,6 @@ class Client {
     ffi.Pointer<raw.UA_Client> client = _client;
     _client = ffi.nullptr;
     await Future.delayed(Duration(milliseconds: 10));
-    print(_clientConfig._clientConfig);
-    print(_clientConfig._clientConfig.ref.authSecurityPolicyUri.length);
-    print(_clientConfig._clientConfig.ref.authSecurityPolicyUri.data);
-    print(_clientConfig._clientConfig.ref.eventLoop);
-    print(_clientConfig._clientConfig.ref.eventLoop);
-    print(_clientConfig._clientConfig.ref.certificateVerification.clear);
-    _clientConfig._clientConfig.ref.outStandingPublishRequests = 1337;
-    print(" Size of * ${ffi.sizeOf<raw.UA_ClientConfig>()}");
     _lib.UA_Client_delete(client);
     // Client_delete calls client config state callbacks
     // Need to close the config after deleting the client

@@ -14,13 +14,14 @@ Future<int> main(List<String> arguments) async {
 
   // Run the c execution loop from the same isolate
   () async {
-    await c.connect(endpointUrl).onError((error, stacktrace) {
-      throw 'Error connecting: $error';
-    });
     while (c.runIterate(Duration(milliseconds: 10))) {
       await Future.delayed(Duration(milliseconds: 10));
     }
   }();
+
+  await c.connect(endpointUrl).onError((error, stacktrace) {
+    throw 'Error connecting: $error';
+  });
 
   // final start = DateTime.now();
   // final counterId = NodeId.fromString(4, "MAIN.nCounter");
