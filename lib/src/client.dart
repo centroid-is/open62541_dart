@@ -405,7 +405,7 @@ class Client {
     return completer.future;
   }
 
-  StreamController<DynamicValue> monitoredItem(
+  Stream<DynamicValue> monitoredItem(
     NodeId nodeId,
     int subscriptionId, {
     raw.UA_AttributeId attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
@@ -605,7 +605,7 @@ class Client {
       }
     };
 
-    return controller;
+    return controller.stream;
   }
 
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {

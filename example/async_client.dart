@@ -40,7 +40,7 @@ Future<int> main(List<String> arguments) async {
   print(subscriptionId);
   final subscription = c.monitoredItem(counterId, subscriptionId, samplingInterval: Duration(milliseconds: 10));
 
-  subscription.stream.listen((event) {
+  subscription.listen((event) {
     print('Subscription event: $event');
   });
 
@@ -62,7 +62,6 @@ Future<int> main(List<String> arguments) async {
   await Future.delayed(Duration(milliseconds: 10)); // Let the subscription catch up
 
   stderr.writeln('Closing subscription');
-  await subscription.close();
   stderr.writeln('Deleting client');
   await c.delete();
   stderr.writeln('Deleted client');

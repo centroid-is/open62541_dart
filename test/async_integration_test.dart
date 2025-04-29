@@ -103,8 +103,7 @@ void main() async {
             value: true,
             typeId: NodeId.boolean)); // It seems we get a value straigt away, make it match the first in the list
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-    final controller = client!.monitoredItem(boolNodeId, subscription);
-    final stream = controller.stream.map<bool>((event) => event.value);
+    final stream = client!.monitoredItem(boolNodeId, subscription).map<bool>((event) => event.value);
     final items = [true, false, true, false];
     expect(stream, emitsInOrder(items));
     for (var item in items) {
@@ -112,7 +111,6 @@ void main() async {
       await Future.delayed(Duration(milliseconds: 100)); // Give the server and client time to do stuff
     }
     await Future.delayed(Duration(milliseconds: 1000)); // Let the subscription catch up
-    await controller.close();
   });
   test('Multiple monitored items', () async {
     // Set current value to false to get a change
@@ -127,10 +125,8 @@ void main() async {
             value: 1,
             typeId: NodeId.int32)); // It seems we get a value straigt away, make it match the first in the list
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-    final boolController = client!.monitoredItem(boolNodeId, subscription);
-    final boolStream = boolController.stream.map<bool>((event) => event.value);
-    final intController = client!.monitoredItem(intNodeId, subscription);
-    final intStream = intController.stream.map<int>((event) => event.value);
+    final boolStream = client!.monitoredItem(boolNodeId, subscription).map<bool>((event) => event.value);
+    final intStream = client!.monitoredItem(intNodeId, subscription).map<int>((event) => event.value);
     final items = [true, false, true, false];
     final intItems = [1, 2, 3, 4];
     expect(boolStream, emitsInOrder(items));
@@ -142,8 +138,6 @@ void main() async {
       await Future.delayed(Duration(milliseconds: 100)); // Give the server and client time to do stuff
     }
     await Future.delayed(Duration(milliseconds: 1000)); // Let the subscription catch up
-    await intController.close();
-    await boolController.close();
   });
 
   test('Creating a subscription and not using it should not hang the process', () async {
