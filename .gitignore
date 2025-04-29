@@ -11,5 +11,4 @@ lib/src/generated/*
 .direnv
 .envrc
 ffigen.yaml
-.vscode
 doc/api/

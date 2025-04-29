@@ -84,6 +84,8 @@ class Client {
       : _lib = lib,
         _client = lib.UA_Client_new() {
     final config = lib.UA_Client_getConfig(_client);
+    lib.UA_ClientConfig_setDefault(config);
+    print(config.ref.authSecurityPolicyUri.data);
     _clientConfig = ClientConfig(config);
   }
 
@@ -108,9 +110,9 @@ class Client {
   Future<void> connect(String url) async {
     final completer = Completer<void>();
     Future<void> waitForConnected() async {
-      await config.stateStream.firstWhere((event) =>
-          event.channelState == raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_OPEN &&
-          event.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
+      while (state.sessionState != raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
+        await Future.delayed(const Duration(milliseconds: 10));
+      }
       completer.complete();
     }
 
@@ -935,6 +937,14 @@ class Client {
     ffi.Pointer<raw.UA_Client> client = _client;
     _client = ffi.nullptr;
     await Future.delayed(Duration(milliseconds: 10));
+    print(_clientConfig._clientConfig);
+    print(_clientConfig._clientConfig.ref.authSecurityPolicyUri.length);
+    print(_clientConfig._clientConfig.ref.authSecurityPolicyUri.data);
+    print(_clientConfig._clientConfig.ref.eventLoop);
+    print(_clientConfig._clientConfig.ref.eventLoop);
+    print(_clientConfig._clientConfig.ref.certificateVerification.clear);
+    _clientConfig._clientConfig.ref.outStandingPublishRequests = 1337;
+    print(" Size of * ${ffi.sizeOf<raw.UA_ClientConfig>()}");
     _lib.UA_Client_delete(client);
     // Client_delete calls client config state callbacks
     // Need to close the config after deleting the client
