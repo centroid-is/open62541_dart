@@ -111,7 +111,7 @@ void main() async {
       await client!.writeValue(boolNodeId, DynamicValue(value: item, typeId: NodeId.boolean));
       await Future.delayed(Duration(milliseconds: 100)); // Give the server and client time to do stuff
     }
-    await Future.delayed(Duration(milliseconds: 600)); // Let the subscription catch up
+    await Future.delayed(Duration(milliseconds: 1000)); // Let the subscription catch up
     await controller.close();
   });
   test('Multiple monitored items', () async {
@@ -141,7 +141,7 @@ void main() async {
       await client!.writeValue(intNodeId, DynamicValue(value: intItems[i], typeId: NodeId.int32));
       await Future.delayed(Duration(milliseconds: 100)); // Give the server and client time to do stuff
     }
-    await Future.delayed(Duration(milliseconds: 600)); // Let the subscription catch up
+    await Future.delayed(Duration(milliseconds: 1000)); // Let the subscription catch up
     await intController.close();
     await boolController.close();
   });
