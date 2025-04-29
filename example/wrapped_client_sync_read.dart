@@ -16,16 +16,13 @@ void clientIsolate(SendPort mainSendPort) async {
   c.config.subscriptionInactivityStream.listen((event) => mainSendPort.send('inactive subscription $event'));
 
   String endpointUrl = 'opc.tcp://172.30.118.23:4840';
-  var statusCode = c.connect(endpointUrl);
-  mainSendPort.send('Endpoint url: $endpointUrl');
-
-  if (statusCode == 0) {
-    mainSendPort.send('Client connected!');
-  } else {
+  await c.connect(endpointUrl).onError((error, stacktrace) {
+    mainSendPort.send('Error connecting: $error');
     c.delete();
     mainSendPort.send('EXIT');
     return;
-  }
+  });
+  mainSendPort.send('Endpoint url: $endpointUrl');
 
   try {
     NodeId objectId = NodeId.fromString(4, "GVL_IO.domeLightGreen");
@@ -52,7 +49,7 @@ void clientIsolate(SendPort mainSendPort) async {
       print("CALL ASYNC error: $error");
     });
 
-    int subId = c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 5));
+    int subId = await c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 5));
     mainSendPort.send('Created subscription $subId');
 
     // final definition =

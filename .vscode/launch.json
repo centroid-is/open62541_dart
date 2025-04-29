@@ -1,0 +1,30 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "async_integration_test (debug - linux)",
+            "type": "cppdbg",
+            "request": "launch",
+            // path to the Dart executable (in the downloaded/installed SDK).
+            "program": "/home/dl/flutter/bin/cache/dart-sdk/bin/dart",
+            "args": [
+                // Path to the standalone Dart file that invokes your shared library.
+                "${workspaceFolder}/test/async_integration_test.dart",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb", // Provided that your host OS is Linux.
+            // "sourceFileMap": {
+            //     // When building the SDK locally, this gives source locations of  the stuff in the Dart
+            //     // executable. A downloaded SDK probably does not have symbols. But if you're
+            //     // only trying to debug your shared library that should be fine.
+            //     "../../out/DebugX64/../../": "${workspaceFolder}/"
+            // },
+        },
+    ]
+}
