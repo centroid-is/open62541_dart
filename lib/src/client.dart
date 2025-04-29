@@ -107,20 +107,11 @@ class Client {
   ClientConfig get config => _clientConfig;
 
   Future<void> connect(String url) async {
-    final completer = Completer<void>();
-    Future<void> waitForConnected() async {
-      //TODO: This does not return if the client does not connect
-      await config.stateStream
-          .firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
-      completer.complete();
-    }
-
     final instantReturn = _lib.UA_Client_connectAsync(_client, url.toNativeUtf8().cast());
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
-      completer.completeError('Failed to connect: ${statusCodeToString(instantReturn)}');
+      throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
     }
-    waitForConnected();
-    return completer.future;
+    await config.stateStream.firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
   }
 
   int syncConnect(String url, {String? username, String? password}) {
@@ -617,12 +608,7 @@ class Client {
     return controller;
   }
 
-  Future<List<DynamicValue>> call(
-    NodeId objectId,
-    NodeId methodId,
-    Iterable<DynamicValue> args, {
-    Duration timeout = const Duration(seconds: 10),
-  }) async {
+  Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
     final len = args.length;
     var inputArgs = calloc<raw.UA_Variant>(len);
     var ptrs = <ffi.Pointer<raw.UA_Variant>>[];
@@ -700,15 +686,6 @@ class Client {
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Unable to call method: $statusCode ${statusCodeToString(statusCode)}';
     }
-    Future.delayed(timeout, () {
-      // Dont complete if already completed
-      if (!completer.isCompleted) {
-        completer.completeError('Timeout calling $objectId $methodId');
-        for (var ptr in ptrs) {
-          _lib.UA_Variant_delete(ptr);
-        }
-      }
-    });
     return completer.future;
   }
 
@@ -862,7 +839,6 @@ class Client {
         defs.addAll(await readDataTypeDefinition(typeId));
       }
     }
-    await Future.delayed(Duration(milliseconds: 100));
     final retValue = variantToValue(data, defs: defs);
     return retValue;
   }
@@ -941,6 +917,10 @@ class Client {
     // Need to close the config after deleting the client
     // s.t. the native callbacks are not closed when called
     await _clientConfig.close();
+    // Clear the memory allocated to structure definitions
+    for (var value in defs.values) {
+      _lib.UA_StructureDefinition_delete(value);
+    }
   }
 
   final raw.open62541 _lib;
