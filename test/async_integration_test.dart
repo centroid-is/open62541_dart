@@ -103,14 +103,22 @@ void main() async {
             value: true,
             typeId: NodeId.boolean)); // It seems we get a value straigt away, make it match the first in the list
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-    final stream = client!.monitoredItem(boolNodeId, subscription).map<bool>((event) => event.value);
     final items = [true, false, true, false];
+    final comp = Completer<void>();
+    int counter = 0;
+    final stream = client!.monitoredItem(boolNodeId, subscription).map<bool>((event) {
+      counter = counter + 1;
+      if (counter == items.length) {
+        comp.complete();
+      }
+      return event.value;
+    });
     expect(stream, emitsInOrder(items));
     for (var item in items) {
       await client!.writeValue(boolNodeId, DynamicValue(value: item, typeId: NodeId.boolean));
       await Future.delayed(Duration(milliseconds: 100)); // Give the server and client time to do stuff
     }
-    await Future.delayed(Duration(milliseconds: 1000)); // Let the subscription catch up
+    await comp.future;
   });
   test('Multiple monitored items', () async {
     // Set current value to false to get a change
@@ -125,10 +133,25 @@ void main() async {
             value: 1,
             typeId: NodeId.int32)); // It seems we get a value straigt away, make it match the first in the list
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-    final boolStream = client!.monitoredItem(boolNodeId, subscription).map<bool>((event) => event.value);
-    final intStream = client!.monitoredItem(intNodeId, subscription).map<int>((event) => event.value);
+    int boolCounter = 0;
+    int intCounter = 0;
+    final comp = Completer<void>();
     final items = [true, false, true, false];
     final intItems = [1, 2, 3, 4];
+    final boolStream = client!.monitoredItem(boolNodeId, subscription).map<bool>((event) {
+      boolCounter = boolCounter + 1;
+      if (boolCounter == items.length && intCounter == intItems.length) {
+        comp.complete();
+      }
+      return event.value;
+    });
+    final intStream = client!.monitoredItem(intNodeId, subscription).map<int>((event) {
+      intCounter = intCounter + 1;
+      if (boolCounter == items.length && intCounter == intItems.length) {
+        comp.complete();
+      }
+      return event.value;
+    });
     expect(boolStream, emitsInOrder(items));
     expect(intStream, emitsInOrder(intItems));
     expect(items.length, intItems.length);
@@ -137,7 +160,7 @@ void main() async {
       await client!.writeValue(intNodeId, DynamicValue(value: intItems[i], typeId: NodeId.int32));
       await Future.delayed(Duration(milliseconds: 100)); // Give the server and client time to do stuff
     }
-    await Future.delayed(Duration(milliseconds: 1000)); // Let the subscription catch up
+    await comp.future;
   });
 
   test('Creating a subscription and not using it should not hang the process', () async {
@@ -151,7 +174,6 @@ void main() async {
     print("Tearing down");
     await client!.delete();
     lib.UA_Server_run_shutdown(server);
-    await Future.delayed(Duration(seconds: 1));
 
     lib.UA_Server_delete(server);
     print("Done tearing down");
