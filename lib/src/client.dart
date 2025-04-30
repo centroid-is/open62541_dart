@@ -16,6 +16,11 @@ class ClientState {
   raw.UA_SessionState sessionState;
   int recoveryStatus;
   ClientState({required this.channelState, required this.sessionState, required this.recoveryStatus});
+
+  @override
+  String toString() {
+    return 'ClientState(channelState: $channelState, sessionState: $sessionState, recoveryStatus: $recoveryStatus)';
+  }
 }
 
 class ClientConfig {
@@ -513,6 +518,14 @@ class Client {
         // Don't process the data if we are closed
         if (controller.isClosed) {
           stderr.writeln("Stream closed, data still sent from monitored item $monId");
+          return;
+        }
+        if (value == ffi.nullptr) {
+          controller.addError('Failed to read value, nullptr provided');
+          return;
+        }
+        if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
+          controller.addError('Failed to read value: ${statusCodeToString(value.ref.status)}');
           return;
         }
         DynamicValue data = DynamicValue();
