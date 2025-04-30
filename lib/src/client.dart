@@ -107,7 +107,17 @@ class Client {
   ClientConfig get config => _clientConfig;
 
   Future<void> awaitConnect() async {
+    if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
+      return;
+    }
     await config.stateStream.firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
+  }
+
+  Future<void> awaitDisconnect() async {
+    if (state.sessionState != raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
+      return;
+    }
+    await config.stateStream.firstWhere((state) => state.sessionState != raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
   }
 
   Future<void> connect(String url) async {
