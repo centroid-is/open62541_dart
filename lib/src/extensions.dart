@@ -40,7 +40,9 @@ enum Namespace0Id {
   uinteger(raw.UA_NS0ID_UINTEGER),
   enumeration(raw.UA_NS0ID_ENUMERATION),
   image(raw.UA_NS0ID_IMAGE),
-  references(raw.UA_NS0ID_REFERENCES);
+  references(raw.UA_NS0ID_REFERENCES),
+  structureDefinitionDefaultBinary(raw.UA_NS0ID_STRUCTUREDEFINITION_ENCODING_DEFAULTBINARY),
+  enumDefinitionDefaultBinary(raw.UA_NS0ID_ENUMDEFINITION_ENCODING_DEFAULTBINARY);
 
   final int value;
   const Namespace0Id(this.value);
