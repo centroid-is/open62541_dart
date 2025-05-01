@@ -113,13 +113,6 @@ class Client {
     await config.stateStream.firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
   }
 
-  Future<void> awaitDisconnect() async {
-    if (state.sessionState != raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
-      return;
-    }
-    await config.stateStream.firstWhere((state) => state.sessionState != raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
-  }
-
   Future<void> connect(String url) async {
     final instantReturn = _lib.UA_Client_connectAsync(_client, url.toNativeUtf8().cast());
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
