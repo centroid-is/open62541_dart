@@ -85,11 +85,14 @@ class ClientConfig {
 }
 
 class Client {
-  Client(raw.open62541 lib)
+  Client(raw.open62541 lib, {Duration? secureChannelLifeTime})
       : _lib = lib,
         _client = lib.UA_Client_new() {
     final config = lib.UA_Client_getConfig(_client);
     lib.UA_ClientConfig_setDefault(config);
+    if (secureChannelLifeTime != null) {
+      config.ref.secureChannelLifeTime = secureChannelLifeTime.inMilliseconds;
+    }
     _clientConfig = ClientConfig(config);
   }
 
@@ -124,16 +127,6 @@ class Client {
       throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
     }
     await awaitConnect();
-  }
-
-  int syncConnect(String url, {String? username, String? password}) {
-    ffi.Pointer<ffi.Char> urlPointer = url.toNativeUtf8().cast();
-    if (username != null && password != null) {
-      ffi.Pointer<ffi.Char> usernamePointer = username.toNativeUtf8().cast();
-      ffi.Pointer<ffi.Char> passwordPointer = password.toNativeUtf8().cast();
-      return _lib.UA_Client_connectUsername(_client, urlPointer, usernamePointer, passwordPointer);
-    }
-    return _lib.UA_Client_connect(_client, urlPointer);
   }
 
   bool runIterate(Duration iterate) {
@@ -271,20 +264,6 @@ class Client {
     return retValue;
   }
 
-  bool syncWriteValue(NodeId nodeId, DynamicValue value) {
-    final variant = valueToVariant(value, _lib);
-
-    // Write value
-    final retValue = _lib.UA_Client_writeValueAttribute(_client, nodeId.toRaw(_lib), variant);
-    if (retValue != raw.UA_STATUSCODE_GOOD) {
-      stderr.write('Write off $nodeId to $value failed with $retValue, name: ${statusCodeToString(retValue)}');
-    }
-
-    // Use variant delete to delete the internal data pointer as well
-    _lib.UA_Variant_delete(variant);
-    return retValue == raw.UA_STATUSCODE_GOOD;
-  }
-
   Future<DynamicValue> readValue(NodeId nodeId) {
     Completer<DynamicValue> completer = Completer<DynamicValue>();
 
@@ -343,19 +322,6 @@ class Client {
       ffi.nullptr,
     );
     return completer.future;
-  }
-
-  dynamic syncReadValue(NodeId nodeId) {
-    ffi.Pointer<raw.UA_Variant> data = calloc<raw.UA_Variant>();
-    int statusCode = _lib.UA_Client_readValueAttribute(_client, nodeId.toRaw(_lib), data);
-    if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      final statusCodeName = _lib.UA_StatusCode_name(statusCode);
-      throw 'Bad status code $statusCode name: ${statusCodeName.cast<Utf8>().toDartString()}';
-    }
-
-    final retVal = _variantToValueAutoSchemaSync(data.ref);
-    calloc.free(data);
-    return retVal;
   }
 
   Future<int> subscriptionCreate({
@@ -709,57 +675,7 @@ class Client {
     return completer.future;
   }
 
-  Schema readDataTypeDefinitionSync(NodeId nodeIdType) {
-    ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>();
-    _lib.UA_ReadValueId_init(readValueId);
-    raw.UA_DataValue res;
-    var map = Schema();
-    try {
-      readValueId.ref.nodeId = nodeIdType.toRaw(_lib);
-      readValueId.ref.attributeId = raw.UA_AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION.value;
-      res = _lib.UA_Client_read(_client, readValueId);
-
-      if (res.status != raw.UA_STATUSCODE_GOOD) {
-        throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code ${res.status} ${statusCodeToString(res.status)}, NodeID: $nodeIdType';
-      }
-      if (res.value.type.ref.typeKind != raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE) {
-        throw 'UA_Client_read[DATATYPEDEFINITION]: Expected structure type, got ${res.value.type.ref.typeKind}';
-      }
-      if (!nodeIdType.isString()) {
-        throw 'UA_Client_read[DATATYPEDEFINITION]: Expected string type, got $nodeIdType';
-      }
-
-      // Read our current structure
-      final structDef = res.value.data.cast<raw.UA_StructureDefinition>();
-      map[nodeIdType] = structDef;
-
-      // Crawl the structure for sub structures recursivly
-      for (var i = 0; i < structDef.ref.fieldsSize; i++) {
-        final field = structDef.ref.fields[i];
-        raw.UA_NodeId dataType = field.dataType;
-        if (dataType.isNumeric()) {
-          continue;
-        }
-        if (dataType.isString()) {
-          // recursively read the nested structure type
-          final mp = readDataTypeDefinitionSync(dataType.toNodeId());
-          for (var subId in mp.keys) {
-            map[subId] = mp[subId]!;
-          }
-        } else {
-          throw 'Unsupported field type: $dataType';
-        }
-      }
-    } catch (e) {
-      stderr.write("Error reading DataTypeDefinition: $e");
-      rethrow;
-    } finally {
-      _lib.UA_ReadValueId_delete(readValueId);
-    }
-    return map;
-  }
-
-  Future<Schema> readDataTypeDefinition(NodeId nodeIdType) async {
+  Future<Schema> _readDataTypeDefinition(NodeId nodeIdType) async {
     ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>();
     _lib.UA_ReadValueId_init(readValueId);
     var map = Schema();
@@ -783,44 +699,61 @@ class Client {
       // Clean up request parameters
       _lib.UA_ReadValueId_delete(readValueId);
 
+      // Close our callback so it can be garbage collected
+      callback.close();
+
       if (statusCode != raw.UA_STATUSCODE_GOOD) {
         throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code $statusCode ${statusCodeToString(statusCode)}, NodeID: $nodeIdType';
       }
+      if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
+        throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code ${value.ref.status} ${statusCodeToString(value.ref.status)}, NodeID: $nodeIdType';
+      }
       final res = value.ref;
-      if (res.value.type.ref.typeKind != raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE) {
-        throw 'UA_Client_read[DATATYPEDEFINITION]: Expected structure type, got ${res.value.type.ref.typeKind}';
-      }
-      if (!nodeIdType.isString()) {
-        throw 'UA_Client_read[DATATYPEDEFINITION]: Expected string type, got $nodeIdType';
-      }
+      final binaryEncodingId = res.value.type.ref.binaryEncodingId.toNodeId();
+
+      final source = calloc<raw.UA_Variant>();
+      source.ref = res.value;
+      final destination = calloc<raw.UA_Variant>();
+      _lib.UA_Variant_copy(source, destination);
+      map[nodeIdType] = destination;
+      calloc.free(source);
 
       // Read our current structure
-      final source = res.value.data.cast<raw.UA_StructureDefinition>();
-      final structDef = calloc<raw.UA_StructureDefinition>();
-      _lib.UA_StructureDefinition_copy(source, structDef);
-      map[nodeIdType] = structDef;
+      if (binaryEncodingId == NodeId.structureDefinitionDefaultBinary) {
+        // cast the value to fetch the schema recursively
+        final structDef = destination.ref.data.cast<raw.UA_StructureDefinition>();
 
-      // Crawl the structure for sub structures recursivly
-      for (var i = 0; i < structDef.ref.fieldsSize; i++) {
-        final field = structDef.ref.fields[i];
-        raw.UA_NodeId dataType = field.dataType;
-        if (dataType.isNumeric()) {
-          continue;
-        }
-        if (dataType.isString()) {
-          // recursively read the nested structure type
-          final mp = await readDataTypeDefinition(dataType.toNodeId());
-          for (var subId in mp.keys) {
-            map[subId] = mp[subId]!;
+        // Crawl the structure for sub structures recursivly
+        for (var i = 0; i < structDef.ref.fieldsSize; i++) {
+          final field = structDef.ref.fields[i];
+          raw.UA_NodeId dataType = field.dataType;
+          if (dataType.isNumeric()) {
+            continue;
           }
-        } else {
-          throw 'Unsupported field type: $dataType';
+          if (dataType.isString()) {
+            // recursively read the nested structure type
+            final mp = await _readDataTypeDefinition(dataType.toNodeId());
+            for (var subId in mp.keys) {
+              map[subId] = mp[subId]!;
+            }
+          } else {
+            throw 'Unsupported field type: $dataType';
+          }
         }
+      } else if (binaryEncodingId == NodeId.enumDefinitionDefaultBinary) {
+        //TODO: Implement enum
+        // final source = res.value.data.cast<raw.UA_EnumDefinition>();
+        // final fieldSize = source.ref.fieldsSize;
+        // final enum_def = {};
+        // for (var i = 0; i < fieldSize; i++) {
+        //   enum_def[source.ref.fields[i].value]['displayname'] = source.ref.fields[i].displayName.
+        //   enum_def[source.ref.fields[i].value]['description'] = source.ref.fields[i].description.
+        // }
+        // map[nodeIdType] = enum_def;
+      } else {
+        throw 'Unsupported binary encoding id: $binaryEncodingId';
       }
       completer.complete(map);
-
-      // Close our callback so it can be garbage collected
-      callback.close();
     });
     _lib.UA_Client_readAttribute_async(
       _client,
@@ -836,27 +769,15 @@ class Client {
 
   Schema defs = {};
 
-  DynamicValue _variantToValueAutoSchemaSync(raw.UA_Variant data) {
-    if (data.type.ref.typeId.toNodeId() == NodeId.structure) {
-      // Cast the data to extension object
-      final ext = data.data.cast<raw.UA_ExtensionObject>();
-      final typeId = ext.ref.content.encoded.typeId.toNodeId();
-      if (!defs.containsKey(typeId)) {
-        defs.addAll(readDataTypeDefinitionSync(typeId));
-      }
-    }
-    final retValue = variantToValue(data, defs: defs);
-    return retValue;
-  }
-
   Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data) async {
-    if (data.type.ref.typeId.toNodeId() == NodeId.structure) {
+    final typeId = data.type.ref.typeId.toNodeId();
+    if (typeId == NodeId.structure) {
       // Cast the data to extension object
       final ext = data.data.cast<raw.UA_ExtensionObject>();
       final typeId = ext.ref.content.encoded.typeId.toNodeId();
       if (!defs.containsKey(typeId)) {
         // Copy our data before async switch
-        defs.addAll(await readDataTypeDefinition(typeId));
+        defs.addAll(await _readDataTypeDefinition(typeId));
       }
     }
     final retValue = variantToValue(data, defs: defs);
@@ -939,7 +860,7 @@ class Client {
     await _clientConfig.close();
     // Clear the memory allocated to structure definitions
     for (var value in defs.values) {
-      _lib.UA_StructureDefinition_delete(value);
+      _lib.UA_Variant_delete(value);
     }
   }
 

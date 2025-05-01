@@ -40,7 +40,9 @@ enum Namespace0Id {
   uinteger(raw.UA_NS0ID_UINTEGER),
   enumeration(raw.UA_NS0ID_ENUMERATION),
   image(raw.UA_NS0ID_IMAGE),
-  references(raw.UA_NS0ID_REFERENCES);
+  references(raw.UA_NS0ID_REFERENCES),
+  structureDefinitionDefaultBinary(raw.UA_NS0ID_STRUCTUREDEFINITION_ENCODING_DEFAULTBINARY),
+  enumDefinitionDefaultBinary(raw.UA_NS0ID_ENUMDEFINITION_ENCODING_DEFAULTBINARY);
 
   final int value;
   const Namespace0Id(this.value);
@@ -391,16 +393,15 @@ extension UA_StringExtension on raw.UA_String {
   }
 }
 
+extension LocalizedTextExtension on raw.UA_LocalizedText {
+  LocalizedText get localizedText {
+    return LocalizedText(text.value, locale.value);
+  }
+}
+
 // ignore: camel_case_extensions
 extension UA_StructureFieldExtension on raw.UA_StructureField {
   String get fieldName => name.value;
-  MemberDescription get fieldDescription {
-    final textValue = description.text.value;
-    final localeValue = description.locale.value;
-    // print('description: $textValue');
-    // print('locale: $localeValue');
-    return MemberDescription(textValue, localeValue);
-  }
 
   List<int> get dimensions {
     if (arrayDimensionsSize == 0 || arrayDimensions == nullptr) {

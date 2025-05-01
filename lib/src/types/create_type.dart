@@ -18,13 +18,9 @@ final _payloadTypes = {
   NodeId.uastring: UA_StringPayload(),
 };
 
-PayloadType nodeIdToPayloadType(NodeId? nodeIdType) {
+PayloadType? nodeIdToPayloadType(NodeId? nodeIdType) {
   if (nodeIdType == null || !nodeIdType.isNumeric()) {
-    throw ArgumentError('NodeId is not numeric: $nodeIdType');
+    return null;
   }
-  final retValue = _payloadTypes[nodeIdType];
-  if (retValue == null) {
-    throw 'Unsupported field type: $nodeIdType';
-  }
-  return retValue as PayloadType;
+  return _payloadTypes[nodeIdType] as PayloadType?;
 }

@@ -127,7 +127,7 @@ void main() {
 
     var defs = {spNodeId: sp};
     final decoded = Client.variantToValue(variant.ref, defs: defs);
-    lib.UA_StructureDefinition_delete(sp);
+    lib.UA_Variant_delete(sp);
 
     expect(val["s1"].asString, "some string");
     expect(val["s2"].asString, "other string");
@@ -483,7 +483,7 @@ void main() {
     expect(value[1][0][0]["s2"].asString, "bM");
     expect(value[1][0][0]["s3"].asString, "cM");
 
-    lib.UA_StructureDefinition_delete(sp);
+    lib.UA_Variant_delete(sp);
     lib.UA_Variant_delete(variant);
   }, skip: "Todo: make this test from real data");
 
@@ -967,8 +967,8 @@ void main() {
     final dynValueAgain = Client.variantToValue(variantEncoded.ref, defs: defs);
     expectArrayDyn(dynValueAgain);
 
-    lib.UA_StructureDefinition_delete(hmi);
-    lib.UA_StructureDefinition_delete(atv);
+    lib.UA_Variant_delete(hmi);
+    lib.UA_Variant_delete(atv);
     // I presume this erases the data correctly
     lib.UA_Variant_delete(variant);
     lib.UA_Variant_delete(variantEncoded);
