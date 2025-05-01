@@ -393,7 +393,7 @@ extension UA_StringExtension on raw.UA_String {
   }
 }
 
-extension localized on raw.UA_LocalizedText {
+extension LocalizedTextExtension on raw.UA_LocalizedText {
   LocalizedText get localizedText {
     return LocalizedText(text.value, locale.value);
   }

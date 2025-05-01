@@ -1,5 +1,4 @@
 import 'package:open62541/open62541.dart';
-import 'package:open62541/src/generated/open62541_bindings.dart';
 
 Future<void> main(List<String> arguments) async {
   Client c = Client(Open62541Singleton().lib, secureChannelLifeTime: Duration(seconds: 20));
@@ -43,7 +42,5 @@ Future<void> main(List<String> arguments) async {
   //       .firstWhere((element) => element.sessionState == UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
   //   print("Subscription has been lost, will be recreated");
   // }
-
-  await Future.delayed(Duration(seconds: 50));
   c.delete();
 }

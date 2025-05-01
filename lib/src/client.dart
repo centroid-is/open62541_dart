@@ -771,8 +771,6 @@ class Client {
 
   Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data) async {
     final typeId = data.type.ref.typeId.toNodeId();
-    final b = data.type.ref.binaryEncodingId.toNodeId();
-    final k = data.type.ref.typeName.cast<Utf8>().toDartString();
     if (typeId == NodeId.structure) {
       // Cast the data to extension object
       final ext = data.data.cast<raw.UA_ExtensionObject>();
