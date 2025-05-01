@@ -10,18 +10,29 @@ import 'node_id.dart';
 
 enum DynamicType { object, array, string, boolean, nullValue, unknown, integer, double }
 
-class MemberDescription {
+class LocalizedText {
   final String value;
   final String locale;
-  MemberDescription(this.value, this.locale);
+  LocalizedText(this.value, this.locale);
 }
 
-typedef Schema = Map<NodeId, ffi.Pointer<raw.UA_StructureDefinition>>;
+class EnumField {
+  final int value;
+  final LocalizedText displayName;
+  final LocalizedText description;
+  final String name;
+  EnumField(this.value, this.name, this.displayName, this.description);
+}
+
+typedef Schema = Map<NodeId, ffi.Pointer<raw.UA_Variant>>;
 
 class DynamicValue extends PayloadType<DynamicValue> {
   dynamic value;
   NodeId? typeId;
-  MemberDescription? _description;
+  String? name;
+  LocalizedText? description;
+  LocalizedText? displayName;
+  Map<int, EnumField>? enumFields;
 
   factory DynamicValue.fromMap(LinkedHashMap<String, dynamic> entries) {
     DynamicValue v = DynamicValue();
@@ -41,7 +52,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     }
     return v;
   }
-  DynamicValue({this.value, description, this.typeId}) : _description = description;
+  DynamicValue({this.value, this.description, this.typeId, this.displayName});
 
   DynamicType get type {
     if (value == null) return DynamicType.nullValue;
@@ -68,7 +79,6 @@ class DynamicValue extends PayloadType<DynamicValue> {
   String get asString => value?.toString() ?? '';
   bool get asBool => _parseBool(value) ?? false;
   DateTime? get asDateTime => _parseDateTime(value);
-  MemberDescription? get description => _description;
 
   List<DynamicValue> get asArray =>
       isArray ? value : throw StateError('DynamicValue is not an array, ${value.runtimeType}');
@@ -152,7 +162,12 @@ class DynamicValue extends PayloadType<DynamicValue> {
   }
 
   @override
-  String toString() => value?.toString() ?? 'null';
+  String toString() {
+    if (enumFields != null) {
+      return "${enumFields![value]!.name}(${value.toString()})";
+    }
+    return "${displayName == null ? '' : displayName!.value} ${description == null ? '' : description!.value} ${value?.toString() ?? 'null'}";
+  }
 
   static double? _parseDouble(dynamic val) {
     if (val is double) return val;
@@ -204,31 +219,49 @@ class DynamicValue extends PayloadType<DynamicValue> {
   factory DynamicValue.fromDataTypeDefinition(NodeId root, Schema defs) {
     DynamicValue tree = DynamicValue(typeId: root);
 
-    // Base case
-    if (root.isNumeric()) {
+    // If we know how to deal with this type
+    if (nodeIdToPayloadType(root) != null) {
       return tree;
     }
 
-    // Assert after trivial return
     assert(defs.containsKey(root));
 
-    // Object case & Array case
-    for (int i = 0; i < defs[root]!.ref.fieldsSize; i++) {
-      final field = defs[root]!.ref.fields[i];
-
-      if (field.dimensions.isEmpty) {
-        tree[field.fieldName] = DynamicValue.fromDataTypeDefinition(field.dataType.toNodeId(), defs);
-      } else {
-        // Don't support multi dimensional fields for now
-        assert(field.dimensions.length == 1);
-        var collection = [];
-        for (int i = 0; i < field.dimensions[0]; i++) {
-          collection.add(DynamicValue.fromDataTypeDefinition(field.dataType.toNodeId(), defs));
-        }
-        tree[field.fieldName] = DynamicValue.fromList(collection, typeId: field.dataType.toNodeId());
+    final def = defs[root]!.ref;
+    // Check if we are an enum
+    final binaryEncodingId = def.type.ref.binaryEncodingId.toNodeId();
+    if (binaryEncodingId == NodeId.enumDefinitionDefaultBinary) {
+      final enumDefinition = def.data.cast<raw.UA_EnumDefinition>();
+      final enumFields = <int, EnumField>{};
+      for (int i = 0; i < enumDefinition.ref.fieldsSize; i++) {
+        final field = enumDefinition.ref.fields[i];
+        enumFields[field.value] =
+            EnumField(field.value, field.name.value, field.displayName.localizedText, field.description.localizedText);
       }
-      tree[field.fieldName]._description = field.fieldDescription;
+      tree.enumFields = enumFields;
+      //TODO: This only supports int32 enums for now
+      tree.typeId = NodeId.int32;
+    } else {
+      final structSchema = def.data.cast<raw.UA_StructureDefinition>();
+      // Object case & Array case
+      for (int i = 0; i < structSchema.ref.fieldsSize; i++) {
+        final field = structSchema.ref.fields[i];
+
+        if (field.dimensions.isEmpty) {
+          tree[field.fieldName] = DynamicValue.fromDataTypeDefinition(field.dataType.toNodeId(), defs);
+        } else {
+          // Don't support multi dimensional fields for now
+          assert(field.dimensions.length == 1);
+          var collection = [];
+          for (int i = 0; i < field.dimensions[0]; i++) {
+            collection.add(DynamicValue.fromDataTypeDefinition(field.dataType.toNodeId(), defs));
+          }
+          tree[field.fieldName] = DynamicValue.fromList(collection, typeId: field.dataType.toNodeId());
+        }
+        tree[field.fieldName].description = field.description.localizedText;
+        tree[field.fieldName].name = field.name.value;
+      }
     }
+    // Need description and displayname for the root
     return tree;
   }
 
@@ -245,7 +278,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       if (typeId == NodeId.uastring && insideStruct) {
         value = ContiguousStringPayload().get(reader, endian);
       } else {
-        value = nodeIdToPayloadType(typeId).get(reader, endian);
+        value = nodeIdToPayloadType(typeId)?.get(reader, endian);
       }
     }
 
@@ -325,7 +358,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       if (typeId == NodeId.uastring && insideStruct) {
         ContiguousStringPayload().set(writer, value.value, endian);
       } else {
-        nodeIdToPayloadType(value.typeId ?? autoDeduceType(value.value)).set(writer, value.value, endian);
+        nodeIdToPayloadType(value.typeId ?? autoDeduceType(value.value))?.set(writer, value.value, endian);
       }
     }
   }

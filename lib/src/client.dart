@@ -675,7 +675,7 @@ class Client {
     return completer.future;
   }
 
-  Future<Schema> readDataTypeDefinition(NodeId nodeIdType) async {
+  Future<Schema> _readDataTypeDefinition(NodeId nodeIdType) async {
     ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>();
     _lib.UA_ReadValueId_init(readValueId);
     var map = Schema();
@@ -711,12 +711,17 @@ class Client {
       final res = value.ref;
       final binaryEncodingId = res.value.type.ref.binaryEncodingId.toNodeId();
 
+      final source = calloc<raw.UA_Variant>();
+      source.ref = res.value;
+      final destination = calloc<raw.UA_Variant>();
+      _lib.UA_Variant_copy(source, destination);
+      map[nodeIdType] = destination;
+      calloc.free(source);
+
       // Read our current structure
       if (binaryEncodingId == NodeId.structureDefinitionDefaultBinary) {
-        final source = res.value.data.cast<raw.UA_StructureDefinition>();
-        final structDef = calloc<raw.UA_StructureDefinition>();
-        _lib.UA_StructureDefinition_copy(source, structDef);
-        map[nodeIdType] = structDef;
+        // cast the value to fetch the schema recursively
+        final structDef = destination.ref.data.cast<raw.UA_StructureDefinition>();
 
         // Crawl the structure for sub structures recursivly
         for (var i = 0; i < structDef.ref.fieldsSize; i++) {
@@ -727,7 +732,7 @@ class Client {
           }
           if (dataType.isString()) {
             // recursively read the nested structure type
-            final mp = await readDataTypeDefinition(dataType.toNodeId());
+            final mp = await _readDataTypeDefinition(dataType.toNodeId());
             for (var subId in mp.keys) {
               map[subId] = mp[subId]!;
             }
@@ -736,11 +741,15 @@ class Client {
           }
         }
       } else if (binaryEncodingId == NodeId.enumDefinitionDefaultBinary) {
-        final source = res.value.data.cast<raw.UA_EnumDefinition>();
-        final fieldSize = source.ref.fieldsSize;
-        for (var i = 0; i < fieldSize; i++) {
-          print("${source.ref.fields[i].value}:  ${source.ref.fields[i].displayName.text.value}");
-        }
+        //TODO: Implement enum
+        // final source = res.value.data.cast<raw.UA_EnumDefinition>();
+        // final fieldSize = source.ref.fieldsSize;
+        // final enum_def = {};
+        // for (var i = 0; i < fieldSize; i++) {
+        //   enum_def[source.ref.fields[i].value]['displayname'] = source.ref.fields[i].displayName.
+        //   enum_def[source.ref.fields[i].value]['description'] = source.ref.fields[i].description.
+        // }
+        // map[nodeIdType] = enum_def;
       } else {
         throw 'Unsupported binary encoding id: $binaryEncodingId';
       }
@@ -770,7 +779,7 @@ class Client {
       final typeId = ext.ref.content.encoded.typeId.toNodeId();
       if (!defs.containsKey(typeId)) {
         // Copy our data before async switch
-        defs.addAll(await readDataTypeDefinition(typeId));
+        defs.addAll(await _readDataTypeDefinition(typeId));
       }
     }
     final retValue = variantToValue(data, defs: defs);
@@ -853,7 +862,7 @@ class Client {
     await _clientConfig.close();
     // Clear the memory allocated to structure definitions
     for (var value in defs.values) {
-      _lib.UA_StructureDefinition_delete(value);
+      _lib.UA_Variant_delete(value);
     }
   }
 

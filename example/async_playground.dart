@@ -26,18 +26,15 @@ Future<void> main(List<String> arguments) async {
   });
 
   // final start = DateTime.now();
-  final counterId = NodeId.fromString(4, "GVL_HMI.Drives_Line1[1].HMI.p_stat_State");
-  print("Enumeration : ${await c.readValue(counterId)}");
-  final dtyped = NodeId.fromString(4, "#Type|hmis_e");
-  await c.readDataTypeDefinition(dtyped);
-  print("Done");
+
+  final counterId = NodeId.fromString(4, "GVL_BatchLines.Drives_Line1[1].HMI");
+  final subscriptionId = await c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
+  print("Subscription created");
+  c
+      .monitoredItem(counterId, subscriptionId, samplingInterval: Duration(milliseconds: 10))
+      .listen((data) => print(data));
 
   // while (true) {
-  //   final subscriptionId = await c.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-  //   print("Subscription created");
-  //   c
-  //       .monitoredItem(counterId, subscriptionId, samplingInterval: Duration(milliseconds: 10))
-  //       .listen((data) => print(data));
 
   //   // Resubscribe once a new session is created
   //   await c.config.stateStream
@@ -46,5 +43,7 @@ Future<void> main(List<String> arguments) async {
   //       .firstWhere((element) => element.sessionState == UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
   //   print("Subscription has been lost, will be recreated");
   // }
+
+  await Future.delayed(Duration(seconds: 50));
   c.delete();
 }

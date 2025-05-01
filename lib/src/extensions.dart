@@ -393,16 +393,15 @@ extension UA_StringExtension on raw.UA_String {
   }
 }
 
+extension localized on raw.UA_LocalizedText {
+  LocalizedText get localizedText {
+    return LocalizedText(text.value, locale.value);
+  }
+}
+
 // ignore: camel_case_extensions
 extension UA_StructureFieldExtension on raw.UA_StructureField {
   String get fieldName => name.value;
-  MemberDescription get fieldDescription {
-    final textValue = description.text.value;
-    final localeValue = description.locale.value;
-    // print('description: $textValue');
-    // print('locale: $localeValue');
-    return MemberDescription(textValue, localeValue);
-  }
 
   List<int> get dimensions {
     if (arrayDimensionsSize == 0 || arrayDimensions == nullptr) {
