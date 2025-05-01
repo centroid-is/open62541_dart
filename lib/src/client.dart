@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:binarize/binarize.dart' as binarize;
 import 'package:open62541/open62541.dart';
+import 'package:open62541/src/types/create_type.dart';
 
 import 'generated/open62541_bindings.dart' as raw;
 import 'extensions.dart';
@@ -264,7 +265,20 @@ class Client {
     return retValue;
   }
 
-  Future<DynamicValue> readValue(NodeId nodeId) {
+  /// Reads a value from the server.
+  ///
+  /// If [prefetchTypeId] is true, the data type of the node will be read and cached.
+  /// This is useful if you are reading a value that is a structure or an enum.
+  Future<DynamicValue> readValue(NodeId nodeId, {bool prefetchTypeId = false}) async {
+    NodeId? prefetchedTypeId;
+
+    if (prefetchTypeId) {
+      prefetchedTypeId = await readDataTypeAttribute(nodeId);
+      if (nodeIdToPayloadType(prefetchedTypeId) == null) {
+        defs.addAll(await _readDataTypeDefinition(prefetchedTypeId));
+      }
+    }
+
     Completer<DynamicValue> completer = Completer<DynamicValue>();
 
     // Create callback for this specific read request
@@ -305,7 +319,7 @@ class Client {
       final variant = calloc<raw.UA_Variant>();
       _lib.UA_Variant_copy(source, variant);
       calloc.free(source);
-      final retVal = await _variantToValueAutoSchema(variant.ref);
+      final retVal = await _variantToValueAutoSchema(variant.ref, prefetchedTypeId: prefetchedTypeId);
 
       // Close our callback so it can be garbage collected
       callback.close();
@@ -321,6 +335,64 @@ class Client {
       ffi.nullptr,
       ffi.nullptr,
     );
+    return completer.future;
+  }
+
+  Future<NodeId> readDataTypeAttribute(NodeId nodeId) async {
+    final completer = Completer<NodeId>();
+
+    late ffi.NativeCallable<
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Uint32,
+          raw.UA_StatusCode,
+          ffi.Pointer<raw.UA_NodeId>,
+        )> callback;
+
+    callback = ffi.NativeCallable<
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Uint32,
+          raw.UA_StatusCode,
+          ffi.Pointer<raw.UA_NodeId>,
+        )>.isolateLocal((
+      ffi.Pointer<raw.UA_Client> client,
+      ffi.Pointer<ffi.Void> userdata,
+      int requestId,
+      int status,
+      ffi.Pointer<raw.UA_NodeId> value,
+    ) {
+      // Close our callback so it can be garbage collected
+      callback.close();
+
+      if (completer.isCompleted) {
+        return;
+      }
+
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        completer.completeError('Failed to read data type: ${statusCodeToString(status)}');
+        return;
+      }
+
+      completer.complete(value.ref.toNodeId());
+    });
+
+    int statusCode = _lib.UA_Client_readDataTypeAttribute_async(
+      _client,
+      nodeId.toRaw(_lib),
+      callback.nativeFunction,
+      ffi.nullptr, // userdata
+      ffi.nullptr, // requestId
+    );
+
+    if (statusCode != raw.UA_STATUSCODE_GOOD) {
+      callback.close();
+      completer.completeError(
+          'UA_Client_readDataTypeAttribute: Bad status code $statusCode ${statusCodeToString(statusCode)}');
+    }
+
     return completer.future;
   }
 
@@ -383,6 +455,10 @@ class Client {
     return completer.future;
   }
 
+  /// Creates a monitored item on the server.
+  ///
+  /// If [prefetchTypeId] is true, the data type of the node will be read and cached.
+  /// This is useful if you are reading a value that is a structure or an enum.
   Stream<DynamicValue> monitoredItem(
     NodeId nodeId,
     int subscriptionId, {
@@ -391,6 +467,7 @@ class Client {
     Duration samplingInterval = const Duration(milliseconds: 250),
     bool discardOldest = true,
     int queueSize = 1,
+    bool prefetchTypeId = false,
   }) {
     // force the stream to be synchronous and run in the same isolate as the callback
     StreamController<DynamicValue> controller = StreamController<DynamicValue>();
@@ -459,7 +536,16 @@ class Client {
       return completer.future;
     };
 
-    controller.onListen = () {
+    controller.onListen = () async {
+      NodeId? prefetchedTypeId;
+
+      if (prefetchTypeId) {
+        prefetchedTypeId = await readDataTypeAttribute(nodeId);
+        if (nodeIdToPayloadType(prefetchedTypeId) == null) {
+          defs.addAll(await _readDataTypeDefinition(prefetchedTypeId));
+        }
+      }
+
       // Create our request
       ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = calloc<raw.UA_MonitoredItemCreateRequest>();
       _lib.UA_MonitoredItemCreateRequest_init(monRequest);
@@ -518,7 +604,7 @@ class Client {
           source.ref = value.ref.value;
           _lib.UA_Variant_copy(source, variant);
           calloc.free(source);
-          data = await _variantToValueAutoSchema(variant.ref);
+          data = await _variantToValueAutoSchema(variant.ref, prefetchedTypeId: prefetchedTypeId);
         } catch (e) {
           stderr.write("Error converting data to type $DynamicValue: $e");
         } finally {
@@ -752,18 +838,6 @@ class Client {
             throw 'Unsupported field type: $dataType';
           }
         }
-      } else if (binaryEncodingId == NodeId.enumDefinitionDefaultBinary) {
-        //TODO: Implement enum
-        // final source = res.value.data.cast<raw.UA_EnumDefinition>();
-        // final fieldSize = source.ref.fieldsSize;
-        // final enum_def = {};
-        // for (var i = 0; i < fieldSize; i++) {
-        //   enum_def[source.ref.fields[i].value]['displayname'] = source.ref.fields[i].displayName.
-        //   enum_def[source.ref.fields[i].value]['description'] = source.ref.fields[i].description.
-        // }
-        // map[nodeIdType] = enum_def;
-      } else {
-        throw 'Unsupported binary encoding id: $binaryEncodingId';
       }
       completer.complete(map);
     });
@@ -781,7 +855,7 @@ class Client {
 
   Schema defs = {};
 
-  Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data) async {
+  Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data, {NodeId? prefetchedTypeId}) async {
     final typeId = data.type.ref.typeId.toNodeId();
     if (typeId == NodeId.structure) {
       // Cast the data to extension object
@@ -792,11 +866,11 @@ class Client {
         defs.addAll(await _readDataTypeDefinition(typeId));
       }
     }
-    final retValue = variantToValue(data, defs: defs);
+    final retValue = variantToValue(data, defs: defs, prefetchedTypeId: prefetchedTypeId);
     return retValue;
   }
 
-  static DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs}) {
+  static DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? prefetchedTypeId}) {
     // Check if the variant contains no data
     if (data.data == ffi.nullptr) {
       return DynamicValue();
@@ -806,6 +880,11 @@ class Client {
     if (typeId == NodeId.structure) {
       final ext = data.data.cast<raw.UA_ExtensionObject>();
       typeId = ext.ref.content.encoded.typeId.toNodeId();
+    } else if (prefetchedTypeId != null && defs != null && defs.containsKey(prefetchedTypeId)) {
+      // Handle known enum types
+      // Because the typeId of the `data` variant is integer,
+      // we need to use the typeId of the enum definition
+      typeId = prefetchedTypeId;
     }
 
     final dimensions = data.dimensions;
@@ -814,14 +893,14 @@ class Client {
     DynamicValue retValue;
 
     // Read structure from opc-ua server
-    DynamicValue dynamicValueSchema(NodeId nodeId) {
-      if (nodeId.isNumeric()) {
-        return DynamicValue(typeId: nodeId);
+    DynamicValue dynamicValueSchema(NodeId typeId) {
+      if (typeId.isNumeric()) {
+        return DynamicValue(typeId: typeId);
       }
-      if (nodeId.isString()) {
-        return DynamicValue.fromDataTypeDefinition(nodeId, defs!);
+      if (typeId.isString()) {
+        return DynamicValue.fromDataTypeDefinition(typeId, defs!);
       }
-      throw 'Unsupported nodeId type: $nodeId';
+      throw 'Unsupported nodeId type: $typeId';
     }
 
     DynamicValue createNestedArray(NodeId typeId, List<int> dims) {
