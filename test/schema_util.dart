@@ -6,7 +6,8 @@ import 'package:open62541/src/library.dart';
 import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/node_id.dart';
 
-Pointer<raw.UA_StructureDefinition> buildDef(List<Pointer<raw.UA_StructureField>> fields) {
+Pointer<raw.UA_Variant> buildDef(List<Pointer<raw.UA_StructureField>> fields) {
+  Pointer<raw.UA_Variant> retVariant = calloc<raw.UA_Variant>();
   Pointer<raw.UA_StructureDefinition> retValue = calloc<raw.UA_StructureDefinition>();
   retValue.ref.fields = calloc(fields.length);
   retValue.ref.fieldsSize = fields.length;
@@ -16,7 +17,10 @@ Pointer<raw.UA_StructureDefinition> buildDef(List<Pointer<raw.UA_StructureField>
     calloc.free(fields[i]);
   }
 
-  return retValue;
+  retVariant.ref.data = retValue.cast();
+  retVariant.ref.type = Pointer.fromAddress(Open62541Singleton().lib.addresses.UA_TYPES.address +
+      (raw.UA_TYPES_STRUCTUREDEFINITION * sizeOf<raw.UA_DataType>()));
+  return retVariant;
 }
 
 Pointer<raw.UA_StructureField> buildField(NodeId typeId, String name, List<int> arrayDimensions, String description) {
