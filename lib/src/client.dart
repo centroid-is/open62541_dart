@@ -838,6 +838,18 @@ class Client {
             throw 'Unsupported field type: $dataType';
           }
         }
+      } else if (binaryEncodingId == NodeId.enumDefinitionDefaultBinary) {
+        //TODO: Implement enum
+        // final source = res.value.data.cast<raw.UA_EnumDefinition>();
+        // final fieldSize = source.ref.fieldsSize;
+        // final enum_def = {};
+        // for (var i = 0; i < fieldSize; i++) {
+        //   enum_def[source.ref.fields[i].value]['displayname'] = source.ref.fields[i].displayName.
+        //   enum_def[source.ref.fields[i].value]['description'] = source.ref.fields[i].description.
+        // }
+        // map[nodeIdType] = enum_def;
+      } else {
+        throw 'Unsupported binary encoding id: $binaryEncodingId';
       }
       completer.complete(map);
     });
