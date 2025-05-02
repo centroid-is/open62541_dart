@@ -43,9 +43,12 @@ Future<void> main(List<String> arguments) async {
   //   print("Subscription has been lost, will be recreated");
   // }
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
   await Future.delayed(Duration(seconds: 10));
 
 >>>>>>> 8d0a23e (Added nullptr checks and stop inflight async operations)
+=======
+>>>>>>> eefc8d4 (Use main)
   c.delete();
 }

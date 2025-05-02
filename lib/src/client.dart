@@ -412,7 +412,6 @@ class Client {
     ffi.Pointer<ffi.Uint32> localRequestId = ffi.nullptr;
 
     controller.onCancel = () {
-      print("This is triggered");
       final completer = Completer<void>();
       if (monId == null) {
         if (localRequestId == ffi.nullptr) {
