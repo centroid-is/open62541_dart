@@ -94,6 +94,8 @@ class Client {
       config.ref.secureChannelLifeTime = secureChannelLifeTime.inMilliseconds;
     }
     _clientConfig = ClientConfig(config);
+    requestId = calloc<ffi.Uint32>();
+    requestId.value = 100000;
   }
 
   /// Creates a Client instance using static linking or dynamic linking based on platform.
@@ -409,47 +411,54 @@ class Client {
 
     // Store the monitored item id here so we can use it in the onCancel closure
     int? monId;
+    ffi.Pointer<ffi.Uint32> localRequestId = ffi.nullptr;
 
     controller.onCancel = () {
+      print("This is triggered");
       final completer = Completer<void>();
       if (monId == null) {
-        throw 'No monitored item id to delete, this propably mean the stream was closed before fully created';
-      }
-      final request = calloc<raw.UA_DeleteMonitoredItemsRequest>();
-      _lib.UA_DeleteMonitoredItemsRequest_init(request);
-      request.ref.subscriptionId = subscriptionId;
-      final ids = calloc<ffi.Uint32>(1);
-      ids[0] = monId!;
-      request.ref.monitoredItemIds = ids;
-      request.ref.monitoredItemIdsSize = 1;
-      request.ref.subscriptionId = subscriptionId;
-
-      late ffi.NativeCallable<
-          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
-              ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse>)> deleteCallback;
-      deleteCallback = ffi.NativeCallable<
-          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
-              ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
-          ffi.Pointer<ffi.Void> userdata, int requestId, ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse> response) {
-        if (response.ref.results.value != raw.UA_STATUSCODE_GOOD) {
-          stderr.write(
-              "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}");
+        if (localRequestId == ffi.nullptr) {
+          throw 'This should not happen';
+        } else {
+          // The monitored item request has not yet returned
+          _lib.UA_Client_cancelByRequestId(_client, localRequestId.value, ffi.nullptr);
         }
-        _lib.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
-        monitorCallback.close();
-        calloc.free(callbacks);
-        deleteCallback.close();
-        monId = null;
-        completer.complete();
-      });
-      _lib.UA_Client_MonitoredItems_delete_async(
-        _client,
-        request.ref,
-        deleteCallback.nativeFunction,
-        ffi.nullptr,
-        ffi.nullptr,
-      );
+      } else {
+        final request = calloc<raw.UA_DeleteMonitoredItemsRequest>();
+        _lib.UA_DeleteMonitoredItemsRequest_init(request);
+        request.ref.subscriptionId = subscriptionId;
+        final ids = calloc<ffi.Uint32>(1);
+        ids[0] = monId!;
+        request.ref.monitoredItemIds = ids;
+        request.ref.monitoredItemIdsSize = 1;
+        request.ref.subscriptionId = subscriptionId;
 
+        late ffi.NativeCallable<
+            ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
+                ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse>)> deleteCallback;
+        deleteCallback = ffi.NativeCallable<
+            ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
+                ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
+            ffi.Pointer<ffi.Void> userdata, int requestId, ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse> response) {
+          if (response.ref.results.value != raw.UA_STATUSCODE_GOOD) {
+            stderr.write(
+                "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}");
+          }
+          _lib.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
+          monitorCallback.close();
+          calloc.free(callbacks);
+          deleteCallback.close();
+          monId = null;
+          completer.complete();
+        });
+        _lib.UA_Client_MonitoredItems_delete_async(
+          _client,
+          request.ref,
+          deleteCallback.nativeFunction,
+          ffi.nullptr,
+          ffi.nullptr,
+        );
+      }
       return completer.future;
     };
 
@@ -542,23 +551,28 @@ class Client {
         // Cleanup the request memory
         _lib.UA_CreateMonitoredItemsRequest_delete(createRequest);
         createCallback.close();
-        monId = response.ref.results.ref.monitoredItemId;
+        calloc.free(localRequestId);
 
         bool error = false;
-
-        if (response.ref.resultsSize == 0) {
-          controller.addError('No results for create monitored item');
+        if (response == ffi.nullptr) {
+          controller.addError('ffi pointer is null');
           error = true;
-        }
-        if (response.ref.results.ref.statusCode != raw.UA_STATUSCODE_GOOD) {
-          controller.addError(
-              'Unable to create monitored item: ${response.ref.results.ref.statusCode} ${statusCodeToString(response.ref.results.ref.statusCode)}');
-          error = true;
-        }
-        if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-          controller.addError(
-              'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
-          error = true;
+        } else {
+          if (response.ref.resultsSize == 0) {
+            controller.addError('No results for create monitored item');
+            error = true;
+          } else if (response.ref.results.ref.statusCode != raw.UA_STATUSCODE_GOOD) {
+            controller.addError(
+                'Unable to create monitored item: ${response.ref.results.ref.statusCode} ${statusCodeToString(response.ref.results.ref.statusCode)}');
+            error = true;
+          } else if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+            controller.addError(
+                'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
+            error = true;
+          } else {
+            monId = response.ref.results.ref.monitoredItemId;
+            print("requestId: $requestId");
+          }
         }
         if (error) {
           controller.onCancel = () {}; // Don't invoke the real close callback
@@ -567,6 +581,9 @@ class Client {
           controller.close();
         }
       });
+      requestId.value++;
+      localRequestId = calloc<ffi.Uint32>();
+      localRequestId.value = requestId.value;
       final statusCode = _lib.UA_Client_MonitoredItems_createDataChanges_async(
         _client,
         createRequest.ref,
@@ -575,7 +592,7 @@ class Client {
         ffi.nullptr,
         createCallback.nativeFunction,
         ffi.nullptr,
-        ffi.nullptr,
+        localRequestId,
       );
       if (statusCode != raw.UA_STATUSCODE_GOOD) {
         _lib.UA_CreateMonitoredItemsRequest_delete(createRequest);
@@ -766,6 +783,8 @@ class Client {
 
     return completer.future;
   }
+
+  late ffi.Pointer<ffi.Uint32> requestId;
 
   Schema defs = {};
 

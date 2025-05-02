@@ -12,6 +12,8 @@ void main() async {
   Client? client;
   final boolNodeId = NodeId.fromString(1, "the.bBool");
   final intNodeId = NodeId.fromString(1, "the.int");
+
+  bool quitServer = false; // For tests that need to stop the server
   setUp(() async {
     print("Setting up");
     // Initalize an open62541 server
@@ -20,7 +22,7 @@ void main() async {
 
     // Run the server while we test
     () async {
-      while (true) {
+      while (!quitServer) {
         // The true is if the server should wait for messages in the network layer
         // The function returns how long it can wait before the next iteration
         // That is a really high number and causes my tests to run slow.
@@ -168,6 +170,13 @@ void main() async {
     // ignore: unused_local_variable
     final controller = client!.monitoredItem(boolNodeId, subscription);
     await Future.delayed(Duration(milliseconds: 100));
+  });
+
+  test('Create a monitored item and then cancel before it has been created', () async {
+    final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
+    final stream = client!.monitoredItem(boolNodeId, subscription);
+    final streamSub = stream.listen((event) => expect(true, false));
+    expect(streamSub.cancel(), throwsException);
   });
 
   tearDown(() async {
