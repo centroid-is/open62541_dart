@@ -42,5 +42,7 @@ Future<void> main(List<String> arguments) async {
   //       .firstWhere((element) => element.sessionState == UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
   //   print("Subscription has been lost, will be recreated");
   // }
+  await Future.delayed(Duration(seconds: 10));
+
   c.delete();
 }
