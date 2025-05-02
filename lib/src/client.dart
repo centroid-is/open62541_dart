@@ -94,8 +94,6 @@ class Client {
       config.ref.secureChannelLifeTime = secureChannelLifeTime.inMilliseconds;
     }
     _clientConfig = ClientConfig(config);
-    requestId = calloc<ffi.Uint32>();
-    requestId.value = 100000;
   }
 
   /// Creates a Client instance using static linking or dynamic linking based on platform.
@@ -581,9 +579,7 @@ class Client {
           controller.close();
         }
       });
-      requestId.value++;
       localRequestId = calloc<ffi.Uint32>();
-      localRequestId.value = requestId.value;
       final statusCode = _lib.UA_Client_MonitoredItems_createDataChanges_async(
         _client,
         createRequest.ref,
@@ -783,8 +779,6 @@ class Client {
 
     return completer.future;
   }
-
-  late ffi.Pointer<ffi.Uint32> requestId;
 
   Schema defs = {};
 
