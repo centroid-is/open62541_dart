@@ -173,10 +173,25 @@ void main() async {
   });
 
   test('Create a monitored item and then cancel before it has been created', () async {
+    // This test has no expected outcome.
+    // A failure is of the test is a timeout.
+
+    // Not properly closing callbacks or cleaning up resources will cause the test to hang.
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     final stream = client!.monitoredItem(boolNodeId, subscription);
     final streamSub = stream.listen((event) => expect(true, false));
-    expect(streamSub.cancel(), throwsException);
+    await streamSub.cancel();
+  });
+
+  test('Create a monitored item and then cancel before a request id has been alloted', () async {
+    // This test has no expected outcome.
+    // A failure is of the test is a timeout.
+
+    // Not properly closing callbacks or cleaning up resources will cause the test to hang.
+    final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
+    final stream = client!.monitoredItem(boolNodeId, subscription, prefetchTypeId: true);
+    final streamSub = stream.listen((event) => expect(true, false));
+    await streamSub.cancel();
   });
 
   tearDown(() async {

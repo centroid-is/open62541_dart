@@ -140,7 +140,7 @@ class Client {
   }
 
   static ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType, raw.open62541 lib) {
-    int type = uaType.index;
+    int type = uaType.value;
     if (type < 0 || type > raw.UA_TYPES_COUNT) {
       throw 'Type out of boundary $type';
     }
@@ -338,6 +338,72 @@ class Client {
     return completer.future;
   }
 
+  // Reimplementation of the readAttribute method from open62541
+  // this method on the flutter side has the same purpose. To deal with
+  // the complexity of calling the underlying service and provide a
+  // single point of entry for all read operations.
+  Future<DynamicValue> readAttribute() async {
+    final nodes = [
+      (NodeId.fromString(4, ""), AttributeId.UA_ATTRIBUTEID_VALUE),
+      (NodeId.fromString(4, ""), AttributeId.UA_ATTRIBUTEID_DESCRIPTION),
+      (NodeId.fromString(4, ""), AttributeId.UA_ATTRIBUTEID_DISPLAYNAME),
+    ];
+
+    ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>(nodes.length);
+    final completer = Completer<DynamicValue>();
+    for (var i = 0; i < nodes.length; i++) {
+      readValueId[i].nodeId = nodes[i].$1.toRaw(_lib);
+      readValueId[i].attributeId = nodes[i].$2.value;
+    }
+
+    ffi.Pointer<raw.UA_ReadRequest> request = calloc<raw.UA_ReadRequest>();
+    _lib.UA_ReadRequest_init(request);
+    request.ref.nodesToRead = readValueId;
+    request.ref.nodesToReadSize = nodes.length;
+    request.ref.timestampsToReturnAsInt = raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH.value;
+
+    ffi.Pointer<ffi.Uint32> requestId = calloc<ffi.Uint32>();
+
+    late ffi.NativeCallable<
+            ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>
+        callback;
+
+    callback = ffi.NativeCallable<
+        ffi.Void Function(
+            ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal((
+      ffi.Pointer<raw.UA_Client> client,
+      ffi.Pointer<ffi.Void> userdata,
+      int requestId,
+      ffi.Pointer<ffi.Void> voidPointer,
+    ) async {
+      ffi.Pointer<raw.UA_ReadResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
+      print(response.ref.resultsSize);
+      print("This is semi working");
+      completer.complete(DynamicValue());
+    });
+
+    print(Client.getType(UaTypes.boolean, _lib).ref.typeName.cast<Utf8>().toDartString());
+    print(Client.getType(UaTypes.readRequest, _lib).ref.typeName.cast<Utf8>().toDartString());
+    print(Client.getType(UaTypes.readResponse, _lib).ref.typeName.cast<Utf8>().toDartString());
+    int res = _lib.UA_Client_AsyncService(
+      _client,
+      request.cast(),
+      Client.getType(UaTypes.readRequest, _lib),
+      callback.nativeFunction,
+      Client.getType(UaTypes.readResponse, _lib),
+      ffi.nullptr,
+      requestId,
+    );
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      completer.completeError('Failed to read attribute: ${statusCodeToString(res)}');
+      return completer.future;
+    }
+
+    print(requestId.value);
+    print("this got executed");
+    return completer.future;
+  }
+
   Future<NodeId> readDataTypeAttribute(NodeId nodeId) async {
     final completer = Completer<NodeId>();
 
@@ -462,8 +528,8 @@ class Client {
   Stream<DynamicValue> monitoredItem(
     NodeId nodeId,
     int subscriptionId, {
-    raw.UA_AttributeId attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
-    raw.UA_MonitoringMode monitoringMode = raw.UA_MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    AttributeId attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
+    MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
     Duration samplingInterval = const Duration(milliseconds: 250),
     bool discardOldest = true,
     int queueSize = 1,
@@ -496,6 +562,7 @@ class Client {
         } else {
           // The monitored item request has not yet returned
           _lib.UA_Client_cancelByRequestId(_client, localRequestId.value, ffi.nullptr);
+          completer.complete();
         }
       } else {
         final request = calloc<raw.UA_DeleteMonitoredItemsRequest>();
@@ -654,7 +721,6 @@ class Client {
             error = true;
           } else {
             monId = response.ref.results.ref.monitoredItemId;
-            print("requestId: $requestId");
           }
         }
         if (error) {
@@ -779,7 +845,7 @@ class Client {
     var map = Schema();
     final completer = Completer<Schema>();
     readValueId.ref.nodeId = nodeIdType.toRaw(_lib);
-    readValueId.ref.attributeId = raw.UA_AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION.value;
+    readValueId.ref.attributeId = AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION.value;
 
     late ffi.NativeCallable<
         ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32, raw.UA_StatusCode,
