@@ -172,7 +172,6 @@ void main() async {
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     // ignore: unused_local_variable
     final controller = client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10));
-    await Future.delayed(Duration(milliseconds: 100));
   });
 
   test('Create a monitored item and then cancel before it has been created', () async {
@@ -188,6 +187,7 @@ void main() async {
 
   tearDown(() async {
     print("Tearing down");
+
     lib.UA_Server_run_shutdown(server);
 
     await client!.delete();

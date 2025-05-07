@@ -548,9 +548,19 @@ class Client {
             ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
                 ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
             ffi.Pointer<ffi.Void> userdata, int requestId, ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse> response) {
-          if (response.ref.results.value != raw.UA_STATUSCODE_GOOD) {
+          if (response == ffi.nullptr) {
             stderr.write(
-                "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}");
+                "Error deleting monitored item, nullptr provided connection propably already closed. Client cleanup.");
+          } else if (response.ref.resultsSize == 0) {
+            stderr.write(
+                "Error deleting monitored item, no results provided, connection propably already closed. Client cleanup.");
+          } else {
+            for (var i = 0; i < response.ref.resultsSize; i++) {
+              if (response.ref.results[i] != raw.UA_STATUSCODE_GOOD) {
+                stderr.write(
+                    "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}");
+              }
+            }
           }
           _lib.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
           monitorCallback.close();
