@@ -770,14 +770,28 @@ class Client {
     return controller.stream;
   }
 
-  Stream<DynamicValue> monitorValue(NodeId nodeId, int subscriptionId) {
+  Stream<DynamicValue> monitor(
+    NodeId nodeId,
+    int subscriptionId, {
+    MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    Duration samplingInterval = const Duration(milliseconds: 250),
+    bool discardOldest = true,
+    int queueSize = 1,
+  }) {
     final controller = StreamController<DynamicValue>();
-    final stream = monitoredItems({
-      nodeId: [
-        AttributeId.UA_ATTRIBUTEID_DATATYPE,
-        AttributeId.UA_ATTRIBUTEID_VALUE,
-      ]
-    }, subscriptionId);
+    final stream = monitoredItems(
+      {
+        nodeId: [
+          AttributeId.UA_ATTRIBUTEID_DATATYPE,
+          AttributeId.UA_ATTRIBUTEID_VALUE,
+        ]
+      },
+      subscriptionId,
+      monitoringMode: monitoringMode,
+      samplingInterval: samplingInterval,
+      discardOldest: discardOldest,
+      queueSize: queueSize,
+    );
     final subscription = stream.listen((event) => controller.add(event.values.first));
     subscription.onError((error) => controller.addError(error));
     controller.onCancel = () {
