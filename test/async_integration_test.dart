@@ -108,7 +108,7 @@ void main() async {
     final items = [true, false, true, false];
     final comp = Completer<void>();
     int counter = 0;
-    final stream = client!.monitoredItem(boolNodeId, subscription).map<bool>((event) {
+    final stream = client!.monitorValue(boolNodeId, subscription).map<bool>((event) {
       counter = counter + 1;
       if (counter == items.length) {
         comp.complete();
@@ -140,14 +140,14 @@ void main() async {
     final comp = Completer<void>();
     final items = [true, false, true, false];
     final intItems = [1, 2, 3, 4];
-    final boolStream = client!.monitoredItem(boolNodeId, subscription).map<bool>((event) {
+    final boolStream = client!.monitorValue(boolNodeId, subscription).map<bool>((event) {
       boolCounter = boolCounter + 1;
       if (boolCounter == items.length && intCounter == intItems.length) {
         comp.complete();
       }
       return event.value;
     });
-    final intStream = client!.monitoredItem(intNodeId, subscription).map<int>((event) {
+    final intStream = client!.monitorValue(intNodeId, subscription).map<int>((event) {
       intCounter = intCounter + 1;
       if (boolCounter == items.length && intCounter == intItems.length) {
         comp.complete();
@@ -168,7 +168,7 @@ void main() async {
   test('Creating a subscription and not using it should not hang the process', () async {
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     // ignore: unused_local_variable
-    final controller = client!.monitoredItem(boolNodeId, subscription);
+    final controller = client!.monitorValue(boolNodeId, subscription);
     await Future.delayed(Duration(milliseconds: 100));
   });
 
@@ -178,7 +178,7 @@ void main() async {
 
     // Not properly closing callbacks or cleaning up resources will cause the test to hang.
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-    final stream = client!.monitoredItem(boolNodeId, subscription);
+    final stream = client!.monitorValue(boolNodeId, subscription);
     final streamSub = stream.listen((event) => expect(true, false));
     await streamSub.cancel();
   });

@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:binarize/binarize.dart' as binarize;
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/types/create_type.dart';
+import 'package:tuple/tuple.dart';
 
 import 'generated/open62541_bindings.dart' as raw;
 import 'extensions.dart';
@@ -374,7 +375,7 @@ class Client {
             final dataType = value.data.cast<raw.UA_NodeId>();
             reference.typeId = dataType.ref.toNodeId();
           case AttributeId.UA_ATTRIBUTEID_VALUE:
-            final temporary = await _variantToValueAutoSchema(value);
+            final temporary = await _variantToValueAutoSchema(value, reference.typeId);
             reference.value = temporary.value;
             reference.typeId = reference.typeId ?? temporary.typeId; // Prefer explicitly fetched type id
             reference.enumFields = reference.enumFields ?? temporary.enumFields;
@@ -488,37 +489,39 @@ class Client {
   ///
   /// If [prefetchTypeId] is true, the data type of the node will be read and cached.
   /// This is useful if you are reading a value that is a structure or an enum.
-  Stream<DynamicValue> monitoredItem(
-    NodeId nodeId,
+  Stream<Map<NodeId, DynamicValue>> monitoredItems(
+    ReadAttributeParam nodes,
     int subscriptionId, {
-    AttributeId attr = AttributeId.UA_ATTRIBUTEID_VALUE,
     MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
     Duration samplingInterval = const Duration(milliseconds: 250),
     bool discardOldest = true,
     int queueSize = 1,
   }) {
-    // force the stream to be synchronous and run in the same isolate as the callback
-    StreamController<DynamicValue> controller = StreamController<DynamicValue>();
+    StreamController<Map<NodeId, DynamicValue>> controller = StreamController<Map<NodeId, DynamicValue>>();
 
     // We define our monitor callback here so we can use it in the onListen and onCancel closures
     late ffi.NativeCallable<
         ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>, ffi.Uint32,
             ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)> monitorCallback;
 
+    // figure out the size of the node set
+    final nodeCount = nodes.entries.map<int>((entry) => entry.value.length).fold(0, (prev, curr) => prev + curr);
+
     // Since the api we are using handles creating multiple monitored items at once, we need to create an array of callbacks
     final callbacks = calloc<
         ffi.Pointer<
             ffi.NativeFunction<
                 ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>, ffi.Uint32,
-                    ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)>>>(); // For now just allocate one
+                    ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)>>>(nodeCount); // For now just allocate one
 
     // Store the monitored item id here so we can use it in the onCancel closure
-    int? monId;
+    List<int> monIds = [];
     ffi.Pointer<ffi.Uint32> localRequestId = ffi.nullptr;
+    Map<int, Tuple2<NodeId, AttributeId>> monIdToNodeAndAttribute = {};
 
     controller.onCancel = () {
       final completer = Completer<void>();
-      if (monId == null) {
+      if (monIds.isEmpty) {
         if (localRequestId == ffi.nullptr) {
           throw 'This should not happen';
         } else {
@@ -530,10 +533,12 @@ class Client {
         final request = calloc<raw.UA_DeleteMonitoredItemsRequest>();
         _lib.UA_DeleteMonitoredItemsRequest_init(request);
         request.ref.subscriptionId = subscriptionId;
-        final ids = calloc<ffi.Uint32>(1);
-        ids[0] = monId!;
+        final ids = calloc<ffi.Uint32>(monIds.length);
+        for (var i = 0; i < monIds.length; i++) {
+          ids[i] = monIds[i];
+        }
         request.ref.monitoredItemIds = ids;
-        request.ref.monitoredItemIdsSize = 1;
+        request.ref.monitoredItemIdsSize = monIds.length;
         request.ref.subscriptionId = subscriptionId;
 
         late ffi.NativeCallable<
@@ -551,7 +556,7 @@ class Client {
           monitorCallback.close();
           calloc.free(callbacks);
           deleteCallback.close();
-          monId = null;
+          monIds.clear();
           completer.complete();
         });
         _lib.UA_Client_MonitoredItems_delete_async(
@@ -567,23 +572,30 @@ class Client {
 
     controller.onListen = () async {
       // Create our request
-      ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = calloc<raw.UA_MonitoredItemCreateRequest>();
-      _lib.UA_MonitoredItemCreateRequest_init(monRequest);
-      monRequest.ref.itemToMonitor.nodeId = nodeId.toRaw(_lib);
-      monRequest.ref.itemToMonitor.attributeId = attr.value;
-      monRequest.ref.monitoringModeAsInt = monitoringMode.value;
-      monRequest.ref.requestedParameters.samplingInterval = samplingInterval.inMicroseconds / 1000.0;
-      monRequest.ref.requestedParameters.discardOldest = discardOldest;
-      monRequest.ref.requestedParameters.queueSize = queueSize;
+      ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = calloc<raw.UA_MonitoredItemCreateRequest>(nodeCount);
+      var index = 0;
+      for (var entry in nodes.entries) {
+        for (var attribute in entry.value) {
+          monRequest[index].itemToMonitor.nodeId = entry.key.toRaw(_lib);
+          monRequest[index].itemToMonitor.attributeId = attribute.value;
+          monRequest[index].monitoringModeAsInt = monitoringMode.value;
+          monRequest[index].requestedParameters.samplingInterval = samplingInterval.inMicroseconds / 1000.0;
+          monRequest[index].requestedParameters.discardOldest = discardOldest;
+          monRequest[index].requestedParameters.queueSize = queueSize;
+          index++;
+        }
+      }
 
       ffi.Pointer<raw.UA_CreateMonitoredItemsRequest> createRequest = calloc<raw.UA_CreateMonitoredItemsRequest>();
       _lib.UA_CreateMonitoredItemsRequest_init(createRequest);
       createRequest.ref.subscriptionId = subscriptionId;
       createRequest.ref.itemsToCreate = monRequest;
-      createRequest.ref.itemsToCreateSize = 1;
+      createRequest.ref.itemsToCreateSize = nodeCount;
+
+      Map<NodeId, DynamicValue> latestValues = {};
+      Set<int> seenMonIds = {};
 
       // Assign our monitor callback pointer, This one stays alive for the duration of the stream
-
       monitorCallback = ffi.NativeCallable<
           ffi.Void Function(
             ffi.Pointer<raw.UA_Client>,
@@ -613,35 +625,70 @@ class Client {
           controller.addError('Failed to read value: ${statusCodeToString(value.ref.status)}');
           return;
         }
-        DynamicValue data = DynamicValue();
-        final variant = calloc<raw.UA_Variant>();
         try {
-          // Steal the variant pointer from open62541 so they don't delete it
-          // if we don't do this, the variant will be freed on a flutter async
-          // boundary. f.e. while we fetch the structure of a schema.
-          // because the callback we are currently in "returns" before completing.
-          final source = calloc<raw.UA_Variant>();
-          source.ref = value.ref.value;
-          _lib.UA_Variant_copy(source, variant);
-          calloc.free(source);
-          data = await _variantToValueAutoSchema(variant.ref);
+          //TODO: Find the stuff we used to create the request
+          final temp = monIdToNodeAndAttribute[monId]!;
+          final nodeId = temp.item1;
+          final attributeId = temp.item2;
+          seenMonIds.add(monId);
+
+          var reference = latestValues[nodeId] ?? DynamicValue();
+          final ref = value.ref.value;
+
+          switch (attributeId) {
+            case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
+              final description = ref.data.cast<raw.UA_LocalizedText>();
+              reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
+            case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
+              final displayName = ref.data.cast<raw.UA_LocalizedText>();
+              reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
+            case AttributeId.UA_ATTRIBUTEID_DATATYPE:
+              final dataType = ref.data.cast<raw.UA_NodeId>();
+              reference.typeId = dataType.ref.toNodeId();
+            case AttributeId.UA_ATTRIBUTEID_VALUE:
+              // Steal the variant pointer from open62541 so they don't delete it
+              // if we don't do this, the variant will be freed on a flutter async
+              // boundary. f.e. while we fetch the structure of a schema.
+              // because the callback we are currently in "returns" before completing.
+              final source = calloc<raw.UA_Variant>();
+              source.ref = value.ref.value;
+              final variant = calloc<raw.UA_Variant>();
+              _lib.UA_Variant_copy(source, variant);
+              calloc.free(source);
+              final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
+              reference.value = data.value;
+              reference.typeId = data.typeId;
+              reference.enumFields = data.enumFields;
+              _lib.UA_Variant_delete(variant);
+            case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
+              final temporary =
+                  DynamicValue.fromDataTypeDefinition(reference.typeId ?? ref.type.ref.typeId.toNodeId(), ref);
+              reference.value = temporary.value;
+              reference.typeId = reference.typeId ?? temporary.typeId;
+              reference.enumFields = reference.enumFields ?? temporary.enumFields;
+            default:
+              throw 'Unhandled attribute id $attributeId';
+          }
+          latestValues[nodeId] = reference;
+          if (controller.isClosed) {
+            return; // While processing the data the controller might have been closed
+          }
+          try {
+            if (seenMonIds.length == nodeCount) {
+              controller.add(latestValues);
+            }
+          } catch (e) {
+            stderr.write("Error adding data: $e");
+          }
         } catch (e) {
           stderr.write("Error converting data to type $DynamicValue: $e");
-        } finally {
-          // Delete the variant again that we used to reference the data
-          _lib.UA_Variant_delete(variant);
-        }
-        if (controller.isClosed) {
-          return; // While processing the data, the stream might have been closed
-        }
-        try {
-          controller.add(data);
-        } catch (e) {
-          stderr.write("Error adding data: $e $data");
         }
       });
 
-      callbacks[0] = monitorCallback.nativeFunction;
+      // Set all the callbacks to have the same handler function
+      for (var i = 0; i < nodeCount; i++) {
+        callbacks[i] = monitorCallback.nativeFunction;
+      }
 
       // Define the callback that is invoked when the monitored item is created
       late ffi.NativeCallable<
@@ -673,7 +720,19 @@ class Client {
                 'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
             error = true;
           } else {
-            monId = response.ref.results.ref.monitoredItemId;
+            assert(response.ref.resultsSize == nodeCount);
+            int index = 0;
+            for (var node in nodes.keys) {
+              for (var attributes in nodes[node]!) {
+                if (response.ref.results[index].statusCode != raw.UA_STATUSCODE_GOOD) {
+                  throw 'Some failure, need to handle this';
+                } else {
+                  monIds.add(response.ref.results[index].monitoredItemId);
+                  monIdToNodeAndAttribute[response.ref.results[index].monitoredItemId] = Tuple2(node, attributes);
+                  index++;
+                }
+              }
+            }
           }
         }
         if (error) {
@@ -708,6 +767,22 @@ class Client {
       }
     };
 
+    return controller.stream;
+  }
+
+  Stream<DynamicValue> monitorValue(NodeId nodeId, int subscriptionId) {
+    final controller = StreamController<DynamicValue>();
+    final stream = monitoredItems({
+      nodeId: [
+        AttributeId.UA_ATTRIBUTEID_DATATYPE,
+        AttributeId.UA_ATTRIBUTEID_VALUE,
+      ]
+    }, subscriptionId);
+    final subscription = stream.listen((event) => controller.add(event.values.first));
+    subscription.onError((error) => controller.addError(error));
+    controller.onCancel = () {
+      subscription.cancel();
+    };
     return controller.stream;
   }
 
@@ -814,28 +889,33 @@ class Client {
 
   Schema defs = {};
 
-  Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data) async {
-    final typeId = data.type.ref.typeId.toNodeId();
+  Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data, [NodeId? dataTypeId]) async {
+    var typeId = data.type.ref.typeId.toNodeId();
     if (typeId == NodeId.structure) {
       // Cast the data to extension object
       final ext = data.data.cast<raw.UA_ExtensionObject>();
-      final typeId = ext.ref.content.encoded.typeId.toNodeId();
+      typeId = ext.ref.content.encoded.typeId.toNodeId();
       if (!defs.containsKey(typeId)) {
         // Copy our data before async switch
         defs.addAll(await _readDataTypeDefinition(typeId));
       }
+    } else if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null) {
+      if (!defs.containsKey(dataTypeId)) {
+        // Copy our data before async switch
+        defs.addAll(await _readDataTypeDefinition(dataTypeId));
+      }
     }
-    final retValue = variantToValue(data, defs: defs);
+    final retValue = variantToValue(data, defs: defs, dataTypeId: dataTypeId);
     return retValue;
   }
 
-  static DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs}) {
+  static DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataTypeId}) {
     // Check if the variant contains no data
     if (data.data == ffi.nullptr) {
       return DynamicValue();
     }
 
-    var typeId = data.type.ref.typeId.toNodeId();
+    var typeId = dataTypeId ?? data.type.ref.typeId.toNodeId();
     if (typeId == NodeId.structure) {
       final ext = data.data.cast<raw.UA_ExtensionObject>();
       typeId = ext.ref.content.encoded.typeId.toNodeId();

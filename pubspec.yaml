@@ -9,6 +9,7 @@ dependencies:
   binarize: ^2.0.0
   collection: ^1.19.0
   ffi: ^2.1.2
+  tuple: ^2.0.2
 platforms:
   linux:
 topics:
