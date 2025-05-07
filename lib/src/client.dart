@@ -528,7 +528,7 @@ class Client {
   Stream<DynamicValue> monitoredItem(
     NodeId nodeId,
     int subscriptionId, {
-    AttributeId attr = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE,
+    AttributeId attr = AttributeId.UA_ATTRIBUTEID_VALUE,
     MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
     Duration samplingInterval = const Duration(milliseconds: 250),
     bool discardOldest = true,
