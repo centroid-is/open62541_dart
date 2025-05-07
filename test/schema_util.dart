@@ -1,5 +1,4 @@
 import 'package:open62541/open62541.dart';
-import 'package:open62541/src/node_id.dart';
 
 DynamicValue buildDef(NodeId typeId, List<DynamicValue> fields) {
   final ret = DynamicValue(typeId: typeId);
