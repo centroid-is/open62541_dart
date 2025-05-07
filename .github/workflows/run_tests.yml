@@ -31,9 +31,11 @@ jobs:
         run: dart pub get
 
       - name: Verify formatting
+        if: matrix.os == 'ubuntu-latest' # Only run on Linux, dont need all the runners to run this
         run: dart format --set-exit-if-changed . # Line length is set in analysis_options.yaml
 
       - name: Analyze project source
+        if: matrix.os == 'ubuntu-latest' # Only run on Linux, dont need all the runners to run this
         run: dart analyze --fatal-infos --fatal-warnings .
 
       - name: Install dependencies for open62541 library Linux

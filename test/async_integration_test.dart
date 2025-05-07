@@ -186,7 +186,7 @@ void main() async {
   });
 
   tearDown(() async {
-    print("Tearing down");
+    print("Tearing down!");
 
     lib.UA_Server_run_shutdown(server);
 
