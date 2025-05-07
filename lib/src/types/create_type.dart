@@ -16,8 +16,6 @@ final _payloadTypes = {
   NodeId.double: UA_DoublePayload(),
   NodeId.datetime: UA_DateTimePayload(),
   NodeId.uastring: UA_StringPayload(),
-  // NodeId.nodeId: UA_NodeIdPayload(),
-  // NodeId.localizedText: UA_LocalizedTextPayload(),
 };
 
 PayloadType? nodeIdToPayloadType(NodeId? nodeIdType) {

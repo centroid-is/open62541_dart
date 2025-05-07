@@ -283,15 +283,13 @@ class DynamicValue extends PayloadType<DynamicValue> {
         final field = structSchema.ref.fields[i];
 
         if (field.dimensions.isEmpty) {
-          tree[field.fieldName] = DynamicValue(
-              typeId: field.dataType.toNodeId()); //fromDataTypeDefinition(field.dataType.toNodeId(), defs);
+          tree[field.fieldName] = DynamicValue(typeId: field.dataType.toNodeId());
         } else {
           // Don't support multi dimensional fields for now
           assert(field.dimensions.length == 1);
           var collection = [];
           for (int i = 0; i < field.dimensions[0]; i++) {
-            collection.add(DynamicValue(
-                typeId: field.dataType.toNodeId())); //.fromDataTypeDefinition(field.dataType.toNodeId(), defs));
+            collection.add(DynamicValue(typeId: field.dataType.toNodeId()));
           }
           tree[field.fieldName] = DynamicValue.fromList(collection, typeId: field.dataType.toNodeId());
         }
