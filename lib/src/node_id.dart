@@ -1,5 +1,6 @@
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
+import 'package:open62541/src/dynamic_value.dart';
 import 'generated/open62541_bindings.dart' as raw;
 
 import 'extensions.dart';
@@ -99,6 +100,14 @@ class NodeId {
 
   static NodeId get enumDefinitionDefaultBinary {
     return NodeId.fromNumeric(0, Namespace0Id.enumDefinitionDefaultBinary.value);
+  }
+
+  static NodeId get nodeId {
+    return NodeId.fromNumeric(0, Namespace0Id.nodeId.value);
+  }
+
+  static NodeId get localizedText {
+    return NodeId.fromNumeric(0, Namespace0Id.localizedText.value);
   }
 
   raw.UA_NodeId toRaw(raw.open62541 lib) {

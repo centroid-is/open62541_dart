@@ -269,88 +269,27 @@ class Client {
   ///
   /// If [prefetchTypeId] is true, the data type of the node will be read and cached.
   /// This is useful if you are reading a value that is a structure or an enum.
-  Future<DynamicValue> readValue(NodeId nodeId, {bool prefetchTypeId = false}) async {
-    NodeId? prefetchedTypeId;
+  Future<DynamicValue> read(NodeId nodeId) async {
+    final parameters = [
+      (nodeId, AttributeId.UA_ATTRIBUTEID_DESCRIPTION),
+      (nodeId, AttributeId.UA_ATTRIBUTEID_DISPLAYNAME),
+      (nodeId, AttributeId.UA_ATTRIBUTEID_DATATYPE),
+      (nodeId, AttributeId.UA_ATTRIBUTEID_VALUE),
+    ];
+    final results = await readAttribute(parameters);
 
-    if (prefetchTypeId) {
-      prefetchedTypeId = await readDataTypeAttribute(nodeId);
-      if (nodeIdToPayloadType(prefetchedTypeId) == null) {
-        defs.addAll(await _readDataTypeDefinition(prefetchedTypeId));
-      }
-    }
-
-    Completer<DynamicValue> completer = Completer<DynamicValue>();
-
-    // Create callback for this specific read request
-    late ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32, raw.UA_StatusCode,
-            ffi.Pointer<raw.UA_DataValue>)> callback;
-    callback = ffi.NativeCallable<
-        ffi.Void Function(
-          ffi.Pointer<raw.UA_Client>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Uint32,
-          raw.UA_StatusCode,
-          ffi.Pointer<raw.UA_DataValue>,
-        )>.isolateLocal((
-      ffi.Pointer<raw.UA_Client> client,
-      ffi.Pointer<ffi.Void> userdata,
-      int reqId,
-      int status,
-      ffi.Pointer<raw.UA_DataValue> value,
-    ) async {
-      if (completer.isCompleted) {
-        return; // Request timed out already
-      }
-      if (status != raw.UA_STATUSCODE_GOOD) {
-        completer.completeError('Failed to read value: ${statusCodeToString(status)}');
-        return;
-      }
-      if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
-        completer.completeError('Failed to read value: ${statusCodeToString(value.ref.status)}');
-        return;
-      }
-      // Steal the variant pointer from open62541 so they don't delete it
-      // if we don't do this, the variant will be freed on a flutter async
-      // boundary. f.e. while we fetch the structure of a schema.
-      // because the callback we are currently in "returns" before completing.
-      final source = calloc<raw.UA_Variant>();
-      source.ref = value.ref.value;
-      final variant = calloc<raw.UA_Variant>();
-      _lib.UA_Variant_copy(source, variant);
-      calloc.free(source);
-      final retVal = await _variantToValueAutoSchema(variant.ref, prefetchedTypeId: prefetchedTypeId);
-
-      // Close our callback so it can be garbage collected
-      callback.close();
-
-      // Delete the variant again that we used to reference the data
-      _lib.UA_Variant_delete(variant);
-      completer.complete(retVal);
-    });
-    _lib.UA_Client_readValueAttribute_async(
-      _client,
-      nodeId.toRaw(_lib),
-      callback.nativeFunction,
-      ffi.nullptr,
-      ffi.nullptr,
-    );
-    return completer.future;
+    assert(results.length == 1);
+    assert(results.containsKey(nodeId));
+    return results[nodeId]!;
   }
 
   // Reimplementation of the readAttribute method from open62541
   // this method on the flutter side has the same purpose. To deal with
   // the complexity of calling the underlying service and provide a
   // single point of entry for all read operations.
-  Future<DynamicValue> readAttribute() async {
-    final nodes = [
-      (NodeId.fromString(4, ""), AttributeId.UA_ATTRIBUTEID_VALUE),
-      (NodeId.fromString(4, ""), AttributeId.UA_ATTRIBUTEID_DESCRIPTION),
-      (NodeId.fromString(4, ""), AttributeId.UA_ATTRIBUTEID_DISPLAYNAME),
-    ];
-
+  Future<Map<NodeId, DynamicValue>> readAttribute(List nodes) async {
     ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>(nodes.length);
-    final completer = Completer<DynamicValue>();
+    final completer = Completer<Map<NodeId, DynamicValue>>();
     for (var i = 0; i < nodes.length; i++) {
       readValueId[i].nodeId = nodes[i].$1.toRaw(_lib);
       readValueId[i].attributeId = nodes[i].$2.value;
@@ -362,7 +301,7 @@ class Client {
     request.ref.nodesToReadSize = nodes.length;
     request.ref.timestampsToReturnAsInt = raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH.value;
 
-    ffi.Pointer<ffi.Uint32> requestId = calloc<ffi.Uint32>();
+    ffi.Pointer<ffi.Uint32> requestIdPtr = calloc<ffi.Uint32>();
 
     late ffi.NativeCallable<
             ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>
@@ -376,10 +315,69 @@ class Client {
       int requestId,
       ffi.Pointer<ffi.Void> voidPointer,
     ) async {
+      // Cleanup request and callback method
+      callback.close();
+      _lib.UA_ReadRequest_delete(request);
+      calloc.free(requestIdPtr);
+
+      if (voidPointer == ffi.nullptr) {
+        completer.completeError('readAttribute callback received null pointer');
+        return;
+      }
       ffi.Pointer<raw.UA_ReadResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
-      print(response.ref.resultsSize);
-      print("This is semi working");
-      completer.complete(DynamicValue());
+      List<ffi.Pointer<raw.UA_DataValue>> pointers = [];
+
+      // Steal the variant pointer from open62541 so they don't delete it
+      // if we don't do this, the variant will be freed on a flutter async
+      // boundary. f.e. while we fetch the structure of a schema.
+      // because the callback we are currently in "returns" before completing.
+      ffi.Pointer<raw.UA_DataValue> source = calloc<raw.UA_DataValue>();
+      for (var i = 0; i < response.ref.resultsSize; i++) {
+        pointers.add(calloc<raw.UA_DataValue>());
+        _lib.UA_DataValue_init(pointers.last);
+        source.ref = response.ref.results[i];
+        _lib.UA_DataValue_copy(source, pointers.last);
+      }
+      calloc.free(source);
+
+      assert(pointers.length == response.ref.resultsSize);
+      assert(nodes.length == pointers.length);
+
+      final retVal = <NodeId, DynamicValue>{};
+      for (var i = 0; i < pointers.length; i++) {
+        if (pointers[i].ref.status != raw.UA_STATUSCODE_GOOD) {
+          completer.completeError(
+              'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status)} NodeId: ${nodes[i].$1}');
+          break; // Break here to cleanup pointers memory below
+        }
+
+        var reference = retVal[nodes[i].$1] ?? DynamicValue();
+        final value = pointers[i].ref.value;
+
+        switch (nodes[i].$2) {
+          case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
+            final description = value.data.cast<raw.UA_LocalizedText>();
+            reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
+          case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
+            final displayName = value.data.cast<raw.UA_LocalizedText>();
+            reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
+          case AttributeId.UA_ATTRIBUTEID_DATATYPE:
+            final dataType = value.data.cast<raw.UA_NodeId>();
+            reference.typeId = dataType.ref.toNodeId();
+          case AttributeId.UA_ATTRIBUTEID_VALUE:
+            final temporary = await _variantToValueAutoSchema(value, prefetchedTypeId: reference.typeId);
+            reference.value = temporary.value;
+            reference.typeId = reference.typeId ?? temporary.typeId; // Prefer explicitly fetched type id
+            reference.enumFields = reference.enumFields ?? temporary.enumFields;
+          default:
+            throw 'Unhandled attribute id ${nodes[i].$2}';
+        }
+        retVal[nodes[i].$1] = reference;
+      }
+      for (var element in pointers) {
+        _lib.UA_DataValue_delete(element);
+      }
+      if (!completer.isCompleted) completer.complete(retVal);
     });
 
     print(Client.getType(UaTypes.boolean, _lib).ref.typeName.cast<Utf8>().toDartString());
@@ -392,15 +390,16 @@ class Client {
       callback.nativeFunction,
       Client.getType(UaTypes.readResponse, _lib),
       ffi.nullptr,
-      requestId,
+      requestIdPtr,
     );
     if (res != raw.UA_STATUSCODE_GOOD) {
+      callback.close();
+      _lib.UA_ReadRequest_delete(request);
+      calloc.free(requestIdPtr);
       completer.completeError('Failed to read attribute: ${statusCodeToString(res)}');
       return completer.future;
     }
 
-    print(requestId.value);
-    print("this got executed");
     return completer.future;
   }
 
@@ -943,6 +942,10 @@ class Client {
         // Copy our data before async switch
         defs.addAll(await _readDataTypeDefinition(typeId));
       }
+    } else if (prefetchedTypeId != null &&
+        !defs.containsKey(prefetchedTypeId) &&
+        nodeIdToPayloadType(prefetchedTypeId) == null) {
+      defs.addAll(await _readDataTypeDefinition(prefetchedTypeId));
     }
     final retValue = variantToValue(data, defs: defs, prefetchedTypeId: prefetchedTypeId);
     return retValue;
