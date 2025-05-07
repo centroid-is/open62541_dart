@@ -188,8 +188,9 @@ void main() async {
 
   tearDown(() async {
     print("Tearing down");
-    await client!.delete();
     lib.UA_Server_run_shutdown(server);
+
+    await client!.delete();
 
     lib.UA_Server_delete(server);
     print("Done tearing down");
