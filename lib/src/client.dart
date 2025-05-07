@@ -85,6 +85,8 @@ class ClientConfig {
       _inactivity;
 }
 
+typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
+
 class Client {
   Client(raw.open62541 lib, {Duration? secureChannelLifeTime})
       : _lib = lib,
@@ -266,16 +268,15 @@ class Client {
   }
 
   /// Reads a value from the server.
-  ///
-  /// If [prefetchTypeId] is true, the data type of the node will be read and cached.
-  /// This is useful if you are reading a value that is a structure or an enum.
   Future<DynamicValue> read(NodeId nodeId) async {
-    final parameters = [
-      (nodeId, AttributeId.UA_ATTRIBUTEID_DESCRIPTION),
-      (nodeId, AttributeId.UA_ATTRIBUTEID_DISPLAYNAME),
-      (nodeId, AttributeId.UA_ATTRIBUTEID_DATATYPE),
-      (nodeId, AttributeId.UA_ATTRIBUTEID_VALUE),
-    ];
+    final parameters = {
+      nodeId: [
+        AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+        AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
+        AttributeId.UA_ATTRIBUTEID_DATATYPE,
+        AttributeId.UA_ATTRIBUTEID_VALUE,
+      ],
+    };
     final results = await readAttribute(parameters);
 
     assert(results.length == 1);
@@ -287,18 +288,26 @@ class Client {
   // this method on the flutter side has the same purpose. To deal with
   // the complexity of calling the underlying service and provide a
   // single point of entry for all read operations.
-  Future<Map<NodeId, DynamicValue>> readAttribute(List nodes) async {
-    ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>(nodes.length);
+  Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
+    final nodeCount = nodes.entries.map<int>((entry) => entry.value.length).fold(0, (prev, curr) => prev + curr);
+    ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>(nodeCount);
     final completer = Completer<Map<NodeId, DynamicValue>>();
-    for (var i = 0; i < nodes.length; i++) {
-      readValueId[i].nodeId = nodes[i].$1.toRaw(_lib);
-      readValueId[i].attributeId = nodes[i].$2.value;
+    final indorderNodes = [];
+    var index = 0;
+    for (var entry in nodes.entries) {
+      for (var attributeId in entry.value) {
+        readValueId[index].nodeId = entry.key.toRaw(_lib);
+        readValueId[index].attributeId = attributeId.value;
+        index++;
+        indorderNodes.add((entry.key, attributeId));
+      }
     }
+    assert(index == nodeCount);
 
     ffi.Pointer<raw.UA_ReadRequest> request = calloc<raw.UA_ReadRequest>();
     _lib.UA_ReadRequest_init(request);
     request.ref.nodesToRead = readValueId;
-    request.ref.nodesToReadSize = nodes.length;
+    request.ref.nodesToReadSize = nodeCount;
     request.ref.timestampsToReturnAsInt = raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH.value;
 
     ffi.Pointer<ffi.Uint32> requestIdPtr = calloc<ffi.Uint32>();
@@ -341,20 +350,20 @@ class Client {
       calloc.free(source);
 
       assert(pointers.length == response.ref.resultsSize);
-      assert(nodes.length == pointers.length);
+      assert(nodeCount == pointers.length);
 
       final retVal = <NodeId, DynamicValue>{};
       for (var i = 0; i < pointers.length; i++) {
         if (pointers[i].ref.status != raw.UA_STATUSCODE_GOOD) {
           completer.completeError(
-              'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status)} NodeId: ${nodes[i].$1}');
+              'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status)} NodeId: ${indorderNodes[i].$1}');
           break; // Break here to cleanup pointers memory below
         }
 
-        var reference = retVal[nodes[i].$1] ?? DynamicValue();
+        var reference = retVal[indorderNodes[i].$1] ?? DynamicValue();
         final value = pointers[i].ref.value;
 
-        switch (nodes[i].$2) {
+        switch (indorderNodes[i].$2) {
           case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
             final description = value.data.cast<raw.UA_LocalizedText>();
             reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
@@ -365,14 +374,20 @@ class Client {
             final dataType = value.data.cast<raw.UA_NodeId>();
             reference.typeId = dataType.ref.toNodeId();
           case AttributeId.UA_ATTRIBUTEID_VALUE:
-            final temporary = await _variantToValueAutoSchema(value, prefetchedTypeId: reference.typeId);
+            final temporary = await _variantToValueAutoSchema(value);
             reference.value = temporary.value;
             reference.typeId = reference.typeId ?? temporary.typeId; // Prefer explicitly fetched type id
             reference.enumFields = reference.enumFields ?? temporary.enumFields;
+          case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
+            final temporary =
+                DynamicValue.fromDataTypeDefinition(reference.typeId ?? value.type.ref.typeId.toNodeId(), value);
+            reference.value = temporary.value;
+            reference.typeId = reference.typeId ?? temporary.typeId;
+            reference.enumFields = reference.enumFields ?? temporary.enumFields;
           default:
-            throw 'Unhandled attribute id ${nodes[i].$2}';
+            throw 'Unhandled attribute id ${indorderNodes[i].$2}';
         }
-        retVal[nodes[i].$1] = reference;
+        retVal[indorderNodes[i].$1] = reference;
       }
       for (var element in pointers) {
         _lib.UA_DataValue_delete(element);
@@ -380,9 +395,6 @@ class Client {
       if (!completer.isCompleted) completer.complete(retVal);
     });
 
-    print(Client.getType(UaTypes.boolean, _lib).ref.typeName.cast<Utf8>().toDartString());
-    print(Client.getType(UaTypes.readRequest, _lib).ref.typeName.cast<Utf8>().toDartString());
-    print(Client.getType(UaTypes.readResponse, _lib).ref.typeName.cast<Utf8>().toDartString());
     int res = _lib.UA_Client_AsyncService(
       _client,
       request.cast(),
@@ -404,61 +416,13 @@ class Client {
   }
 
   Future<NodeId> readDataTypeAttribute(NodeId nodeId) async {
-    final completer = Completer<NodeId>();
-
-    late ffi.NativeCallable<
-        ffi.Void Function(
-          ffi.Pointer<raw.UA_Client>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Uint32,
-          raw.UA_StatusCode,
-          ffi.Pointer<raw.UA_NodeId>,
-        )> callback;
-
-    callback = ffi.NativeCallable<
-        ffi.Void Function(
-          ffi.Pointer<raw.UA_Client>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Uint32,
-          raw.UA_StatusCode,
-          ffi.Pointer<raw.UA_NodeId>,
-        )>.isolateLocal((
-      ffi.Pointer<raw.UA_Client> client,
-      ffi.Pointer<ffi.Void> userdata,
-      int requestId,
-      int status,
-      ffi.Pointer<raw.UA_NodeId> value,
-    ) {
-      // Close our callback so it can be garbage collected
-      callback.close();
-
-      if (completer.isCompleted) {
-        return;
-      }
-
-      if (status != raw.UA_STATUSCODE_GOOD) {
-        completer.completeError('Failed to read data type: ${statusCodeToString(status)}');
-        return;
-      }
-
-      completer.complete(value.ref.toNodeId());
-    });
-
-    int statusCode = _lib.UA_Client_readDataTypeAttribute_async(
-      _client,
-      nodeId.toRaw(_lib),
-      callback.nativeFunction,
-      ffi.nullptr, // userdata
-      ffi.nullptr, // requestId
-    );
-
-    if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      callback.close();
-      completer.completeError(
-          'UA_Client_readDataTypeAttribute: Bad status code $statusCode ${statusCodeToString(statusCode)}');
-    }
-
-    return completer.future;
+    final parameters = {
+      nodeId: [AttributeId.UA_ATTRIBUTEID_DATATYPE],
+    };
+    final results = await readAttribute(parameters);
+    assert(results.length == 1);
+    assert(results.containsKey(nodeId));
+    return results[nodeId]!.typeId!;
   }
 
   Future<int> subscriptionCreate({
@@ -532,7 +496,6 @@ class Client {
     Duration samplingInterval = const Duration(milliseconds: 250),
     bool discardOldest = true,
     int queueSize = 1,
-    bool prefetchTypeId = false,
   }) {
     // force the stream to be synchronous and run in the same isolate as the callback
     StreamController<DynamicValue> controller = StreamController<DynamicValue>();
@@ -603,15 +566,6 @@ class Client {
     };
 
     controller.onListen = () async {
-      NodeId? prefetchedTypeId;
-
-      if (prefetchTypeId) {
-        prefetchedTypeId = await readDataTypeAttribute(nodeId);
-        if (nodeIdToPayloadType(prefetchedTypeId) == null) {
-          defs.addAll(await _readDataTypeDefinition(prefetchedTypeId));
-        }
-      }
-
       // Create our request
       ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = calloc<raw.UA_MonitoredItemCreateRequest>();
       _lib.UA_MonitoredItemCreateRequest_init(monRequest);
@@ -670,7 +624,7 @@ class Client {
           source.ref = value.ref.value;
           _lib.UA_Variant_copy(source, variant);
           calloc.free(source);
-          data = await _variantToValueAutoSchema(variant.ref, prefetchedTypeId: prefetchedTypeId);
+          data = await _variantToValueAutoSchema(variant.ref);
         } catch (e) {
           stderr.write("Error converting data to type $DynamicValue: $e");
         } finally {
@@ -839,100 +793,28 @@ class Client {
   }
 
   Future<Schema> _readDataTypeDefinition(NodeId nodeIdType) async {
-    ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>();
-    _lib.UA_ReadValueId_init(readValueId);
     var map = Schema();
-    final completer = Completer<Schema>();
-    readValueId.ref.nodeId = nodeIdType.toRaw(_lib);
-    readValueId.ref.attributeId = AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION.value;
-
-    late ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32, raw.UA_StatusCode,
-            ffi.Pointer<raw.UA_DataValue>)> callback;
-
-    callback = ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32, raw.UA_StatusCode,
-            ffi.Pointer<raw.UA_DataValue>)>.isolateLocal((
-      ffi.Pointer<raw.UA_Client> client,
-      ffi.Pointer<ffi.Void> userdata,
-      int requestId,
-      int statusCode,
-      ffi.Pointer<raw.UA_DataValue> value,
-    ) async {
-      // Clean up request parameters
-      _lib.UA_ReadValueId_delete(readValueId);
-
-      // Close our callback so it can be garbage collected
-      callback.close();
-
-      if (statusCode != raw.UA_STATUSCODE_GOOD) {
-        throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code $statusCode ${statusCodeToString(statusCode)}, NodeID: $nodeIdType';
-      }
-      if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
-        throw 'UA_Client_read[DATATYPEDEFINITION]: Bad status code ${value.ref.status} ${statusCodeToString(value.ref.status)}, NodeID: $nodeIdType';
-      }
-      final res = value.ref;
-      final binaryEncodingId = res.value.type.ref.binaryEncodingId.toNodeId();
-
-      final source = calloc<raw.UA_Variant>();
-      source.ref = res.value;
-      final destination = calloc<raw.UA_Variant>();
-      _lib.UA_Variant_copy(source, destination);
-      map[nodeIdType] = destination;
-      calloc.free(source);
-
-      // Read our current structure
-      if (binaryEncodingId == NodeId.structureDefinitionDefaultBinary) {
-        // cast the value to fetch the schema recursively
-        final structDef = destination.ref.data.cast<raw.UA_StructureDefinition>();
-
-        // Crawl the structure for sub structures recursivly
-        for (var i = 0; i < structDef.ref.fieldsSize; i++) {
-          final field = structDef.ref.fields[i];
-          raw.UA_NodeId dataType = field.dataType;
-          if (dataType.isNumeric()) {
-            continue;
-          }
-          if (dataType.isString()) {
-            // recursively read the nested structure type
-            final mp = await _readDataTypeDefinition(dataType.toNodeId());
-            for (var subId in mp.keys) {
-              map[subId] = mp[subId]!;
-            }
-          } else {
-            throw 'Unsupported field type: $dataType';
-          }
+    map[nodeIdType] = (await readAttribute({
+      nodeIdType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION]
+    }))
+        .values
+        .first;
+    final val = map[nodeIdType]!;
+    if (val.isObject) {
+      for (var entry in val.entries) {
+        final val = entry.value;
+        if (nodeIdToPayloadType(entry.value.typeId) == null) {
+          map.addAll(await _readDataTypeDefinition(entry.value.typeId!));
+          val[entry.value.name] = map[entry.value.typeId]!;
         }
-      } else if (binaryEncodingId == NodeId.enumDefinitionDefaultBinary) {
-        //TODO: Implement enum
-        // final source = res.value.data.cast<raw.UA_EnumDefinition>();
-        // final fieldSize = source.ref.fieldsSize;
-        // final enum_def = {};
-        // for (var i = 0; i < fieldSize; i++) {
-        //   enum_def[source.ref.fields[i].value]['displayname'] = source.ref.fields[i].displayName.
-        //   enum_def[source.ref.fields[i].value]['description'] = source.ref.fields[i].description.
-        // }
-        // map[nodeIdType] = enum_def;
-      } else {
-        throw 'Unsupported binary encoding id: $binaryEncodingId';
       }
-      completer.complete(map);
-    });
-    _lib.UA_Client_readAttribute_async(
-      _client,
-      readValueId,
-      raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH,
-      callback.nativeFunction,
-      ffi.nullptr,
-      ffi.nullptr,
-    );
-
-    return completer.future;
+    }
+    return map;
   }
 
   Schema defs = {};
 
-  Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data, {NodeId? prefetchedTypeId}) async {
+  Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data) async {
     final typeId = data.type.ref.typeId.toNodeId();
     if (typeId == NodeId.structure) {
       // Cast the data to extension object
@@ -942,16 +824,12 @@ class Client {
         // Copy our data before async switch
         defs.addAll(await _readDataTypeDefinition(typeId));
       }
-    } else if (prefetchedTypeId != null &&
-        !defs.containsKey(prefetchedTypeId) &&
-        nodeIdToPayloadType(prefetchedTypeId) == null) {
-      defs.addAll(await _readDataTypeDefinition(prefetchedTypeId));
     }
-    final retValue = variantToValue(data, defs: defs, prefetchedTypeId: prefetchedTypeId);
+    final retValue = variantToValue(data, defs: defs);
     return retValue;
   }
 
-  static DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? prefetchedTypeId}) {
+  static DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs}) {
     // Check if the variant contains no data
     if (data.data == ffi.nullptr) {
       return DynamicValue();
@@ -961,11 +839,6 @@ class Client {
     if (typeId == NodeId.structure) {
       final ext = data.data.cast<raw.UA_ExtensionObject>();
       typeId = ext.ref.content.encoded.typeId.toNodeId();
-    } else if (prefetchedTypeId != null && defs != null && defs.containsKey(prefetchedTypeId)) {
-      // Handle known enum types
-      // Because the typeId of the `data` variant is integer,
-      // we need to use the typeId of the enum definition
-      typeId = prefetchedTypeId;
     }
 
     final dimensions = data.dimensions;
@@ -979,7 +852,7 @@ class Client {
         return DynamicValue(typeId: typeId);
       }
       if (typeId.isString()) {
-        return DynamicValue.fromDataTypeDefinition(typeId, defs!);
+        return DynamicValue.from(defs![typeId]!);
       }
       throw 'Unsupported nodeId type: $typeId';
     }
@@ -1030,10 +903,6 @@ class Client {
     // Need to close the config after deleting the client
     // s.t. the native callbacks are not closed when called
     await _clientConfig.close();
-    // Clear the memory allocated to structure definitions
-    for (var value in defs.values) {
-      _lib.UA_Variant_delete(value);
-    }
   }
 
   final raw.open62541 _lib;

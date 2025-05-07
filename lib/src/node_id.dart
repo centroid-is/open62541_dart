@@ -1,6 +1,5 @@
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
-import 'package:open62541/src/dynamic_value.dart';
 import 'generated/open62541_bindings.dart' as raw;
 
 import 'extensions.dart';
@@ -10,6 +9,16 @@ class NodeId {
       : _stringId = id is String ? id : null,
         _numericId = id is int ? id : null {
     if (_stringId == null && _numericId == null) {
+      throw 'NodeId is not initialized or unimplemented';
+    }
+  }
+
+  factory NodeId.from(NodeId other) {
+    if (other.isString()) {
+      return NodeId.fromString(other.namespace, other.string);
+    } else if (other.isNumeric()) {
+      return NodeId.fromNumeric(other.namespace, other.numeric);
+    } else {
       throw 'NodeId is not initialized or unimplemented';
     }
   }

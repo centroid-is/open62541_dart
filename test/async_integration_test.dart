@@ -90,11 +90,11 @@ void main() async {
     print("Client connected!");
   });
   test('Basic read and write boolean async', () async {
-    expect((await client!.readValue(boolNodeId)).value, true);
+    expect((await client!.read(boolNodeId)).value, true);
     await client!.writeValue(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
-    expect((await client!.readValue(boolNodeId)).value, false);
+    expect((await client!.read(boolNodeId)).value, false);
     await client!.writeValue(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
-    expect((await client!.readValue(boolNodeId)).value, true);
+    expect((await client!.read(boolNodeId)).value, true);
   });
 
   test('Basic subscription', () async {
@@ -179,17 +179,6 @@ void main() async {
     // Not properly closing callbacks or cleaning up resources will cause the test to hang.
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     final stream = client!.monitoredItem(boolNodeId, subscription);
-    final streamSub = stream.listen((event) => expect(true, false));
-    await streamSub.cancel();
-  });
-
-  test('Create a monitored item and then cancel before a request id has been alloted', () async {
-    // This test has no expected outcome.
-    // A failure is of the test is a timeout.
-
-    // Not properly closing callbacks or cleaning up resources will cause the test to hang.
-    final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-    final stream = client!.monitoredItem(boolNodeId, subscription, prefetchTypeId: true);
     final streamSub = stream.listen((event) => expect(true, false));
     await streamSub.cancel();
   });

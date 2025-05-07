@@ -45,7 +45,7 @@ Future<int> main(List<String> arguments) async {
   });
 
   while (start.isAfter(DateTime.now().subtract(Duration(seconds: 1)))) {
-    DynamicValue value = await c.readValue(counterId).onError((error, stacktrace) {
+    DynamicValue value = await c.read(counterId).onError((error, stacktrace) {
       print('Error reading value: $error');
       return DynamicValue(value: 0, typeId: NodeId.int32);
     });

@@ -14,6 +14,10 @@ class LocalizedText {
   final String value;
   final String locale;
   LocalizedText(this.value, this.locale);
+
+  factory LocalizedText.from(LocalizedText other) {
+    return LocalizedText(other.value, other.locale);
+  }
 }
 
 class EnumField {
@@ -22,9 +26,13 @@ class EnumField {
   final LocalizedText description;
   final String name;
   EnumField(this.value, this.name, this.displayName, this.description);
+
+  factory EnumField.from(EnumField other) {
+    return EnumField(other.value, other.name, other.displayName, other.description);
+  }
 }
 
-typedef Schema = Map<NodeId, ffi.Pointer<raw.UA_Variant>>;
+typedef Schema = Map<NodeId, DynamicValue>;
 
 class DynamicValue extends PayloadType<DynamicValue> {
   dynamic value;
@@ -49,6 +57,34 @@ class DynamicValue extends PayloadType<DynamicValue> {
         v[counter].typeId = typeId;
       }
       counter = counter + 1;
+    }
+    return v;
+  }
+  factory DynamicValue.from(DynamicValue other) {
+    var v = DynamicValue();
+    if (other.value is DynamicValue) {
+      v.value = DynamicValue.from(other.value);
+    } else if (other.value is LinkedHashMap) {
+      v.value = LinkedHashMap<String, DynamicValue>();
+      other.value.forEach((key, value) => v.value[key] = DynamicValue.from(value));
+    } else if (other.value is List) {
+      v.value = other.value.map((e) => DynamicValue.from(e)).toList();
+    } else {
+      v.value = other.value;
+    }
+
+    if (other.typeId != null) {
+      v.typeId = NodeId.from(other.typeId!);
+    }
+    if (other.displayName != null) {
+      v.displayName = LocalizedText.from(other.displayName!);
+    }
+    if (other.description != null) {
+      v.description = LocalizedText.from(other.description!);
+    }
+    if (other.enumFields != null) {
+      v.enumFields = LinkedHashMap<int, EnumField>();
+      other.enumFields!.forEach((key, value) => v.enumFields![key] = EnumField.from(value));
     }
     return v;
   }
@@ -164,6 +200,9 @@ class DynamicValue extends PayloadType<DynamicValue> {
   @override
   String toString() {
     if (enumFields != null) {
+      if (value == null) {
+        return "null";
+      }
       return "${enumFields![value]!.name}(${value.toString()})";
     }
     return "${displayName == null ? '' : displayName!.value} ${description == null ? '' : description!.value} ${value?.toString() ?? 'null'}";
@@ -216,7 +255,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   // Lesa TypeId frá server fyrir gefna týpu
   // Nýta TypeId til að búa til readValueId (með nodeid og AttributeId (DATATYPEDEFINITION))
 
-  factory DynamicValue.fromDataTypeDefinition(NodeId root, Schema defs) {
+  factory DynamicValue.fromDataTypeDefinition(NodeId root, raw.UA_Variant def) {
     DynamicValue tree = DynamicValue(typeId: root);
 
     // If we know how to deal with this type
@@ -224,9 +263,6 @@ class DynamicValue extends PayloadType<DynamicValue> {
       return tree;
     }
 
-    assert(defs.containsKey(root));
-
-    final def = defs[root]!.ref;
     // Check if we are an enum
     final binaryEncodingId = def.type.ref.binaryEncodingId.toNodeId();
     if (binaryEncodingId == NodeId.enumDefinitionDefaultBinary) {
@@ -240,26 +276,30 @@ class DynamicValue extends PayloadType<DynamicValue> {
       tree.enumFields = enumFields;
       //TODO: This only supports int32 enums for now
       tree.typeId = NodeId.int32;
-    } else {
+    } else if (binaryEncodingId == NodeId.structureDefinitionDefaultBinary) {
       final structSchema = def.data.cast<raw.UA_StructureDefinition>();
       // Object case & Array case
       for (int i = 0; i < structSchema.ref.fieldsSize; i++) {
         final field = structSchema.ref.fields[i];
 
         if (field.dimensions.isEmpty) {
-          tree[field.fieldName] = DynamicValue.fromDataTypeDefinition(field.dataType.toNodeId(), defs);
+          tree[field.fieldName] = DynamicValue(
+              typeId: field.dataType.toNodeId()); //fromDataTypeDefinition(field.dataType.toNodeId(), defs);
         } else {
           // Don't support multi dimensional fields for now
           assert(field.dimensions.length == 1);
           var collection = [];
           for (int i = 0; i < field.dimensions[0]; i++) {
-            collection.add(DynamicValue.fromDataTypeDefinition(field.dataType.toNodeId(), defs));
+            collection.add(DynamicValue(
+                typeId: field.dataType.toNodeId())); //.fromDataTypeDefinition(field.dataType.toNodeId(), defs));
           }
           tree[field.fieldName] = DynamicValue.fromList(collection, typeId: field.dataType.toNodeId());
         }
         tree[field.fieldName].description = field.description.localizedText;
         tree[field.fieldName].name = field.name.value;
       }
+    } else {
+      throw 'Unsupported binary encoding id: $binaryEncodingId for AttributeId UA_ATTRIBUTEID_DATATYPEDEFINITION';
     }
     // Need description and displayname for the root
     return tree;
@@ -278,7 +318,11 @@ class DynamicValue extends PayloadType<DynamicValue> {
       if (typeId == NodeId.uastring && insideStruct) {
         value = ContiguousStringPayload().get(reader, endian);
       } else {
-        value = nodeIdToPayloadType(typeId)?.get(reader, endian);
+        final pload = nodeIdToPayloadType(typeId);
+        if (pload == null) {
+          throw 'Unsupported typeId: $typeId';
+        }
+        value = pload.get(reader, endian);
       }
     }
 
@@ -358,7 +402,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       if (typeId == NodeId.uastring && insideStruct) {
         ContiguousStringPayload().set(writer, value.value, endian);
       } else {
-        nodeIdToPayloadType(value.typeId ?? autoDeduceType(value.value))?.set(writer, value.value, endian);
+        nodeIdToPayloadType(value.typeId ?? autoDeduceType(value.value))!.set(writer, value.value, endian);
       }
     }
   }

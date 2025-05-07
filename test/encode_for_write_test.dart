@@ -118,16 +118,15 @@ void main() {
     final variant = Client.valueToVariant(val, lib);
 
     var spNodeId = NodeId.fromString(4, "Omars string struct");
-    List<Pointer<raw.UA_StructureField>> spFields = [
-      buildField(NodeId.uastring, "s1", [], "ff"),
-      buildField(NodeId.uastring, "s2", [], "ff"),
-      buildField(NodeId.uastring, "s3", [], "ff"),
-    ];
-    var sp = buildDef(spFields);
+
+    DynamicValue sp = DynamicValue(typeId: spNodeId);
+
+    sp["s1"] = buildField(NodeId.uastring, "s1", [], "ff");
+    sp["s2"] = buildField(NodeId.uastring, "s2", [], "ff");
+    sp["s3"] = buildField(NodeId.uastring, "s3", [], "ff");
 
     var defs = {spNodeId: sp};
     final decoded = Client.variantToValue(variant.ref, defs: defs);
-    lib.UA_Variant_delete(sp);
 
     expect(val["s1"].asString, "some string");
     expect(val["s2"].asString, "other string");
@@ -157,12 +156,10 @@ void main() {
     final variant = Client.valueToVariant(parent, lib);
 
     var spNodeId = NodeId.fromString(4, "Omars string struct");
-    List<Pointer<raw.UA_StructureField>> spFields = [
-      buildField(NodeId.uastring, "s1", [], "ff"),
-      buildField(NodeId.uastring, "s2", [], "ff"),
-      buildField(NodeId.uastring, "s3", [], "ff"),
-    ];
-    var sp = buildDef(spFields);
+    DynamicValue sp = DynamicValue(typeId: spNodeId);
+    sp["s1"] = buildField(NodeId.uastring, "s1", [], "ff");
+    sp["s2"] = buildField(NodeId.uastring, "s2", [], "ff");
+    sp["s3"] = buildField(NodeId.uastring, "s3", [], "ff");
 
     var defs = {spNodeId: sp};
     final decoded = Client.variantToValue(variant.ref, defs: defs);
@@ -453,14 +450,8 @@ void main() {
     variant.ref.type = Client.getType(UaTypes.int16, lib);
 
     var spNodeId = NodeId.fromString(4, "Omars string struct");
-    List<Pointer<raw.UA_StructureField>> spFields = [
-      buildField(NodeId.uastring, "s1", [], "ff"),
-      buildField(NodeId.uastring, "s2", [], "ff"),
-      buildField(NodeId.uastring, "s3", [], "ff"),
-    ];
-    var sp = buildDef(spFields);
-    var defs = {spNodeId: sp};
 
+    final defs = {spNodeId: DynamicValue.fromDataTypeDefinition(spNodeId, variant.ref)};
     final value = Client.variantToValue(variant.ref, defs: defs);
 
     expect(value.isArray, true);
@@ -483,7 +474,6 @@ void main() {
     expect(value[1][0][0]["s2"].asString, "bM");
     expect(value[1][0][0]["s3"].asString, "cM");
 
-    lib.UA_Variant_delete(sp);
     lib.UA_Variant_delete(variant);
   }, skip: "Todo: make this test from real data");
 
@@ -846,37 +836,35 @@ void main() {
     variant.ref.type = Client.getType(UaTypes.extensionObject, lib);
 
     var hmiNodeId = NodeId.fromString(4, "FB_ATV.HMI");
-    List<Pointer<raw.UA_StructureField>> hmiFields = [
-      buildField(NodeId.boolean, "p_cmd_JogFwd", [], "ff"),
-      buildField(NodeId.boolean, "p_cmd_JogBwd", [], "ff"),
-      buildField(NodeId.boolean, "p_cmd_ResetRunHours", [], "ff"),
-      buildField(NodeId.boolean, "p_cmd_ManualStopOnRelease", [], "ff"),
-      buildField(NodeId.boolean, "p_stat_JogFwd", [], "ff"),
-      buildField(NodeId.boolean, "p_stat_JogBwd", [], "ff"),
-      buildField(NodeId.boolean, "p_stat_xResetRunHours", [], "ff"),
-      buildField(NodeId.boolean, "p_stat_StopOnRelease", [], "ff"),
-      buildField(NodeId.uastring, "p_stat_State", [], "ff"),
-      buildField(NodeId.uastring, "p_stat_LastFault", [], "ff"),
-      buildField(NodeId.float, "p_stat_rFrequency", [], "ff"),
-      buildField(NodeId.float, "p_stat_rCurrent", [], "ff"),
-      buildField(NodeId.uint32, "p_stat_duRunMinutes", [], "ff"),
-    ];
 
-    List<Pointer<raw.UA_StructureField>> atvFields = [
-      buildField(NodeId.boolean, "i_xRun", [], "ff"),
-      buildField(NodeId.float, "i_rFreq", [], "ff"),
-      buildField(NodeId.boolean, "q_xRunning", [], "ff"),
-      buildField(NodeId.boolean, "q_xFwd", [], "ff"),
-      buildField(NodeId.boolean, "q_xBwd", [], "ff"),
-      buildField(NodeId.float, "q_rFreq", [], "ff"),
-      buildField(NodeId.boolean, "q_xError", [], "ff"),
-      buildField(NodeId.uastring, "q_sError", [], "ff"),
-      buildField(NodeId.fromString(4, "FB_ATV.HMI"), "HMI", [], "ff"),
-    ];
-    var atv = buildDef(atvFields);
-    var hmi = buildDef(hmiFields);
+    DynamicValue hmi = DynamicValue(typeId: hmiNodeId);
+    hmi["p_cmd_JogFwd"] = buildField(NodeId.boolean, "p_cmd_JogFwd", [], "ff");
+    hmi["p_cmd_JogBwd"] = buildField(NodeId.boolean, "p_cmd_JogBwd", [], "ff");
+    hmi["p_cmd_ResetRunHours"] = buildField(NodeId.boolean, "p_cmd_ResetRunHours", [], "ff");
+    hmi["p_cmd_ManualStopOnRelease"] = buildField(NodeId.boolean, "p_cmd_ManualStopOnRelease", [], "ff");
+    hmi["p_stat_JogFwd"] = buildField(NodeId.boolean, "p_stat_JogFwd", [], "ff");
+    hmi["p_stat_JogBwd"] = buildField(NodeId.boolean, "p_stat_JogBwd", [], "ff");
+    hmi["p_stat_xResetRunHours"] = buildField(NodeId.boolean, "p_stat_xResetRunHours", [], "ff");
+    hmi["p_stat_StopOnRelease"] = buildField(NodeId.boolean, "p_stat_StopOnRelease", [], "ff");
+    hmi["p_stat_State"] = buildField(NodeId.uastring, "p_stat_State", [], "ff");
+    hmi["p_stat_LastFault"] = buildField(NodeId.uastring, "p_stat_LastFault", [], "ff");
+    hmi["p_stat_rFrequency"] = buildField(NodeId.float, "p_stat_rFrequency", [], "ff");
+    hmi["p_stat_rCurrent"] = buildField(NodeId.float, "p_stat_rCurrent", [], "ff");
+    hmi["p_stat_duRunMinutes"] = buildField(NodeId.uint32, "p_stat_duRunMinutes", [], "ff");
 
-    var defs = {atvId: atv, hmiNodeId: hmi};
+    DynamicValue atv = DynamicValue(typeId: atvId);
+    atv["i_xRun"] = buildField(NodeId.boolean, "i_xRun", [], "ff");
+    atv["i_rFreq"] = buildField(NodeId.float, "i_rFreq", [], "ff");
+    atv["q_xRunning"] = buildField(NodeId.boolean, "q_xRunning", [], "ff");
+    atv["q_xFwd"] = buildField(NodeId.boolean, "q_xFwd", [], "ff");
+    atv["q_xBwd"] = buildField(NodeId.boolean, "q_xBwd", [], "ff");
+    atv["q_rFreq"] = buildField(NodeId.float, "q_rFreq", [], "ff");
+    atv["q_xError"] = buildField(NodeId.boolean, "q_xError", [], "ff");
+    atv["q_sError"] = buildField(NodeId.uastring, "q_sError", [], "ff");
+    atv["HMI"] = hmi;
+
+    print(atv);
+    var defs = {atvId: atv};
 
     final value = Client.variantToValue(variant.ref, defs: defs);
 
@@ -967,8 +955,6 @@ void main() {
     final dynValueAgain = Client.variantToValue(variantEncoded.ref, defs: defs);
     expectArrayDyn(dynValueAgain);
 
-    lib.UA_Variant_delete(hmi);
-    lib.UA_Variant_delete(atv);
     // I presume this erases the data correctly
     lib.UA_Variant_delete(variant);
     lib.UA_Variant_delete(variantEncoded);
