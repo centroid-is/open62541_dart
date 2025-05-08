@@ -47,6 +47,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   LocalizedText? description;
   LocalizedText? displayName;
   Map<int, EnumField>? enumFields;
+  bool isOptional = false;
 
   factory DynamicValue.fromMap(LinkedHashMap<String, dynamic> entries) {
     DynamicValue v = DynamicValue();
@@ -92,6 +93,8 @@ class DynamicValue extends PayloadType<DynamicValue> {
       v.enumFields = LinkedHashMap<int, EnumField>();
       other.enumFields!.forEach((key, value) => v.enumFields![key] = EnumField.from(value));
     }
+    v.name = other.name;
+    v.isOptional = other.isOptional;
     return v;
   }
   DynamicValue({this.value, this.description, this.typeId, this.displayName});
@@ -261,11 +264,11 @@ class DynamicValue extends PayloadType<DynamicValue> {
   // Lesa TypeId frá server fyrir gefna týpu
   // Nýta TypeId til að búa til readValueId (með nodeid og AttributeId (DATATYPEDEFINITION))
 
-  factory DynamicValue.fromDataTypeDefinition(NodeId root, raw.UA_Variant def) {
-    DynamicValue tree = DynamicValue(typeId: root);
+  factory DynamicValue.fromDataTypeDefinition(NodeId typeId, raw.UA_Variant def) {
+    DynamicValue tree = DynamicValue(typeId: typeId);
 
     // If we know how to deal with this type
-    if (nodeIdToPayloadType(root) != null) {
+    if (nodeIdToPayloadType(typeId) != null) {
       return tree;
     }
 
@@ -299,6 +302,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
           }
           tree[field.fieldName] = DynamicValue.fromList(collection, typeId: field.dataType.toNodeId());
         }
+        tree[field.fieldName].isOptional = field.isOptional;
         tree[field.fieldName].description = field.description.localizedText;
         tree[field.fieldName].name = field.name.value;
       }
@@ -318,6 +322,9 @@ class DynamicValue extends PayloadType<DynamicValue> {
     // }
     // Trivial case ( bool, int, etc )
     if (!isArray && !isObject) {
+      if (isOptional) {
+        throw 'Optional values not supported currently';
+      }
       // Special case for strings, encoded differetly for structs here then UA_String
       if (typeId == NodeId.uastring && insideStruct) {
         value = ContiguousStringPayload().get(reader, endian);

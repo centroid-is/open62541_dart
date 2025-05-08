@@ -585,6 +585,8 @@ void main() {
 
   test('Copy constructor', () {
     final test = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    test.name = "TEST";
+    test.isOptional = true;
     test["a"] = DynamicValue(typeId: NodeId.uastring, value: "a");
     final copy = DynamicValue.from(test);
     expect(copy["a"].asString, "a");
@@ -592,5 +594,8 @@ void main() {
     copy["a"] = DynamicValue(typeId: NodeId.uastring, value: "b");
     expect(test["a"].asString, "a");
     expect(copy["a"].asString, "b");
+
+    expect(test.isOptional, copy.isOptional);
+    expect(test.name, copy.name);
   });
 }

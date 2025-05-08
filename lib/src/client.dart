@@ -493,7 +493,7 @@ class Client {
     ReadAttributeParam nodes,
     int subscriptionId, {
     MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
-    Duration samplingInterval = const Duration(milliseconds: 250),
+    Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
   }) {
@@ -667,7 +667,7 @@ class Client {
               calloc.free(source);
               final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
               reference.value = data.value;
-              reference.typeId = data.typeId;
+              reference.typeId = reference.typeId ?? data.typeId;
               reference.enumFields = data.enumFields;
               _lib.UA_Variant_delete(variant);
             case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
@@ -791,7 +791,7 @@ class Client {
     NodeId nodeId,
     int subscriptionId, {
     MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
-    Duration samplingInterval = const Duration(milliseconds: 250),
+    Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
   }) {
@@ -816,6 +816,9 @@ class Client {
     controller.onCancel = () {
       subscription.cancel();
     };
+    subscription.onDone(() {
+      controller.close();
+    });
     return controller.stream;
   }
 
@@ -924,18 +927,17 @@ class Client {
 
   Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data, [NodeId? dataTypeId]) async {
     var typeId = data.type.ref.typeId.toNodeId();
-    if (typeId == NodeId.structure) {
+    if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null) {
+      if (!defs.containsKey(dataTypeId)) {
+        defs.addAll(await buildSchema(dataTypeId));
+      }
+    } else if (typeId == NodeId.structure) {
       // Cast the data to extension object
       final ext = data.data.cast<raw.UA_ExtensionObject>();
       typeId = ext.ref.content.encoded.typeId.toNodeId();
       if (!defs.containsKey(typeId)) {
         // Copy our data before async switch
         defs.addAll(await buildSchema(typeId));
-      }
-    } else if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null) {
-      if (!defs.containsKey(dataTypeId)) {
-        // Copy our data before async switch
-        defs.addAll(await buildSchema(dataTypeId));
       }
     }
     final retValue = variantToValue(data, defs: defs, dataTypeId: dataTypeId);
@@ -961,11 +963,11 @@ class Client {
 
     // Read structure from opc-ua server
     DynamicValue dynamicValueSchema(NodeId typeId) {
-      if (typeId.isNumeric()) {
+      if (nodeIdToPayloadType(typeId) != null) {
         return DynamicValue(typeId: typeId);
       }
-      if (typeId.isString()) {
-        return DynamicValue.from(defs![typeId]!);
+      if (defs != null && defs.containsKey(typeId)) {
+        return DynamicValue.from(defs[typeId]!);
       }
       throw 'Unsupported nodeId type: $typeId';
     }
