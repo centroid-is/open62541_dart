@@ -13,6 +13,16 @@ class NodeId {
     }
   }
 
+  factory NodeId.from(NodeId other) {
+    if (other.isString()) {
+      return NodeId.fromString(other.namespace, other.string);
+    } else if (other.isNumeric()) {
+      return NodeId.fromNumeric(other.namespace, other.numeric);
+    } else {
+      throw 'NodeId is not initialized or unimplemented';
+    }
+  }
+
   factory NodeId.fromRaw(raw.UA_NodeId nodeId) {
     if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
       // Drop the __DefaultBinary if attached to string, don't know why it is there
@@ -99,6 +109,14 @@ class NodeId {
 
   static NodeId get enumDefinitionDefaultBinary {
     return NodeId.fromNumeric(0, Namespace0Id.enumDefinitionDefaultBinary.value);
+  }
+
+  static NodeId get nodeId {
+    return NodeId.fromNumeric(0, Namespace0Id.nodeId.value);
+  }
+
+  static NodeId get localizedText {
+    return NodeId.fromNumeric(0, Namespace0Id.localizedText.value);
   }
 
   raw.UA_NodeId toRaw(raw.open62541 lib) {

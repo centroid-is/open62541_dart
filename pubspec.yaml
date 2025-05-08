@@ -9,6 +9,7 @@ dependencies:
   binarize: ^2.0.0
   collection: ^1.19.0
   ffi: ^2.1.2
+  tuple: ^2.0.2
 platforms:
   linux:
 topics:
@@ -32,6 +33,9 @@ ffigen:
     symbol-address:
       include:
         - 'UA_*' # Do this to expose all function pointers.
+        - '__UA_Client_AsyncService'
+    rename:
+      '__UA_Client_AsyncService': 'UA_Client_AsyncService'
   # UA_TYPES is a list inside the library and we need raw access
   # To the top level pointer to increment the list.
   globals:

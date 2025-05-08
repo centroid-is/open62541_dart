@@ -8,6 +8,9 @@ import 'dynamic_value.dart';
 import 'node_id.dart';
 import 'generated/open62541_bindings.dart' as raw;
 
+typedef MonitoringMode = raw.UA_MonitoringMode;
+typedef AttributeId = raw.UA_AttributeId;
+
 // ignore: camel_case_types
 enum Namespace0Id {
   boolean(raw.UA_NS0ID_BOOLEAN),
@@ -233,7 +236,9 @@ enum UaTypes {
   configurationVersionDataType(raw.UA_TYPES_CONFIGURATIONVERSIONDATATYPE),
   publishedVariableDataType(raw.UA_TYPES_PUBLISHEDVARIABLEDATATYPE),
   publishedDataItemsDataType(raw.UA_TYPES_PUBLISHEDDATAITEMSDATATYPE),
-  publishedDataSetCustomSourceDataType(raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE);
+  publishedDataSetCustomSourceDataType(raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE),
+  readRequest(raw.UA_TYPES_READREQUEST),
+  readResponse(raw.UA_TYPES_READRESPONSE);
 
   final int value;
   const UaTypes(this.value);

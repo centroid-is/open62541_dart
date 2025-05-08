@@ -90,11 +90,11 @@ void main() async {
     print("Client connected!");
   });
   test('Basic read and write boolean async', () async {
-    expect((await client!.readValue(boolNodeId)).value, true);
+    expect((await client!.read(boolNodeId)).value, true);
     await client!.writeValue(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
-    expect((await client!.readValue(boolNodeId)).value, false);
+    expect((await client!.read(boolNodeId)).value, false);
     await client!.writeValue(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
-    expect((await client!.readValue(boolNodeId)).value, true);
+    expect((await client!.read(boolNodeId)).value, true);
   });
 
   test('Basic subscription', () async {
@@ -108,7 +108,8 @@ void main() async {
     final items = [true, false, true, false];
     final comp = Completer<void>();
     int counter = 0;
-    final stream = client!.monitoredItem(boolNodeId, subscription).map<bool>((event) {
+    final stream =
+        client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10)).map<bool>((event) {
       counter = counter + 1;
       if (counter == items.length) {
         comp.complete();
@@ -140,14 +141,16 @@ void main() async {
     final comp = Completer<void>();
     final items = [true, false, true, false];
     final intItems = [1, 2, 3, 4];
-    final boolStream = client!.monitoredItem(boolNodeId, subscription).map<bool>((event) {
+    final boolStream =
+        client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10)).map<bool>((event) {
       boolCounter = boolCounter + 1;
       if (boolCounter == items.length && intCounter == intItems.length) {
         comp.complete();
       }
       return event.value;
     });
-    final intStream = client!.monitoredItem(intNodeId, subscription).map<int>((event) {
+    final intStream =
+        client!.monitor(intNodeId, subscription, samplingInterval: Duration(milliseconds: 10)).map<int>((event) {
       intCounter = intCounter + 1;
       if (boolCounter == items.length && intCounter == intItems.length) {
         comp.complete();
@@ -168,21 +171,26 @@ void main() async {
   test('Creating a subscription and not using it should not hang the process', () async {
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     // ignore: unused_local_variable
-    final controller = client!.monitoredItem(boolNodeId, subscription);
-    await Future.delayed(Duration(milliseconds: 100));
+    final controller = client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10));
   });
 
   test('Create a monitored item and then cancel before it has been created', () async {
+    // This test has no expected outcome.
+    // A failure of the test is a timeout.
+
+    // Not properly closing callbacks or cleaning up resources will cause the test to hang.
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-    final stream = client!.monitoredItem(boolNodeId, subscription);
+    final stream = client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10));
     final streamSub = stream.listen((event) => expect(true, false));
-    expect(streamSub.cancel(), throwsException);
+    await streamSub.cancel();
   });
 
   tearDown(() async {
-    print("Tearing down");
-    await client!.delete();
+    print("Tearing down!");
+
     lib.UA_Server_run_shutdown(server);
+
+    await client!.delete();
 
     lib.UA_Server_delete(server);
     print("Done tearing down");
