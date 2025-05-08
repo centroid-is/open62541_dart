@@ -337,8 +337,8 @@ class Client {
       ffi.Pointer<raw.UA_ReadResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
       List<ffi.Pointer<raw.UA_DataValue>> pointers = [];
 
-      // Steal the variant pointer from open62541 so they don't delete it
-      // if we don't do this, the variant will be freed on a flutter async
+      // Steal the data_value pointer from open62541 so they don't delete it
+      // if we don't do this, the data_value will be freed on a flutter async
       // boundary. f.e. while we fetch the structure of a schema.
       // because the callback we are currently in "returns" before completing.
       ffi.Pointer<raw.UA_DataValue> source = calloc<raw.UA_DataValue>();
@@ -512,7 +512,7 @@ class Client {
         ffi.Pointer<
             ffi.NativeFunction<
                 ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>, ffi.Uint32,
-                    ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)>>>(nodeCount); // For now just allocate one
+                    ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)>>>(nodeCount);
 
     // Store the monitored item id here so we can use it in the onCancel closure
     List<int> monIds = [];
