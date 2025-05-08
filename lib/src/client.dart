@@ -729,27 +729,34 @@ class Client {
             controller.addError(
                 'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
             error = true;
+          }
+
+          if (error) {
+            controller.onCancel = () {}; // Don't invoke the real close callback
+            monitorCallback.close();
+            calloc.free(callbacks);
+            controller.close();
           } else {
             assert(response.ref.resultsSize == nodeCount);
             int index = 0;
+            Map<Tuple2<NodeId, AttributeId>, int> failures = {};
             for (var node in nodes.keys) {
               for (var attributes in nodes[node]!) {
                 if (response.ref.results[index].statusCode != raw.UA_STATUSCODE_GOOD) {
-                  throw 'Some failure, need to handle this';
+                  failures[Tuple2(node, attributes)] = response.ref.results[index].statusCode;
                 } else {
                   monIds.add(response.ref.results[index].monitoredItemId);
                   monIdToNodeAndAttribute[response.ref.results[index].monitoredItemId] = Tuple2(node, attributes);
-                  index++;
                 }
+                index++;
               }
             }
+            if (failures.isNotEmpty) {
+              controller.addError(
+                  "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value)}").join(", ")}");
+              controller.close(); // Call onCancel above
+            }
           }
-        }
-        if (error) {
-          controller.onCancel = () {}; // Don't invoke the real close callback
-          monitorCallback.close();
-          calloc.free(callbacks);
-          controller.close();
         }
       });
       localRequestId = calloc<ffi.Uint32>();
@@ -792,6 +799,8 @@ class Client {
     final stream = monitoredItems(
       {
         nodeId: [
+          AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+          AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
           AttributeId.UA_ATTRIBUTEID_DATATYPE,
           AttributeId.UA_ATTRIBUTEID_VALUE,
         ]
@@ -891,7 +900,7 @@ class Client {
     return completer.future;
   }
 
-  Future<Schema> _readDataTypeDefinition(NodeId nodeIdType) async {
+  Future<Schema> buildSchema(NodeId nodeIdType) async {
     var map = Schema();
     map[nodeIdType] = (await readAttribute({
       nodeIdType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION]
@@ -901,9 +910,9 @@ class Client {
     final val = map[nodeIdType]!;
     if (val.isObject) {
       for (var entry in val.entries) {
-        final val = entry.value;
         if (nodeIdToPayloadType(entry.value.typeId) == null) {
-          map.addAll(await _readDataTypeDefinition(entry.value.typeId!));
+          final temporary = await buildSchema(entry.value.typeId!);
+          map.addAll(temporary);
           val[entry.value.name] = map[entry.value.typeId]!;
         }
       }
@@ -921,12 +930,12 @@ class Client {
       typeId = ext.ref.content.encoded.typeId.toNodeId();
       if (!defs.containsKey(typeId)) {
         // Copy our data before async switch
-        defs.addAll(await _readDataTypeDefinition(typeId));
+        defs.addAll(await buildSchema(typeId));
       }
     } else if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null) {
       if (!defs.containsKey(dataTypeId)) {
         // Copy our data before async switch
-        defs.addAll(await _readDataTypeDefinition(dataTypeId));
+        defs.addAll(await buildSchema(dataTypeId));
       }
     }
     final retValue = variantToValue(data, defs: defs, dataTypeId: dataTypeId);

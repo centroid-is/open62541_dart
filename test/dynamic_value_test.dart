@@ -589,5 +589,8 @@ void main() {
     final copy = DynamicValue.from(test);
     expect(copy["a"].asString, "a");
     expect(copy.typeId, NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    copy["a"] = DynamicValue(typeId: NodeId.uastring, value: "b");
+    expect(test["a"].asString, "a");
+    expect(copy["a"].asString, "b");
   });
 }

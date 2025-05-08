@@ -18,6 +18,12 @@ class LocalizedText {
   factory LocalizedText.from(LocalizedText other) {
     return LocalizedText(other.value, other.locale);
   }
+
+  @override
+  String toString() {
+    if (value.isNotEmpty && locale.isNotEmpty) return "$locale : $value";
+    return value;
+  }
 }
 
 class EnumField {
