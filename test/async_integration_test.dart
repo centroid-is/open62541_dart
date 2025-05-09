@@ -8,32 +8,23 @@ import 'package:test/test.dart';
 
 void main() async {
   final lib = Open62541Singleton().lib;
-  Pointer<UA_Server> server = nullptr;
   Client? client;
+  Server? server;
   final boolNodeId = NodeId.fromString(1, "the.bBool");
   final intNodeId = NodeId.fromString(1, "the.int");
 
   bool quitServer = false; // For tests that need to stop the server
   setUp(() async {
     print("Setting up");
-    // Initalize an open62541 server
-    server = lib.UA_Server_new();
-    lib.UA_Server_run_startup(server);
+    server = Server(lib);
 
     // Run the server while we test
     () async {
-      while (!quitServer) {
-        // The true is if the server should wait for messages in the network layer
+      while (server!.runIterate()) {
         // The function returns how long it can wait before the next iteration
         // That is a really high number and causes my tests to run slow.
         // Lets just wait 50ms
-        lib.UA_Server_run_iterate(server, true);
-        // Check if the server is running
-        final state = lib.UA_Server_getLifecycleState(server);
-        if (state == UA_LifecycleState.UA_LIFECYCLESTATE_STOPPED) {
-          break;
-        }
-        await Future.delayed(Duration(milliseconds: 10));
+        await Future.delayed(Duration(milliseconds: 50));
       }
     }();
 
@@ -188,11 +179,11 @@ void main() async {
   tearDown(() async {
     print("Tearing down!");
 
-    lib.UA_Server_run_shutdown(server);
+    server!.shutdown();
 
     await client!.delete();
 
-    lib.UA_Server_delete(server);
+    server!.delete();
     print("Done tearing down");
   });
 }
