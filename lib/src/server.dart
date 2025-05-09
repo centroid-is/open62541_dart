@@ -6,6 +6,7 @@ import 'package:open62541/open62541.dart';
 import 'common.dart';
 import 'extensions.dart';
 import 'generated/open62541_bindings.dart' as raw;
+import 'package:ffi/ffi.dart';
 
 class Server {
   Server(raw.open62541 lib) {
