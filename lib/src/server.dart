@@ -4,6 +4,7 @@ import 'package:open62541/open62541.dart';
 import 'generated/open62541_bindings.dart' as raw;
 import 'dart:ffi' as ffi;
 import 'common.dart';
+import 'extensions.dart';
 
 class Server {
   Server(raw.open62541 lib) {
@@ -107,6 +108,33 @@ class Server {
     if (returnCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add variable node ${statusCodeToString(returnCode, _lib)}';
     }
+  }
+
+  /// Writes a description to a variable node in the OPC UA server.
+  ///
+  /// This method sets the description attribute of a variable node using a
+  /// localized text value. The description can be used to provide additional
+  /// information about the variable to clients.
+  ///
+  /// Required parameters:
+  /// * [variableNodeId] - The identifier of the variable node to update
+  /// * [description] - The localized text containing the description
+  ///
+  /// Example:
+  /// ```dart
+  /// final nodeId = NodeId.fromString(1, "my.variable");
+  /// final description = LocalizedText(
+  ///   locale: "en-US",
+  ///   value: "Temperature sensor reading in Celsius"
+  /// );
+  /// server.writeDescription(nodeId, description);
+  /// ```
+  void writeDescription(NodeId variableNodeId, LocalizedText description) {
+    ffi.Pointer<raw.UA_LocalizedText> descriptionRaw = calloc<raw.UA_LocalizedText>();
+    descriptionRaw.ref.locale.set(description.locale);
+    descriptionRaw.ref.text.set(description.value);
+    _lib.UA_Server_writeDescription(_server, variableNodeId.toRaw(_lib), descriptionRaw.ref);
+    _lib.UA_LocalizedText_delete(descriptionRaw);
   }
 
   /// Runs a single iteration of the server's main loop.

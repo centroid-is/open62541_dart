@@ -150,6 +150,46 @@ void main() async {
     await streamSub.cancel();
   });
 
+  test('Test server and client descriptions', () async {
+    final description = LocalizedText("This is a test", "en-US");
+    server!.writeDescription(boolNodeId, description);
+    final value = await client!.read(boolNodeId);
+    expect(value.description, description);
+  });
+
+  test('Just run the server so we can connect with a client', () async {
+    await Future.delayed(Duration(minutes: 10));
+    // expect((await client!.read(boolNodeId)).value, false);
+    // await client!.writeValue(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
+    // expect((await client!.read(boolNodeId)).value, true);
+  }, timeout: Timeout(Duration(minutes: 10)), skip: true);
+
+  test('Partial read failures should return partial data', () async {
+    final doesNotExist = NodeId.fromString(1, "does.not.exist");
+    final value = await client!.readAttribute({
+      boolNodeId: [
+        // Should this entire nodeid be a failure?
+        AttributeId.UA_ATTRIBUTEID_VALUE, // This succeeds
+        AttributeId.UA_ATTRIBUTEID_DESCRIPTION, // This succeeds
+        AttributeId.UA_ATTRIBUTEID_ROLEPERMISSIONS, // This fails
+      ],
+      doesNotExist: [
+        AttributeId.UA_ATTRIBUTEID_VALUE, // This fails
+        AttributeId.UA_ATTRIBUTEID_DESCRIPTION, // This fails
+        AttributeId.UA_ATTRIBUTEID_ROLEPERMISSIONS, // This fails
+      ]
+    });
+
+    expect(value.length, 2);
+    expect(value[boolNodeId], isNotNull);
+    expect(value[boolNodeId]!.value, isNotNull);
+    expect(value[boolNodeId]!.description, isNotNull);
+
+    expect(value[doesNotExist], isNotNull);
+    expect(value[doesNotExist]!.value, isNull);
+    expect(value[doesNotExist]!.description, isNull);
+  }, skip: true);
+
   tearDown(() async {
     print("Tearing down!");
 
