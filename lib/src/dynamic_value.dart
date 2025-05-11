@@ -97,7 +97,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     v.isOptional = other.isOptional;
     return v;
   }
-  DynamicValue({this.value, this.description, this.typeId, this.displayName});
+  DynamicValue({this.value, this.description, this.typeId, this.displayName, this.name});
 
   DynamicType get type {
     if (value == null) return DynamicType.nullValue;

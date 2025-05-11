@@ -1,25 +1,23 @@
 import 'dart:async';
-import 'dart:ffi';
 
-import 'package:ffi/ffi.dart';
 import 'package:open62541/open62541.dart';
-import 'package:open62541/src/generated/open62541_bindings.dart';
 import 'package:test/test.dart';
 
 void main() async {
   final lib = Open62541Singleton().lib;
   Client? client;
   Server? server;
-  final boolNodeId = NodeId.fromString(1, "the.bBool");
+  final boolNodeId = NodeId.fromString(1, "the.bool");
   final intNodeId = NodeId.fromString(1, "the.int");
 
-  bool quitServer = false; // For tests that need to stop the server
   setUp(() async {
     print("Setting up");
     server = Server(lib);
+    server!.start();
 
     // Run the server while we test
     () async {
+      print("Starting server loop");
       while (server!.runIterate()) {
         // The function returns how long it can wait before the next iteration
         // That is a really high number and causes my tests to run slow.
@@ -30,37 +28,13 @@ void main() async {
 
     {
       // Create a boolean variable to read and write
-      DynamicValue boolValue = DynamicValue(value: true, typeId: NodeId.boolean);
-      Pointer<UA_VariableAttributes> attr = calloc<UA_VariableAttributes>();
-      attr.ref = lib.UA_VariableAttributes_default;
-      final variant = Client.valueToVariant(boolValue, lib);
-      attr.ref.value = variant.ref;
-      attr.ref.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
-      attr.ref.dataType = NodeId.boolean.toRaw(lib);
-
-      UA_QualifiedName name = lib.UA_QUALIFIEDNAME(1, "the bool".toNativeUtf8().cast());
-      UA_NodeId parentNodeId = NodeId.fromNumeric(0, UA_NS0ID_OBJECTSFOLDER).toRaw(lib);
-      UA_NodeId parentReferenceNodeId = NodeId.fromNumeric(0, UA_NS0ID_ORGANIZES).toRaw(lib);
-      UA_NodeId basedatavariableType = NodeId.fromNumeric(0, UA_NS0ID_BASEDATAVARIABLETYPE).toRaw(lib);
-      lib.UA_Server_addVariableNode(server, boolNodeId.toRaw(lib), parentNodeId, parentReferenceNodeId, name,
-          basedatavariableType, attr.ref, nullptr, nullptr);
+      DynamicValue boolValue = DynamicValue(value: true, typeId: NodeId.boolean, name: "the.bool");
+      server!.addVariableNode(boolNodeId, boolValue);
     }
     {
       // Create a int variables to read and write
-      DynamicValue intValue = DynamicValue(value: 0, typeId: NodeId.int32);
-      Pointer<UA_VariableAttributes> attr = calloc<UA_VariableAttributes>();
-      attr.ref = lib.UA_VariableAttributes_default;
-      final variant = Client.valueToVariant(intValue, lib);
-      attr.ref.value = variant.ref;
-      attr.ref.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
-      attr.ref.dataType = NodeId.int32.toRaw(lib);
-
-      UA_QualifiedName name = lib.UA_QUALIFIEDNAME(1, "the int".toNativeUtf8().cast());
-      UA_NodeId parentNodeId = NodeId.fromNumeric(0, UA_NS0ID_OBJECTSFOLDER).toRaw(lib);
-      UA_NodeId parentReferenceNodeId = NodeId.fromNumeric(0, UA_NS0ID_ORGANIZES).toRaw(lib);
-      UA_NodeId basedatavariableType = NodeId.fromNumeric(0, UA_NS0ID_BASEDATAVARIABLETYPE).toRaw(lib);
-      lib.UA_Server_addVariableNode(server, intNodeId.toRaw(lib), parentNodeId, parentReferenceNodeId, name,
-          basedatavariableType, attr.ref, nullptr, nullptr);
+      DynamicValue intValue = DynamicValue(value: 0, typeId: NodeId.int32, name: "the.int");
+      server!.addVariableNode(intNodeId, intValue);
     }
 
     print("Creating client");

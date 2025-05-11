@@ -12,6 +12,7 @@ import 'package:tuple/tuple.dart';
 import 'generated/open62541_bindings.dart' as raw;
 import 'extensions.dart';
 import 'dynamic_value.dart';
+import 'common.dart';
 
 class ClientState {
   raw.UA_SecureChannelState channelState;
@@ -172,7 +173,7 @@ class Client {
   Future<void> connect(String url) async {
     final instantReturn = _lib.UA_Client_connectAsync(_client, url.toNativeUtf8().cast());
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
+      throw 'Failed to connect: ${statusCodeToString(instantReturn, _lib)}';
     }
     await awaitConnect();
   }
@@ -184,60 +185,6 @@ class Client {
       return _lib.UA_Client_run_iterate(_client, ms) == raw.UA_STATUSCODE_GOOD;
     }
     return false;
-  }
-
-  static ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType, raw.open62541 lib) {
-    int type = uaType.value;
-    if (type < 0 || type > raw.UA_TYPES_COUNT) {
-      throw 'Type out of boundary $type';
-    }
-    return ffi.Pointer.fromAddress(lib.addresses.UA_TYPES.address + (type * ffi.sizeOf<raw.UA_DataType>()));
-  }
-
-  static ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib) {
-    ffi.Pointer<ffi.Uint8> pointer;
-
-    binarize.ByteWriter wr = binarize.ByteWriter();
-    value.set(wr, value, Endian.little, false, true);
-    pointer = calloc<ffi.Uint8>(wr.length);
-    pointer.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
-
-    Namespace0Id id;
-    if (value.typeId!.isNumeric()) {
-      id = Namespace0Id.fromInt(value.typeId!.numeric);
-    } else {
-      id = Namespace0Id.structure;
-    }
-    List<int> getDimensions(DynamicValue value) {
-      if (!value.isArray) {
-        return [];
-      }
-      if (value.asArray.isEmpty) {
-        // I would like this to be an error case
-        throw ArgumentError('Empty array');
-      }
-      var dims = [value.asArray.length];
-      if (value[0].isArray) {
-        dims.addAll(getDimensions(value[0]));
-      }
-      return dims;
-    }
-
-    final dimensions = getDimensions(value);
-    ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
-    lib.UA_Variant_init(variant); // todo is this needed?
-    variant.ref.data = pointer.cast();
-    variant.ref.type = getType(id.toUaTypes(), lib);
-    if (dimensions.isNotEmpty) {
-      variant.ref.arrayLength = dimensions.fold(1, (a, b) => a * b);
-    }
-    if (dimensions.length > 1) {
-      variant.ref.arrayDimensions = calloc<ffi.Uint32>(dimensions.length);
-      variant.ref.arrayDimensions.asTypedList(dimensions.length).setRange(0, dimensions.length, dimensions);
-      variant.ref.arrayDimensionsSize = dimensions.length;
-    }
-
-    return variant;
   }
 
   Future<void> writeValue(NodeId nodeId, DynamicValue value) {
@@ -271,13 +218,13 @@ class Client {
       _lib.UA_Variant_delete(variant);
       if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
         completer.completeError(
-          'Failed to write value: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
+          'Failed to write value: ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}',
         );
         return;
       }
       if (response.ref.results.value != raw.UA_STATUSCODE_GOOD) {
         completer.completeError(
-          'Failed to write value: ${statusCodeToString(response.ref.results.value)}',
+          'Failed to write value: ${statusCodeToString(response.ref.results.value, _lib)}',
         );
         return;
       }
@@ -401,7 +348,7 @@ class Client {
       for (var i = 0; i < pointers.length; i++) {
         if (pointers[i].ref.status != raw.UA_STATUSCODE_GOOD) {
           completer.completeError(
-              'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status)} NodeId: ${indorderNodes[i].$1}');
+              'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status, _lib)} NodeId: ${indorderNodes[i].$1}');
           break; // Break here to cleanup pointers memory below
         }
 
@@ -443,9 +390,9 @@ class Client {
     int res = _lib.UA_Client_AsyncService(
       _client,
       request.cast(),
-      Client.getType(UaTypes.readRequest, _lib),
+      getType(UaTypes.readRequest, _lib),
       callback.nativeFunction,
-      Client.getType(UaTypes.readResponse, _lib),
+      getType(UaTypes.readResponse, _lib),
       ffi.nullptr,
       requestIdPtr,
     );
@@ -453,7 +400,7 @@ class Client {
       callback.close();
       _lib.UA_ReadRequest_delete(request);
       calloc.free(requestIdPtr);
-      completer.completeError('Failed to read attribute: ${statusCodeToString(res)}');
+      completer.completeError('Failed to read attribute: ${statusCodeToString(res, _lib)}');
       return completer.future;
     }
 
@@ -510,7 +457,7 @@ class Client {
       callback.close();
       if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
         completer.completeError(
-            'unable to create subscription ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
+            'unable to create subscription ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}');
         return;
       }
       completer.complete(response.ref.subscriptionId);
@@ -602,7 +549,7 @@ class Client {
             for (var i = 0; i < response.ref.resultsSize; i++) {
               if (response.ref.results[i] != raw.UA_STATUSCODE_GOOD) {
                 stderr.write(
-                    "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}");
+                    "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value, _lib)}");
               }
             }
           }
@@ -676,7 +623,7 @@ class Client {
           return;
         }
         if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
-          controller.addError('Failed to read value: ${statusCodeToString(value.ref.status)}');
+          controller.addError('Failed to read value: ${statusCodeToString(value.ref.status, _lib)}');
           return;
         }
         try {
@@ -767,11 +714,11 @@ class Client {
             error = true;
           } else if (response.ref.results.ref.statusCode != raw.UA_STATUSCODE_GOOD) {
             controller.addError(
-                'Unable to create monitored item: ${response.ref.results.ref.statusCode} ${statusCodeToString(response.ref.results.ref.statusCode)}');
+                'Unable to create monitored item: ${response.ref.results.ref.statusCode} ${statusCodeToString(response.ref.results.ref.statusCode, _lib)}');
             error = true;
           } else if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
             controller.addError(
-                'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
+                'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}');
             error = true;
           }
 
@@ -797,7 +744,7 @@ class Client {
             }
             if (failures.isNotEmpty) {
               controller.addError(
-                  "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value)}").join(", ")}");
+                  "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value, _lib)}").join(", ")}");
               controller.close(); // Call onCancel above
             }
           }
@@ -819,7 +766,7 @@ class Client {
         calloc.free(callbacks);
         monitorCallback.close();
         createCallback.close();
-        controller.addError('Unable to create monitored item: $statusCode ${statusCodeToString(statusCode)}');
+        controller.addError('Unable to create monitored item: $statusCode ${statusCodeToString(statusCode, _lib)}');
 
         // Cleanup resources that the close callback was suppose to do
         controller.onCancel = () {}; // Don't invoke the real close callback
@@ -901,13 +848,13 @@ class Client {
         final results = ref.results.ref;
         if (results.statusCode != raw.UA_STATUSCODE_GOOD) {
           return completer.completeError(
-            "Results error on call to $objectId $methodId failed with ${statusCodeToString(results.statusCode)}",
+            "Results error on call to $objectId $methodId failed with ${statusCodeToString(results.statusCode, _lib)}",
             StackTrace.current,
           );
         }
         if (ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
           return completer.completeError(
-            "Header error on call to $objectId $methodId failed with ${statusCodeToString(ref.responseHeader.serviceResult)}",
+            "Header error on call to $objectId $methodId failed with ${statusCodeToString(ref.responseHeader.serviceResult, _lib)}",
             StackTrace.current,
           );
         }
@@ -942,7 +889,7 @@ class Client {
       ffi.nullptr,
     );
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Unable to call method: $statusCode ${statusCodeToString(statusCode)}';
+      throw 'Unable to call method: $statusCode ${statusCodeToString(statusCode, _lib)}';
     }
     return completer.future;
   }
@@ -1042,14 +989,10 @@ class Client {
     return retValue;
   }
 
-  String statusCodeToString(int statusCode) {
-    return _lib.UA_StatusCode_name(statusCode).cast<Utf8>().toDartString();
-  }
-
   void disconnect() {
     final statusCode = _lib.UA_Client_disconnect(_client);
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Unable to disconnect: $statusCode ${statusCodeToString(statusCode)}';
+      throw 'Unable to disconnect: $statusCode ${statusCodeToString(statusCode, _lib)}';
     }
   }
 

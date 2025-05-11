@@ -1,7 +1,9 @@
 import 'package:ffi/ffi.dart';
+import 'package:open62541/open62541.dart';
 
 import 'generated/open62541_bindings.dart' as raw;
 import 'dart:ffi' as ffi;
+import 'common.dart';
 
 class Server {
   Server(raw.open62541 lib) {
@@ -12,8 +14,99 @@ class Server {
   late raw.open62541 _lib;
   late ffi.Pointer<raw.UA_Server> _server;
 
+  /// Initializes and starts the OPC UA server.
+  ///
+  /// This method performs the initial startup sequence for the server, including:
+  /// * Initializing the server's internal state
+  /// * Setting up the network layer
+  /// * Initializing the server's lifecycle state
+  /// * Preparing the server for client connections
+  ///
+  /// This method must be called before any other server operations can be performed.
+  /// After calling this method, you should start running server iterations using
+  /// [runIterate] to process client requests.
+  ///
+  /// Throws an exception if the server startup fails, with the error
+  /// message including the status code.
+  ///
+  /// Example:
+  /// ```dart
+  /// server.start();
+  /// while (server.runIterate(waitInterval: true)) {
+  ///   await Future.delayed(Duration(milliseconds: 50));
+  /// }
+  /// ```
   void start() {
-    _lib.UA_Server_run_startup(_server);
+    int retCode = _lib.UA_Server_run_startup(_server);
+    if (retCode != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to start server ${statusCodeToString(retCode, _lib)}';
+    }
+  }
+
+  /// Adds a variable node to the OPC UA server.
+  ///
+  /// This method creates a new variable node in the server's address space with the
+  /// specified properties and value. The variable can be read and written by clients
+  /// based on the provided access level.
+  ///
+  /// Required parameters:
+  /// * [variableNodeId] - The unique identifier for the new variable node
+  /// * [value] - The initial value and type information for the variable
+  ///
+  /// Optional parameters:
+  /// * [accessLevel] - Controls read/write access to the variable (defaults to read and write enabled)
+  /// * [parentNodeId] - The parent node in the address space (defaults to Objects folder)
+  /// * [parentReferenceNodeId] - The reference type to the parent (defaults to Organizes)
+  /// * [basedatavariableType] - The base type for the variable (defaults to BaseDataVariableType)
+  ///
+  /// Throws an exception if:
+  /// * The value's name is not provided (required for browse name)
+  /// * The server fails to add the variable node
+  ///
+  /// Example:
+  /// ```dart
+  /// final nodeId = NodeId.fromString(1, "my.variable");
+  /// final value = DynamicValue(
+  ///   name: "My Variable",
+  ///   value: 42,
+  ///   typeId: NodeId.int32,
+  /// );
+  /// server.addVariableNode(nodeId, value);
+  /// ```
+  void addVariableNode(
+    NodeId variableNodeId,
+    DynamicValue value, {
+    AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
+    NodeId? parentNodeId,
+    NodeId? parentReferenceNodeId,
+    NodeId? basedatavariableType,
+  }) {
+    ffi.Pointer<raw.UA_VariableAttributes> attr = calloc<raw.UA_VariableAttributes>();
+    attr.ref = _lib.UA_VariableAttributes_default;
+    final variant = valueToVariant(value, _lib);
+    attr.ref.value = variant.ref;
+    attr.ref.accessLevel = accessLevel.value;
+    attr.ref.dataType = value.typeId!.toRaw(_lib);
+
+    if (value.name == null) {
+      throw 'Value name must be provided to use as a browse name';
+    }
+    final name = _lib.UA_QUALIFIEDNAME(1, value.name!.toNativeUtf8().cast());
+
+    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
+    basedatavariableType ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
+
+    final parentNodeIdRaw = parentNodeId.toRaw(_lib);
+    final parentReferenceNodeIdRaw = parentReferenceNodeId.toRaw(_lib);
+    final basedatavariableTypeRaw = basedatavariableType.toRaw(_lib);
+
+    var returnCode = _lib.UA_Server_addVariableNode(_server, variableNodeId.toRaw(_lib), parentNodeIdRaw,
+        parentReferenceNodeIdRaw, name, basedatavariableTypeRaw, attr.ref, ffi.nullptr, ffi.nullptr);
+    _lib.UA_VariableAttributes_delete(attr);
+    if (returnCode != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add variable node ${statusCodeToString(returnCode, _lib)}';
+    }
   }
 
   /// Runs a single iteration of the server's main loop.
@@ -53,21 +146,52 @@ class Server {
     return false;
   }
 
-  String statusCodeToString(int statusCode) {
-    return _lib.UA_StatusCode_name(statusCode).cast<Utf8>().toDartString();
-  }
-
+  /// Shuts down the OPC UA server gracefully.
+  ///
+  /// This method performs a controlled shutdown of the server, stopping all
+  /// network operations and cleaning up resources. It should be called before
+  /// deleting the server instance.
+  ///
+  /// Throws an exception if the shutdown operation fails, with the error
+  /// message including the status code.
+  ///
+  /// Example:
+  /// ```dart
+  /// try {
+  ///   server.shutdown();
+  /// } catch (e) {
+  ///   print('Failed to shutdown server: $e');
+  /// }
+  /// ```
   void shutdown() {
     int ret = _lib.UA_Server_run_shutdown(_server);
     if (ret != 0) {
-      throw "Failed to shutdown server ${statusCodeToString(ret)}";
+      throw "Failed to shutdown server ${statusCodeToString(ret, _lib)}";
     }
   }
 
+  /// Deletes the OPC UA server instance and frees all associated resources.
+  ///
+  /// This method should be called after [shutdown] to clean up all server resources.
+  /// It is important to call this method to prevent memory leaks when the server
+  /// is no longer needed.
+  ///
+  /// Throws an exception if the deletion operation fails, with the error
+  /// message including the status code.
+  ///
+  /// Example:
+  /// ```dart
+  /// try {
+  ///   server.shutdown();
+  ///   server.delete();
+  /// } catch (e) {
+  ///   print('Failed to cleanup server: $e');
+  /// }
+  /// ```
   void delete() {
     int ret = _lib.UA_Server_delete(_server);
     if (ret != 0) {
-      throw "Failed to delete server ${statusCodeToString(ret)}";
+      throw "Failed to delete server ${statusCodeToString(ret, _lib)}";
     }
   }
 }
