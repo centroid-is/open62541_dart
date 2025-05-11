@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:open62541/open62541.dart';
+import 'package:open62541/src/types/create_type.dart';
 
 import 'extensions.dart';
 import 'generated/open62541_bindings.dart' as raw;
@@ -67,4 +69,58 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib
   }
 
   return variant;
+}
+
+DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataTypeId}) {
+  // Check if the variant contains no data
+  if (data.data == ffi.nullptr) {
+    return DynamicValue();
+  }
+
+  var typeId = dataTypeId ?? data.type.ref.typeId.toNodeId();
+  if (typeId == NodeId.structure) {
+    final ext = data.data.cast<raw.UA_ExtensionObject>();
+    typeId = ext.ref.content.encoded.typeId.toNodeId();
+  }
+
+  final dimensions = data.dimensions;
+  final dimensionsMultiplied = dimensions.fold(1, (a, b) => a * b);
+  final bufferLength = dimensionsMultiplied * data.type.ref.memSize;
+  DynamicValue retValue;
+
+  // Read structure from opc-ua server
+  DynamicValue dynamicValueSchema(NodeId typeId) {
+    if (nodeIdToPayloadType(typeId) != null) {
+      return DynamicValue(typeId: typeId);
+    }
+    if (defs != null && defs.containsKey(typeId)) {
+      return DynamicValue.from(defs[typeId]!);
+    }
+    throw 'Unsupported nodeId type: $typeId';
+  }
+
+  DynamicValue createNestedArray(NodeId typeId, List<int> dims) {
+    if (dims.isEmpty) {
+      return dynamicValueSchema(typeId);
+    }
+
+    DynamicValue list = DynamicValue(typeId: typeId);
+    if (dims.length == 1) {
+      // Base case: create array of the final dimension
+      for (int i = 0; i < dims[0]; i++) {
+        list[i] = dynamicValueSchema(typeId);
+      }
+    } else {
+      for (int i = 0; i < dims[0]; i++) {
+        list[i] = createNestedArray(typeId, dims.sublist(1));
+      }
+    }
+    return list;
+  }
+
+  retValue = createNestedArray(typeId, dimensions.toList());
+  final reader = binarize.ByteReader(data.data.cast<ffi.Uint8>().asTypedList(bufferLength));
+  retValue.get(reader, Endian.little, false, true);
+
+  return retValue;
 }
