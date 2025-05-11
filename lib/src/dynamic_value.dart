@@ -75,7 +75,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       v.value = LinkedHashMap<String, DynamicValue>();
       other.value.forEach((key, value) => v.value[key] = DynamicValue.from(value));
     } else if (other.value is List) {
-      v.value = other.value.map((e) => DynamicValue.from(e)).toList();
+      v.value = other.value.map<DynamicValue>((e) => DynamicValue.from(e)).toList();
     } else {
       v.value = other.value;
     }
@@ -275,6 +275,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     // Check if we are an enum
     final binaryEncodingId = def.type.ref.binaryEncodingId.toNodeId();
     if (binaryEncodingId == NodeId.enumDefinitionDefaultBinary) {
+      final arraydimensionssize = def.arrayLength;
       final enumDefinition = def.data.cast<raw.UA_EnumDefinition>();
       final enumFields = <int, EnumField>{};
       for (int i = 0; i < enumDefinition.ref.fieldsSize; i++) {
@@ -290,21 +291,23 @@ class DynamicValue extends PayloadType<DynamicValue> {
       // Object case & Array case
       for (int i = 0; i < structSchema.ref.fieldsSize; i++) {
         final field = structSchema.ref.fields[i];
+        final fieldName = field.fieldName;
+        final fieldDataType = field.dataType.toNodeId();
 
         if (field.dimensions.isEmpty) {
-          tree[field.fieldName] = DynamicValue(typeId: field.dataType.toNodeId());
+          tree[fieldName] = DynamicValue(typeId: fieldDataType);
         } else {
           // Don't support multi dimensional fields for now
           assert(field.dimensions.length == 1);
           var collection = [];
           for (int i = 0; i < field.dimensions[0]; i++) {
-            collection.add(DynamicValue(typeId: field.dataType.toNodeId()));
+            collection.add(DynamicValue(typeId: fieldDataType));
           }
-          tree[field.fieldName] = DynamicValue.fromList(collection, typeId: field.dataType.toNodeId());
+          tree[fieldName] = DynamicValue.fromList(collection, typeId: fieldDataType);
         }
-        tree[field.fieldName].isOptional = field.isOptional;
-        tree[field.fieldName].description = field.description.localizedText;
-        tree[field.fieldName].name = field.name.value;
+        tree[fieldName].isOptional = field.isOptional;
+        tree[fieldName].description = field.description.localizedText;
+        tree[fieldName].name = field.name.value;
       }
     } else {
       throw 'Unsupported binary encoding id: $binaryEncodingId for AttributeId UA_ATTRIBUTEID_DATATYPEDEFINITION';

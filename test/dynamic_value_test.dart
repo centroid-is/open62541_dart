@@ -598,4 +598,10 @@ void main() {
     expect(test.isOptional, copy.isOptional);
     expect(test.name, copy.name);
   });
+  test('Copy constructor with array as struct member', () {
+    var a = DynamicValue();
+    a["sub"] = DynamicValue.fromList([DynamicValue(), DynamicValue()]);
+    var b = DynamicValue.from(a);
+    expect(b["sub"].asArray.length, 2);
+  });
 }
