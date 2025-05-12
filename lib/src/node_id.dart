@@ -160,9 +160,9 @@ class NodeId {
   @override
   String toString() {
     if (_stringId != null) {
-      return 'NodeId(namespace: $_namespaceIndex, string: $_stringId)';
+      return "ns=$namespace;s=$_stringId";
     } else if (_numericId != null) {
-      return 'NodeId(namespace: $_namespaceIndex, numeric: $_numericId)';
+      return "ns=$namespace;i=$_numericId";
     } else {
       return 'NodeId(TODO)';
     }
