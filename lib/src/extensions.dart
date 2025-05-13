@@ -10,6 +10,7 @@ import 'generated/open62541_bindings.dart' as raw;
 
 typedef MonitoringMode = raw.UA_MonitoringMode;
 typedef AttributeId = raw.UA_AttributeId;
+typedef MessageSecurityMode = raw.UA_MessageSecurityMode;
 
 // ignore: camel_case_types
 enum Namespace0Id {
