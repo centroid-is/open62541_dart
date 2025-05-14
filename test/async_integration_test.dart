@@ -1,7 +1,8 @@
 import 'dart:async';
 
-import 'package:open62541/open62541.dart';
 import 'package:test/test.dart';
+
+import 'package:open62541/open62541.dart';
 
 void main() async {
   final lib = Open62541Singleton().lib;

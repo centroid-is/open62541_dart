@@ -3,11 +3,11 @@ import 'dart:ffi' as ffi;
 
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
+
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
 import 'package:open62541/src/types/payloads.dart';
-
 import 'node_id.dart';
 import 'types/create_type.dart';
 

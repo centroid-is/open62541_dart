@@ -1,14 +1,14 @@
 import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
+import 'package:test/test.dart';
+
 import 'package:open62541/src/common.dart';
 import 'package:open62541/src/dynamic_value.dart';
 import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
 import 'package:open62541/src/library.dart';
 import 'package:open62541/src/node_id.dart';
-import 'package:test/test.dart';
-
 import 'schema_util.dart';
 
 void main() {
@@ -179,7 +179,7 @@ void main() {
   });
   test('4x2 multi dimensional array', () {
     var data = [0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00, 0x05, 0x00, 0x06, 0x00, 0x07, 0x00, 0x08, 0x00];
-    Pointer<UA_Variant> variant = calloc();
+    Pointer<raw.UA_Variant> variant = calloc();
     variant.ref.data = calloc<Uint8>(data.length).cast();
     variant.ref.data.cast<Uint8>().asTypedList(data.length).setRange(0, data.length, data);
 
@@ -251,7 +251,7 @@ void main() {
       0x01,
       0x00,
     ];
-    Pointer<UA_Variant> variant = calloc();
+    Pointer<raw.UA_Variant> variant = calloc();
     variant.ref.data = calloc<Uint8>(data.length).cast();
     variant.ref.data.cast<Uint8>().asTypedList(data.length).setRange(0, data.length, data);
 
@@ -437,7 +437,7 @@ void main() {
       2, 0, 0, 0, 99, 88, 0, // cX
     ];
 
-    Pointer<UA_Variant> variant = calloc();
+    Pointer<raw.UA_Variant> variant = calloc();
     variant.ref.data = calloc<Uint8>(data.length).cast();
     variant.ref.data.cast<Uint8>().asTypedList(data.length).setRange(0, data.length, data);
 
@@ -803,7 +803,7 @@ void main() {
 
     var atvId = NodeId.fromString(4, "FB_ATV");
 
-    Pointer<UA_Variant> variant = calloc();
+    Pointer<raw.UA_Variant> variant = calloc();
     Pointer<raw.UA_ExtensionObject> ext = calloc(3);
     // Set encoding
     ext[0].encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
