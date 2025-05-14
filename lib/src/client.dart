@@ -345,11 +345,11 @@ class Client {
 
       final retVal = <NodeId, DynamicValue>{};
       for (var i = 0; i < pointers.length; i++) {
-        // if (pointers[i].ref.status != raw.UA_STATUSCODE_GOOD) {
-        //   completer.completeError(
-        //       'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status, _lib)} NodeId: ${indorderNodes[i].$1} AttributeId: ${indorderNodes[i].$2}');
-        //   break; // Break here to cleanup pointers memory below
-        // }
+        if (pointers[i].ref.status != raw.UA_STATUSCODE_GOOD) {
+          completer.completeError(
+              'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status, _lib)} NodeId: ${indorderNodes[i].$1} AttributeId: ${indorderNodes[i].$2}');
+          break; // Break here to cleanup pointers memory below
+        }
         final status = pointers[i].ref.status;
         final ok = status == raw.UA_STATUSCODE_GOOD;
         var reference = retVal[indorderNodes[i].$1] ?? DynamicValue();
@@ -357,13 +357,8 @@ class Client {
 
         switch (indorderNodes[i].$2) {
           case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
-            if (ok) {
-              final description = value!.data.cast<raw.UA_LocalizedText>();
-              reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
-            } else {
-              reference.attributeDescription =
-                  AttributeContainer(opcUaStatus: status, errorMessage: statusCodeToString(status, _lib));
-            }
+            final description = value!.data.cast<raw.UA_LocalizedText>();
+            reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
           case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
             final displayName = value!.data.cast<raw.UA_LocalizedText>();
             reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);

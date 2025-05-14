@@ -49,44 +49,16 @@ class EnumField {
   }
 }
 
-class AttributeContainer<T> {
-  final T? value;
-  final int opcUaStatus;
-  final String errorMessage;
-
-  bool get hasError => opcUaStatus != UA_STATUSCODE_GOOD;
-
-  const AttributeContainer({this.value, this.opcUaStatus = UA_STATUSCODE_GOOD, this.errorMessage = ''});
-}
-
 typedef Schema = Map<NodeId, DynamicValue>;
 
 class DynamicValue extends PayloadType<DynamicValue> {
   dynamic value;
   NodeId? typeId;
   String? name;
-  AttributeContainer<LocalizedText?> _description;
+  LocalizedText? description;
   LocalizedText? displayName;
   Map<int, EnumField>? enumFields;
   bool isOptional = false;
-
-  // ignore: unnecessary_getters_setters
-  AttributeContainer<LocalizedText?> get attributeDescription => _description;
-
-  set attributeDescription(AttributeContainer<LocalizedText?> value) {
-    _description = value;
-  }
-
-  LocalizedText? get description {
-    if (_description.hasError) {
-      throw _description.errorMessage;
-    }
-    return _description.value;
-  }
-
-  set description(LocalizedText? value) {
-    _description = AttributeContainer(value: value);
-  }
 
   factory DynamicValue.fromMap(LinkedHashMap<String, dynamic> entries) {
     DynamicValue v = DynamicValue();
@@ -136,8 +108,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     v.isOptional = other.isOptional;
     return v;
   }
-  DynamicValue({this.value, LocalizedText? description, this.typeId, this.displayName, this.name})
-      : _description = AttributeContainer(value: description);
+  DynamicValue({this.value, this.description, this.typeId, this.displayName, this.name});
 
   DynamicType get type {
     if (value == null) return DynamicType.nullValue;
