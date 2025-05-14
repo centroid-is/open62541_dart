@@ -1,8 +1,9 @@
 import 'dart:ffi';
+
 import 'package:ffi/ffi.dart';
-import 'generated/open62541_bindings.dart' as raw;
 
 import 'extensions.dart';
+import 'generated/open62541_bindings.dart' as raw;
 
 class NodeId {
   NodeId._internal(this._namespaceIndex, {dynamic id})
