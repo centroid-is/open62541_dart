@@ -103,6 +103,10 @@ class NodeId {
     return NodeId.fromNumeric(0, Namespace0Id.structure.value);
   }
 
+  static NodeId get structureDefinition {
+    return NodeId.fromNumeric(0, Namespace0Id.structureDefinition.value);
+  }
+
   static NodeId get structureDefinitionDefaultBinary {
     return NodeId.fromNumeric(0, Namespace0Id.structureDefinitionDefaultBinary.value);
   }
