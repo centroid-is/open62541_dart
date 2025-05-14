@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:ffi' as ffi;
+
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
 
 import '../generated/open62541_bindings.dart' as raw;
+
 // TODO this file has a lot of boilerplate, can we make it better?
 
 class BooleanPayload extends PayloadType<bool> {

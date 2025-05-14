@@ -34,9 +34,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest' # Only run on Linux, dont need all the runners to run this
         run: dart format --set-exit-if-changed . # Line length is set in analysis_options.yaml
 
+      - name: Verify import order
+        if: matrix.os == 'ubuntu-latest' # Only run on Linux, dont need all the runners to run this
+        run: dart pub run import_sorter:main --exit-if-changed
+
       - name: Analyze project source
         if: matrix.os == 'ubuntu-latest' # Only run on Linux, dont need all the runners to run this
         run: dart analyze --fatal-infos --fatal-warnings .
+
 
       - name: Install dependencies for open62541 library Linux
         if: matrix.os == 'ubuntu-latest'

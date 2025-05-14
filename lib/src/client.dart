@@ -4,14 +4,14 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
-import 'package:open62541/open62541.dart';
-import 'package:open62541/src/types/create_type.dart';
 import 'package:tuple/tuple.dart';
 
-import 'generated/open62541_bindings.dart' as raw;
-import 'extensions.dart';
-import 'dynamic_value.dart';
 import 'common.dart';
+import 'dynamic_value.dart';
+import 'extensions.dart';
+import 'generated/open62541_bindings.dart' as raw;
+import 'node_id.dart';
+import 'types/create_type.dart';
 
 class ClientState {
   raw.UA_SecureChannelState channelState;

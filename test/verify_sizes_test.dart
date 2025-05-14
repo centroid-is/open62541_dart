@@ -1,9 +1,11 @@
-import 'package:ffi/ffi.dart';
-import 'package:open62541/src/common.dart';
-import 'package:test/test.dart';
-import 'package:open62541/src/generated/open62541_bindings.dart';
 import 'dart:ffi';
+
+import 'package:ffi/ffi.dart';
+import 'package:test/test.dart';
+
 import 'package:open62541/open62541.dart';
+import 'package:open62541/src/common.dart';
+import 'package:open62541/src/generated/open62541_bindings.dart';
 
 void main() {
   final lib = Open62541Singleton().lib;
