@@ -22,6 +22,12 @@ dev_dependencies:
   ffigen: ^18.1.0
   lints: ^5.1.1
   test: ^1.24.0
+  import_sorter: ^4.6.0
+import_sorter:
+  emojis: false
+  comments: false
+  ignored_files: 
+    - open62541_bindings.dart
 ffigen:
   output: lib/src/generated/open62541_bindings.dart
   name: open62541
