@@ -89,13 +89,57 @@ class ClientConfig {
 typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
 
 class Client {
-  Client(raw.open62541 lib, {Duration? secureChannelLifeTime})
-      : _lib = lib,
+  Client(
+    raw.open62541 lib, {
+    Duration? secureChannelLifeTime,
+    String? username,
+    String? password,
+    MessageSecurityMode? securityMode,
+    Uint8List? certificate,
+    Uint8List? privateKey,
+  })  : _lib = lib,
         _client = lib.UA_Client_new() {
     final config = lib.UA_Client_getConfig(_client);
     lib.UA_ClientConfig_setDefault(config);
     if (secureChannelLifeTime != null) {
       config.ref.secureChannelLifeTime = secureChannelLifeTime.inMilliseconds;
+    }
+
+    if (securityMode != null) {
+      config.ref.securityModeAsInt = securityMode.value;
+    }
+
+    if (certificate != null && privateKey != null) {
+      ffi.Pointer<raw.UA_ByteString> rawCertificate = calloc<raw.UA_ByteString>();
+      ffi.Pointer<raw.UA_ByteString> rawPrivateKey = calloc<raw.UA_ByteString>();
+
+      rawCertificate.ref.data = calloc<ffi.Uint8>(certificate.length);
+      rawCertificate.ref.length = certificate.length;
+      rawCertificate.ref.data.asTypedList(certificate.length).setRange(0, certificate.length, certificate);
+
+      rawPrivateKey.ref.data = calloc<ffi.Uint8>(privateKey.length);
+      rawPrivateKey.ref.length = privateKey.length;
+      rawPrivateKey.ref.data.asTypedList(privateKey.length).setRange(0, privateKey.length, privateKey);
+
+      _lib.UA_ClientConfig_setDefaultEncryption(
+          config, rawCertificate.ref, rawPrivateKey.ref, ffi.nullptr, 0, ffi.nullptr, 0);
+
+      // Accept all certificates
+      ffi.Pointer<raw.UA_CertificateGroup> certificateVerification = calloc<raw.UA_CertificateGroup>();
+      certificateVerification.ref = config.ref.certificateVerification;
+      _lib.UA_CertificateGroup_AcceptAll(certificateVerification);
+      config.ref.certificateVerification = certificateVerification.ref;
+      calloc.free(certificateVerification);
+
+      calloc.free(rawCertificate.ref.data);
+      calloc.free(rawPrivateKey.ref.data);
+      calloc.free(rawCertificate);
+      calloc.free(rawPrivateKey);
+    }
+
+    if (username != null) {
+      _lib.UA_ClientConfig_setAuthenticationUsername(
+          config, username.toNativeUtf8().cast(), password != null ? password.toNativeUtf8().cast() : ffi.nullptr);
     }
     _clientConfig = ClientConfig(config);
   }

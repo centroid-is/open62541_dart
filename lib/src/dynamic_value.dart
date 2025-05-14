@@ -275,7 +275,6 @@ class DynamicValue extends PayloadType<DynamicValue> {
     // Check if we are an enum
     final binaryEncodingId = def.type.ref.binaryEncodingId.toNodeId();
     if (binaryEncodingId == NodeId.enumDefinitionDefaultBinary) {
-      final arraydimensionssize = def.arrayLength;
       final enumDefinition = def.data.cast<raw.UA_EnumDefinition>();
       final enumFields = <int, EnumField>{};
       for (int i = 0; i < enumDefinition.ref.fieldsSize; i++) {
