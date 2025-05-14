@@ -6,7 +6,6 @@ import 'package:ffi/ffi.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/types/create_type.dart';
-import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'generated/open62541_bindings.dart' as raw;
 
