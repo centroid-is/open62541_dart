@@ -902,6 +902,10 @@ class Client {
         .values
         .first;
     final val = map[nodeIdType]!;
+    if (val.typeId == NodeId.structureDefinition) {
+      val.typeId =
+          nodeIdType; // TODO: Inside the read enum typeids are overwritten as int32. This is a mix and needs to be cleaned up
+    }
     if (val.isObject) {
       for (var entry in val.entries) {
         if (nodeIdToPayloadType(entry.value.typeId) == null) {

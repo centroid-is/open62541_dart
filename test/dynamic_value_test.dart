@@ -604,4 +604,12 @@ void main() {
     var b = DynamicValue.from(a);
     expect(b["sub"].asArray.length, 2);
   });
+  test('Copy constructor with array of structs', () {
+    var c = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    c[0] = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    c[1] = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    var d = DynamicValue.from(c);
+    expect(d[0].typeId, NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    expect(d[1].typeId, NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+  });
 }

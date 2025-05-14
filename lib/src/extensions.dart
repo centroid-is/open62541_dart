@@ -45,6 +45,7 @@ enum Namespace0Id {
   enumeration(raw.UA_NS0ID_ENUMERATION),
   image(raw.UA_NS0ID_IMAGE),
   references(raw.UA_NS0ID_REFERENCES),
+  structureDefinition(raw.UA_NS0ID_STRUCTUREDEFINITION),
   structureDefinitionDefaultBinary(raw.UA_NS0ID_STRUCTUREDEFINITION_ENCODING_DEFAULTBINARY),
   enumDefinitionDefaultBinary(raw.UA_NS0ID_ENUMDEFINITION_ENCODING_DEFAULTBINARY);
 
