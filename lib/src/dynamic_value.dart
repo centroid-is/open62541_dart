@@ -2,11 +2,11 @@ import 'dart:collection' show LinkedHashMap;
 import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 import 'package:binarize/binarize.dart';
+import 'package:open62541/open62541.dart';
 import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
 import 'package:open62541/src/types/payloads.dart';
 import 'types/create_type.dart';
-import 'node_id.dart';
 
 enum DynamicType { object, array, string, boolean, nullValue, unknown, integer, double }
 
@@ -24,6 +24,17 @@ class LocalizedText {
     if (value.isNotEmpty && locale.isNotEmpty) return "$locale : $value";
     return value;
   }
+
+  @override
+  bool operator ==(Object other) {
+    if (other is LocalizedText) {
+      return value == other.value && locale == other.locale;
+    }
+    return false;
+  }
+
+  @override
+  int get hashCode => value.hashCode ^ locale.hashCode;
 }
 
 class EnumField {
@@ -97,7 +108,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     v.isOptional = other.isOptional;
     return v;
   }
-  DynamicValue({this.value, this.description, this.typeId, this.displayName});
+  DynamicValue({this.value, this.description, this.typeId, this.displayName, this.name});
 
   DynamicType get type {
     if (value == null) return DynamicType.nullValue;

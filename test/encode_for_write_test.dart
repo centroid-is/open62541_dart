@@ -1,5 +1,6 @@
 import 'dart:ffi';
 
+import 'package:open62541/src/common.dart';
 import 'package:open62541/src/dynamic_value.dart';
 import 'package:open62541/src/generated/open62541_bindings.dart';
 import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
@@ -8,14 +9,13 @@ import 'package:open62541/src/node_id.dart';
 import 'package:open62541/src/extensions.dart';
 import 'package:test/test.dart';
 import 'package:ffi/ffi.dart';
-import 'package:open62541/src/client.dart';
 import 'schema_util.dart';
 
 void main() {
   final lib = Open62541Singleton().lib;
   void testSimpleTypes(DynamicValue value) {
-    final variant = Client.valueToVariant(value, lib);
-    final decoded = Client.variantToValue(variant.ref);
+    final variant = valueToVariant(value, lib);
+    final decoded = variantToValue(variant.ref);
     expect(value.isArray, decoded.isArray);
     if (value.isArray) {
       expect(decoded.asArray.length, value.asArray.length);
@@ -115,7 +115,7 @@ void main() {
     val["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
     val["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
     val["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
-    final variant = Client.valueToVariant(val, lib);
+    final variant = valueToVariant(val, lib);
 
     var spNodeId = NodeId.fromString(4, "Omars string struct");
 
@@ -126,7 +126,7 @@ void main() {
     sp["s3"] = buildField(NodeId.uastring, "s3", [], "ff");
 
     var defs = {spNodeId: sp};
-    final decoded = Client.variantToValue(variant.ref, defs: defs);
+    final decoded = variantToValue(variant.ref, defs: defs);
 
     expect(val["s1"].asString, "some string");
     expect(val["s2"].asString, "other string");
@@ -153,7 +153,7 @@ void main() {
     val3["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
 
     DynamicValue parent = DynamicValue.fromList([val1, val2, val3], typeId: val1.typeId);
-    final variant = Client.valueToVariant(parent, lib);
+    final variant = valueToVariant(parent, lib);
 
     var spNodeId = NodeId.fromString(4, "Omars string struct");
     DynamicValue sp = DynamicValue(typeId: spNodeId);
@@ -162,7 +162,7 @@ void main() {
     sp["s3"] = buildField(NodeId.uastring, "s3", [], "ff");
 
     var defs = {spNodeId: sp};
-    final decoded = Client.variantToValue(variant.ref, defs: defs);
+    final decoded = variantToValue(variant.ref, defs: defs);
 
     expect(val1["s1"].asString, "some string");
     expect(val1["s2"].asString, "other string");
@@ -188,8 +188,8 @@ void main() {
     variant.ref.arrayDimensions = calloc(2);
     variant.ref.arrayDimensions[0] = 4;
     variant.ref.arrayDimensions[1] = 2;
-    variant.ref.type = Client.getType(UaTypes.int16, lib);
-    final value = Client.variantToValue(variant.ref);
+    variant.ref.type = getType(UaTypes.int16, lib);
+    final value = variantToValue(variant.ref);
 
     expect(value.isArray, true);
     expect(value[0].isArray, true);
@@ -209,7 +209,7 @@ void main() {
     expect(value[3][0].asInt, 7);
     expect(value[3][1].asInt, 8);
 
-    final variantEncoded = Client.valueToVariant(value, lib);
+    final variantEncoded = valueToVariant(value, lib);
     expect(variantEncoded.ref.arrayLength, 8);
     final variantData = variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
     expect(variantData, data);
@@ -261,7 +261,7 @@ void main() {
     variant.ref.arrayDimensions[0] = 4;
     variant.ref.arrayDimensions[1] = 4;
     variant.ref.arrayDimensions[2] = 2;
-    variant.ref.type = Client.getType(UaTypes.boolean, lib);
+    variant.ref.type = getType(UaTypes.boolean, lib);
     void expectArrayDyn(DynamicValue value) {
       expect(value.isArray, true);
       expect(value[0].isArray, true);
@@ -322,15 +322,15 @@ void main() {
       expect(value[3][3][1].asBool, false);
     }
 
-    final dynValueFromBuffer = Client.variantToValue(variant.ref);
+    final dynValueFromBuffer = variantToValue(variant.ref);
     expectArrayDyn(dynValueFromBuffer);
 
-    final variantEncoded = Client.valueToVariant(dynValueFromBuffer, lib);
+    final variantEncoded = valueToVariant(dynValueFromBuffer, lib);
     expect(variantEncoded.ref.arrayLength, 32);
     final variantData = variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
     expect(variantData, data);
 
-    final decoded = Client.variantToValue(variantEncoded.ref);
+    final decoded = variantToValue(variantEncoded.ref);
     expectArrayDyn(decoded);
     lib.UA_Variant_delete(variant);
     lib.UA_Variant_delete(variantEncoded);
@@ -447,12 +447,12 @@ void main() {
     variant.ref.arrayDimensions[0] = 2;
     variant.ref.arrayDimensions[1] = 3;
     variant.ref.arrayDimensions[2] = 4;
-    variant.ref.type = Client.getType(UaTypes.int16, lib);
+    variant.ref.type = getType(UaTypes.int16, lib);
 
     var spNodeId = NodeId.fromString(4, "Omars string struct");
 
     final defs = {spNodeId: DynamicValue.fromDataTypeDefinition(spNodeId, variant.ref)};
-    final value = Client.variantToValue(variant.ref, defs: defs);
+    final value = variantToValue(variant.ref, defs: defs);
 
     expect(value.isArray, true);
     expect(value.asArray.length, 2);
@@ -833,7 +833,7 @@ void main() {
     variant.ref.data = ext.cast();
     variant.ref.arrayLength = 3;
     variant.ref.arrayDimensionsSize = 0;
-    variant.ref.type = Client.getType(UaTypes.extensionObject, lib);
+    variant.ref.type = getType(UaTypes.extensionObject, lib);
 
     var hmiNodeId = NodeId.fromString(4, "FB_ATV.HMI");
 
@@ -866,7 +866,7 @@ void main() {
     print(atv);
     var defs = {atvId: atv};
 
-    final value = Client.variantToValue(variant.ref, defs: defs);
+    final value = variantToValue(variant.ref, defs: defs);
 
     void expectArrayDyn(DynamicValue value) {
       // Validate array length
@@ -950,9 +950,9 @@ void main() {
 
     expectArrayDyn(value);
 
-    final variantEncoded = Client.valueToVariant(value, lib);
+    final variantEncoded = valueToVariant(value, lib);
     expect(variantEncoded.ref.arrayLength, 3);
-    final dynValueAgain = Client.variantToValue(variantEncoded.ref, defs: defs);
+    final dynValueAgain = variantToValue(variantEncoded.ref, defs: defs);
     expectArrayDyn(dynValueAgain);
 
     // I presume this erases the data correctly
