@@ -124,6 +124,10 @@ class NodeId {
     return NodeId.fromNumeric(0, Namespace0Id.localizedText.value);
   }
 
+  static NodeId get serverStatusCurrentTime {
+    return NodeId.fromNumeric(0, 2258);
+  }
+
   raw.UA_NodeId toRaw(raw.open62541 lib) {
     if (_stringId != null) {
       return lib.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8().cast());
