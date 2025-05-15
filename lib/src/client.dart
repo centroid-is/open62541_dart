@@ -916,7 +916,6 @@ class Client {
             for (var i = 0; i < val[entry.value.name].asArray.length; i++) {
               val[entry.value.name][i] = map[entry.value.typeId]!;
             }
-            print("Array val:");
           } else {
             val[entry.value.name] = map[entry.value.typeId]!;
           }
