@@ -226,7 +226,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       if (value == null) {
         return "null";
       }
-      return "${enumFields![value]!.name}(${value.toString()})";
+      return "${enumFields![value]?.name}(${value.toString()})";
     }
     return "${displayName == null ? '' : displayName!.value} ${description == null ? '' : description!.value} ${value?.toString() ?? 'null'}";
   }
