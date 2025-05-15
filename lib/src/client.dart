@@ -911,7 +911,14 @@ class Client {
         if (nodeIdToPayloadType(entry.value.typeId) == null) {
           final temporary = await buildSchema(entry.value.typeId!);
           map.addAll(temporary);
-          val[entry.value.name] = map[entry.value.typeId]!;
+          if (val[entry.value.name].isArray) {
+            // todo: only supports one level of array
+            for (var i = 0; i < val[entry.value.name].asArray.length; i++) {
+              val[entry.value.name][i] = map[entry.value.typeId]!;
+            }
+          } else {
+            val[entry.value.name] = map[entry.value.typeId]!;
+          }
         }
       }
     }
