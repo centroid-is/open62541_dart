@@ -26,7 +26,7 @@ class ClientState {
 }
 
 class ClientConfig {
-  ClientConfig(this._clientConfig, {Duration? connectivityCheckInterval}) {
+  ClientConfig(this._clientConfig) {
     // Intercept callbacks
     _state = ffi.NativeCallable<
         ffi.Void Function(
@@ -51,8 +51,7 @@ class ClientConfig {
     _inactivityCallback =
         ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>)>.isolateLocal(_inactivityCallbackC);
     _clientConfig.ref.inactivityCallback = _inactivityCallback.nativeFunction;
-    _clientConfig.ref.connectivityCheckInterval = connectivityCheckInterval?.inMilliseconds ?? 0;
-    calloc.free(_clientConfig.ref.logging);
+    // calloc.free(_clientConfig.ref.logging);
     // ffi.Pointer<raw.UA_Logger> loggerShim = calloc<raw.UA_Logger>();
     // loggerShim.ref.clear = ffi.nullptr; // Lets see if we can get away with this
     // loggerShim.ref.context = ffi.nullptr;
@@ -70,8 +69,8 @@ class ClientConfig {
   //     ffi.Pointer<ffi.Void> args) {
   //   final messageStr = message.cast<Utf8>().toDartString();
   //   try {
-  //     final formatedMessage = sprintf(messageStr, []);
-  //     print("Log: $formatedMessage");
+  //     //final formatedMessage = sprintf(messageStr, []);
+  //     print("Log: $messageStr");
   //   } catch (e) {
   //     print(e);
   //     print(messageStr);
@@ -133,18 +132,22 @@ class Client {
   Client(
     raw.open62541 lib, {
     Duration? secureChannelLifeTime,
+    Duration? requestedSessionTimeout,
     String? username,
     String? password,
     MessageSecurityMode? securityMode,
     Uint8List? certificate,
     Uint8List? privateKey,
-    Duration connectivityCheckInterval = const Duration(milliseconds: 100),
+    Duration connectivityCheckInterval = const Duration(seconds: 1),
   })  : _lib = lib,
         _client = lib.UA_Client_new() {
     final config = lib.UA_Client_getConfig(_client);
     lib.UA_ClientConfig_setDefault(config);
     if (secureChannelLifeTime != null) {
       config.ref.secureChannelLifeTime = secureChannelLifeTime.inMilliseconds;
+    }
+    if (requestedSessionTimeout != null) {
+      config.ref.requestedSessionTimeout = requestedSessionTimeout.inMilliseconds;
     }
 
     if (securityMode != null) {
@@ -183,7 +186,9 @@ class Client {
       _lib.UA_ClientConfig_setAuthenticationUsername(
           config, username.toNativeUtf8().cast(), password != null ? password.toNativeUtf8().cast() : ffi.nullptr);
     }
-    _clientConfig = ClientConfig(config, connectivityCheckInterval: connectivityCheckInterval);
+
+    config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
+    _clientConfig = ClientConfig(config);
   }
 
   /// Creates a Client instance using static linking or dynamic linking based on platform.
