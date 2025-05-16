@@ -30,8 +30,6 @@ void main(List<String> args) async {
 
   final id = NodeId.serverStatusCurrentTime;
 
-  c.config.subscriptionInactivityStream.listen((value) => print("Subscription Inactivity: $value"));
-  c.config.inactivityStream.listen((value) => print("Inactivity"));
   bool sessionLost = true;
   c.config.stateStream.listen((value) async {
     print("State: $value");
@@ -46,6 +44,12 @@ void main(List<String> args) async {
         id: [AttributeId.UA_ATTRIBUTEID_VALUE],
       }, samplingInterval: Duration(milliseconds: 3000), subscriptionId).listen((value) {
         print(value.values.first.asDateTime);
+      }).onError((error) {
+        if (error is Inactivity) {
+          print("Inactivity reported for subscription containing our monitored item");
+        } else {
+          throw error;
+        }
       });
     }
   });

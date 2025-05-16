@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:open62541/src/types/errors.dart';
 import 'package:tuple/tuple.dart';
 
 import 'common.dart';
@@ -14,8 +15,8 @@ import 'node_id.dart';
 import 'types/create_type.dart';
 
 class ClientState {
-  raw.UA_SecureChannelState channelState;
-  raw.UA_SessionState sessionState;
+  SecureChannelState channelState;
+  SessionState sessionState;
   int recoveryStatus;
   ClientState({required this.channelState, required this.sessionState, required this.recoveryStatus});
 
@@ -755,6 +756,12 @@ class Client {
         calloc.free(localRequestId);
 
         bool error = false;
+
+        config.subscriptionInactivityStream.listen((inactiveSubscriptionId) {
+          if (inactiveSubscriptionId == subscriptionId) {
+            controller.addError(Inactivity());
+          }
+        });
         if (response == ffi.nullptr) {
           controller.addError('ffi pointer is null');
           error = true;

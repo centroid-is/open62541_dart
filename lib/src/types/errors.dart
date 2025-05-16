@@ -1,0 +1,1 @@
+class Inactivity extends Error {}

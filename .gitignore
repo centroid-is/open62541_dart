@@ -13,3 +13,4 @@ lib/src/generated/*
 ffigen.yaml
 doc/api/
 *.der
+.env
