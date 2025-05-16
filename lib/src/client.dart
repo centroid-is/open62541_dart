@@ -99,6 +99,8 @@ class ClientConfig {
     _clientConfig.ref.securityPolicyUri.set(uri);
   }
 
+  int get outstandingPublishRequests => _clientConfig.ref.outStandingPublishRequests;
+
   Future<void> close() async {
     await _stateStream.close();
     await _subscriptionInactivity.close();

@@ -11,8 +11,8 @@ import 'node_id.dart';
 typedef MonitoringMode = raw.UA_MonitoringMode;
 typedef AttributeId = raw.UA_AttributeId;
 typedef MessageSecurityMode = raw.UA_MessageSecurityMode;
-typedef SessionState = raw.UA_SessionState;
 typedef SecureChannelState = raw.UA_SecureChannelState;
+typedef SessionState = raw.UA_SessionState;
 
 // ignore: camel_case_types
 enum Namespace0Id {
