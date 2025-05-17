@@ -152,11 +152,34 @@ class Client {
   ///
   /// Returns:
   ///   A new [Client] instance.
-  factory Client.fromStatic() {
+  factory Client.fromStatic({
+    Duration? secureChannelLifeTime,
+    String? username,
+    String? password,
+    MessageSecurityMode? securityMode,
+    Uint8List? certificate,
+    Uint8List? privateKey,
+  }) {
     if (Platform.isAndroid) {
-      return Client(raw.open62541(ffi.DynamicLibrary.open('libopen62541.so')));
+      return Client(
+        raw.open62541(ffi.DynamicLibrary.open('libopen62541.so')),
+        secureChannelLifeTime: secureChannelLifeTime,
+        username: username,
+        password: password,
+        securityMode: securityMode,
+        certificate: certificate,
+        privateKey: privateKey,
+      );
     } else {
-      return Client(raw.open62541(ffi.DynamicLibrary.executable()));
+      return Client(
+        raw.open62541(ffi.DynamicLibrary.executable()),
+        secureChannelLifeTime: secureChannelLifeTime,
+        username: username,
+        password: password,
+        securityMode: securityMode,
+        certificate: certificate,
+        privateKey: privateKey,
+      );
     }
   }
 
