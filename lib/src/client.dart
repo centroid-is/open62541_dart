@@ -14,8 +14,8 @@ import 'node_id.dart';
 import 'types/create_type.dart';
 
 class ClientState {
-  raw.UA_SecureChannelState channelState;
-  raw.UA_SessionState sessionState;
+  SecureChannelState channelState;
+  SessionState sessionState;
   int recoveryStatus;
   ClientState({required this.channelState, required this.sessionState, required this.recoveryStatus});
 
