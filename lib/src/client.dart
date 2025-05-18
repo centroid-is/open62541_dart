@@ -13,18 +13,9 @@ import 'generated/open62541_bindings.dart' as raw;
 import 'node_id.dart';
 import 'types/create_type.dart';
 
-class Open62541ClientException implements Exception {
-  final String message;
-
-  Open62541ClientException(this.message);
-
-  @override
-  String toString() => 'Open62541ClientException: $message';
-}
-
 class ClientState {
-  raw.UA_SecureChannelState channelState;
-  raw.UA_SessionState sessionState;
+  SecureChannelState channelState;
+  SessionState sessionState;
   int recoveryStatus;
   ClientState({required this.channelState, required this.sessionState, required this.recoveryStatus});
 
@@ -374,8 +365,10 @@ class Client {
 
       assert(pointers.length == response.ref.resultsSize);
       if (pointers.length != nodeCount && pointers.isEmpty) {
-        throw Open62541ClientException(
-            "The connection might be broken, got no response when reading attributes for nodes: $nodes");
+        completer.completeError(
+            "The connection might be broken, got no response when reading attributes for nodes: $nodes",
+            StackTrace.current);
+        return;
       }
       assert(nodeCount == pointers.length);
 
