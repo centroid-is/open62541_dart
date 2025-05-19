@@ -767,6 +767,11 @@ class Client {
             controller.addError(Inactivity());
           }
         });
+        config.stateStream.listen((state) {
+          if (state.channelState == SecureChannelState.UA_SECURECHANNELSTATE_CLOSED) {
+            controller.addError(SecureChannelClosed());
+          }
+        });
         if (response == ffi.nullptr) {
           controller.addError('ffi pointer is null');
           error = true;
