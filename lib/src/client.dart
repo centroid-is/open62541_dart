@@ -52,31 +52,7 @@ class ClientConfig {
     _inactivityCallback =
         ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>)>.isolateLocal(_inactivityCallbackC);
     _clientConfig.ref.inactivityCallback = _inactivityCallback.nativeFunction;
-    // calloc.free(_clientConfig.ref.logging);
-    // ffi.Pointer<raw.UA_Logger> loggerShim = calloc<raw.UA_Logger>();
-    // loggerShim.ref.clear = ffi.nullptr; // Lets see if we can get away with this
-    // loggerShim.ref.context = ffi.nullptr;
-
-    // final _logCallback = ffi.NativeCallable<
-    //     ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.UnsignedInt, ffi.UnsignedInt, ffi.Pointer<ffi.Char>,
-    //         ffi.Pointer<ffi.Void>)>.isolateLocal(_logCallbackC);
-
-    // loggerShim.ref.log = _logCallback.nativeFunction.cast();
-    // _clientConfig.ref.logging = loggerShim;
   }
-
-  //TODO: This is tricky as args is a vararg list.
-  // void _logCallbackC(ffi.Pointer<ffi.Void> context, int level, int category, ffi.Pointer<ffi.Char> message,
-  //     ffi.Pointer<ffi.Void> args) {
-  //   final messageStr = message.cast<Utf8>().toDartString();
-  //   try {
-  //     //final formatedMessage = sprintf(messageStr, []);
-  //     print("Log: $messageStr");
-  //   } catch (e) {
-  //     print(e);
-  //     print(messageStr);
-  //   }
-  // }
 
   void _inactivityCallbackC(ffi.Pointer<raw.UA_Client> client) {
     _inactivity.add(null);
