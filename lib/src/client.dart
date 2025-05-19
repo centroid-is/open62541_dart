@@ -4,9 +4,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
-import 'package:open62541/src/types/errors.dart';
 import 'package:tuple/tuple.dart';
 
+import 'package:open62541/src/types/errors.dart';
 import 'common.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
