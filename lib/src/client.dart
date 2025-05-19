@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:tuple/tuple.dart';
 
+import 'package:open62541/src/types/errors.dart';
 import 'common.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
@@ -44,15 +45,26 @@ class ClientConfig {
       ),
     );
     _clientConfig.ref.stateCallback = _state.nativeFunction;
-    _inactivity = ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal(
-      (ffi.Pointer<raw.UA_Client> client, int subId, ffi.Pointer<ffi.Void> subContext) =>
-          _subscriptionInactivity.add(subId),
-    );
-    _clientConfig.ref.subscriptionInactivityCallback = _inactivity.nativeFunction;
+    _subscriptionInactivityCallback = ffi.NativeCallable<
+        ffi.Void Function(
+            ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal(_subscriptionInactivityC);
+    _clientConfig.ref.subscriptionInactivityCallback = _subscriptionInactivityCallback.nativeFunction;
+    _inactivityCallback =
+        ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>)>.isolateLocal(_inactivityCallbackC);
+    _clientConfig.ref.inactivityCallback = _inactivityCallback.nativeFunction;
   }
+
+  void _inactivityCallbackC(ffi.Pointer<raw.UA_Client> client) {
+    _inactivity.add(null);
+  }
+
+  void _subscriptionInactivityC(ffi.Pointer<raw.UA_Client> client, int subId, ffi.Pointer<ffi.Void> subContext) {
+    _subscriptionInactivity.add(subId);
+  }
+
   Stream<ClientState> get stateStream => _stateStream.stream;
   Stream<int> get subscriptionInactivityStream => _subscriptionInactivity.stream;
+  Stream<void> get inactivityStream => _inactivity.stream;
 
   raw.UA_MessageSecurityMode get securityMode => _clientConfig.ref.securityMode;
   set securityMode(raw.UA_MessageSecurityMode mode) {
@@ -64,17 +76,23 @@ class ClientConfig {
     _clientConfig.ref.securityPolicyUri.set(uri);
   }
 
+  int get outstandingPublishRequests => _clientConfig.ref.outStandingPublishRequests;
+
   Future<void> close() async {
     await _stateStream.close();
     await _subscriptionInactivity.close();
+    await _inactivity.close();
+
     _state.close();
-    _inactivity.close();
+    _subscriptionInactivityCallback.close();
+    _inactivityCallback.close();
   }
 
   // Private interface
   final ffi.Pointer<raw.UA_ClientConfig> _clientConfig;
   final StreamController<ClientState> _stateStream = StreamController<ClientState>.broadcast();
   final StreamController<int> _subscriptionInactivity = StreamController<int>.broadcast();
+  final StreamController<void> _inactivity = StreamController<void>.broadcast();
   late ffi.NativeCallable<
       ffi.Void Function(
         ffi.Pointer<raw.UA_Client> client,
@@ -83,7 +101,8 @@ class ClientConfig {
         raw.UA_StatusCode connectStatus,
       )> _state;
   late ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>
-      _inactivity;
+      _subscriptionInactivityCallback;
+  late ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>)> _inactivityCallback;
 }
 
 typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
@@ -92,17 +111,22 @@ class Client {
   Client(
     raw.open62541 lib, {
     Duration? secureChannelLifeTime,
+    Duration? requestedSessionTimeout,
     String? username,
     String? password,
     MessageSecurityMode? securityMode,
     Uint8List? certificate,
     Uint8List? privateKey,
+    Duration connectivityCheckInterval = const Duration(seconds: 1),
   })  : _lib = lib,
         _client = lib.UA_Client_new() {
     final config = lib.UA_Client_getConfig(_client);
     lib.UA_ClientConfig_setDefault(config);
     if (secureChannelLifeTime != null) {
       config.ref.secureChannelLifeTime = secureChannelLifeTime.inMilliseconds;
+    }
+    if (requestedSessionTimeout != null) {
+      config.ref.requestedSessionTimeout = requestedSessionTimeout.inMilliseconds;
     }
 
     if (securityMode != null) {
@@ -141,6 +165,8 @@ class Client {
       _lib.UA_ClientConfig_setAuthenticationUsername(
           config, username.toNativeUtf8().cast(), password != null ? password.toNativeUtf8().cast() : ffi.nullptr);
     }
+
+    config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
     _clientConfig = ClientConfig(config);
   }
 
@@ -491,6 +517,7 @@ class Client {
       }
       completer.complete(response.ref.subscriptionId);
     });
+
     _lib.UA_Client_Subscriptions_create_async(
       _client,
       request.ref,
@@ -734,6 +761,12 @@ class Client {
         calloc.free(localRequestId);
 
         bool error = false;
+
+        config.subscriptionInactivityStream.listen((inactiveSubscriptionId) {
+          if (inactiveSubscriptionId == subscriptionId) {
+            controller.addError(Inactivity());
+          }
+        });
         if (response == ffi.nullptr) {
           controller.addError('ffi pointer is null');
           error = true;
