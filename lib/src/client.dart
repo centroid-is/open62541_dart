@@ -761,13 +761,22 @@ class Client {
         calloc.free(localRequestId);
 
         bool error = false;
-
-        config.subscriptionInactivityStream.listen((inactiveSubscriptionId) {
+        late StreamSubscription inactivitySubscription;
+        inactivitySubscription = config.subscriptionInactivityStream.listen((inactiveSubscriptionId) {
+          if (controller.isClosed) {
+            inactivitySubscription.cancel();
+            return;
+          }
           if (inactiveSubscriptionId == subscriptionId) {
             controller.addError(Inactivity());
           }
         });
-        config.stateStream.listen((state) {
+        late StreamSubscription stateSubscription;
+        stateSubscription = config.stateStream.listen((state) {
+          if (controller.isClosed) {
+            stateSubscription.cancel();
+            return;
+          }
           if (state.channelState == SecureChannelState.UA_SECURECHANNELSTATE_CLOSED) {
             controller.addError(SecureChannelClosed());
           }
