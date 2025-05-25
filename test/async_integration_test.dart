@@ -336,6 +336,10 @@ void main() async {
     expect(value[2]["c"].value, value2[2]["c"].value);
   }, skip: true);
 
+  test('Non existing subscription should throw', () {
+    expect(() => client!.monitor(boolNodeId, 10000, samplingInterval: Duration(milliseconds: 10)), throwsException);
+  });
+
   tearDown(() async {
     server!.shutdown();
 
