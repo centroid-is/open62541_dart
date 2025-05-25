@@ -1,11 +1,13 @@
-import 'dart:ffi' as ffi;
+import 'dart:async';
 
 import 'package:ffi/ffi.dart';
-
 import 'package:open62541/open62541.dart';
+
+import 'generated/open62541_bindings.dart' as raw;
+import 'dart:ffi' as ffi;
+
 import 'common.dart';
 import 'extensions.dart';
-import 'generated/open62541_bindings.dart' as raw;
 
 class Server {
   Server(ffi.DynamicLibrary lib) {
@@ -75,20 +77,19 @@ class Server {
   /// );
   /// server.addVariableNode(nodeId, value);
   /// ```
-  void addVariableNode(
-    NodeId variableNodeId,
-    DynamicValue value, {
-    AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
-    NodeId? parentNodeId,
-    NodeId? parentReferenceNodeId,
-    NodeId? basedatavariableType,
-  }) {
+  void addVariableNode(NodeId variableNodeId, DynamicValue value,
+      {AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
+      NodeId? parentNodeId,
+      NodeId? parentReferenceNodeId,
+      NodeId? basedatavariableType,
+      NodeId? typeId}) {
     ffi.Pointer<raw.UA_VariableAttributes> attr = calloc<raw.UA_VariableAttributes>();
     attr.ref = _lib.UA_VariableAttributes_default;
     final variant = valueToVariant(value, _lib);
     attr.ref.value = variant.ref;
     attr.ref.accessLevel = accessLevel.value;
-    attr.ref.dataType = value.typeId!.toRaw(_lib);
+    typeId ??= value.typeId;
+    attr.ref.dataType = typeId!.toRaw(_lib);
 
     if (value.name == null) {
       throw 'Value name must be provided to use as a browse name';
@@ -107,8 +108,77 @@ class Server {
         parentReferenceNodeIdRaw, name, basedatavariableTypeRaw, attr.ref, ffi.nullptr, ffi.nullptr);
     _lib.UA_VariableAttributes_delete(attr);
     if (returnCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to add variable node ${statusCodeToString(returnCode, _lib)}';
+      throw 'Failed to add variable node ${statusCodeToString(returnCode, _lib)}, nodeId: $variableNodeId';
     }
+  }
+
+  void addDataTypeNode(NodeId typeId, String name,
+      {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
+    raw.UA_DataTypeAttributes attr = _lib.UA_DataTypeAttributes_default;
+    if (displayName != null) {
+      attr.displayName.locale.set(displayName.locale);
+      attr.displayName.text.set(displayName.value);
+    }
+
+    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATATYPE);
+
+    final parentNodeIdRaw = parentNodeId.toRaw(_lib);
+    final referenceTypeIdRaw = referenceTypeId.toRaw(_lib);
+
+    final qualifiedName = _lib.UA_QUALIFIEDNAME(1, name.toNativeUtf8().cast());
+    final returnCode = _lib.UA_Server_addDataTypeNode(_server, typeId.toRaw(_lib), parentNodeIdRaw, referenceTypeIdRaw,
+        qualifiedName, attr, ffi.nullptr, ffi.nullptr);
+    if (returnCode != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add data type node ${statusCodeToString(returnCode, _lib)}';
+    }
+  }
+
+  // Register callbacks onto the `variableNodeId` to get notifications
+  // when the value is read and written to.
+  Stream<String> monitorVariable(NodeId variableNodeId) {
+    // UA_NodeId currentNodeId = UA_NODEID_STRING(1, "current-time-value-callback");
+    // UA_ValueCallback callback ;
+    // callback.onRead = beforeReadTime;
+    // callback.onWrite = afterWriteTime;
+    // UA_Server_setVariableNode_valueCallback(server, currentNodeId, callback);
+
+    StreamController<String> controller = StreamController<String>();
+
+    ffi.Pointer<raw.UA_ValueCallback> callback = calloc<raw.UA_ValueCallback>();
+
+    void onRead(
+        ffi.Pointer<raw.UA_Server> server,
+        ffi.Pointer<raw.UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<raw.UA_NodeId> nodeId,
+        ffi.Pointer<ffi.Void> nodeContext,
+        ffi.Pointer<raw.UA_NumericRange> range,
+        ffi.Pointer<raw.UA_DataValue> value) {
+      // TODO: Implement the read callback logic
+      controller.add("Read callback triggered");
+    }
+
+    final onReadCallback = ffi.NativeCallable<
+        ffi.Void Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NumericRange>,
+            ffi.Pointer<raw.UA_DataValue>)>.isolateLocal(onRead);
+
+    callback.ref.onRead = onReadCallback.nativeFunction;
+    _lib.UA_Server_setVariableNode_valueCallback(_server, variableNodeId.toRaw(_lib), callback.ref);
+
+    controller.onCancel = () {
+      // _lib.UA_Server_setVariableNode_valueCallback(_server, variableNodeId.toRaw(_lib), ffi.nullptr); TODO: This cannot call us anymore
+      onReadCallback.close();
+      calloc.free(callback);
+    };
+
+    return controller.stream;
   }
 
   /// Writes a description to a variable node in the OPC UA server.
