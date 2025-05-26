@@ -114,21 +114,23 @@ class Server {
 
   void addDataTypeNode(NodeId typeId, String name,
       {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
-    raw.UA_DataTypeAttributes attr = _lib.UA_DataTypeAttributes_default;
+    var attr = calloc<raw.UA_DataTypeAttributes>();
     if (displayName != null) {
-      attr.displayName.locale.set(displayName.locale);
-      attr.displayName.text.set(displayName.value);
+      attr.ref.displayName.locale.set(displayName.locale);
+      attr.ref.displayName.text.set(displayName.value);
     }
 
-    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
-    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATATYPE);
+    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_STRUCTURE);
+    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
 
     final parentNodeIdRaw = parentNodeId.toRaw(_lib);
     final referenceTypeIdRaw = referenceTypeId.toRaw(_lib);
+    final typeIdRaw = typeId.toRaw(_lib);
 
     final qualifiedName = _lib.UA_QUALIFIEDNAME(1, name.toNativeUtf8().cast());
-    final returnCode = _lib.UA_Server_addDataTypeNode(_server, typeId.toRaw(_lib), parentNodeIdRaw, referenceTypeIdRaw,
-        qualifiedName, attr, ffi.nullptr, ffi.nullptr);
+    final returnCode = _lib.UA_Server_addDataTypeNode(
+        _server, typeIdRaw, parentNodeIdRaw, referenceTypeIdRaw, qualifiedName, attr.ref, ffi.nullptr, ffi.nullptr);
+    _lib.UA_DataTypeAttributes_delete(attr);
     if (returnCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add data type node ${statusCodeToString(returnCode, _lib)}';
     }
