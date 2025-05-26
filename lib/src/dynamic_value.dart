@@ -63,14 +63,14 @@ class DynamicValue extends PayloadType<DynamicValue> {
   Map<int, EnumField>? enumFields;
   bool isOptional = false;
 
-  factory DynamicValue.fromMap(LinkedHashMap<String, dynamic> entries) {
-    DynamicValue v = DynamicValue();
+  factory DynamicValue.fromMap(LinkedHashMap<String, dynamic> entries, {String? name}) {
+    DynamicValue v = DynamicValue(name: name);
     entries.forEach((key, value) => v[key] = value);
     return v;
   }
 
-  factory DynamicValue.fromList(List<dynamic> entries, {NodeId? typeId}) {
-    DynamicValue v = DynamicValue(typeId: typeId);
+  factory DynamicValue.fromList(List<dynamic> entries, {NodeId? typeId, String? name}) {
+    DynamicValue v = DynamicValue(typeId: typeId, name: name);
     var counter = 0;
     for (var value in entries) {
       v[counter] = value;
