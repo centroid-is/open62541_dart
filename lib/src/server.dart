@@ -10,9 +10,22 @@ import 'common.dart';
 import 'extensions.dart';
 
 class Server {
-  Server(ffi.DynamicLibrary lib) {
+  Server(
+    ffi.DynamicLibrary lib, {
+    LogLevel? logLevel,
+  }) {
     _lib = raw.open62541(lib);
-    _server = _lib.UA_Server_new();
+    final config = calloc<raw.UA_ServerConfig>();
+    int res = _lib.UA_ServerConfig_setDefault(config);
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to set default server config ${statusCodeToString(res, _lib)}';
+    }
+
+    if (logLevel != null) {
+      config.ref.logging = _lib.UA_Log_Stdout_new(logLevel);
+    }
+
+    _server = _lib.UA_Server_newWithConfig(config);
   }
 
   late raw.open62541 _lib;
@@ -109,6 +122,36 @@ class Server {
     _lib.UA_VariableAttributes_delete(attr);
     if (returnCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add variable node ${statusCodeToString(returnCode, _lib)}, nodeId: $variableNodeId';
+    }
+  }
+
+  void addVariableTypeNode(DynamicValue schema, NodeId variableTypeId, String name,
+      {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
+    var dattr = calloc<raw.UA_VariableTypeAttributes>();
+    if (displayName != null) {
+      dattr.ref.displayName.locale.set(displayName.locale);
+      dattr.ref.displayName.text.set(displayName.value);
+    }
+    dattr.ref.dataType = variableTypeId.toRaw(_lib);
+    dattr.ref.valueRank = raw.UA_VALUERANK_SCALAR;
+    final variant = valueToVariant(schema, _lib);
+    dattr.ref.value = variant.ref;
+
+    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
+    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
+
+    final parentNodeIdRaw = parentNodeId.toRaw(_lib);
+    final referenceTypeIdRaw = referenceTypeId.toRaw(_lib);
+    final qualifiedName = _lib.UA_QUALIFIEDNAME(1, name.toNativeUtf8().cast());
+
+    int res = _lib.UA_Server_addVariableTypeNode(_server, variableTypeId.toRaw(_lib), parentNodeIdRaw,
+        referenceTypeIdRaw, qualifiedName, parentNodeIdRaw, dattr.ref, ffi.nullptr, ffi.nullptr);
+
+    _lib.UA_Variant_delete(variant);
+    _lib.UA_VariableTypeAttributes_delete(dattr);
+
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add variable type node ${statusCodeToString(res, _lib)}';
     }
   }
 
