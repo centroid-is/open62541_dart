@@ -31,10 +31,11 @@ void main() async {
   DynamicValue structureValue = DynamicValue(name: "My Structure Variable", typeId: myStructureTypeId);
   structureValue["a"] = DynamicValue(value: 1, typeId: NodeId.int32);
   structureValue["b"] = DynamicValue(value: false, typeId: NodeId.boolean);
+  final bullshit = NodeId.fromString(1, "bullshit");
+  server.addDataTypeNode(bullshit, "myStructureType", displayName: LocalizedText("My Structure Type", "en-US"));
+  server.addVariableTypeNode(structureValue, myStructureTypeId, "Very good name");
   server.addVariableNode(structureVariableNodeId, structureValue,
-      accessLevel: AccessLevelMask(read: true, write: true), typeId: NodeId.structure);
-  server.addDataTypeNode(myStructureTypeId, "myStructureType",
-      displayName: LocalizedText("My Structure Type", "en-US"));
+      accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
 
   final runTime = Duration(minutes: 10);
   print("The server will now run for $runTime");
