@@ -36,7 +36,7 @@ void main() async {
   server.addDataTypeNode(myStructureTypeId, "myStructureType",
       displayName: LocalizedText("My Structure Type", "en-US"));
 
-  final runTime = Duration(minutes: 1);
+  final runTime = Duration(minutes: 10);
   print("The server will now run for $runTime");
   await Future.delayed(runTime);
 
