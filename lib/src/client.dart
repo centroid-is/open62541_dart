@@ -117,11 +117,19 @@ class Client {
     MessageSecurityMode? securityMode,
     Uint8List? certificate,
     Uint8List? privateKey,
+    LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
-  })  : _lib = lib,
-        _client = lib.UA_Client_new() {
-    final config = lib.UA_Client_getConfig(_client);
-    lib.UA_ClientConfig_setDefault(config);
+  }) : _lib = lib {
+    final config = calloc<raw.UA_ClientConfig>();
+
+    if (logLevel != null) {
+      config.ref.logging = _lib.UA_Log_Stdout_new(logLevel);
+    }
+
+    // The event loop logger is set to the config logger if defined
+    // No need to modify the eventloop logger.
+    _lib.UA_ClientConfig_setDefault(config);
+
     if (secureChannelLifeTime != null) {
       config.ref.secureChannelLifeTime = secureChannelLifeTime.inMilliseconds;
     }
@@ -168,6 +176,7 @@ class Client {
 
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
     _clientConfig = ClientConfig(config);
+    _client = _lib.UA_Client_newWithConfig(config);
   }
 
   /// Creates a Client instance using static linking or dynamic linking based on platform.
@@ -1041,6 +1050,6 @@ class Client {
   }
 
   final raw.open62541 _lib;
-  ffi.Pointer<raw.UA_Client> _client;
+  late ffi.Pointer<raw.UA_Client> _client;
   late final ClientConfig _clientConfig;
 }
