@@ -121,6 +121,21 @@ class Client {
   })  : _lib = lib,
         _client = lib.UA_Client_new() {
     final config = lib.UA_Client_getConfig(_client);
+
+    // Set default populates logger if no logger is set. Override here so we don't do that work.
+    final logger = calloc<raw.UA_Logger>();
+
+    final t = ffi.NativeCallable<
+        ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.UnsignedInt, ffi.UnsignedInt, ffi.Pointer<ffi.Char>,
+            raw.va_list)>.isolateLocal(_log);
+    final logPtr = calloc<
+        ffi.Pointer<
+            ffi.NativeFunction<
+                ffi.Void Function(
+                    ffi.Pointer<ffi.Void>, ffi.UnsignedInt, ffi.UnsignedInt, ffi.Pointer<ffi.Char>, raw.va_list)>>>();
+    logPtr.value = t.nativeFunction;
+    logger.ref.log = logPtr.value;
+    config.ref.logging = logger;
     lib.UA_ClientConfig_setDefault(config);
     if (secureChannelLifeTime != null) {
       config.ref.secureChannelLifeTime = secureChannelLifeTime.inMilliseconds;
@@ -210,6 +225,16 @@ class Client {
   }
 
   ClientConfig get config => _clientConfig;
+
+  void _log(ffi.Pointer<ffi.Void> userdata, int logLevel, int category, ffi.Pointer<ffi.Char> msg, raw.va_list args) {
+    //stderr.write("${msg.cast<Utf8>().toDartString()} \n");
+    var buffer = calloc<ffi.Char>(512);
+    print("Is this the real world");
+    _lib.vsnprintf(buffer, 512, ffi.nullptr, ffi.nullptr);
+    stderr.write(buffer.cast<Utf8>().toDartString());
+    print("does this crash?");
+    //stderr.write('${logLevel.toString()} $category $msg');
+  }
 
   Future<void> awaitConnect() async {
     if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
