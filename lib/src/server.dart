@@ -8,8 +8,8 @@ import 'extensions.dart';
 import 'generated/open62541_bindings.dart' as raw;
 
 class Server {
-  Server(raw.open62541 lib) {
-    _lib = lib;
+  Server(ffi.DynamicLibrary lib) {
+    _lib = raw.open62541(lib);
     _server = _lib.UA_Server_new();
   }
 

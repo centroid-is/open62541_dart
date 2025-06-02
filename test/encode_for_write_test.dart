@@ -7,12 +7,11 @@ import 'package:open62541/src/common.dart';
 import 'package:open62541/src/dynamic_value.dart';
 import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
-import 'package:open62541/src/library.dart';
 import 'package:open62541/src/node_id.dart';
 import 'schema_util.dart';
 
 void main() {
-  final lib = Open62541Singleton().lib;
+  final lib = raw.open62541(loadOpen62541Library(local: true));
   void testSimpleTypes(DynamicValue value) {
     final variant = valueToVariant(value, lib);
     final decoded = variantToValue(variant.ref);

@@ -5,7 +5,7 @@ import 'package:test/test.dart';
 import 'package:open62541/open62541.dart';
 
 void main() async {
-  final lib = Open62541Singleton().lib;
+  final lib = loadOpen62541Library(local: true);
   Client? client;
   Server? server;
   final boolNodeId = NodeId.fromString(1, "the.bool");
