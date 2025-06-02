@@ -5,13 +5,13 @@ import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/common.dart';
-import 'package:open62541/src/generated/open62541_bindings.dart';
+import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
 
 void main() {
-  final lib = Open62541Singleton().lib;
+  final lib = raw.open62541(loadOpen62541Library(local: true));
   test("Verify sizes", () {
-    expect(sizeOf<UA_ClientConfig>(), 864);
-    expect(sizeOf<UA_DataType>(), 72);
+    expect(sizeOf<raw.UA_ClientConfig>(), 864);
+    expect(sizeOf<raw.UA_DataType>(), 72);
   });
   test("Verify types", () {
     expect(getType(UaTypes.readRequest, lib).ref.typeName.cast<Utf8>().toDartString(), "ReadRequest");

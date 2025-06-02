@@ -1,5 +1,7 @@
 import 'dart:ffi' as ffi;
+import 'dart:isolate';
 import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:binarize/binarize.dart' as binarize;
 import 'package:ffi/ffi.dart';
@@ -119,4 +121,45 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
   retValue.get(reader, Endian.little, false, true);
 
   return retValue;
+}
+
+/// Loads the open62541 library.
+///
+/// By default, it attempts to load the library dynamically based on the platform:
+/// - Linux: 'libopen62541.so'
+/// - MacOS: 'libopen62541.dylib'
+/// - Windows: 'libopen62541.dll'
+///
+/// If [staticLinking] is true:
+/// - On Android: loads 'libopen62541.so' dynamically (static linking not supported)
+/// - Other platforms: loads from the executable itself
+/// This works with https://pub.dev/packages/open62541_libs
+///
+/// If [local] is true, loads from the package's lib directory.
+/// If [path] is provided, loads from the specified path.
+///
+/// Returns:
+///   A new [ffi.DynamicLibrary] instance.
+ffi.DynamicLibrary loadOpen62541Library({bool staticLinking = false, bool local = false, Uri? path}) {
+  if (staticLinking) {
+    if (Platform.isAndroid) {
+      return ffi.DynamicLibrary.open('libopen62541.so');
+    } else {
+      return ffi.DynamicLibrary.executable();
+    }
+  }
+  var ending = 'so';
+  if (Platform.isMacOS) {
+    ending = 'dylib';
+  } else if (Platform.isWindows) {
+    ending = 'dll';
+  }
+  if (local) {
+    var uri = Isolate.resolvePackageUriSync(Uri.parse('package:open62541/libopen62541.$ending'));
+    return ffi.DynamicLibrary.open(uri!.path);
+  }
+  if (path != null) {
+    return ffi.DynamicLibrary.open(path.path);
+  }
+  return ffi.DynamicLibrary.open('libopen62541.$ending');
 }

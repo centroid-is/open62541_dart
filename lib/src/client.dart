@@ -109,7 +109,7 @@ typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
 
 class Client {
   Client(
-    raw.open62541 lib, {
+    ffi.DynamicLibrary lib, {
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
     String? username,
@@ -119,7 +119,7 @@ class Client {
     Uint8List? privateKey,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
-  }) : _lib = lib {
+  }) : _lib = raw.open62541(lib) {
     final config = calloc<raw.UA_ClientConfig>();
 
     if (logLevel != null) {
@@ -177,45 +177,6 @@ class Client {
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
     _clientConfig = ClientConfig(config);
     _client = _lib.UA_Client_newWithConfig(config);
-  }
-
-  /// Creates a Client instance using static linking or dynamic linking based on platform.
-  ///
-  /// On Android, it uses dynamic linking by loading 'libopen62541.so' since Android
-  /// does not support static linking by design. For all other platforms, it uses
-  /// static linking by loading from the executable itself.
-  ///
-  /// Returns:
-  ///   A new [Client] instance.
-  factory Client.fromStatic({
-    Duration? secureChannelLifeTime,
-    String? username,
-    String? password,
-    MessageSecurityMode? securityMode,
-    Uint8List? certificate,
-    Uint8List? privateKey,
-  }) {
-    if (Platform.isAndroid) {
-      return Client(
-        raw.open62541(ffi.DynamicLibrary.open('libopen62541.so')),
-        secureChannelLifeTime: secureChannelLifeTime,
-        username: username,
-        password: password,
-        securityMode: securityMode,
-        certificate: certificate,
-        privateKey: privateKey,
-      );
-    } else {
-      return Client(
-        raw.open62541(ffi.DynamicLibrary.executable()),
-        secureChannelLifeTime: secureChannelLifeTime,
-        username: username,
-        password: password,
-        securityMode: securityMode,
-        certificate: certificate,
-        privateKey: privateKey,
-      );
-    }
   }
 
   ClientConfig get config => _clientConfig;
