@@ -1,7 +1,7 @@
 import 'dart:ffi' as ffi;
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
-import 'dart:io';
 
 import 'package:binarize/binarize.dart' as binarize;
 import 'package:ffi/ffi.dart';
