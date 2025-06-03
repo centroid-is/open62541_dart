@@ -13,10 +13,11 @@ class Server {
   Server(
     ffi.DynamicLibrary lib, {
     LogLevel? logLevel,
+    int? port,
   }) {
     _lib = raw.open62541(lib);
     final config = calloc<raw.UA_ServerConfig>();
-    int res = _lib.UA_ServerConfig_setDefault(config);
+    int res = _lib.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
     if (res != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to set default server config ${statusCodeToString(res, _lib)}';
     }
@@ -99,6 +100,10 @@ class Server {
     ffi.Pointer<raw.UA_VariableAttributes> attr = calloc<raw.UA_VariableAttributes>();
     attr.ref = _lib.UA_VariableAttributes_default;
     final variant = valueToVariant(value, _lib);
+    print(variant.ref.type.ref.typeId.toNodeId());
+    if (variant.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
+      variant.ref.type.ref.typeId = typeId!.toRaw(_lib);
+    }
     attr.ref.value = variant.ref;
     attr.ref.accessLevel = accessLevel.value;
     typeId ??= value.typeId;
@@ -155,27 +160,67 @@ class Server {
     }
   }
 
-  void addDataTypeNode(NodeId typeId, String name,
+  void addDataTypeNode(NodeId requestedNewNodeId, String browseName,
       {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
     var attr = calloc<raw.UA_DataTypeAttributes>();
+
     if (displayName != null) {
       attr.ref.displayName.locale.set(displayName.locale);
       attr.ref.displayName.text.set(displayName.value);
     }
 
-    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_STRUCTURE);
-    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
+    parentNodeId ??= NodeId.structure;
+    referenceTypeId ??= NodeId.hasSubtype;
 
-    final parentNodeIdRaw = parentNodeId.toRaw(_lib);
-    final referenceTypeIdRaw = referenceTypeId.toRaw(_lib);
-    final typeIdRaw = typeId.toRaw(_lib);
+    _addNode(raw.UA_NodeClass.UA_NODECLASS_DATATYPE, requestedNewNodeId, parentNodeId, referenceTypeId, browseName,
+        NodeId.nullId, attr.cast(), getType(UaTypes.dataTypeAttributes, _lib));
 
-    final qualifiedName = _lib.UA_QUALIFIEDNAME(1, name.toNativeUtf8().cast());
-    final returnCode = _lib.UA_Server_addDataTypeNode(
-        _server, typeIdRaw, parentNodeIdRaw, referenceTypeIdRaw, qualifiedName, attr.ref, ffi.nullptr, ffi.nullptr);
     _lib.UA_DataTypeAttributes_delete(attr);
-    if (returnCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to add data type node ${statusCodeToString(returnCode, _lib)}';
+  }
+
+  void _addNode(
+      raw.UA_NodeClass nodeClass,
+      NodeId requestedNewNodeId,
+      NodeId parentNodeId,
+      NodeId referenceTypeId,
+      String browseName,
+      NodeId typeDefinition,
+      ffi.Pointer<raw.UA_NodeAttributes> attr,
+      ffi.Pointer<raw.UA_DataType> attributeType) {
+    nodeIdPtrIfNotNull(NodeId? nodeId) {
+      if (nodeId == null) {
+        return ffi.nullptr;
+      }
+      final ptr = calloc<raw.UA_NodeId>();
+      ptr.ref = nodeId.toRaw(_lib);
+      return ptr;
+    }
+
+    freeNodeIdIfNotNull(ffi.Pointer<raw.UA_NodeId> nodeId) {
+      if (nodeId != ffi.nullptr) {
+        _lib.UA_NodeId_delete(nodeId);
+      }
+    }
+
+    // This is dereferenced in the underlying c code. Throw errors here
+    // to avoid a segfault in the c code. which is harder to debug.
+    final _requestedNewNodeId = nodeIdPtrIfNotNull(requestedNewNodeId);
+    final _parentNodeId = nodeIdPtrIfNotNull(parentNodeId);
+    final _referenceTypeId = nodeIdPtrIfNotNull(referenceTypeId);
+    final _typeDefinition = nodeIdPtrIfNotNull(typeDefinition);
+
+    final _browseName = _lib.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8().cast());
+
+    final retCode = _lib.UA_Server_addNode(_server, nodeClass, _requestedNewNodeId, _parentNodeId, _referenceTypeId,
+        _browseName, _typeDefinition, attr, attributeType, ffi.nullptr, ffi.nullptr);
+
+    freeNodeIdIfNotNull(_requestedNewNodeId);
+    freeNodeIdIfNotNull(_parentNodeId);
+    freeNodeIdIfNotNull(_referenceTypeId);
+    freeNodeIdIfNotNull(_typeDefinition);
+
+    if (retCode != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add node ${statusCodeToString(retCode, _lib)}';
     }
   }
 

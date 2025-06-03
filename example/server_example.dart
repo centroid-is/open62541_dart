@@ -1,7 +1,7 @@
 import 'package:open62541/open62541.dart';
 
 void main() async {
-  final lib = Open62541Singleton().lib;
+  final lib = loadOpen62541Library(local: true);
   final server = Server(lib);
 
   print("Starting server");
@@ -31,9 +31,10 @@ void main() async {
   DynamicValue structureValue = DynamicValue(name: "My Structure Variable", typeId: myStructureTypeId);
   structureValue["a"] = DynamicValue(value: 1, typeId: NodeId.int32);
   structureValue["b"] = DynamicValue(value: false, typeId: NodeId.boolean);
-  final bullshit = NodeId.fromString(1, "bullshit");
-  server.addDataTypeNode(bullshit, "myStructureType", displayName: LocalizedText("My Structure Type", "en-US"));
-  server.addVariableTypeNode(structureValue, myStructureTypeId, "Very good name");
+
+  server.addDataTypeNode(myStructureTypeId, "myStructureType",
+      displayName: LocalizedText("My Structure Type", "en-US"));
+  //server.addVariableTypeNode(structureValue, myStructureTypeId, "Very good name");
   server.addVariableNode(structureVariableNodeId, structureValue,
       accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
 

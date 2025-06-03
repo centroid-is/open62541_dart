@@ -26,5 +26,35 @@
             //     "../../out/DebugX64/../../": "${workspaceFolder}/"
             // },
         },
+        {
+            "name": "server_example (debug - macos)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/Users/omar/source/repos/flutter/bin/cache/dart-sdk/bin/dart",
+            "args": [
+                "${workspaceFolder}/example/server_example.dart"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb",
+            //"preLaunchTask": "build",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "sourceFileMap": {
+                "/Users/omar/source/repos/open62541_bindings": "${workspaceFolder}"
+            }
+        },
     ]
 }
