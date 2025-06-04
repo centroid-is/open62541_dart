@@ -1,14 +1,13 @@
 import 'dart:async';
+import 'dart:ffi' as ffi;
 
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
+
 import 'package:open62541/open62541.dart';
-
-import 'generated/open62541_bindings.dart' as raw;
-import 'dart:ffi' as ffi;
-
 import 'common.dart';
 import 'extensions.dart';
+import 'generated/open62541_bindings.dart' as raw;
 
 class Server {
   Server(
