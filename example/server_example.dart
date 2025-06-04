@@ -20,17 +20,17 @@ void main() async {
     }
   }();
 
-  // // Add some variables to our little server
-  // final variableNodeId = NodeId.fromString(1, "myVariable");
-  // DynamicValue value = DynamicValue(value: true, typeId: NodeId.boolean, name: "My Variable");
-  // server.addVariableNode(variableNodeId, value, accessLevel: AccessLevelMask(read: true, write: true));
+  // Add some variables to our little server
+  final variableNodeId = NodeId.fromString(1, "myVariable");
+  DynamicValue value = DynamicValue(value: true, typeId: NodeId.boolean, name: "My Variable");
+  server.addVariableNode(variableNodeId, value, accessLevel: AccessLevelMask(read: true, write: true));
 
-  // final variableSubscription = server.monitorVariable(variableNodeId).listen((event) => print(event));
+  final variableSubscription = server.monitorVariable(variableNodeId).listen((event) => print(event));
 
   // Try adding a array variable to our server
-  // final complexVariableNodeId = NodeId.fromString(1, "arrayVariable");
-  // final complexValue = DynamicValue.fromList([1337, 2005, 3535], typeId: NodeId.int32, name: "My Array Variable");
-  // server.addVariableNode(complexVariableNodeId, complexValue, accessLevel: AccessLevelMask(read: true, write: true));
+  final complexVariableNodeId = NodeId.fromString(1, "arrayVariable");
+  final complexValue = DynamicValue.fromList([1337, 2005, 3535], typeId: NodeId.int32, name: "My Array Variable");
+  server.addVariableNode(complexVariableNodeId, complexValue, accessLevel: AccessLevelMask(read: true, write: true));
 
   // Try adding a structure variable to our server
   final structureVariableNodeId = NodeId.fromString(1, "structureVariable");
@@ -44,7 +44,6 @@ void main() async {
 
   server.addDataTypeNode(myStructureTypeId, "myStructureType",
       displayName: LocalizedText("My Structure Type", "en-US"));
-  //server.addVariableTypeNode(structureValue, myStructureTypeId, "Very good name");
   server.addVariableNode(structureVariableNodeId, structureValue,
       accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
 
@@ -52,7 +51,7 @@ void main() async {
   print("The server will now run for $runTime");
   await Future.delayed(runTime);
 
-  //await variableSubscription.cancel();
+  await variableSubscription.cancel();
 
   server.shutdown();
 

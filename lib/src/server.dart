@@ -107,20 +107,32 @@ class Server {
       NodeId? typeId}) {
     ffi.Pointer<raw.UA_VariableAttributes> attr = calloc<raw.UA_VariableAttributes>();
     attr.ref = _lib.UA_VariableAttributes_default;
+
     final variant = valueToVariant(value, _lib);
+    typeId ??= value.typeId;
+
+    // The returned variant is a encoded extension object. extract that and set the scalar value of the variant
     if (variant.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
       final t = _findDataType(typeId!);
       if (t == ffi.nullptr) {
         throw 'Failed to find data type $typeId';
       }
       variant.ref.type = t;
-    }
-    attr.ref.value = variant.ref;
-    attr.ref.accessLevel = accessLevel.value;
-    typeId ??= value.typeId;
-    attr.ref.dataType = typeId!.toRaw(_lib);
+      attr.ref.value.type = t;
+      attr.ref.value.arrayLength = 0;
+      final extObjView = variant.ref.data.cast<raw.UA_ExtensionObject>();
+      final length = extObjView.ref.content.encoded.body.length;
 
-    print("Memsize: ${variant.ref.type.ref.memSize}");
+      attr.ref.value.data = calloc<raw.UA_Byte>(length).cast();
+      attr.ref.value.data
+          .cast<raw.UA_Byte>()
+          .asTypedList(length)
+          .setRange(0, length, extObjView.ref.content.encoded.body.data.asTypedList(length));
+    } else {
+      attr.ref.value = variant.ref;
+    }
+    attr.ref.accessLevel = accessLevel.value;
+    attr.ref.dataType = typeId!.toRaw(_lib);
 
     if (value.name == null) {
       throw 'Value name must be provided to use as a browse name';

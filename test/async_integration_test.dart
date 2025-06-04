@@ -201,7 +201,7 @@ void main() async {
     DynamicValue structureValue = DynamicValue(name: "My Structure Variable", typeId: myStructureTypeId);
     structureValue["a"] = DynamicValue(value: 0, typeId: NodeId.int32);
     structureValue["b"] = DynamicValue(value: true, typeId: NodeId.boolean);
-    structureValue["c"] = DynamicValue(value: 5.8, typeId: NodeId.float);
+    structureValue["c"] = DynamicValue(value: 5.8, typeId: NodeId.double);
 
     server!.addCustomType(myStructureTypeId, structureValue);
 
@@ -211,10 +211,7 @@ void main() async {
     server!.addVariableNode(structureVariableNodeId, structureValue,
         accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
 
-    //final value = await client!.read(structureVariableNodeId);
-    final schema = await client!.buildSchema(myStructureTypeId);
-    final value = server!.readValue(structureVariableNodeId, schema: schema);
-    print(value);
+    final value = await client!.read(structureVariableNodeId);
     expect(value.isObject, isTrue);
     expect(value.typeId, myStructureTypeId);
     expect(value.asObject.length, 3);
