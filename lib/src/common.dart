@@ -76,9 +76,10 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
   }
 
   var typeId = dataTypeId ?? data.type.ref.typeId.toNodeId();
-  if (typeId == NodeId.structure) {
+  NodeId? extObjEncodingId;
+  if (data.type.ref.typeKind == raw.UA_DataTypeKind.UA_DATATYPEKIND_EXTENSIONOBJECT) {
     final ext = data.data.cast<raw.UA_ExtensionObject>();
-    typeId = ext.ref.content.encoded.typeId.toNodeId();
+    extObjEncodingId = ext.ref.content.encoded.typeId.toNodeId();
   }
 
   final dimensions = data.dimensions;
@@ -119,6 +120,7 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
   retValue = createNestedArray(typeId, dimensions.toList());
   final reader = binarize.ByteReader(data.data.cast<ffi.Uint8>().asTypedList(bufferLength));
   retValue.get(reader, Endian.little, false, true);
+  retValue.extObjEncodingId = extObjEncodingId;
 
   return retValue;
 }

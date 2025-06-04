@@ -40,7 +40,7 @@ void main() async {
   server.addVariableNode(structureVariableNodeId, structureValue,
       accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
 
-  final runTime = Duration(minutes: 10);
+  final runTime = Duration(minutes: 60);
   print("The server will now run for $runTime");
   await Future.delayed(runTime);
 

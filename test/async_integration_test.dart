@@ -52,15 +52,15 @@ void main() async {
   });
   test('Basic read and write boolean async', () async {
     expect((await client!.read(boolNodeId)).value, true);
-    await client!.writeValue(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
+    await client!.write(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
     expect((await client!.read(boolNodeId)).value, false);
-    await client!.writeValue(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
+    await client!.write(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
     expect((await client!.read(boolNodeId)).value, true);
   });
 
   test('Basic subscription', () async {
     // Set current value to false to get a change
-    await client!.writeValue(
+    await client!.write(
         boolNodeId,
         DynamicValue(
             value: true,
@@ -79,19 +79,19 @@ void main() async {
     });
     expect(stream, emitsInOrder(items));
     for (var item in items) {
-      await client!.writeValue(boolNodeId, DynamicValue(value: item, typeId: NodeId.boolean));
+      await client!.write(boolNodeId, DynamicValue(value: item, typeId: NodeId.boolean));
       await Future.delayed(Duration(milliseconds: 100)); // Give the server and client time to do stuff
     }
     await comp.future;
   });
   test('Multiple monitored items', () async {
     // Set current value to false to get a change
-    await client!.writeValue(
+    await client!.write(
         boolNodeId,
         DynamicValue(
             value: true,
             typeId: NodeId.boolean)); // It seems we get a value straigt away, make it match the first in the list
-    await client!.writeValue(
+    await client!.write(
         intNodeId,
         DynamicValue(
             value: 1,
@@ -122,8 +122,8 @@ void main() async {
     expect(intStream, emitsInOrder(intItems));
     expect(items.length, intItems.length);
     for (var i = 0; i < items.length; i++) {
-      await client!.writeValue(boolNodeId, DynamicValue(value: items[i], typeId: NodeId.boolean));
-      await client!.writeValue(intNodeId, DynamicValue(value: intItems[i], typeId: NodeId.int32));
+      await client!.write(boolNodeId, DynamicValue(value: items[i], typeId: NodeId.boolean));
+      await client!.write(intNodeId, DynamicValue(value: intItems[i], typeId: NodeId.int32));
       await Future.delayed(Duration(milliseconds: 100)); // Give the server and client time to do stuff
     }
     await comp.future;
@@ -156,7 +156,7 @@ void main() async {
   test('Just run the server so we can connect with a client', () async {
     await Future.delayed(Duration(minutes: 10));
     // expect((await client!.read(boolNodeId)).value, false);
-    // await client!.writeValue(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
+    // await client!.write(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
     // expect((await client!.read(boolNodeId)).value, true);
   }, timeout: Timeout(Duration(minutes: 10)), skip: true);
 
@@ -195,11 +195,11 @@ void main() async {
     expect(server!.readValue(boolNodeId).value, false);
   });
 
-  test('Read a basic struct from a server', () async {
+  test('Basic struct read and write', () async {
     final structureVariableNodeId = NodeId.fromString(1, "structureVariable");
     final myStructureTypeId = NodeId.fromString(1, "myStructureType");
     DynamicValue structureValue = DynamicValue(name: "My Structure Variable", typeId: myStructureTypeId);
-    structureValue["a"] = DynamicValue(value: 0, typeId: NodeId.int32);
+    structureValue["a"] = DynamicValue(value: 2, typeId: NodeId.int32);
     structureValue["b"] = DynamicValue(value: true, typeId: NodeId.boolean);
     structureValue["c"] = DynamicValue(value: 5.8, typeId: NodeId.double);
 
@@ -207,7 +207,6 @@ void main() async {
 
     server!.addDataTypeNode(myStructureTypeId, "myStructureType",
         displayName: LocalizedText("My Structure Type", "en-US"));
-    //server.addVariableTypeNode(structureValue, myStructureTypeId, "Very good name");
     server!.addVariableNode(structureVariableNodeId, structureValue,
         accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
 
@@ -215,9 +214,22 @@ void main() async {
     expect(value.isObject, isTrue);
     expect(value.typeId, myStructureTypeId);
     expect(value.asObject.length, 3);
-    expect(value.asObject["a"]!.value, 0);
-    expect(value.asObject["b"]!.value, true);
-    expect(value.asObject["c"]!.value, 5.8);
+    expect(value["a"]!.value, 2);
+    expect(value["b"]!.value, true);
+    expect(value["c"]!.value, 5.8);
+    
+    // Update the variable on the server
+    value["a"] = 10;
+    value["b"] = false;
+    value["c"] = 154.7;
+
+    await client!.write(structureVariableNodeId, value);
+    final value2 = await client!.read(structureVariableNodeId);
+
+    expect(value["a"]!.value, value2["a"]!.value);
+    expect(value["b"]!.value, value2["b"]!.value);
+    expect(value["c"]!.value, value2["c"]!.value);
+    
   });
 
   tearDown(() async {
