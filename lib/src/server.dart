@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
 import 'package:open62541/open62541.dart';
 
@@ -28,10 +29,12 @@ class Server {
     }
 
     _server = _lib.UA_Server_newWithConfig(config);
+    _config = _lib.UA_Server_getConfig(_server);
   }
 
   late raw.open62541 _lib;
   late ffi.Pointer<raw.UA_Server> _server;
+  late ffi.Pointer<raw.UA_ServerConfig> _config;
 
   /// Initializes and starts the OPC UA server.
   ///
@@ -92,6 +95,10 @@ class Server {
   /// );
   /// server.addVariableNode(nodeId, value);
   /// ```
+  String debugType() {
+    return getType(UaTypes.fromValue(21), _lib).ref.typeId.identifierType.name;
+  }
+
   void addVariableNode(NodeId variableNodeId, DynamicValue value,
       {AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
       NodeId? parentNodeId,
@@ -102,12 +109,18 @@ class Server {
     attr.ref = _lib.UA_VariableAttributes_default;
     final variant = valueToVariant(value, _lib);
     if (variant.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
-      variant.ref.type.ref.typeId = typeId!.toRaw(_lib);
+      final t = _findDataType(typeId!);
+      if (t == ffi.nullptr) {
+        throw 'Failed to find data type $typeId';
+      }
+      variant.ref.type = t;
     }
     attr.ref.value = variant.ref;
     attr.ref.accessLevel = accessLevel.value;
     typeId ??= value.typeId;
     attr.ref.dataType = typeId!.toRaw(_lib);
+
+    print("Memsize: ${variant.ref.type.ref.memSize}");
 
     if (value.name == null) {
       throw 'Value name must be provided to use as a browse name';
@@ -125,6 +138,7 @@ class Server {
     var returnCode = _lib.UA_Server_addVariableNode(_server, variableNodeId.toRaw(_lib), parentNodeIdRaw,
         parentReferenceNodeIdRaw, name, basedatavariableTypeRaw, attr.ref, ffi.nullptr, ffi.nullptr);
     _lib.UA_VariableAttributes_delete(attr);
+    calloc.free(variant);
     if (returnCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add variable node ${statusCodeToString(returnCode, _lib)}, nodeId: $variableNodeId';
     }
@@ -296,6 +310,67 @@ class Server {
     descriptionRaw.ref.text.set(description.value);
     _lib.UA_Server_writeDescription(_server, variableNodeId.toRaw(_lib), descriptionRaw.ref);
     _lib.UA_LocalizedText_delete(descriptionRaw);
+  }
+
+  DynamicValue readValue(NodeId variableNodeId, {Schema? schema}) {
+    final variant = calloc<raw.UA_Variant>();
+    _lib.UA_Server_readValue(_server, variableNodeId.toRaw(_lib), variant);
+    final value = variantToValue(variant.ref, defs: schema);
+    _lib.UA_Variant_delete(variant);
+    return value;
+  }
+
+  void writeValue(NodeId variableNodeId, DynamicValue value) {
+    final variant = valueToVariant(value, _lib);
+    _lib.UA_Server_writeValue(_server, variableNodeId.toRaw(_lib), variant.ref);
+    _lib.UA_Variant_delete(variant);
+  }
+
+  // populate structschema for out type
+  void addCustomType(NodeId typeId, DynamicValue value) {
+    final array = calloc<raw.UA_DataTypeArray>();
+    if (!value.isObject) {
+      throw 'Value must be a object';
+    }
+    array.ref.typesSize = 1;
+    array.ref.types = calloc<raw.UA_DataType>(1);
+    array.ref.types[0].typeId = typeId.toRaw(_lib);
+    array.ref.types[0].binaryEncodingId =
+        NodeId.fromString(typeId.namespace, "BinaryEncoding_Default:${value.name}").toRaw(_lib);
+
+    array.ref.types[0].memSize = 9;
+    array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
+
+    final memberCount = value.asObject.length;
+    array.ref.types[0].membersSize = memberCount;
+    array.ref.types[0].members = calloc<raw.UA_DataTypeMember>(memberCount);
+    for (var i = 0; i < memberCount; i++) {
+      final entry = value.asObject.entries.elementAt(i);
+      final member = entry.value;
+      final memberName = entry.key;
+      if (member.isObject && _findDataType(member.typeId!) == ffi.nullptr) {
+        // If we contain a member add that first
+        addCustomType(member.typeId!, member);
+      }
+      array.ref.types[0].members[i].memberName = memberName.toNativeUtf8().cast();
+      array.ref.types[0].members[i].memberType = _findDataType(member.typeId!);
+      array.ref.types[0].members[i].isOptional = member.isOptional;
+      array.ref.types[0].members[i].isArray = member.isArray;
+      array.ref.types[0].members[i].padding = 0;
+    }
+
+    // Have open62541 clear the pointers we are allocating here on configuration clean-up
+    array.ref.cleanup = true;
+    array.ref.next = _config.ref.customDataTypes;
+    _config.ref.customDataTypes = array;
+  }
+
+  ffi.Pointer<raw.UA_DataType> _findDataType(NodeId typeId) {
+    final nodeId = calloc<raw.UA_NodeId>();
+    nodeId.ref = typeId.toRaw(_lib);
+    final ret = _lib.UA_Server_findDataType(_server, nodeId);
+    calloc.free(nodeId);
+    return ret;
   }
 
   /// Runs a single iteration of the server's main loop.

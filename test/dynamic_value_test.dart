@@ -613,4 +613,8 @@ void main() {
     expect(d[0].typeId, NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     expect(d[1].typeId, NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
   });
+
+  test('Memory size', () {
+    // TODO: Need this
+  });
 }

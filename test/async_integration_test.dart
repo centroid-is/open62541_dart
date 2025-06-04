@@ -186,6 +186,43 @@ void main() async {
     expect(value[doesNotExist]!.description, isNull);
   }, skip: true);
 
+  test('Update data from the server', () async {
+    server!.writeValue(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
+    expect((await client!.read(boolNodeId)).value, true);
+    expect(server!.readValue(boolNodeId).value, true);
+    server!.writeValue(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
+    expect((await client!.read(boolNodeId)).value, false);
+    expect(server!.readValue(boolNodeId).value, false);
+  });
+
+  test('Read a basic struct from a server', () async {
+    final structureVariableNodeId = NodeId.fromString(1, "structureVariable");
+    final myStructureTypeId = NodeId.fromString(1, "myStructureType");
+    DynamicValue structureValue = DynamicValue(name: "My Structure Variable", typeId: myStructureTypeId);
+    structureValue["a"] = DynamicValue(value: 0, typeId: NodeId.int32);
+    structureValue["b"] = DynamicValue(value: true, typeId: NodeId.boolean);
+    structureValue["c"] = DynamicValue(value: 5.8, typeId: NodeId.float);
+
+    server!.addCustomType(myStructureTypeId, structureValue);
+
+    server!.addDataTypeNode(myStructureTypeId, "myStructureType",
+        displayName: LocalizedText("My Structure Type", "en-US"));
+    //server.addVariableTypeNode(structureValue, myStructureTypeId, "Very good name");
+    server!.addVariableNode(structureVariableNodeId, structureValue,
+        accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
+
+    //final value = await client!.read(structureVariableNodeId);
+    final schema = await client!.buildSchema(myStructureTypeId);
+    final value = server!.readValue(structureVariableNodeId, schema: schema);
+    print(value);
+    expect(value.isObject, isTrue);
+    expect(value.typeId, myStructureTypeId);
+    expect(value.asObject.length, 3);
+    expect(value.asObject["a"]!.value, 0);
+    expect(value.asObject["b"]!.value, true);
+    expect(value.asObject["c"]!.value, 5.8);
+  });
+
   tearDown(() async {
     server!.shutdown();
 

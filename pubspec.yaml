@@ -41,10 +41,12 @@ ffigen:
         - 'UA_*' # Do this to expose all function pointers.
         - '__UA_Client_AsyncService'
         - '__UA_Server_addNode'
+        - '__UA_Server_write'
 
     rename:
       '__UA_Client_AsyncService': 'UA_Client_AsyncService'
       '__UA_Server_addNode': 'UA_Server_addNode'
+      '__UA_Server_write': 'UA_Server_write_raw'
   # UA_TYPES is a list inside the library and we need raw access
   # To the top level pointer to increment the list.
   globals:
