@@ -862,7 +862,6 @@ void main() {
     atv["q_sError"] = buildField(NodeId.uastring, "q_sError", [], "ff");
     atv["HMI"] = hmi;
 
-    print(atv);
     var defs = {atvId: atv};
 
     final value = variantToValue(variant.ref, defs: defs);

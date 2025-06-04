@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:test/test.dart';
 
@@ -6,19 +7,19 @@ import 'package:open62541/open62541.dart';
 
 void main() async {
   final lib = loadOpen62541Library(local: true);
+
+  int port = Random().nextInt(10000) + 4840;
   Client? client;
   Server? server;
   final boolNodeId = NodeId.fromString(1, "the.bool");
   final intNodeId = NodeId.fromString(1, "the.int");
 
   setUp(() async {
-    print("Setting up");
-    server = Server(lib);
+    server = Server(lib, port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
     server!.start();
 
     // Run the server while we test
     () async {
-      print("Starting server loop");
       while (server!.runIterate()) {
         // The function returns how long it can wait before the next iteration
         // That is a really high number and causes my tests to run slow.
@@ -38,22 +39,16 @@ void main() async {
       server!.addVariableNode(intNodeId, intValue);
     }
 
-    print("Creating client");
-    client = Client(lib);
-    // Print the state of the client connection
-    client!.config.stateStream.listen((state) {
-      print("Client state: $state");
-    });
+    client = Client(lib, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
     // Run the client while we connect
     () async {
       while (client!.runIterate(Duration(milliseconds: 10))) {
         await Future.delayed(Duration(milliseconds: 5));
       }
     }();
-    await client!.connect("opc.tcp://localhost:4840").onError((error, stackTrace) {
+    await client!.connect("opc.tcp://localhost:$port").onError((error, stackTrace) {
       throw Exception("Failed to connect to the server: $error");
     });
-    print("Client connected!");
   });
   test('Basic read and write boolean async', () async {
     expect((await client!.read(boolNodeId)).value, true);
@@ -192,13 +187,10 @@ void main() async {
   }, skip: true);
 
   tearDown(() async {
-    print("Tearing down!");
-
     server!.shutdown();
 
     await client!.delete();
 
     server!.delete();
-    print("Done tearing down");
   });
 }

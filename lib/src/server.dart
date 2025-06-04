@@ -17,13 +17,14 @@ class Server {
   }) {
     _lib = raw.open62541(lib);
     final config = calloc<raw.UA_ServerConfig>();
-    int res = _lib.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
-    if (res != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to set default server config ${statusCodeToString(res, _lib)}';
-    }
 
     if (logLevel != null) {
       config.ref.logging = _lib.UA_Log_Stdout_new(logLevel);
+    }
+    // setMinimal sets the logging level if not set.
+    int res = _lib.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to set default server config ${statusCodeToString(res, _lib)}';
     }
 
     _server = _lib.UA_Server_newWithConfig(config);
@@ -100,7 +101,6 @@ class Server {
     ffi.Pointer<raw.UA_VariableAttributes> attr = calloc<raw.UA_VariableAttributes>();
     attr.ref = _lib.UA_VariableAttributes_default;
     final variant = valueToVariant(value, _lib);
-    print(variant.ref.type.ref.typeId.toNodeId());
     if (variant.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
       variant.ref.type.ref.typeId = typeId!.toRaw(_lib);
     }
