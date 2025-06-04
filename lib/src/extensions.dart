@@ -257,6 +257,7 @@ enum UaTypes {
   }
 }
 
+// ignore: camel_case_extensions
 extension UA_DataTypeMemberExtension on raw.UA_DataTypeMember {
   int get padding => (substitute >> 6) & 0x3F;
   set padding(int value) => substitute = (substitute & 0x00FFFFFF) | (value << 6);
