@@ -1,15 +1,8 @@
 import 'package:open62541/open62541.dart';
-import 'package:open62541/src/common.dart';
-import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
-import 'dart:ffi';
 
 void main() async {
   final lib = loadOpen62541Library(local: true);
   final server = Server(lib);
-
-  String debugType() {
-    return getType(UaTypes.fromValue(21), raw.open62541(lib)).ref.typeId.identifierType.name;
-  }
 
   print("Starting server");
   server.start();
