@@ -994,6 +994,14 @@ class Client {
     return retValue;
   }
 
+  ffi.Pointer<raw.UA_DataType> _findDataType(NodeId typeId) {
+    final nodeId = calloc<raw.UA_NodeId>();
+    nodeId.ref = typeId.toRaw(_lib);
+    final ret = _lib.UA_Client_findDataType(_client, nodeId);
+    calloc.free(nodeId);
+    return ret;
+  }
+
   void disconnect() {
     final statusCode = _lib.UA_Client_disconnect(_client);
     if (statusCode != raw.UA_STATUSCODE_GOOD) {

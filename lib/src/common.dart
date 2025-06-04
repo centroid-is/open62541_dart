@@ -56,7 +56,7 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib
   ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
   lib.UA_Variant_init(variant); // todo is this needed?
   variant.ref.data = pointer.cast();
-  variant.ref.type = getType(id.toUaTypes(), lib);
+  variant.ref.type = getType(id.toUaTypes(), lib); //TODO: This is not really the correct.
   if (dimensions.isNotEmpty) {
     variant.ref.arrayLength = dimensions.fold(1, (a, b) => a * b);
   }

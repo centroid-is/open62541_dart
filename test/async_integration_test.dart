@@ -214,10 +214,10 @@ void main() async {
     expect(value.isObject, isTrue);
     expect(value.typeId, myStructureTypeId);
     expect(value.asObject.length, 3);
-    expect(value["a"]!.value, 2);
-    expect(value["b"]!.value, true);
-    expect(value["c"]!.value, 5.8);
-    
+    expect(value["a"].value, 2);
+    expect(value["b"].value, true);
+    expect(value["c"].value, 5.8);
+
     // Update the variable on the server
     value["a"] = 10;
     value["b"] = false;
@@ -226,10 +226,9 @@ void main() async {
     await client!.write(structureVariableNodeId, value);
     final value2 = await client!.read(structureVariableNodeId);
 
-    expect(value["a"]!.value, value2["a"]!.value);
-    expect(value["b"]!.value, value2["b"]!.value);
-    expect(value["c"]!.value, value2["c"]!.value);
-    
+    expect(value["a"].value, value2["a"].value);
+    expect(value["b"].value, value2["b"].value);
+    expect(value["c"].value, value2["c"].value);
   });
 
   tearDown(() async {

@@ -110,13 +110,13 @@ void main() {
   });
 
   test('struct of strings variant to value and back', () {
-    final DynamicValue val = DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
+    var spNodeId = NodeId.fromString(4, "Omars string struct");
+
+    final DynamicValue val = DynamicValue(typeId: spNodeId);
     val["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
     val["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
     val["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
     final variant = valueToVariant(val, lib);
-
-    var spNodeId = NodeId.fromString(4, "Omars string struct");
 
     DynamicValue sp = DynamicValue(typeId: spNodeId);
 
