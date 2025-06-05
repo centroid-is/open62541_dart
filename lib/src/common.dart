@@ -31,12 +31,11 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib
   pointer = calloc<ffi.Uint8>(wr.length);
   pointer.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
 
-  Namespace0Id id;
+  Namespace0Id? id;
   if (value.typeId!.isNumeric()) {
     id = Namespace0Id.fromInt(value.typeId!.numeric);
-  } else {
-    id = Namespace0Id.structure;
   }
+
   List<int> getDimensions(DynamicValue value) {
     if (!value.isArray) {
       return [];
@@ -54,9 +53,14 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib
 
   final dimensions = getDimensions(value);
   ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
-  lib.UA_Variant_init(variant); // todo is this needed?
   variant.ref.data = pointer.cast();
-  variant.ref.type = getType(id.toUaTypes(), lib); //TODO: This is not really the correct.
+  if (value.isObject || value.isArray && value.asArray.first.isObject) {
+    variant.ref.type = getType(UaTypes.extensionObject, lib);
+  } else if (id != null) {
+    variant.ref.type = getType(id.toUaTypes(), lib); //TODO: This is not really the correct.
+  } else {
+    throw 'Unable to determine type for $value';
+  }
   if (dimensions.isNotEmpty) {
     variant.ref.arrayLength = dimensions.fold(1, (a, b) => a * b);
   }

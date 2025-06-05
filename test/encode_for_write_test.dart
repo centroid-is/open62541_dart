@@ -125,7 +125,7 @@ void main() {
     sp["s3"] = buildField(NodeId.uastring, "s3", [], "ff");
 
     var defs = {spNodeId: sp};
-    final decoded = variantToValue(variant.ref, defs: defs);
+    final decoded = variantToValue(variant.ref, defs: defs, dataTypeId: spNodeId);
 
     expect(val["s1"].asString, "some string");
     expect(val["s2"].asString, "other string");
@@ -161,7 +161,7 @@ void main() {
     sp["s3"] = buildField(NodeId.uastring, "s3", [], "ff");
 
     var defs = {spNodeId: sp};
-    final decoded = variantToValue(variant.ref, defs: defs);
+    final decoded = variantToValue(variant.ref, defs: defs, dataTypeId: spNodeId);
 
     expect(val1["s1"].asString, "some string");
     expect(val1["s2"].asString, "other string");
@@ -864,7 +864,7 @@ void main() {
 
     var defs = {atvId: atv};
 
-    final value = variantToValue(variant.ref, defs: defs);
+    final value = variantToValue(variant.ref, defs: defs, dataTypeId: atvId);
 
     void expectArrayDyn(DynamicValue value) {
       // Validate array length
@@ -950,7 +950,7 @@ void main() {
 
     final variantEncoded = valueToVariant(value, lib);
     expect(variantEncoded.ref.arrayLength, 3);
-    final dynValueAgain = variantToValue(variantEncoded.ref, defs: defs);
+    final dynValueAgain = variantToValue(variantEncoded.ref, defs: defs, dataTypeId: atvId);
     expectArrayDyn(dynValueAgain);
 
     // I presume this erases the data correctly
