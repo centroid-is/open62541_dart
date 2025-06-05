@@ -994,6 +994,7 @@ class Client {
     return retValue;
   }
 
+  // ignore: unused_element
   ffi.Pointer<raw.UA_DataType> _findDataType(NodeId typeId) {
     final nodeId = calloc<raw.UA_NodeId>();
     nodeId.ref = typeId.toRaw(_lib);

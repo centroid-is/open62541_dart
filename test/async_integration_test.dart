@@ -16,7 +16,7 @@ void main() async {
 
   // Not all tests need this and it is annoying me to have this
   // be added while I am debugging other tests.
-  void add_basic_variables() {
+  void addBasicVariables() {
     // Create a boolean variable to read and write
     DynamicValue boolValue = DynamicValue(value: true, typeId: NodeId.boolean, name: "the.bool");
     server!.addVariableNode(boolNodeId, boolValue);
@@ -51,7 +51,7 @@ void main() async {
     });
   });
   test('Basic read and write boolean async', () async {
-    add_basic_variables();
+    addBasicVariables();
     expect((await client!.read(boolNodeId)).value, true);
     await client!.write(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
     expect((await client!.read(boolNodeId)).value, false);
@@ -60,7 +60,7 @@ void main() async {
   });
 
   test('Basic subscription', () async {
-    add_basic_variables();
+    addBasicVariables();
     // Set current value to false to get a change
     await client!.write(
         boolNodeId,
@@ -87,7 +87,7 @@ void main() async {
     await comp.future;
   });
   test('Multiple monitored items', () async {
-    add_basic_variables();
+    addBasicVariables();
     // Set current value to false to get a change
     await client!.write(
         boolNodeId,
@@ -133,14 +133,14 @@ void main() async {
   });
 
   test('Creating a subscription and not using it should not hang the process', () async {
-    add_basic_variables();
+    addBasicVariables();
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     // ignore: unused_local_variable
     final controller = client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10));
   });
 
   test('Create a monitored item and then cancel before it has been created', () async {
-    add_basic_variables();
+    addBasicVariables();
     // This test has no expected outcome.
     // A failure of the test is a timeout.
 
@@ -152,7 +152,7 @@ void main() async {
   });
 
   test('Test server and client descriptions', () async {
-    add_basic_variables();
+    addBasicVariables();
     final description = LocalizedText("This is a test", "en-US");
     server!.writeDescription(boolNodeId, description);
     final value = await client!.read(boolNodeId);
@@ -160,7 +160,7 @@ void main() async {
   });
 
   test('Just run the server so we can connect with a client', () async {
-    add_basic_variables();
+    addBasicVariables();
     await Future.delayed(Duration(minutes: 10));
     // expect((await client!.read(boolNodeId)).value, false);
     // await client!.write(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
@@ -194,7 +194,7 @@ void main() async {
   }, skip: true);
 
   test('Update data from the server', () async {
-    add_basic_variables();
+    addBasicVariables();
     server!.writeValue(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
     expect((await client!.read(boolNodeId)).value, true);
     expect(server!.readValue(boolNodeId).value, true);
