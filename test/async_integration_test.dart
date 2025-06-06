@@ -5,53 +5,22 @@ import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 
+import 'common.dart';
+
 void main() async {
   final lib = loadOpen62541Library(local: true);
 
   int port = Random().nextInt(10000) + 4840;
   Client? client;
   Server? server;
-  final boolNodeId = NodeId.fromString(1, "the.bool");
-  final intNodeId = NodeId.fromString(1, "the.int");
-
-  // Not all tests need this and it is annoying me to have this
-  // be added while I am debugging other tests.
-  void addBasicVariables() {
-    // Create a boolean variable to read and write
-    DynamicValue boolValue = DynamicValue(value: true, typeId: NodeId.boolean, name: "the.bool");
-    server!.addVariableNode(boolNodeId, boolValue);
-    // Create a int variables to read and write
-    DynamicValue intValue = DynamicValue(value: 0, typeId: NodeId.int32, name: "the.int");
-    server!.addVariableNode(intNodeId, intValue);
-  }
 
   setUp(() async {
-    server = Server(lib, port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
-    server!.start();
-
-    // Run the server while we test
-    () async {
-      while (server!.runIterate()) {
-        // The function returns how long it can wait before the next iteration
-        // That is a really high number and causes my tests to run slow.
-        // Lets just wait 50ms
-        await Future.delayed(Duration(milliseconds: 50));
-      }
-    }();
-
-    client = Client(lib, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
-    // Run the client while we connect
-    () async {
-      while (client!.runIterate(Duration(milliseconds: 10))) {
-        await Future.delayed(Duration(milliseconds: 5));
-      }
-    }();
-    await client!.connect("opc.tcp://localhost:$port").onError((error, stackTrace) {
-      throw Exception("Failed to connect to the server: $error");
-    });
+    server = setupServer(lib, port);
+    client = await setupClient(lib, port);
   });
+
   test('Basic read and write boolean async', () async {
-    addBasicVariables();
+    addBasicVariables(server!);
     expect((await client!.read(boolNodeId)).value, true);
     await client!.write(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
     expect((await client!.read(boolNodeId)).value, false);
@@ -60,7 +29,7 @@ void main() async {
   });
 
   test('Basic subscription', () async {
-    addBasicVariables();
+    addBasicVariables(server!);
     // Set current value to false to get a change
     await client!.write(
         boolNodeId,
@@ -87,7 +56,7 @@ void main() async {
     await comp.future;
   });
   test('Multiple monitored items', () async {
-    addBasicVariables();
+    addBasicVariables(server!);
     // Set current value to false to get a change
     await client!.write(
         boolNodeId,
@@ -133,14 +102,14 @@ void main() async {
   });
 
   test('Creating a subscription and not using it should not hang the process', () async {
-    addBasicVariables();
+    addBasicVariables(server!);
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     // ignore: unused_local_variable
     final controller = client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10));
   });
 
   test('Create a monitored item and then cancel before it has been created', () async {
-    addBasicVariables();
+    addBasicVariables(server!);
     // This test has no expected outcome.
     // A failure of the test is a timeout.
 
@@ -152,7 +121,7 @@ void main() async {
   });
 
   test('Test server and client descriptions', () async {
-    addBasicVariables();
+    addBasicVariables(server!);
     final description = LocalizedText("This is a test", "en-US");
     server!.writeDescription(boolNodeId, description);
     final value = await client!.read(boolNodeId);
@@ -160,7 +129,7 @@ void main() async {
   });
 
   test('Just run the server so we can connect with a client', () async {
-    addBasicVariables();
+    addBasicVariables(server!);
     await Future.delayed(Duration(minutes: 10));
     // expect((await client!.read(boolNodeId)).value, false);
     // await client!.write(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
@@ -194,13 +163,13 @@ void main() async {
   }, skip: true);
 
   test('Update data from the server', () async {
-    addBasicVariables();
-    server!.writeValue(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
+    addBasicVariables(server!);
+    server!.write(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
     expect((await client!.read(boolNodeId)).value, true);
-    expect(server!.readValue(boolNodeId).value, true);
-    server!.writeValue(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
+    expect(server!.read(boolNodeId).value, true);
+    server!.write(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
     expect((await client!.read(boolNodeId)).value, false);
-    expect(server!.readValue(boolNodeId).value, false);
+    expect(server!.read(boolNodeId).value, false);
   });
 
   test('Basic struct read and write', () async {
@@ -237,6 +206,18 @@ void main() async {
     expect(value["a"].value, value2["a"].value);
     expect(value["b"].value, value2["b"].value);
     expect(value["c"].value, value2["c"].value);
+  });
+
+  test('Server string value', () async {
+    final value = DynamicValue(value: "Hello World!", typeId: NodeId.uastring, name: "the.string");
+    final id = NodeId.fromString(1, "the.string");
+    server!.addVariableNode(id, value, accessLevel: AccessLevelMask(read: true, write: true));
+    final value2 = await client!.read(id);
+    expect(value2.value, "Hello World!");
+    value.value = "God night";
+    await client!.write(id, value);
+    final value3 = await client!.read(id);
+    expect(value3.value, "God night");
   });
 
   test('struct of strings', () async {

@@ -322,7 +322,7 @@ class Server {
     _lib.UA_LocalizedText_delete(descriptionRaw);
   }
 
-  DynamicValue readValue(NodeId variableNodeId, {Schema? schema}) {
+  DynamicValue read(NodeId variableNodeId, {Schema? schema}) {
     final variant = calloc<raw.UA_Variant>();
     _lib.UA_Server_readValue(_server, variableNodeId.toRaw(_lib), variant);
     final value = variantToValue(variant.ref, defs: schema);
@@ -330,7 +330,7 @@ class Server {
     return value;
   }
 
-  void writeValue(NodeId variableNodeId, DynamicValue value) {
+  void write(NodeId variableNodeId, DynamicValue value) {
     final variant = valueToVariant(value, _lib);
     _lib.UA_Server_writeValue(_server, variableNodeId.toRaw(_lib), variant.ref);
     _lib.UA_Variant_delete(variant);
