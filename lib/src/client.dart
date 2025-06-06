@@ -205,7 +205,7 @@ class Client {
     return false;
   }
 
-  Future<void> writeValue(NodeId nodeId, DynamicValue value) {
+  Future<void> write(NodeId nodeId, DynamicValue value) {
     Completer<void> completer = Completer<void>();
 
     final variant = valueToVariant(value, _lib);
@@ -395,12 +395,14 @@ class Client {
             reference.value = temporary.value;
             reference.typeId = reference.typeId ?? temporary.typeId; // Prefer explicitly fetched type id
             reference.enumFields = reference.enumFields ?? temporary.enumFields;
+            reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
           case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
             final temporary =
                 DynamicValue.fromDataTypeDefinition(reference.typeId ?? value!.type.ref.typeId.toNodeId(), value!);
             reference.value = temporary.value;
             reference.typeId = reference.typeId ?? temporary.typeId;
             reference.enumFields = reference.enumFields ?? temporary.enumFields;
+            reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
           default:
             throw 'Unhandled attribute id ${indorderNodes[i].$2}';
         }
@@ -990,6 +992,15 @@ class Client {
     }
     final retValue = variantToValue(data, defs: defs, dataTypeId: dataTypeId);
     return retValue;
+  }
+
+  // ignore: unused_element
+  ffi.Pointer<raw.UA_DataType> _findDataType(NodeId typeId) {
+    final nodeId = calloc<raw.UA_NodeId>();
+    nodeId.ref = typeId.toRaw(_lib);
+    final ret = _lib.UA_Client_findDataType(_client, nodeId);
+    calloc.free(nodeId);
+    return ret;
   }
 
   void disconnect() {

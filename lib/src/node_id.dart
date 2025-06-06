@@ -48,6 +48,10 @@ class NodeId {
   }
 
   // Handy methods for namespace 0 types
+  static NodeId get nullId {
+    return NodeId.fromNumeric(0, 0);
+  }
+
   static NodeId get boolean {
     return NodeId.fromNumeric(0, Namespace0Id.boolean.value);
   }
@@ -126,6 +130,10 @@ class NodeId {
 
   static NodeId get serverStatusCurrentTime {
     return NodeId.fromNumeric(0, 2258);
+  }
+
+  static NodeId get hasSubtype {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
   }
 
   raw.UA_NodeId toRaw(raw.open62541 lib) {

@@ -243,7 +243,8 @@ enum UaTypes {
   publishedDataItemsDataType(raw.UA_TYPES_PUBLISHEDDATAITEMSDATATYPE),
   publishedDataSetCustomSourceDataType(raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE),
   readRequest(raw.UA_TYPES_READREQUEST),
-  readResponse(raw.UA_TYPES_READRESPONSE);
+  readResponse(raw.UA_TYPES_READRESPONSE),
+  dataTypeAttributes(raw.UA_TYPES_DATATYPEATTRIBUTES);
 
   final int value;
   const UaTypes(this.value);
@@ -257,12 +258,26 @@ enum UaTypes {
 }
 
 // ignore: camel_case_extensions
+extension UA_DataTypeMemberExtension on raw.UA_DataTypeMember {
+  int get padding => (substitute >> 6) & 0x3F;
+  set padding(int value) => substitute = (substitute & 0x00FFFFFF) | (value << 6);
+  bool get isArray => (substitute >> 7) & 0x1 == 1;
+  set isArray(bool value) => substitute = (substitute & 0x00FFFFFF) | (value ? 1 : 0);
+  bool get isOptional => (substitute >> 8) & 0x1 == 1;
+  set isOptional(bool value) => substitute = (substitute & 0x00FFFFFF) | (value ? 1 : 0);
+}
+
+// ignore: camel_case_extensions
 extension UA_DataTypeExtension on raw.UA_DataType {
   int get memSize => substitute & 0xFFFF; // First 16 bits
+  set memSize(int value) => substitute = (substitute & 0xFFFF0000) | value; // First 16 bits
   raw.UA_DataTypeKind get typeKind => raw.UA_DataTypeKind.fromValue((substitute >> 16) & 0x3F); // Next 6 bits
+  set typeKind(raw.UA_DataTypeKind value) =>
+      substitute = (substitute & 0xFFC0FFFF) | ((value.value & 0x3F) << 16); // Next 6 bits
   bool get pointerFree => ((substitute >> 22) & 0x1) == 1; // Next 1 bit
   bool get overlayable => ((substitute >> 23) & 0x1) == 1; // Next 1 bit
   int get membersSize => (substitute >> 24) & 0xFF; // Last 8 bits
+  set membersSize(int value) => substitute = (substitute & 0x00FFFFFF) | ((value << 24) & 0xFF000000); // Last 8 bits
 
   String format() {
     final nId = binaryEncodingId.format();

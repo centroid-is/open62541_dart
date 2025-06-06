@@ -110,13 +110,13 @@ void main() {
   });
 
   test('struct of strings variant to value and back', () {
-    final DynamicValue val = DynamicValue(typeId: NodeId.fromString(4, "Omars string struct"));
+    var spNodeId = NodeId.fromString(4, "Omars string struct");
+
+    final DynamicValue val = DynamicValue(typeId: spNodeId);
     val["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
     val["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
     val["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
     final variant = valueToVariant(val, lib);
-
-    var spNodeId = NodeId.fromString(4, "Omars string struct");
 
     DynamicValue sp = DynamicValue(typeId: spNodeId);
 
@@ -125,7 +125,7 @@ void main() {
     sp["s3"] = buildField(NodeId.uastring, "s3", [], "ff");
 
     var defs = {spNodeId: sp};
-    final decoded = variantToValue(variant.ref, defs: defs);
+    final decoded = variantToValue(variant.ref, defs: defs, dataTypeId: spNodeId);
 
     expect(val["s1"].asString, "some string");
     expect(val["s2"].asString, "other string");
@@ -161,7 +161,7 @@ void main() {
     sp["s3"] = buildField(NodeId.uastring, "s3", [], "ff");
 
     var defs = {spNodeId: sp};
-    final decoded = variantToValue(variant.ref, defs: defs);
+    final decoded = variantToValue(variant.ref, defs: defs, dataTypeId: spNodeId);
 
     expect(val1["s1"].asString, "some string");
     expect(val1["s2"].asString, "other string");
@@ -862,10 +862,9 @@ void main() {
     atv["q_sError"] = buildField(NodeId.uastring, "q_sError", [], "ff");
     atv["HMI"] = hmi;
 
-    print(atv);
     var defs = {atvId: atv};
 
-    final value = variantToValue(variant.ref, defs: defs);
+    final value = variantToValue(variant.ref, defs: defs, dataTypeId: atvId);
 
     void expectArrayDyn(DynamicValue value) {
       // Validate array length
@@ -951,7 +950,7 @@ void main() {
 
     final variantEncoded = valueToVariant(value, lib);
     expect(variantEncoded.ref.arrayLength, 3);
-    final dynValueAgain = variantToValue(variantEncoded.ref, defs: defs);
+    final dynValueAgain = variantToValue(variantEncoded.ref, defs: defs, dataTypeId: atvId);
     expectArrayDyn(dynValueAgain);
 
     // I presume this erases the data correctly

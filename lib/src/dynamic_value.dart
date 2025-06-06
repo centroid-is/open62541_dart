@@ -57,20 +57,21 @@ typedef Schema = Map<NodeId, DynamicValue>;
 class DynamicValue extends PayloadType<DynamicValue> {
   dynamic value;
   NodeId? typeId;
+  NodeId? extObjEncodingId;
   String? name;
   LocalizedText? description;
   LocalizedText? displayName;
   Map<int, EnumField>? enumFields;
   bool isOptional = false;
 
-  factory DynamicValue.fromMap(LinkedHashMap<String, dynamic> entries) {
-    DynamicValue v = DynamicValue();
+  factory DynamicValue.fromMap(LinkedHashMap<String, dynamic> entries, {String? name}) {
+    DynamicValue v = DynamicValue(name: name);
     entries.forEach((key, value) => v[key] = value);
     return v;
   }
 
-  factory DynamicValue.fromList(List<dynamic> entries, {NodeId? typeId}) {
-    DynamicValue v = DynamicValue(typeId: typeId);
+  factory DynamicValue.fromList(List<dynamic> entries, {NodeId? typeId, String? name}) {
+    DynamicValue v = DynamicValue(typeId: typeId, name: name);
     var counter = 0;
     for (var value in entries) {
       v[counter] = value;
@@ -96,6 +97,9 @@ class DynamicValue extends PayloadType<DynamicValue> {
 
     if (other.typeId != null) {
       v.typeId = NodeId.from(other.typeId!);
+    }
+    if (other.extObjEncodingId != null) {
+      v.extObjEncodingId = NodeId.from(other.extObjEncodingId!);
     }
     if (other.displayName != null) {
       v.displayName = LocalizedText.from(other.displayName!);
@@ -407,7 +411,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       }
     } else if (value.isObject && root) {
       ffi.Pointer<raw.UA_ExtensionObject> obj = calloc<raw.UA_ExtensionObject>();
-      obj.ref.content.encoded.typeId.fromNodeId(value.typeId!);
+      obj.ref.content.encoded.typeId.fromNodeId(value.extObjEncodingId ?? value.typeId!);
       ByteWriter bodyWriter = ByteWriter();
       value.value.forEach((key, value) => value.set(bodyWriter, value, endian, true));
       obj.ref.content.encoded.body.fromBytes(bodyWriter.toBytes());
