@@ -2,6 +2,7 @@
 pubspec.lock
 open62541_tools/*
 open62541_build*
+asan_build/*
 open62541_examples/*
 .DS_Store
 *.so
