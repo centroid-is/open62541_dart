@@ -97,7 +97,7 @@ class Server {
       {AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
       NodeId? parentNodeId,
       NodeId? parentReferenceNodeId,
-      NodeId? basedatavariableType,
+      NodeId? baseDataVariableType,
       NodeId? typeId}) {
     ffi.Pointer<raw.UA_VariableAttributes> attr = calloc<raw.UA_VariableAttributes>();
     attr.ref = _lib.UA_VariableAttributes_default;
