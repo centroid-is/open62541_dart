@@ -93,10 +93,6 @@ class Server {
   /// );
   /// server.addVariableNode(nodeId, value);
   /// ```
-  String debugType() {
-    return getType(UaTypes.fromValue(21), _lib).ref.typeId.identifierType.name;
-  }
-
   void addVariableNode(NodeId variableNodeId, DynamicValue value,
       {AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
       NodeId? parentNodeId,
