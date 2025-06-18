@@ -135,14 +135,14 @@ class Server {
 
     parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
-    basedatavariableType ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
+    baseDataVariableType ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
 
     final parentNodeIdRaw = parentNodeId.toRaw(_lib);
     final parentReferenceNodeIdRaw = parentReferenceNodeId.toRaw(_lib);
-    final basedatavariableTypeRaw = basedatavariableType.toRaw(_lib);
+    final baseDataVariableTypeRaw = baseDataVariableType.toRaw(_lib);
 
     var returnCode = _lib.UA_Server_addVariableNode(_server, variableNodeId.toRaw(_lib), parentNodeIdRaw,
-        parentReferenceNodeIdRaw, name, basedatavariableTypeRaw, attr.ref, ffi.nullptr, ffi.nullptr);
+        parentReferenceNodeIdRaw, name, baseDataVariableTypeRaw, attr.ref, ffi.nullptr, ffi.nullptr);
     _lib.UA_VariableAttributes_delete(attr);
     calloc.free(variant);
     if (returnCode != raw.UA_STATUSCODE_GOOD) {

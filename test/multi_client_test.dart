@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'common.dart';
-
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'common.dart';
 
 void main() async {
   final lib = loadOpen62541Library(local: true);
@@ -17,7 +16,7 @@ void main() async {
     serverPorts = List.generate(serverCount, (index) => Random().nextInt(10000) + 4840);
   }
 
-  LogLevel logLevel = LogLevel.UA_LOGLEVEL_INFO;
+  LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR;
 
   Map<Server, List<Client>> serversAndClients = {};
 
