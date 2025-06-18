@@ -31,12 +31,11 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib
   pointer = calloc<ffi.Uint8>(wr.length);
   pointer.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
 
-  Namespace0Id id;
+  Namespace0Id? id;
   if (value.typeId!.isNumeric()) {
     id = Namespace0Id.fromInt(value.typeId!.numeric);
-  } else {
-    id = Namespace0Id.structure;
   }
+
   List<int> getDimensions(DynamicValue value) {
     if (!value.isArray) {
       return [];
@@ -54,9 +53,14 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib
 
   final dimensions = getDimensions(value);
   ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
-  lib.UA_Variant_init(variant); // todo is this needed?
   variant.ref.data = pointer.cast();
-  variant.ref.type = getType(id.toUaTypes(), lib);
+  if (value.isObject || value.isArray && value.asArray.first.isObject) {
+    variant.ref.type = getType(UaTypes.extensionObject, lib);
+  } else if (id != null) {
+    variant.ref.type = getType(id.toUaTypes(), lib); //TODO: This is not really the correct.
+  } else {
+    throw 'Unable to determine type for $value';
+  }
   if (dimensions.isNotEmpty) {
     variant.ref.arrayLength = dimensions.fold(1, (a, b) => a * b);
   }
@@ -76,9 +80,10 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
   }
 
   var typeId = dataTypeId ?? data.type.ref.typeId.toNodeId();
-  if (typeId == NodeId.structure) {
+  NodeId? extObjEncodingId;
+  if (data.type.ref.typeKind == raw.UA_DataTypeKind.UA_DATATYPEKIND_EXTENSIONOBJECT) {
     final ext = data.data.cast<raw.UA_ExtensionObject>();
-    typeId = ext.ref.content.encoded.typeId.toNodeId();
+    extObjEncodingId = ext.ref.content.encoded.typeId.toNodeId();
   }
 
   final dimensions = data.dimensions;
@@ -119,6 +124,7 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
   retValue = createNestedArray(typeId, dimensions.toList());
   final reader = binarize.ByteReader(data.data.cast<ffi.Uint8>().asTypedList(bufferLength));
   retValue.get(reader, Endian.little, false, true);
+  retValue.extObjEncodingId = extObjEncodingId;
 
   return retValue;
 }

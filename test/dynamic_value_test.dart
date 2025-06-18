@@ -588,10 +588,12 @@ void main() {
     final test = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     test.name = "TEST";
     test.isOptional = true;
+    test.extObjEncodingId = NodeId.fromString(1, "test");
     test["a"] = DynamicValue(typeId: NodeId.uastring, value: "a");
     final copy = DynamicValue.from(test);
     expect(copy["a"].asString, "a");
     expect(copy.typeId, NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+    expect(copy.extObjEncodingId, NodeId.fromString(1, "test"));
     copy["a"] = DynamicValue(typeId: NodeId.uastring, value: "b");
     expect(test["a"].asString, "a");
     expect(copy["a"].asString, "b");
@@ -612,5 +614,9 @@ void main() {
     var d = DynamicValue.from(c);
     expect(d[0].typeId, NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     expect(d[1].typeId, NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
+  });
+
+  test('Memory size', () {
+    // TODO: Need this
   });
 }

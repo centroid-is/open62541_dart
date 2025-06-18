@@ -43549,14 +43549,14 @@ class open62541 {
   late final _UA_Server_write =
       _UA_Server_writePtr.asFunction<int Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_WriteValue>)>();
 
-  DartUA_StatusCode __UA_Server_write(
+  DartUA_StatusCode UA_Server_write_raw(
     ffi.Pointer<UA_Server> server,
     ffi.Pointer<UA_NodeId> nodeId,
     UA_AttributeId attributeId,
     ffi.Pointer<UA_DataType> attr_type,
     ffi.Pointer<ffi.Void> attr,
   ) {
-    return ___UA_Server_write(
+    return _UA_Server_write_raw(
       server,
       nodeId,
       attributeId.value,
@@ -43565,11 +43565,11 @@ class open62541 {
     );
   }
 
-  late final ___UA_Server_writePtr = _lookup<
+  late final _UA_Server_write_rawPtr = _lookup<
       ffi.NativeFunction<
           UA_StatusCode Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_NodeId>, ffi.UnsignedInt,
               ffi.Pointer<UA_DataType>, ffi.Pointer<ffi.Void>)>>('__UA_Server_write');
-  late final ___UA_Server_write = ___UA_Server_writePtr.asFunction<
+  late final _UA_Server_write_raw = _UA_Server_write_rawPtr.asFunction<
       int Function(
           ffi.Pointer<UA_Server>, ffi.Pointer<UA_NodeId>, int, ffi.Pointer<UA_DataType>, ffi.Pointer<ffi.Void>)>();
 
@@ -44377,7 +44377,7 @@ class open62541 {
   /// :ref:`variant`) pointing to a memory location on the stack. If you need
   /// changes to a variable value to manifest at a specific memory location, please
   /// use a :ref:`datasource` or a :ref:`value-callback`.
-  DartUA_StatusCode __UA_Server_addNode(
+  DartUA_StatusCode UA_Server_addNode(
     ffi.Pointer<UA_Server> server,
     UA_NodeClass nodeClass,
     ffi.Pointer<UA_NodeId> requestedNewNodeId,
@@ -44390,7 +44390,7 @@ class open62541 {
     ffi.Pointer<ffi.Void> nodeContext,
     ffi.Pointer<UA_NodeId> outNewNodeId,
   ) {
-    return ___UA_Server_addNode(
+    return _UA_Server_addNode(
       server,
       nodeClass.value,
       requestedNewNodeId,
@@ -44405,7 +44405,7 @@ class open62541 {
     );
   }
 
-  late final ___UA_Server_addNodePtr = _lookup<
+  late final _UA_Server_addNodePtr = _lookup<
       ffi.NativeFunction<
           UA_StatusCode Function(
               ffi.Pointer<UA_Server>,
@@ -44419,7 +44419,7 @@ class open62541 {
               ffi.Pointer<UA_DataType>,
               ffi.Pointer<ffi.Void>,
               ffi.Pointer<UA_NodeId>)>>('__UA_Server_addNode');
-  late final ___UA_Server_addNode = ___UA_Server_addNodePtr.asFunction<
+  late final _UA_Server_addNode = _UA_Server_addNodePtr.asFunction<
       int Function(
           ffi.Pointer<UA_Server>,
           int,
@@ -46182,24 +46182,6 @@ class open62541 {
   late final _UA_ClientConfig_setDefault =
       _UA_ClientConfig_setDefaultPtr.asFunction<int Function(ffi.Pointer<UA_ClientConfig>)>();
 
-  int UA_ClientConfig_setAuthenticationCert(
-    ffi.Pointer<UA_ClientConfig> config,
-    UA_ByteString certificateAuth,
-    UA_ByteString privateKeyAuth,
-  ) {
-    return _UA_ClientConfig_setAuthenticationCert(
-      config,
-      certificateAuth,
-      privateKeyAuth,
-    );
-  }
-
-  late final _UA_ClientConfig_setAuthenticationCertPtr =
-      _lookup<ffi.NativeFunction<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig>, UA_ByteString, UA_ByteString)>>(
-          'UA_ClientConfig_setAuthenticationCert');
-  late final _UA_ClientConfig_setAuthenticationCert = _UA_ClientConfig_setAuthenticationCertPtr.asFunction<
-      int Function(ffi.Pointer<UA_ClientConfig>, UA_ByteString, UA_ByteString)>();
-
   int UA_ClientConfig_setDefaultEncryption(
     ffi.Pointer<UA_ClientConfig> config,
     UA_ByteString localCertificate,
@@ -47544,6 +47526,28 @@ class _SymbolAddresses {
               ffi.Pointer<UA_DataType>,
               ffi.Pointer<ffi.Void>,
               ffi.Pointer<UA_UInt32>)>> get UA_Client_AsyncService => _library._UA_Client_AsyncServicePtr;
+  ffi.Pointer<
+      ffi.NativeFunction<
+          UA_StatusCode Function(
+              ffi.Pointer<UA_Server>,
+              ffi.Pointer<UA_NodeId>,
+              ffi.UnsignedInt,
+              ffi.Pointer<UA_DataType>,
+              ffi.Pointer<ffi.Void>)>> get UA_Server_write_raw => _library._UA_Server_write_rawPtr;
+  ffi.Pointer<
+      ffi.NativeFunction<
+          UA_StatusCode Function(
+              ffi.Pointer<UA_Server>,
+              ffi.UnsignedInt,
+              ffi.Pointer<UA_NodeId>,
+              ffi.Pointer<UA_NodeId>,
+              ffi.Pointer<UA_NodeId>,
+              UA_QualifiedName,
+              ffi.Pointer<UA_NodeId>,
+              ffi.Pointer<UA_NodeAttributes>,
+              ffi.Pointer<UA_DataType>,
+              ffi.Pointer<ffi.Void>,
+              ffi.Pointer<UA_NodeId>)>> get UA_Server_addNode => _library._UA_Server_addNodePtr;
 }
 
 typedef __int8_t = ffi.SignedChar;

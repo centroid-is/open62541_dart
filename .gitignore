@@ -14,3 +14,4 @@ ffigen.yaml
 doc/api/
 *.der
 .env
+.vscode
