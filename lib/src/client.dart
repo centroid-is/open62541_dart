@@ -710,7 +710,7 @@ class Client {
             stderr.write("Error adding data: $e");
           }
         } catch (e) {
-          stderr.write("Error converting data to type $DynamicValue: $e");
+          stderr.write("Error converting data for: ${monIdToNodeAndAttribute[monId]} to type $DynamicValue: $e");
         }
       });
 
