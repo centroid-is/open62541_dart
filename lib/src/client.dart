@@ -990,6 +990,8 @@ class Client {
         // Copy our data before async switch
         defs.addAll(await buildSchema(typeId));
       }
+      // Test
+      dataTypeId ??= typeId;
       print("--------------------------------");
       print("defs: $defs");
       print("--------------------------------");
