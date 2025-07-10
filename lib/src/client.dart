@@ -985,10 +985,14 @@ class Client {
       // Cast the data to extension object
       final ext = data.data.cast<raw.UA_ExtensionObject>();
       typeId = ext.ref.content.encoded.typeId.toNodeId();
+      print("_variantToValueAutoSchema typeId: $typeId, dataTypeId: $dataTypeId");
       if (!defs.containsKey(typeId)) {
         // Copy our data before async switch
         defs.addAll(await buildSchema(typeId));
       }
+      print("--------------------------------");
+      print("defs: $defs");
+      print("--------------------------------");
     }
     final retValue = variantToValue(data, defs: defs, dataTypeId: dataTypeId);
     return retValue;
