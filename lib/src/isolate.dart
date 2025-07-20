@@ -516,7 +516,12 @@ void _isolateEntryPoint(_IsolateData data) {
   sendPort.send(receivePort.sendPort);
 
   // Initialize the client
-  final lib = ffi.DynamicLibrary.open(data.libraryPath);
+  late ffi.DynamicLibrary lib;
+  if (data.libraryPath.isEmpty) {
+    lib = ffi.DynamicLibrary.executable();
+  } else {
+    lib = ffi.DynamicLibrary.open(data.libraryPath);
+  }
   client = Client(
     lib,
     secureChannelLifeTime: data.secureChannelLifeTime,
