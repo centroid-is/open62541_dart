@@ -18,3 +18,4 @@ export 'src/node_id.dart' show NodeId;
 export 'src/server.dart' show Server;
 export 'src/types/errors.dart' show Inactivity;
 export 'src/common.dart' show loadOpen62541Library;
+export 'src/isolate.dart' show ClientIsolate;

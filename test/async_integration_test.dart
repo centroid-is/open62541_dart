@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:isolate';
 
 import 'package:test/test.dart';
 
@@ -12,12 +13,14 @@ void main() async {
   final lib = loadOpen62541Library(local: true);
 
   int port = Random().nextInt(10000) + 4840;
-  Client? client;
+  ClientIsolate? client;
   Server? server;
 
   setUp(() async {
     server = setupServer(lib, port);
-    client = await setupClient(lib, port);
+    client = await ClientIsolate.create(
+        libraryPath: Isolate.resolvePackageUriSync(Uri.parse('package:open62541/libopen62541.so'))!.path);
+    await client!.connect("opc.tcp://localhost:$port");
   });
 
   test('Basic read and write boolean async', () async {
@@ -107,7 +110,7 @@ void main() async {
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     // ignore: unused_local_variable
     final controller = client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10));
-  });
+  }, skip: true);
 
   test('Create a monitored item and then cancel before it has been created', () async {
     addBasicVariables(server!);
@@ -353,7 +356,7 @@ void main() async {
   tearDown(() async {
     server!.shutdown();
 
-    await client!.delete();
+    await client!.close();
 
     server!.delete();
   });

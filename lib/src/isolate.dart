@@ -530,26 +530,17 @@ void _isolateEntryPoint(_IsolateData data) {
     connectivityCheckInterval: data.connectivityCheckInterval,
   );
 
-  print("client!!!!!!!!!!!!!!!!!!!!!!!");
-
   // Start the iterate timer
   iterateTimer = Timer.periodic(const Duration(milliseconds: 10), (timer) {
-    print("Iterate!!!!!!!!!!!!!!!!!!!!!!!");
     client.runIterate(const Duration(milliseconds: 10));
   });
 
-  print("receivePort!!!!!!!!!!!!!!!!!!!!!!!");
-
   // Handle messages from the main isolate
   receivePort.listen((message) async {
-    print("New message!!!!!!!!!!!!!!!!!!!!!!!");
     try {
       if (message is ConnectMessage) {
-        print("HERE4!!!!!!!!!!!!!!!!!!!!!!!");
         await client.connect(message.url);
-        print("HERE5!!!!!!!!!!!!!!!!!!!!!!!");
         sendPort.send(IsolateResponse.success(message.requestId, null));
-        print("HERE6!!!!!!!!!!!!!!!!!!!!!!!");
       } else if (message is ReadMessage) {
         final result = await client.read(message.nodeId);
         sendPort.send(IsolateResponse.success(message.requestId, result));
@@ -570,7 +561,6 @@ void _isolateEntryPoint(_IsolateData data) {
         );
         sendPort.send(IsolateResponse.success(message.requestId, result));
       } else if (message is MonitorMessage) {
-        print("Creating monitor stream for requestId: ${message.requestId}");
         final stream = client.monitor(
           message.nodeId,
           message.subscriptionId,
@@ -583,7 +573,6 @@ void _isolateEntryPoint(_IsolateData data) {
         // Subscribe to the stream and forward data to main isolate
         final subscription = stream.listen(
           (value) {
-            print("Stream data received: $value");
             sendPort.send(StreamDataMessage.success(message.requestId, value));
           },
           onError: (error) {
