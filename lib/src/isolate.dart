@@ -96,6 +96,10 @@ class MonitorCancelMessage extends IsolateMessage {
   const MonitorCancelMessage(String requestId) : super(requestId);
 }
 
+class AwaitConnectMessage extends IsolateMessage {
+  const AwaitConnectMessage(String requestId) : super(requestId);
+}
+
 class StreamDataMessage<T> {
   final String streamId;
   final T? data;
@@ -463,6 +467,23 @@ class ClientIsolate {
     _receivePort.close();
   }
 
+  /// Wait for the connection to be fully established
+  Future<void> awaitConnect() async {
+    if (_isClosed) throw StateError('ClientIsolate is closed');
+
+    final completer = Completer<void>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(AwaitConnectMessage(id));
+
+    try {
+      await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
   // Private fields for request tracking
   final Map<String, Completer> _pendingRequests = {};
   final Map<String, StreamController> _streamControllers = {};
@@ -620,6 +641,9 @@ void _isolateEntryPoint(_IsolateData data) {
 
         iterateTimer.cancel();
         await client.delete();
+        sendPort.send(IsolateResponse.success(message.requestId, null));
+      } else if (message is AwaitConnectMessage) {
+        await client.awaitConnect();
         sendPort.send(IsolateResponse.success(message.requestId, null));
       }
     } catch (e) {
