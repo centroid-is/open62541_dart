@@ -100,6 +100,10 @@ class AwaitConnectMessage extends IsolateMessage {
   const AwaitConnectMessage(String requestId) : super(requestId);
 }
 
+class StateStreamMessage extends IsolateMessage {
+  const StateStreamMessage(String requestId) : super(requestId);
+}
+
 class StreamDataMessage<T> {
   final String streamId;
   final T? data;
@@ -268,7 +272,6 @@ class ClientIsolate {
     final id = _generateId();
     _pendingRequests[id] = completer;
 
-    print("Connect!!!!!!!!!!!!!!!!!!!!!!!");
     _sendPort.send(ConnectMessage(id, url));
 
     try {
@@ -427,6 +430,23 @@ class ClientIsolate {
     } finally {
       _pendingRequests.remove(id);
     }
+  }
+
+  /// Get a stream of client state changes
+  Stream<ClientState> get stateStream {
+    if (_isClosed) throw StateError('ClientIsolate is closed');
+
+    final controller = StreamController<ClientState>();
+    final id = _generateId();
+    _streamControllers[id] = controller;
+
+    _sendPort.send(StateStreamMessage(id));
+
+    controller.onCancel = () {
+      _streamControllers.remove(id);
+    };
+
+    return controller.stream;
   }
 
   /// Disconnect from the server
@@ -644,6 +664,28 @@ void _isolateEntryPoint(_IsolateData data) {
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is AwaitConnectMessage) {
         await client.awaitConnect();
+        sendPort.send(IsolateResponse.success(message.requestId, null));
+      } else if (message is StateStreamMessage) {
+        final stream = client.config.stateStream;
+
+        print("got listen to state stream");
+
+        final subscription = stream.listen(
+          (state) {
+            print("got state: $state");
+            sendPort.send(StreamDataMessage.success(message.requestId, state));
+          },
+          onError: (error) {
+            sendPort.send(StreamDataMessage.error(message.requestId, error.toString()));
+          },
+          onDone: () {
+            activeStreams.remove(message.requestId);
+          },
+        );
+
+        activeStreams[message.requestId] = subscription;
+
+        // Send success response to indicate stream is ready
         sendPort.send(IsolateResponse.success(message.requestId, null));
       }
     } catch (e) {
