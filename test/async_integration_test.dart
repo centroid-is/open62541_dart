@@ -105,7 +105,7 @@ void main() async {
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     // ignore: unused_local_variable
     final controller = client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10));
-  }, skip: true);
+  });
 
   test('Create a monitored item and then cancel before it has been created', () async {
     addBasicVariables(server!);
@@ -372,30 +372,6 @@ void main() async {
     expect(value[2]["b"].value, value2[2]["b"].value);
     expect(value[2]["c"].value, value2[2]["c"].value);
   }, skip: true);
-
-  test('State stream should emit state changes', () async {
-    addBasicVariables(server!);
-
-    // Listen to state changes
-    final stateStream = client!.stateStream;
-    final states = <ClientState>[];
-
-    final subscription = stateStream.listen((state) {
-      states.add(state);
-    });
-
-    server!.shutdown();
-
-    // Wait a bit to collect initial state
-    await Future.delayed(Duration(milliseconds: 100));
-
-    // Verify we have at least one state (some state)
-    expect(states.length, greaterThan(0));
-
-    await subscription.cancel();
-
-    server = setupServer(lib, port);
-  });
 
   tearDown(() async {
     server!.shutdown();

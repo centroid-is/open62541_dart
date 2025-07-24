@@ -14,6 +14,7 @@ import 'node_id.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
 import 'ua_allocation.dart';
+import 'client_api.dart';
 
 class ClientState {
   SecureChannelState channelState;
@@ -115,7 +116,7 @@ class ClientConfig {
 
 typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
 
-class Client {
+class Client implements ClientApi {
   Client({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -198,6 +199,7 @@ class Client {
 
   ClientConfig get config => _clientConfig;
 
+  @override
   Future<void> awaitConnect() async {
     if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
       return;
@@ -205,6 +207,7 @@ class Client {
     await config.stateStream.firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
   }
 
+  @override
   Future<void> connect(String url) async {
     final instantReturn = raw.UA_Client_connectAsync(_client, url.toNativeUtf8(allocator: ua_malloc).cast());
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
@@ -222,6 +225,7 @@ class Client {
     return false;
   }
 
+  @override
   Future<void> write(NodeId nodeId, DynamicValue value) {
     Completer<void> completer = Completer<void>();
 
@@ -281,6 +285,9 @@ class Client {
     return completer.future;
   }
 
+  @override
+  Stream<ClientState> get stateStream => config.stateStream;
+
   ClientState get state {
     ffi.Pointer<ffi.UnsignedInt> state = ua_calloc<ffi.UnsignedInt>();
     ffi.Pointer<ffi.UnsignedInt> sessionState = ua_calloc<ffi.UnsignedInt>();
@@ -298,6 +305,7 @@ class Client {
   }
 
   /// Reads a value from the server.
+  @override
   Future<DynamicValue> read(NodeId nodeId) async {
     final parameters = {
       nodeId: [
@@ -318,6 +326,7 @@ class Client {
   // this method on the flutter side has the same purpose. To deal with
   // the complexity of calling the underlying service and provide a
   // single point of entry for all read operations.
+  @override
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
     final nodeCount = nodes.entries.map<int>((entry) => entry.value.length).fold(0, (prev, curr) => prev + curr);
     ffi.Pointer<raw.UA_ReadValueId> readValueId = ua_calloc<raw.UA_ReadValueId>(nodeCount);
@@ -475,6 +484,7 @@ class Client {
     return results[nodeId]!.typeId!;
   }
 
+  @override
   Future<int> subscriptionCreate({
     Duration requestedPublishingInterval = const Duration(milliseconds: 100),
     int requestedLifetimeCount = 10000,
@@ -946,6 +956,7 @@ class Client {
     return controller.stream;
   }
 
+  @override
   Stream<DynamicValue> monitor(
     NodeId nodeId,
     int subscriptionId, {
@@ -981,6 +992,7 @@ class Client {
     return controller.stream;
   }
 
+  @override
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
     final len = args.length;
     var inputArgs = ua_calloc<raw.UA_Variant>(len);
@@ -1136,6 +1148,7 @@ class Client {
     }
   }
 
+  @override
   Future<void> delete() async {
     ffi.Pointer<raw.UA_Client> client = _client;
     _client = ffi.nullptr;

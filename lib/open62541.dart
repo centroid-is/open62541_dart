@@ -26,3 +26,4 @@ export 'src/node_id.dart' show NodeId;
 export 'src/server.dart' show Server;
 export 'src/types/errors.dart' show Inactivity;
 export 'src/isolate.dart' show ClientIsolate;
+export 'src/client_api.dart' show ClientApi;
