@@ -7,6 +7,7 @@ import 'client.dart';
 import 'dynamic_value.dart';
 import 'node_id.dart';
 import 'extensions.dart';
+import 'client_api.dart';
 
 /// Message types for communication between main isolate and client isolate
 abstract class IsolateMessage {
@@ -135,7 +136,7 @@ class IsolateResponse<T> {
   bool get isSuccess => !isError;
 }
 
-class ClientIsolate {
+class ClientIsolate implements ClientApi {
   ClientIsolate._({
     required this.libraryPath,
     Duration? secureChannelLifeTime,
@@ -147,8 +148,7 @@ class ClientIsolate {
     Uint8List? privateKey,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
-    Duration iterateInterval = const Duration(milliseconds: 10),
-  }) : _iterateInterval = iterateInterval {
+  }) {
     _initIsolate(
       libraryPath: libraryPath,
       secureChannelLifeTime: secureChannelLifeTime,
@@ -188,7 +188,6 @@ class ClientIsolate {
       privateKey: privateKey,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
-      iterateInterval: iterateInterval,
     );
 
     await isolate._initCompleter.future;
@@ -196,7 +195,6 @@ class ClientIsolate {
   }
 
   final String libraryPath;
-  final Duration _iterateInterval;
 
   late final Isolate _isolate;
   late final SendPort _sendPort;
@@ -265,6 +263,7 @@ class ClientIsolate {
   }
 
   /// Connect to an OPC UA server
+  @override
   Future<void> connect(String url) async {
     if (_isClosed) throw StateError('ClientIsolate is closed');
 
@@ -282,6 +281,7 @@ class ClientIsolate {
   }
 
   /// Read a value from the server
+  @override
   Future<DynamicValue> read(NodeId nodeId) async {
     if (_isClosed) throw StateError('ClientIsolate is closed');
 
@@ -299,6 +299,7 @@ class ClientIsolate {
   }
 
   /// Write a value to the server
+  @override
   Future<void> write(NodeId nodeId, DynamicValue value) async {
     if (_isClosed) throw StateError('ClientIsolate is closed');
 
@@ -316,6 +317,7 @@ class ClientIsolate {
   }
 
   /// Read multiple attributes
+  @override
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
     if (_isClosed) throw StateError('ClientIsolate is closed');
 
@@ -333,6 +335,7 @@ class ClientIsolate {
   }
 
   /// Create a subscription
+  @override
   Future<int> subscriptionCreate({
     Duration requestedPublishingInterval = const Duration(milliseconds: 100),
     int requestedLifetimeCount = 10000,
@@ -365,6 +368,7 @@ class ClientIsolate {
   }
 
   /// Monitor a node
+  @override
   Stream<DynamicValue> monitor(
     NodeId nodeId,
     int subscriptionId, {
@@ -399,14 +403,15 @@ class ClientIsolate {
   }
 
   /// Call a method
-  Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, List<DynamicValue> args) async {
+  @override
+  Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
     if (_isClosed) throw StateError('ClientIsolate is closed');
 
     final completer = Completer<List<DynamicValue>>();
     final id = _generateId();
     _pendingRequests[id] = completer;
 
-    _sendPort.send(CallMessage(id, objectId, methodId, args));
+    _sendPort.send(CallMessage(id, objectId, methodId, args.toList()));
 
     try {
       return await completer.future;
@@ -433,6 +438,7 @@ class ClientIsolate {
   }
 
   /// Get a stream of client state changes
+  @override
   Stream<ClientState> get stateStream {
     if (_isClosed) throw StateError('ClientIsolate is closed');
 
@@ -466,8 +472,9 @@ class ClientIsolate {
     }
   }
 
-  /// Close the isolate and clean up resources
-  Future<void> close() async {
+  /// Delete the isolate and clean up resources
+  @override
+  Future<void> delete() async {
     if (_isClosed) return;
     _isClosed = true;
 
@@ -488,6 +495,7 @@ class ClientIsolate {
   }
 
   /// Wait for the connection to be fully established
+  @override
   Future<void> awaitConnect() async {
     if (_isClosed) throw StateError('ClientIsolate is closed');
 
