@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -51,9 +51,22 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: brew install mbedtls
 
+      - name: Install dependencies for open62541 library windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install openssl
+
       - name: Build open62541 library
         if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
         run: ./open62541_tooling/build_lib.sh
+
+      - name: Build open62541 library windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cmake -B build -S open62541 -DBUILD_SHARED_LIBS=ON -DUA_ENABLE_INLINABLE_EXPORT=ON -DUA_ENABLE_ENCRYPTION=OPENSSL -DUA_MULTITHREADING=0 
+          cp build/bin/open62541.dll lib/libopen62541.dll
 
       - name: Run tests
         run: dart test
