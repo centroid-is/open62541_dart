@@ -65,8 +65,9 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          cmake -B build -S open62541 -DBUILD_SHARED_LIBS=ON -DUA_ENABLE_INLINABLE_EXPORT=ON -DUA_ENABLE_ENCRYPTION=OPENSSL -DUA_MULTITHREADING=0 
-          cp build/bin/open62541.dll lib/libopen62541.dll
+          cmake -B build -S open62541 -DBUILD_SHARED_LIBS=ON -DUA_ENABLE_INLINABLE_EXPORT=ON -DUA_ENABLE_ENCRYPTION=OPENSSL -DUA_MULTITHREADING=0
+          cmake --build build -j 4
+          cp build/bin/Debug/open62541.dll lib/libopen62541.dll
 
       - name: Run tests
         run: dart test
