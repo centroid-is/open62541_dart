@@ -652,7 +652,6 @@ class Client {
           return;
         }
         if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
-          print("Failed to read value: ${statusCodeToString(value.ref.status, _lib)}");
           controller.addError('Failed to read value: ${statusCodeToString(value.ref.status, _lib)}');
           return;
         }
