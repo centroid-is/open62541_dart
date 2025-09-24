@@ -162,10 +162,10 @@ ffi.DynamicLibrary loadOpen62541Library({bool staticLinking = false, bool local 
   }
   if (local) {
     var uri = Isolate.resolvePackageUriSync(Uri.parse('package:open62541/libopen62541.$ending'));
-    return ffi.DynamicLibrary.open(uri!.path);
+    return ffi.DynamicLibrary.open(uri!.toFilePath(windows: Platform.isWindows));
   }
   if (path != null) {
-    return ffi.DynamicLibrary.open(path.path);
+    return ffi.DynamicLibrary.open(path.toFilePath(windows: Platform.isWindows));
   }
   return ffi.DynamicLibrary.open('libopen62541.$ending');
 }
