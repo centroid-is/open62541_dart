@@ -525,6 +525,7 @@ class Client {
 
     // figure out the size of the node set
     final nodeCount = nodes.entries.map<int>((entry) => entry.value.length).fold(0, (prev, curr) => prev + curr);
+    var descriptionFailureCount = 0;
 
     // Since the api we are using handles creating multiple monitored items at once, we need to create an array of callbacks
     final callbacks = calloc<
@@ -703,7 +704,7 @@ class Client {
             return; // While processing the data the controller might have been closed
           }
           try {
-            if (seenMonIds.length == nodeCount) {
+            if (seenMonIds.length == nodeCount - descriptionFailureCount) {
               controller.add(latestValues);
             }
           } catch (e) {
@@ -732,7 +733,6 @@ class Client {
         createCallback.close();
         calloc.free(localRequestId);
 
-        bool error = false;
         late StreamSubscription inactivitySubscription;
         inactivitySubscription = config.subscriptionInactivityStream.listen((inactiveSubscriptionId) {
           if (controller.isClosed) {
@@ -753,48 +753,51 @@ class Client {
             controller.addError(SecureChannelClosed());
           }
         });
+        cleanup() {
+          controller.onCancel = () {}; // Don't invoke the real close callback
+          monitorCallback.close();
+          calloc.free(callbacks);
+          controller.close();
+        }
+
         if (response == ffi.nullptr) {
           controller.addError('ffi pointer is null');
-          error = true;
-        } else {
-          if (response.ref.resultsSize == 0) {
-            controller.addError('No results for create monitored item');
-            error = true;
-          } else if (response.ref.results.ref.statusCode != raw.UA_STATUSCODE_GOOD) {
-            controller.addError(
-                'Unable to create monitored item: ${response.ref.results.ref.statusCode} ${statusCodeToString(response.ref.results.ref.statusCode, _lib)}');
-            error = true;
-          } else if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-            controller.addError(
-                'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}');
-            error = true;
-          }
+          cleanup();
+          return;
+        } else if (response.ref.resultsSize == 0) {
+          controller.addError('No results for create monitored item');
+          cleanup();
+          return;
+        } else if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+          controller.addError(
+              'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}');
+          cleanup();
+          return;
+        }
 
-          if (error) {
-            controller.onCancel = () {}; // Don't invoke the real close callback
-            monitorCallback.close();
-            calloc.free(callbacks);
-            controller.close();
-          } else {
-            assert(response.ref.resultsSize == nodeCount);
-            int index = 0;
-            Map<Tuple2<NodeId, AttributeId>, int> failures = {};
-            for (var node in nodes.keys) {
-              for (var attributes in nodes[node]!) {
-                if (response.ref.results[index].statusCode != raw.UA_STATUSCODE_GOOD) {
-                  failures[Tuple2(node, attributes)] = response.ref.results[index].statusCode;
-                } else {
-                  monIds.add(response.ref.results[index].monitoredItemId);
-                  monIdToNodeAndAttribute[response.ref.results[index].monitoredItemId] = Tuple2(node, attributes);
-                }
-                index++;
+        assert(response.ref.resultsSize == nodeCount);
+        int index = 0;
+        Map<Tuple2<NodeId, AttributeId>, int> failures = {};
+        for (var node in nodes.keys) {
+          for (var attribute in nodes[node]!) {
+            if (response.ref.results[index].statusCode == raw.UA_STATUSCODE_GOOD) {
+              monIds.add(response.ref.results[index].monitoredItemId);
+              monIdToNodeAndAttribute[response.ref.results[index].monitoredItemId] = Tuple2(node, attribute);
+            } else {
+              // Allow for the description attribute to be missing
+              if (response.ref.results[index].statusCode != raw.UA_STATUSCODE_BADATTRIBUTEIDINVALID &&
+                  attribute != AttributeId.UA_ATTRIBUTEID_DESCRIPTION) {
+                failures[Tuple2(node, attribute)] = response.ref.results[index].statusCode;
+              } else {
+                descriptionFailureCount++;
               }
             }
-            if (failures.isNotEmpty) {
-              controller.addError(
-                  "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value, _lib)}").join(", ")}");
-              controller.close(); // Call onCancel above
-            }
+            index++;
+          }
+          if (failures.isNotEmpty) {
+            controller.addError(
+                "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value, _lib)}").join(", ")}");
+            controller.close(); // Call onCancel above
           }
         }
       });
@@ -838,10 +841,10 @@ class Client {
     final stream = monitoredItems(
       {
         nodeId: [
-          AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
           AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
           AttributeId.UA_ATTRIBUTEID_DATATYPE,
           AttributeId.UA_ATTRIBUTEID_VALUE,
+          AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
         ]
       },
       subscriptionId,
