@@ -3,8 +3,8 @@ import 'dart:ffi';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
-import 'package:open62541/src/common.dart';
 
+import 'package:open62541/src/common.dart';
 import 'dynamic_value.dart';
 import 'generated/open62541_bindings.dart' as raw;
 import 'node_id.dart';

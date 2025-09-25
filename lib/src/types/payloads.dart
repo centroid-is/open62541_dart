@@ -3,9 +3,9 @@ import 'dart:ffi' as ffi;
 
 import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
+
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/common.dart';
-
 import '../generated/open62541_bindings.dart' as raw;
 
 // TODO this file has a lot of boilerplate, can we make it better?
