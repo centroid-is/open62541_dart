@@ -246,7 +246,7 @@ enum UaTypes {
   readRequest(raw.UA_TYPES_READREQUEST),
   readResponse(raw.UA_TYPES_READRESPONSE),
   dataTypeAttributes(raw.UA_TYPES_DATATYPEATTRIBUTES),
-  readValueId(raw.UA_TYPES_READVALUEID),  
+  readValueId(raw.UA_TYPES_READVALUEID),
   createMonitoredItemCreateRequest(raw.UA_TYPES_MONITOREDITEMCREATEREQUEST);
 
   final int value;

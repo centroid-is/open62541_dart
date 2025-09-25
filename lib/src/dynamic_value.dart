@@ -398,7 +398,8 @@ class DynamicValue extends PayloadType<DynamicValue> {
   }
 
   @override
-  void set(ByteWriter writer, DynamicValue value, [Endian? endian, bool insideStruct = false, root = false, raw.open62541? lib]) {
+  void set(ByteWriter writer, DynamicValue value,
+      [Endian? endian, bool insideStruct = false, root = false, raw.open62541? lib]) {
     if (value.isArray) {
       // Don't encode the array length if we are the root
       if (!root) {
@@ -434,8 +435,8 @@ class DynamicValue extends PayloadType<DynamicValue> {
       //Special case for strings, they are different the UA_Strings when
       // encoded inside of a struct
       if (typeId == NodeId.uastring && insideStruct) {
-        ContiguousStringPayload().set(writer, value.value, endian);}
-      else if (typeId == NodeId.uastring) {
+        ContiguousStringPayload().set(writer, value.value, endian);
+      } else if (typeId == NodeId.uastring) {
         UA_StringPayload().set(writer, value.value, endian, lib);
       } else {
         nodeIdToPayloadType(value.typeId ?? autoDeduceType(value.value))!.set(writer, value.value, endian);
