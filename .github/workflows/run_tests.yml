@@ -71,4 +71,7 @@ jobs:
 
       - name: Run async_integration_test
         run: |
-          dart test/async_integration_test.dart
+          dart test test/async_integration_test.dart `
+            -r expanded `
+            --chain-stack-traces `
+            --concurrency=1
