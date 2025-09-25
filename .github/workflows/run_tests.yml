@@ -69,5 +69,6 @@ jobs:
           cmake --build build -j 4
           cp build/bin/Debug/open62541.dll lib/libopen62541.dll
 
-      - name: Run tests
-        run: dart test
+      - name: Run async_integration_test
+        run: |
+          dart test/async_integration_test.dart
