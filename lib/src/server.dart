@@ -99,7 +99,7 @@ class Server {
       NodeId? parentReferenceNodeId,
       NodeId? baseDataVariableType,
       NodeId? typeId}) {
-    ffi.Pointer<raw.UA_VariableAttributes> attr = calloc<raw.UA_VariableAttributes>();
+    ffi.Pointer<raw.UA_VariableAttributes> attr = _lib.UA_VariableAttributes_new();
     attr.ref = _lib.UA_VariableAttributes_default;
 
     final variant = valueToVariant(value, _lib);
@@ -117,7 +117,8 @@ class Server {
       final extObjView = variant.ref.data.cast<raw.UA_ExtensionObject>();
       final length = extObjView.ref.content.encoded.body.length;
 
-      attr.ref.value.data = calloc<raw.UA_Byte>(length).cast();
+      final bytetype = getType(UaTypes.byte, _lib);
+      attr.ref.value.data = _lib.UA_Array_new(length, bytetype).cast();
       attr.ref.value.data
           .cast<raw.UA_Byte>()
           .asTypedList(length)
@@ -144,18 +145,21 @@ class Server {
     var returnCode = _lib.UA_Server_addVariableNode(_server, variableNodeId.toRaw(_lib), parentNodeIdRaw,
         parentReferenceNodeIdRaw, name, baseDataVariableTypeRaw, attr.ref, ffi.nullptr, ffi.nullptr);
     _lib.UA_VariableAttributes_delete(attr);
-    calloc.free(variant);
+    variant.ref.data = ffi.nullptr;
+    variant.ref.arrayDimensions = ffi.nullptr;
+    _lib.UA_Variant_delete(variant);
     if (returnCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add variable node ${statusCodeToString(returnCode, _lib)}, nodeId: $variableNodeId';
     }
   }
 
+  // todo test
   void addVariableTypeNode(DynamicValue schema, NodeId variableTypeId, String name,
       {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
-    var dattr = calloc<raw.UA_VariableTypeAttributes>();
+    var dattr = _lib.UA_VariableTypeAttributes_new();
     if (displayName != null) {
-      dattr.ref.displayName.locale.set(displayName.locale);
-      dattr.ref.displayName.text.set(displayName.value);
+      dattr.ref.displayName.locale.set(displayName.locale, _lib);
+      dattr.ref.displayName.text.set(displayName.value, _lib);
     }
     dattr.ref.dataType = variableTypeId.toRaw(_lib);
     dattr.ref.valueRank = raw.UA_VALUERANK_SCALAR;
@@ -182,11 +186,11 @@ class Server {
 
   void addDataTypeNode(NodeId requestedNewNodeId, String browseName,
       {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
-    var attr = calloc<raw.UA_DataTypeAttributes>();
+    var attr = _lib.UA_DataTypeAttributes_new();
 
     if (displayName != null) {
-      attr.ref.displayName.locale.set(displayName.locale);
-      attr.ref.displayName.text.set(displayName.value);
+      attr.ref.displayName.locale.set(displayName.locale, _lib);
+      attr.ref.displayName.text.set(displayName.value, _lib);
     }
 
     parentNodeId ??= NodeId.structure;
@@ -211,7 +215,7 @@ class Server {
       if (nodeId == null) {
         return ffi.nullptr;
       }
-      final ptr = calloc<raw.UA_NodeId>();
+      final ptr = _lib.UA_NodeId_new();
       ptr.ref = nodeId.toRaw(_lib);
       return ptr;
     }
@@ -311,15 +315,15 @@ class Server {
   /// server.writeDescription(nodeId, description);
   /// ```
   void writeDescription(NodeId variableNodeId, LocalizedText description) {
-    ffi.Pointer<raw.UA_LocalizedText> descriptionRaw = calloc<raw.UA_LocalizedText>();
-    descriptionRaw.ref.locale.set(description.locale);
-    descriptionRaw.ref.text.set(description.value);
+    ffi.Pointer<raw.UA_LocalizedText> descriptionRaw = _lib.UA_LocalizedText_new();
+    descriptionRaw.ref.locale.set(description.locale, _lib);
+    descriptionRaw.ref.text.set(description.value, _lib);
     _lib.UA_Server_writeDescription(_server, variableNodeId.toRaw(_lib), descriptionRaw.ref);
     _lib.UA_LocalizedText_delete(descriptionRaw);
   }
 
   DynamicValue read(NodeId variableNodeId, {Schema? schema}) {
-    final variant = calloc<raw.UA_Variant>();
+    final variant = _lib.UA_Variant_new();
     _lib.UA_Server_readValue(_server, variableNodeId.toRaw(_lib), variant);
     final value = variantToValue(variant.ref, defs: schema);
     _lib.UA_Variant_delete(variant);
@@ -334,22 +338,29 @@ class Server {
 
   // populate structschema for out type
   void addCustomType(NodeId typeId, DynamicValue value) {
-    final array = calloc<raw.UA_DataTypeArray>();
+    // todo I cannot call new constructor for UA_DataTypeArray from open62541
+    // so I will just allocate byte buffer on the heap and type cast it, basically call calloc in disguise
+    final bytetype = getType(UaTypes.byte, _lib);
+    final uaDataTypeArraySize = ffi.sizeOf<raw.UA_DataTypeArray>();
+    ffi.Pointer<raw.UA_DataTypeArray> array = _lib.UA_Array_new(uaDataTypeArraySize, bytetype).cast();
     if (!value.isObject) {
       throw 'Value must be a object';
     }
-    array.ref.typesSize = 1;
-    array.ref.types = calloc<raw.UA_DataType>(1);
+    final thisArraySize = 1;
+    array.ref.typesSize = thisArraySize;
+    final uaDataTypeSize = ffi.sizeOf<raw.UA_DataType>();
+    array.ref.types = _lib.UA_Array_new(uaDataTypeSize * thisArraySize, bytetype).cast();
     array.ref.types[0].typeId = typeId.toRaw(_lib);
     array.ref.types[0].binaryEncodingId =
         NodeId.fromString(typeId.namespace, "BinaryEncoding_Default:${value.name}").toRaw(_lib);
 
-    array.ref.types[0].memSize = 9;
+    array.ref.types[0].memSize = 9; // this number is leading to a memory crash in test on windows
     array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
 
     final memberCount = value.asObject.length;
     array.ref.types[0].membersSize = memberCount;
-    array.ref.types[0].members = calloc<raw.UA_DataTypeMember>(memberCount);
+    final uaDataTypeMemberSize = ffi.sizeOf<raw.UA_DataTypeMember>();
+    array.ref.types[0].members = _lib.UA_Array_new(memberCount * uaDataTypeMemberSize, bytetype).cast();
     for (var i = 0; i < memberCount; i++) {
       final entry = value.asObject.entries.elementAt(i);
       final member = entry.value;

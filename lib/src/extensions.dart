@@ -3,6 +3,7 @@ import 'dart:ffi';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:open62541/src/common.dart';
 
 import 'dynamic_value.dart';
 import 'generated/open62541_bindings.dart' as raw;
@@ -244,7 +245,9 @@ enum UaTypes {
   publishedDataSetCustomSourceDataType(raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE),
   readRequest(raw.UA_TYPES_READREQUEST),
   readResponse(raw.UA_TYPES_READRESPONSE),
-  dataTypeAttributes(raw.UA_TYPES_DATATYPEATTRIBUTES);
+  dataTypeAttributes(raw.UA_TYPES_DATATYPEATTRIBUTES),
+  readValueId(raw.UA_TYPES_READVALUEID),  
+  createMonitoredItemCreateRequest(raw.UA_TYPES_MONITOREDITEMCREATEREQUEST);
 
   final int value;
   const UaTypes(this.value);
@@ -316,14 +319,14 @@ extension UA_NodeIdExtension on raw.UA_NodeId {
     return NodeId.fromRaw(this);
   }
 
-  void fromNodeId(NodeId nodeId) {
+  void fromNodeId(NodeId nodeId, raw.open62541 lib) {
     namespaceIndex = nodeId.namespace;
     if (nodeId.isNumeric()) {
       identifierTypeAsInt = raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC.value;
       identifier.numeric = nodeId.numeric;
     } else if (nodeId.isString()) {
       identifierTypeAsInt = raw.UA_NodeIdType.UA_NODEIDTYPE_STRING.value;
-      identifier.string.set(nodeId.string);
+      identifier.string.set(nodeId.string, lib);
     } else {
       throw ArgumentError('Invalid NodeId type: $nodeId');
     }
@@ -382,10 +385,11 @@ $indent}''';
 
 // ignore: camel_case_extensions
 extension UA_StringExtension on raw.UA_String {
-  void set(String value) {
-    free();
+  void set(String value, raw.open62541 lib) {
+    free(lib);
     final bytes = utf8.encode(value);
-    final dataPtr = calloc<Uint8>(bytes.length);
+    final bytetype = getType(UaTypes.byte, lib);
+    Pointer<Uint8> dataPtr = lib.UA_Array_new(bytes.length, bytetype).cast();
 
     final byteList = dataPtr.asTypedList(bytes.length);
     byteList.setAll(0, bytes);
@@ -399,9 +403,10 @@ extension UA_StringExtension on raw.UA_String {
     return utf8.decode(bytes);
   }
 
-  void fromBytes(Iterable<int> bytes) {
-    free();
-    data = calloc(bytes.length);
+  void fromBytes(Iterable<int> bytes, raw.open62541 lib) {
+    free(lib);
+    final bytestype = getType(UaTypes.byte, lib);
+    data = lib.UA_Array_new(bytes.length, bytestype).cast();
     // memcpy as fast as possible
     data.asTypedList(bytes.length).setRange(0, bytes.length, bytes);
     length = bytes.length;
@@ -409,8 +414,10 @@ extension UA_StringExtension on raw.UA_String {
 
   Uint8List asTypedList() => data.asTypedList(length);
 
-  void free() {
+  void free(raw.open62541 lib) {
     if (data != nullptr) {
+      final bytetype = getType(UaTypes.byte, lib);
+      lib.UA_Array_delete(data.cast(), length, bytetype);
       calloc.free(data);
       data = nullptr;
       length = 0;

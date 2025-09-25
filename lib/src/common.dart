@@ -24,11 +24,10 @@ ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType, raw.open62541 lib) {
 }
 
 ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib) {
-  ffi.Pointer<ffi.Uint8> pointer;
-
   binarize.ByteWriter wr = binarize.ByteWriter();
-  value.set(wr, value, Endian.little, false, true);
-  pointer = calloc<ffi.Uint8>(wr.length);
+  value.set(wr, value, Endian.little, false, true, lib);
+  final bytetype = getType(UaTypes.byte, lib);
+  ffi.Pointer<ffi.Uint8> pointer = lib.UA_Array_new(wr.length, bytetype).cast();
   pointer.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
 
   Namespace0Id? id;
@@ -52,7 +51,7 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib
   }
 
   final dimensions = getDimensions(value);
-  ffi.Pointer<raw.UA_Variant> variant = calloc<raw.UA_Variant>();
+  ffi.Pointer<raw.UA_Variant> variant = lib.UA_Variant_new();
   variant.ref.data = pointer.cast();
   if (value.isObject || value.isArray && value.asArray.first.isObject) {
     variant.ref.type = getType(UaTypes.extensionObject, lib);
@@ -65,7 +64,8 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib
     variant.ref.arrayLength = dimensions.fold(1, (a, b) => a * b);
   }
   if (dimensions.length > 1) {
-    variant.ref.arrayDimensions = calloc<ffi.Uint32>(dimensions.length);
+    final uint32type = getType(UaTypes.uint32, lib);
+    variant.ref.arrayDimensions = lib.UA_Array_new(dimensions.length, uint32type).cast();
     variant.ref.arrayDimensions.asTypedList(dimensions.length).setRange(0, dimensions.length, dimensions);
     variant.ref.arrayDimensionsSize = dimensions.length;
   }

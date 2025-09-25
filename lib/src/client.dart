@@ -27,7 +27,7 @@ class ClientState {
 }
 
 class ClientConfig {
-  ClientConfig(this._clientConfig) {
+  ClientConfig(this._lib, this._clientConfig) {
     // Intercept callbacks
     _state = ffi.NativeCallable<
         ffi.Void Function(
@@ -73,7 +73,7 @@ class ClientConfig {
 
   String get securityPolicyUri => _clientConfig.ref.securityPolicyUri.value;
   set securityPolicyUri(String uri) {
-    _clientConfig.ref.securityPolicyUri.set(uri);
+    _clientConfig.ref.securityPolicyUri.set(uri, _lib);
   }
 
   int get outstandingPublishRequests => _clientConfig.ref.outStandingPublishRequests;
@@ -89,6 +89,7 @@ class ClientConfig {
   }
 
   // Private interface
+  final raw.open62541 _lib;
   final ffi.Pointer<raw.UA_ClientConfig> _clientConfig;
   final StreamController<ClientState> _stateStream = StreamController<ClientState>.broadcast();
   final StreamController<int> _subscriptionInactivity = StreamController<int>.broadcast();
@@ -175,7 +176,7 @@ class Client {
     }
 
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
-    _clientConfig = ClientConfig(config);
+    _clientConfig = ClientConfig(_lib, config);
     _client = _lib.UA_Client_newWithConfig(config);
   }
 
@@ -300,7 +301,8 @@ class Client {
   // single point of entry for all read operations.
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
     final nodeCount = nodes.entries.map<int>((entry) => entry.value.length).fold(0, (prev, curr) => prev + curr);
-    ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>(nodeCount);
+    final readvalueidtype = getType(UaTypes.readValueId, _lib);
+    ffi.Pointer<raw.UA_ReadValueId> readValueId = _lib.UA_Array_new(nodeCount, readvalueidtype).cast();
     final completer = Completer<Map<NodeId, DynamicValue>>();
     final indorderNodes = [];
     var index = 0;
@@ -314,7 +316,7 @@ class Client {
     }
     assert(index == nodeCount);
 
-    ffi.Pointer<raw.UA_ReadRequest> request = calloc<raw.UA_ReadRequest>();
+    ffi.Pointer<raw.UA_ReadRequest> request = _lib.UA_ReadRequest_new();
     _lib.UA_ReadRequest_init(request);
     request.ref.nodesToRead = readValueId;
     request.ref.nodesToReadSize = nodeCount;
@@ -352,7 +354,7 @@ class Client {
       // because the callback we are currently in "returns" before completing.
       ffi.Pointer<raw.UA_DataValue> source = calloc<raw.UA_DataValue>();
       for (var i = 0; i < response.ref.resultsSize; i++) {
-        pointers.add(calloc<raw.UA_DataValue>());
+        pointers.add(_lib.UA_DataValue_new());
         _lib.UA_DataValue_init(pointers.last);
         source.ref = response.ref.results[i];
         _lib.UA_DataValue_copy(source, pointers.last);
@@ -452,7 +454,7 @@ class Client {
     bool publishingEnabled = true,
     int priority = 0,
   }) {
-    ffi.Pointer<raw.UA_CreateSubscriptionRequest> request = calloc<raw.UA_CreateSubscriptionRequest>();
+    ffi.Pointer<raw.UA_CreateSubscriptionRequest> request = _lib.UA_CreateSubscriptionRequest_new();
     _lib.UA_CreateSubscriptionRequest_init(request);
     request.ref.requestedPublishingInterval = requestedPublishingInterval.inMicroseconds / 1000.0;
     request.ref.requestedLifetimeCount = requestedLifetimeCount;
@@ -550,10 +552,11 @@ class Client {
           completer.complete();
         }
       } else {
-        final request = calloc<raw.UA_DeleteMonitoredItemsRequest>();
+        final request = _lib.UA_DeleteMonitoredItemsRequest_new();
         _lib.UA_DeleteMonitoredItemsRequest_init(request);
         request.ref.subscriptionId = subscriptionId;
-        final ids = calloc<ffi.Uint32>(monIds.length);
+        final uint32type = getType(UaTypes.uint32, _lib);
+        ffi.Pointer<ffi.Uint32> ids = _lib.UA_Array_new(monIds.length, uint32type).cast();
         for (var i = 0; i < monIds.length; i++) {
           ids[i] = monIds[i];
         }
@@ -602,7 +605,8 @@ class Client {
 
     controller.onListen = () async {
       // Create our request
-      ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = calloc<raw.UA_MonitoredItemCreateRequest>(nodeCount);
+      final datatype = getType(UaTypes.createMonitoredItemCreateRequest, _lib);
+      ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = _lib.UA_Array_new(nodeCount, datatype).cast();
       var index = 0;
       for (var entry in nodes.entries) {
         for (var attribute in entry.value) {
@@ -616,7 +620,7 @@ class Client {
         }
       }
 
-      ffi.Pointer<raw.UA_CreateMonitoredItemsRequest> createRequest = calloc<raw.UA_CreateMonitoredItemsRequest>();
+      ffi.Pointer<raw.UA_CreateMonitoredItemsRequest> createRequest = _lib.UA_CreateMonitoredItemsRequest_new();
       _lib.UA_CreateMonitoredItemsRequest_init(createRequest);
       createRequest.ref.subscriptionId = subscriptionId;
       createRequest.ref.itemsToCreate = monRequest;
@@ -681,7 +685,7 @@ class Client {
               // because the callback we are currently in "returns" before completing.
               final source = calloc<raw.UA_Variant>();
               source.ref = value.ref.value;
-              final variant = calloc<raw.UA_Variant>();
+              final variant = _lib.UA_Variant_new();
               _lib.UA_Variant_copy(source, variant);
               calloc.free(source);
               final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
@@ -872,9 +876,11 @@ class Client {
     return controller.stream;
   }
 
+  // todo test
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
     final len = args.length;
-    var inputArgs = calloc<raw.UA_Variant>(len);
+    final uaVariantType = getType(UaTypes.variant, _lib);
+    ffi.Pointer<raw.UA_Variant> inputArgs = _lib.UA_Array_new(len, uaVariantType).cast();
     var ptrs = <ffi.Pointer<raw.UA_Variant>>[];
     final argsIter = args.iterator;
 

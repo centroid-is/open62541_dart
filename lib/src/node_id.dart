@@ -138,7 +138,10 @@ class NodeId {
 
   raw.UA_NodeId toRaw(raw.open62541 lib) {
     if (_stringId != null) {
-      return lib.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8().cast());
+      Pointer<Char> str = _stringId!.toNativeUtf8().cast();
+      final ret = lib.UA_NODEID_STRING_ALLOC(_namespaceIndex, str); // copy "dart C heap" to explicit "C heap" here open62541 copies the string
+      calloc.free(str);
+      return ret;
     } else if (_numericId != null) {
       return lib.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
     } else {

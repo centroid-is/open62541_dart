@@ -398,7 +398,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   }
 
   @override
-  void set(ByteWriter writer, DynamicValue value, [Endian? endian, bool insideStruct = false, root = false]) {
+  void set(ByteWriter writer, DynamicValue value, [Endian? endian, bool insideStruct = false, root = false, raw.open62541? lib]) {
     if (value.isArray) {
       // Don't encode the array length if we are the root
       if (!root) {
@@ -407,14 +407,17 @@ class DynamicValue extends PayloadType<DynamicValue> {
       for (var i = 0; i < value.value.length; i++) {
         // if array is root and subsequent type is array we should treat that also as root
         // as in not read the subsequent array length
-        value.value[i].set(writer, value.value[i], endian, insideStruct, root);
+        value.value[i].set(writer, value.value[i], endian, insideStruct, root, lib);
       }
     } else if (value.isObject && root) {
-      ffi.Pointer<raw.UA_ExtensionObject> obj = calloc<raw.UA_ExtensionObject>();
-      obj.ref.content.encoded.typeId.fromNodeId(value.extObjEncodingId ?? value.typeId!);
+      if (lib == null) {
+        throw "Access to open62541 lib is required for setting object";
+      }
+      ffi.Pointer<raw.UA_ExtensionObject> obj = lib.UA_ExtensionObject_new();
+      obj.ref.content.encoded.typeId.fromNodeId(value.extObjEncodingId ?? value.typeId!, lib);
       ByteWriter bodyWriter = ByteWriter();
       value.value.forEach((key, value) => value.set(bodyWriter, value, endian, true));
-      obj.ref.content.encoded.body.fromBytes(bodyWriter.toBytes());
+      obj.ref.content.encoded.body.fromBytes(bodyWriter.toBytes(), lib);
       // todo support other encodings
       obj.ref.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
       // write the extension object to the writer
@@ -431,7 +434,9 @@ class DynamicValue extends PayloadType<DynamicValue> {
       //Special case for strings, they are different the UA_Strings when
       // encoded inside of a struct
       if (typeId == NodeId.uastring && insideStruct) {
-        ContiguousStringPayload().set(writer, value.value, endian);
+        ContiguousStringPayload().set(writer, value.value, endian);}
+      else if (typeId == NodeId.uastring) {
+        UA_StringPayload().set(writer, value.value, endian, lib);
       } else {
         nodeIdToPayloadType(value.typeId ?? autoDeduceType(value.value))!.set(writer, value.value, endian);
       }
