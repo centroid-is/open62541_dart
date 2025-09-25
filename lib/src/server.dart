@@ -15,19 +15,18 @@ class Server {
     int? port,
   }) {
     _lib = raw.open62541(lib);
-    final config = calloc<raw.UA_ServerConfig>();
+    _server = _lib.UA_Server_new();
+    _config = _lib.UA_Server_getConfig(_server);
 
-    if (logLevel != null) {
-      config.ref.logging = _lib.UA_Log_Stdout_new(logLevel);
-    }
+    // TODO, this doesnt work when default config has been set, we need to free previosly set logger
+    /*if (logLevel != null) {
+      _config.ref.logging = _lib.UA_Log_Stdout_new(logLevel);
+    }*/
     // setMinimal sets the logging level if not set.
-    int res = _lib.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
+    int res = _lib.UA_ServerConfig_setMinimal(_config, port ?? 4840, ffi.nullptr);
     if (res != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to set default server config ${statusCodeToString(res, _lib)}';
     }
-
-    _server = _lib.UA_Server_newWithConfig(config);
-    _config = _lib.UA_Server_getConfig(_server);
   }
 
   late raw.open62541 _lib;
@@ -359,6 +358,7 @@ class Server {
 
     final memberCount = value.asObject.length;
     array.ref.types[0].membersSize = memberCount;
+    // I believe this is incorrect, needs to verify sizeof is same here as in C
     final uaDataTypeMemberSize = ffi.sizeOf<raw.UA_DataTypeMember>();
     array.ref.types[0].members = _lib.UA_Array_new(memberCount * uaDataTypeMemberSize, bytetype).cast();
     for (var i = 0; i < memberCount; i++) {
@@ -369,6 +369,7 @@ class Server {
         // If we contain a member add that first
         addCustomType(member.typeId!, member);
       }
+      // TODO allocate member name with open62541 allocator
       array.ref.types[0].members[i].memberName = memberName.toNativeUtf8().cast();
       array.ref.types[0].members[i].memberType = _findDataType(member.typeId!);
       array.ref.types[0].members[i].isOptional = member.isOptional;
@@ -474,5 +475,13 @@ class Server {
     if (ret != 0) {
       throw "Failed to delete server ${statusCodeToString(ret, _lib)}";
     }
+  }
+
+  raw.UA_QualifiedName toQualifiedName(int nsIndex, String str) {
+    final strPtr = str.toNativeUtf8();
+    // allocate with C allocator copy from dart ffi allocator
+    final res = _lib.UA_QUALIFIEDNAME_ALLOC(nsIndex, strPtr.cast());
+    calloc.free(strPtr);
+    return res;
   }
 }
