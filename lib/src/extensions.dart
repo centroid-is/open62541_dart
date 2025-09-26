@@ -418,7 +418,6 @@ extension UA_StringExtension on raw.UA_String {
     if (data != nullptr) {
       final bytetype = getType(UaTypes.byte, lib);
       lib.UA_Array_delete(data.cast(), length, bytetype);
-      calloc.free(data);
       data = nullptr;
       length = 0;
     }
