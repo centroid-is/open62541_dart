@@ -660,7 +660,6 @@ class Client {
           final temp = monIdToNodeAndAttribute[monId]!;
           final nodeId = temp.item1;
           final attributeId = temp.item2;
-          seenMonIds.add(monId);
 
           var reference = latestValues[nodeId] ?? DynamicValue();
           final ref = value.ref.value;
@@ -686,6 +685,11 @@ class Client {
               _lib.UA_Variant_copy(source, variant);
               calloc.free(source);
               final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
+              // Now that we have crossed an async boundary, we need to fetch a new reference. It might have been updated
+              // with a description or other fields while we processed data.
+              reference = latestValues[nodeId] ?? reference;
+
+              // Update the values of the fields
               reference.value = data.value;
               reference.typeId = reference.typeId ?? data.typeId;
               reference.enumFields = data.enumFields;
@@ -699,6 +703,10 @@ class Client {
             default:
               throw 'Unhandled attribute id $attributeId';
           }
+
+          // Update the seenmonIds after processing
+          seenMonIds.add(monId);
+
           latestValues[nodeId] = reference;
           if (controller.isClosed) {
             return; // While processing the data the controller might have been closed
@@ -794,11 +802,11 @@ class Client {
             }
             index++;
           }
-          if (failures.isNotEmpty) {
-            controller.addError(
-                "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value, _lib)}").join(", ")}");
-            controller.close(); // Call onCancel above
-          }
+        }
+        if (failures.isNotEmpty) {
+          controller.addError(
+              "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value, _lib)}").join(", ")}");
+          controller.close(); // Call onCancel above
         }
       });
       localRequestId = calloc<ffi.Uint32>();
@@ -841,10 +849,10 @@ class Client {
     final stream = monitoredItems(
       {
         nodeId: [
-          AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
           AttributeId.UA_ATTRIBUTEID_DATATYPE,
           AttributeId.UA_ATTRIBUTEID_VALUE,
           AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+          AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
         ]
       },
       subscriptionId,
