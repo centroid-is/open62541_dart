@@ -150,7 +150,6 @@ class Server {
     }
   }
 
-  // todo test
   void addVariableTypeNode(DynamicValue schema, NodeId variableTypeId, String name,
       {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
     var dattr = _lib.UA_VariableTypeAttributes_new();
@@ -359,7 +358,6 @@ class Server {
         // If we contain a member add that first
         addCustomType(member.typeId!, member);
       }
-      // TODO allocate member name with open62541 allocator
       array.ref.types[0].members[i].memberName = memberName.toNativeUtf8(allocator: alloc.malloc).cast();
       array.ref.types[0].members[i].memberType = _findDataType(member.typeId!);
       array.ref.types[0].members[i].isOptional = member.isOptional;
