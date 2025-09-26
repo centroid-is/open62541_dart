@@ -2,6 +2,7 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 
+import 'allocation.dart' as alloc;
 import 'extensions.dart';
 import 'generated/open62541_bindings.dart' as raw;
 
@@ -138,11 +139,7 @@ class NodeId {
 
   raw.UA_NodeId toRaw(raw.open62541 lib) {
     if (_stringId != null) {
-      Pointer<Char> str = _stringId!.toNativeUtf8().cast();
-      final ret = lib.UA_NODEID_STRING_ALLOC(
-          _namespaceIndex, str); // copy "dart C heap" to explicit "C heap" here open62541 copies the string
-      calloc.free(str);
-      return ret;
+      return lib.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: alloc.malloc).cast());
     } else if (_numericId != null) {
       return lib.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
     } else {

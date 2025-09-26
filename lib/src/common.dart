@@ -8,6 +8,7 @@ import 'package:ffi/ffi.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/types/create_type.dart';
+import 'allocation.dart' as alloc;
 import 'extensions.dart';
 import 'generated/open62541_bindings.dart' as raw;
 
@@ -25,9 +26,8 @@ ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType, raw.open62541 lib) {
 
 ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib) {
   binarize.ByteWriter wr = binarize.ByteWriter();
-  value.set(wr, value, Endian.little, false, true, lib);
-  final bytetype = getType(UaTypes.byte, lib);
-  ffi.Pointer<ffi.Uint8> pointer = lib.UA_Array_new(wr.length, bytetype).cast();
+  value.set(wr, value, Endian.little, false, true);
+  final pointer = alloc.calloc<ffi.Uint8>(wr.length);
   pointer.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
 
   Namespace0Id? id;
@@ -64,8 +64,7 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib
     variant.ref.arrayLength = dimensions.fold(1, (a, b) => a * b);
   }
   if (dimensions.length > 1) {
-    final uint32type = getType(UaTypes.uint32, lib);
-    variant.ref.arrayDimensions = lib.UA_Array_new(dimensions.length, uint32type).cast();
+    variant.ref.arrayDimensions = alloc.calloc<ffi.Uint32>(dimensions.length);
     variant.ref.arrayDimensions.asTypedList(dimensions.length).setRange(0, dimensions.length, dimensions);
     variant.ref.arrayDimensionsSize = dimensions.length;
   }

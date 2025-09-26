@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
-import 'package:open62541/src/common.dart';
+import 'allocation.dart' as alloc;
 import 'dynamic_value.dart';
 import 'generated/open62541_bindings.dart' as raw;
 import 'node_id.dart';
@@ -319,14 +319,14 @@ extension UA_NodeIdExtension on raw.UA_NodeId {
     return NodeId.fromRaw(this);
   }
 
-  void fromNodeId(NodeId nodeId, raw.open62541 lib) {
+  void fromNodeId(NodeId nodeId) {
     namespaceIndex = nodeId.namespace;
     if (nodeId.isNumeric()) {
       identifierTypeAsInt = raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC.value;
       identifier.numeric = nodeId.numeric;
     } else if (nodeId.isString()) {
       identifierTypeAsInt = raw.UA_NodeIdType.UA_NODEIDTYPE_STRING.value;
-      identifier.string.set(nodeId.string, lib);
+      identifier.string.set(nodeId.string);
     } else {
       throw ArgumentError('Invalid NodeId type: $nodeId');
     }
@@ -385,11 +385,10 @@ $indent}''';
 
 // ignore: camel_case_extensions
 extension UA_StringExtension on raw.UA_String {
-  void set(String value, raw.open62541 lib) {
-    free(lib);
+  void set(String value) {
+    free();
     final bytes = utf8.encode(value);
-    final bytetype = getType(UaTypes.byte, lib);
-    Pointer<Uint8> dataPtr = lib.UA_Array_new(bytes.length, bytetype).cast();
+    final dataPtr = alloc.calloc<Uint8>(bytes.length);
 
     final byteList = dataPtr.asTypedList(bytes.length);
     byteList.setAll(0, bytes);
@@ -403,10 +402,9 @@ extension UA_StringExtension on raw.UA_String {
     return utf8.decode(bytes);
   }
 
-  void fromBytes(Iterable<int> bytes, raw.open62541 lib) {
-    free(lib);
-    final bytestype = getType(UaTypes.byte, lib);
-    data = lib.UA_Array_new(bytes.length, bytestype).cast();
+  void fromBytes(Iterable<int> bytes) {
+    free();
+    data = alloc.calloc(bytes.length);
     // memcpy as fast as possible
     data.asTypedList(bytes.length).setRange(0, bytes.length, bytes);
     length = bytes.length;
@@ -414,10 +412,9 @@ extension UA_StringExtension on raw.UA_String {
 
   Uint8List asTypedList() => data.asTypedList(length);
 
-  void free(raw.open62541 lib) {
+  void free() {
     if (data != nullptr) {
-      final bytetype = getType(UaTypes.byte, lib);
-      lib.UA_Array_delete(data.cast(), length, bytetype);
+      alloc.calloc.free(data);
       data = nullptr;
       length = 0;
     }

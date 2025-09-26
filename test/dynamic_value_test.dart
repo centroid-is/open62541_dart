@@ -5,7 +5,6 @@ import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
 import 'package:test/test.dart';
 
-import 'package:open62541/src/common.dart';
 import 'package:open62541/src/dynamic_value.dart';
 import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
@@ -13,8 +12,6 @@ import 'package:open62541/src/node_id.dart';
 import 'schema_util.dart';
 
 void main() {
-  final lib = raw.open62541(loadOpen62541Library(local: true));
-
   test('dynamic value', () {
     final dynamicValue = DynamicValue();
     expect(dynamicValue.type, DynamicType.nullValue);
@@ -500,10 +497,10 @@ void main() {
     obj[2].encodingAsInt = encoding.value;
     obj[3].encodingAsInt = encoding.value;
 
-    obj[0].content.encoded.body.fromBytes(data[0], lib);
-    obj[1].content.encoded.body.fromBytes(data[1], lib);
-    obj[2].content.encoded.body.fromBytes(data[2], lib);
-    obj[3].content.encoded.body.fromBytes(data[3], lib);
+    obj[0].content.encoded.body.fromBytes(data[0]);
+    obj[1].content.encoded.body.fromBytes(data[1]);
+    obj[2].content.encoded.body.fromBytes(data[2]);
+    obj[3].content.encoded.body.fromBytes(data[3]);
 
     final bytes = obj.cast<Uint8>().asTypedList(sizeOf<raw.UA_ExtensionObject>() * 4);
 
@@ -546,7 +543,7 @@ void main() {
     expect(parent[3]["bigfield4"].asString, "l");
 
     ByteWriter writer = ByteWriter(endian: Endian.little);
-    parent.set(writer, parent, Endian.little, false, true, lib);
+    parent.set(writer, parent, Endian.little, false, true);
     final b = writer.toBytes();
     expect(bytes.length, b.length);
     for (int i = 0; i < 4; i++) {
@@ -560,7 +557,7 @@ void main() {
       for (int j = 0; j < data[i].length; j++) {
         expect(data[i][j], innerBytes[j]);
       }
-      obj.ref.content.encoded.body.free(lib);
+      obj.ref.content.encoded.body.free();
       calloc.free(obj);
     }
   });

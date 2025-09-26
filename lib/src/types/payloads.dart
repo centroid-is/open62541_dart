@@ -3,9 +3,8 @@ import 'dart:ffi' as ffi;
 
 import 'package:binarize/binarize.dart';
 
-import 'package:open62541/open62541.dart';
-import 'package:open62541/src/common.dart';
 import '../generated/open62541_bindings.dart' as raw;
+import '../allocation.dart' as alloc;
 
 // TODO this file has a lot of boilerplate, can we make it better?
 
@@ -235,13 +234,9 @@ class UA_StringPayload extends PayloadType<String> {
   }
 
   @override
-  void set(ByteWriter writer, String value, [Endian? endian, raw.open62541? lib]) {
+  void set(ByteWriter writer, String value, [Endian? endian]) {
     final buffer = utf8.encode(value);
-    if (lib == null) {
-      throw "Lib has to be used to convert to UA_String";
-    }
-    final sbytetype = getType(UaTypes.sbyte, lib);
-    ffi.Pointer<ffi.Char> heap = lib.UA_Array_new(buffer.length, sbytetype).cast();
+    ffi.Pointer<ffi.Char> heap = alloc.calloc(buffer.length);
     for (int i = 0; i < buffer.length; i++) {
       heap[i] = buffer[i];
     }
