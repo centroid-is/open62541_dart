@@ -661,6 +661,7 @@ class Client {
           final nodeId = temp.item1;
           final attributeId = temp.item2;
           seenMonIds.add(monId);
+          print(attributeId);
 
           var reference = latestValues[nodeId] ?? DynamicValue();
           final ref = value.ref.value;
@@ -705,6 +706,8 @@ class Client {
           }
           try {
             if (seenMonIds.length == nodeCount - descriptionFailureCount) {
+              print("${seenMonIds.length}, $nodeCount, $descriptionFailureCount");
+              print(latestValues);
               controller.add(latestValues);
             }
           } catch (e) {
@@ -794,11 +797,11 @@ class Client {
             }
             index++;
           }
-          if (failures.isNotEmpty) {
-            controller.addError(
-                "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value, _lib)}").join(", ")}");
-            controller.close(); // Call onCancel above
-          }
+        }
+        if (failures.isNotEmpty) {
+          controller.addError(
+              "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value, _lib)}").join(", ")}");
+          controller.close(); // Call onCancel above
         }
       });
       localRequestId = calloc<ffi.Uint32>();
@@ -841,10 +844,10 @@ class Client {
     final stream = monitoredItems(
       {
         nodeId: [
+          AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
           AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
           AttributeId.UA_ATTRIBUTEID_DATATYPE,
           AttributeId.UA_ATTRIBUTEID_VALUE,
-          AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
         ]
       },
       subscriptionId,
