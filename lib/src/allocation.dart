@@ -24,26 +24,22 @@ typedef PosixFreeNative = Void Function(Pointer);
 @Native<Void Function(Pointer)>(symbol: 'free')
 external void posixFree(Pointer ptr);
 
-final Pointer<NativeFunction<PosixFreeNative>> posixFreePointer =
-    Native.addressOf(posixFree);
+final Pointer<NativeFunction<PosixFreeNative>> posixFreePointer = Native.addressOf(posixFree);
 
 final DynamicLibrary ucrtbaselib = DynamicLibrary.open(debug ? 'ucrtbased.dll' : 'ucrtbase.dll');
 
 typedef WinMalloc = Pointer Function(int);
-final WinMalloc winMalloc = ucrtbaselib
-    .lookupFunction<PosixMallocNative, WinMalloc>(
-      'malloc',
-    );
+final WinMalloc winMalloc = ucrtbaselib.lookupFunction<PosixMallocNative, WinMalloc>(
+  'malloc',
+);
 
 typedef WinCalloc = Pointer Function(int, int);
-final WinCalloc winCalloc = ucrtbaselib
-    .lookupFunction<PosixCallocNative, WinCalloc>(
-      'calloc',
-    );
+final WinCalloc winCalloc = ucrtbaselib.lookupFunction<PosixCallocNative, WinCalloc>(
+  'calloc',
+);
 
 typedef WinFree = void Function(Pointer);
-final Pointer<NativeFunction<PosixFreeNative>> winFreePointer =
-    ucrtbaselib.lookup('free');
+final Pointer<NativeFunction<PosixFreeNative>> winFreePointer = ucrtbaselib.lookup('free');
 final WinFree winFree = winFreePointer.asFunction();
 
 /// Manages memory on the native heap.
@@ -78,7 +74,7 @@ final class MallocAllocator implements Allocator {
 
   /// Releases memory allocated on the native heap.
   ///
-  /// For POSIX-based & Windows systems, this uses `free`. 
+  /// For POSIX-based & Windows systems, this uses `free`.
   /// It may only be used against pointers allocated in a
   /// manner equivalent to [allocate].
   @override
@@ -118,8 +114,7 @@ final class MallocAllocator implements Allocator {
   /// malloc.allocate<Uint8>(n).asTypedList(n, finalizer: malloc.nativeFree)
   /// ```
   ///
-  Pointer<NativeFinalizerFunction> get nativeFree =>
-      Platform.isWindows ? winFreePointer : posixFreePointer;
+  Pointer<NativeFinalizerFunction> get nativeFree => Platform.isWindows ? winFreePointer : posixFreePointer;
 }
 
 /// Manages memory on the native heap.
@@ -201,8 +196,7 @@ final class CallocAllocator implements Allocator {
   /// calloc.allocate<Uint8>(n).asTypedList(n, finalizer: calloc.nativeFree)
   /// ```
   ///
-  Pointer<NativeFinalizerFunction> get nativeFree =>
-      Platform.isWindows ? winFreePointer : posixFreePointer;
+  Pointer<NativeFinalizerFunction> get nativeFree => Platform.isWindows ? winFreePointer : posixFreePointer;
 }
 
 /// Manages memory on the native heap.

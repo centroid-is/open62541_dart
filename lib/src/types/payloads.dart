@@ -3,8 +3,8 @@ import 'dart:ffi' as ffi;
 
 import 'package:binarize/binarize.dart';
 
-import '../generated/open62541_bindings.dart' as raw;
 import '../allocation.dart' as alloc;
+import '../generated/open62541_bindings.dart' as raw;
 
 // TODO this file has a lot of boilerplate, can we make it better?
 

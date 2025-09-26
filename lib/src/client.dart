@@ -171,8 +171,8 @@ class Client {
     }
 
     if (username != null) {
-      _lib.UA_ClientConfig_setAuthenticationUsername(
-          config, username.toNativeUtf8(allocator: alloc.malloc).cast(), password != null ? password.toNativeUtf8(allocator: alloc.malloc).cast() : ffi.nullptr);
+      _lib.UA_ClientConfig_setAuthenticationUsername(config, username.toNativeUtf8(allocator: alloc.malloc).cast(),
+          password != null ? password.toNativeUtf8(allocator: alloc.malloc).cast() : ffi.nullptr);
     }
 
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
@@ -603,7 +603,8 @@ class Client {
 
     controller.onListen = () async {
       // Create our request
-      ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = alloc.calloc<raw.UA_MonitoredItemCreateRequest>(nodeCount);
+      ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest =
+          alloc.calloc<raw.UA_MonitoredItemCreateRequest>(nodeCount);
       var index = 0;
       for (var entry in nodes.entries) {
         for (var attribute in entry.value) {

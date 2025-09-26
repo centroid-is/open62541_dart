@@ -399,8 +399,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   }
 
   @override
-  void set(ByteWriter writer, DynamicValue value,
-      [Endian? endian, bool insideStruct = false, root = false]) {
+  void set(ByteWriter writer, DynamicValue value, [Endian? endian, bool insideStruct = false, root = false]) {
     if (value.isArray) {
       // Don't encode the array length if we are the root
       if (!root) {
