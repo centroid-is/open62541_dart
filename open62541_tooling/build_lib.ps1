@@ -21,16 +21,19 @@ if (-not (Test-Path "open62541")) {
     git submodule update --init --recursive
 }
 
+git apply $PROJECT_ROOT\open62541_tooling\SecureZeroMem.patch --directory open62541
+
 $BUILD_DIR = "$PROJECT_ROOT\open62541_build"
 
-cmake -B $BUILD_DIR -S open62541 -DBUILD_SHARED_LIBS=ON `
+cmake --fresh -B $BUILD_DIR -S open62541 -DBUILD_SHARED_LIBS=ON `
     -DUA_ENABLE_INLINABLE_EXPORT=ON `
     -DUA_ENABLE_ENCRYPTION=MBEDTLS `
     -DUA_ENABLE_AMALGAMATION=ON `
     -DMBEDTLS_LIBRARY="$MBEDTLS_LIB" `
     -DMBEDX509_LIBRARY="$MBEDX509_LIB" `
     -DMBEDCRYPTO_LIBRARY="$MBEDCRYPTO_LIB" `
-    -DMBEDTLS_INCLUDE_DIRS="$MBEDTLS_INCLUDE"
+    -DMBEDTLS_INCLUDE_DIRS="$MBEDTLS_INCLUDE" `
+    -DUA_MULTITHREADING=0 -DUA_LOGLEVEL=100
 
 cmake --build $BUILD_DIR -j 4 --config RelWithDebInfo
 
