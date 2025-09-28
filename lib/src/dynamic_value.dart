@@ -7,9 +7,9 @@ import 'package:open62541/open62541.dart';
 import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
 import 'package:open62541/src/types/payloads.dart';
-import 'allocation.dart' as alloc;
 import 'node_id.dart';
 import 'types/create_type.dart';
+import 'ua_allocation.dart';
 
 enum DynamicType { object, array, string, boolean, nullValue, unknown, integer, double }
 
@@ -362,7 +362,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
       ByteReader bodyReader = reader;
       if (root) {
         final objBytes = reader.read(ffi.sizeOf<raw.UA_ExtensionObject>());
-        ffi.Pointer<raw.UA_ExtensionObject> obj = alloc.calloc();
+        ffi.Pointer<raw.UA_ExtensionObject> obj = ua_calloc();
         final ref = obj.ref;
         obj
             .cast<ffi.Uint8>()
@@ -410,7 +410,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
         value.value[i].set(writer, value.value[i], endian, insideStruct, root);
       }
     } else if (value.isObject && root) {
-      ffi.Pointer<raw.UA_ExtensionObject> obj = alloc.calloc<raw.UA_ExtensionObject>();
+      ffi.Pointer<raw.UA_ExtensionObject> obj = ua_calloc<raw.UA_ExtensionObject>();
       obj.ref.content.encoded.typeId.fromNodeId(value.extObjEncodingId ?? value.typeId!);
       ByteWriter bodyWriter = ByteWriter();
       value.value.forEach((key, value) => value.set(bodyWriter, value, endian, true));

@@ -9,37 +9,37 @@ import 'dart:io';
 
 bool debug = false;
 
-typedef PosixMallocNative = Pointer Function(IntPtr);
+typedef UaPosixMallocNative = Pointer Function(IntPtr);
 
-@Native<PosixMallocNative>(symbol: 'malloc')
-external Pointer posixMalloc(int size);
+@Native<UaPosixMallocNative>(symbol: 'malloc')
+external Pointer uaPosixMalloc(int size);
 
-typedef PosixCallocNative = Pointer Function(IntPtr num, IntPtr size);
+typedef UaPosixCallocNative = Pointer Function(IntPtr num, IntPtr size);
 
-@Native<PosixCallocNative>(symbol: 'calloc')
-external Pointer posixCalloc(int num, int size);
+@Native<UaPosixCallocNative>(symbol: 'calloc')
+external Pointer uaPosixCalloc(int num, int size);
 
-typedef PosixFreeNative = Void Function(Pointer);
+typedef UaPosixFreeNative = Void Function(Pointer);
 
 @Native<Void Function(Pointer)>(symbol: 'free')
-external void posixFree(Pointer ptr);
+external void uaPosixFree(Pointer ptr);
 
-final Pointer<NativeFunction<PosixFreeNative>> posixFreePointer = Native.addressOf(posixFree);
+final Pointer<NativeFunction<UaPosixFreeNative>> uaPosixFreePointer = Native.addressOf(uaPosixFree);
 
 final DynamicLibrary ucrtbaselib = DynamicLibrary.open(debug ? 'ucrtbased.dll' : 'ucrtbase.dll');
 
 typedef WinMalloc = Pointer Function(int);
-final WinMalloc winMalloc = ucrtbaselib.lookupFunction<PosixMallocNative, WinMalloc>(
+final WinMalloc winMalloc = ucrtbaselib.lookupFunction<UaPosixMallocNative, WinMalloc>(
   'malloc',
 );
 
 typedef WinCalloc = Pointer Function(int, int);
-final WinCalloc winCalloc = ucrtbaselib.lookupFunction<PosixCallocNative, WinCalloc>(
+final WinCalloc winCalloc = ucrtbaselib.lookupFunction<UaPosixCallocNative, WinCalloc>(
   'calloc',
 );
 
 typedef WinFree = void Function(Pointer);
-final Pointer<NativeFunction<PosixFreeNative>> winFreePointer = ucrtbaselib.lookup('free');
+final Pointer<NativeFunction<UaPosixFreeNative>> winFreePointer = ucrtbaselib.lookup('free');
 final WinFree winFree = winFreePointer.asFunction();
 
 /// Manages memory on the native heap.
@@ -48,8 +48,8 @@ final WinFree winFree = winFreePointer.asFunction();
 /// for zero-initialized memory on allocation.
 ///
 /// For POSIX-based & Windows systems, this uses `malloc` and `free`.
-final class MallocAllocator implements Allocator {
-  const MallocAllocator._();
+final class UaMallocAllocator implements Allocator {
+  const UaMallocAllocator._();
 
   /// Allocates [byteCount] bytes of of unitialized memory on the native heap.
   ///
@@ -64,7 +64,7 @@ final class MallocAllocator implements Allocator {
     if (Platform.isWindows) {
       result = winMalloc(byteCount).cast();
     } else {
-      result = posixMalloc(byteCount).cast();
+      result = uaPosixMalloc(byteCount).cast();
     }
     if (result.address == 0) {
       throw ArgumentError('Could not allocate $byteCount bytes.');
@@ -82,7 +82,7 @@ final class MallocAllocator implements Allocator {
     if (Platform.isWindows) {
       winFree(pointer);
     } else {
-      posixFree(pointer);
+      uaPosixFree(pointer);
     }
   }
 
@@ -114,7 +114,7 @@ final class MallocAllocator implements Allocator {
   /// malloc.allocate<Uint8>(n).asTypedList(n, finalizer: malloc.nativeFree)
   /// ```
   ///
-  Pointer<NativeFinalizerFunction> get nativeFree => Platform.isWindows ? winFreePointer : posixFreePointer;
+  Pointer<NativeFinalizerFunction> get nativeFree => Platform.isWindows ? winFreePointer : uaPosixFreePointer;
 }
 
 /// Manages memory on the native heap.
@@ -123,15 +123,16 @@ final class MallocAllocator implements Allocator {
 /// zero-initialized memory allocation.
 ///
 /// For POSIX-based & Windows systems, this uses `malloc` and `free`.
-const MallocAllocator malloc = MallocAllocator._();
+// ignore: constant_identifier_names
+const UaMallocAllocator ua_malloc = UaMallocAllocator._();
 
 /// Manages memory on the native heap.
 ///
 /// Initializes newly allocated memory to zero.
 ///
 /// For POSIX-based & Windows systems, this uses `calloc` and `free`.
-final class CallocAllocator implements Allocator {
-  const CallocAllocator._();
+final class UaCallocAllocator implements Allocator {
+  const UaCallocAllocator._();
 
   /// Allocates [byteCount] bytes of zero-initialized of memory on the native
   /// heap.
@@ -147,7 +148,7 @@ final class CallocAllocator implements Allocator {
     if (Platform.isWindows) {
       result = winCalloc(byteCount, 1).cast();
     } else {
-      result = posixCalloc(byteCount, 1).cast();
+      result = uaPosixCalloc(byteCount, 1).cast();
     }
     if (result.address == 0) {
       throw ArgumentError('Could not allocate $byteCount bytes.');
@@ -164,7 +165,7 @@ final class CallocAllocator implements Allocator {
     if (Platform.isWindows) {
       winFree(pointer);
     } else {
-      posixFree(pointer);
+      uaPosixFree(pointer);
     }
   }
 
@@ -196,7 +197,7 @@ final class CallocAllocator implements Allocator {
   /// calloc.allocate<Uint8>(n).asTypedList(n, finalizer: calloc.nativeFree)
   /// ```
   ///
-  Pointer<NativeFinalizerFunction> get nativeFree => Platform.isWindows ? winFreePointer : posixFreePointer;
+  Pointer<NativeFinalizerFunction> get nativeFree => Platform.isWindows ? winFreePointer : uaPosixFreePointer;
 }
 
 /// Manages memory on the native heap.
@@ -205,4 +206,5 @@ final class CallocAllocator implements Allocator {
 /// memory allocation.
 ///
 /// For POSIX-based & Windows systems, this uses `calloc` and `free`.
-const CallocAllocator calloc = CallocAllocator._();
+// ignore: constant_identifier_names
+const UaCallocAllocator ua_calloc = UaCallocAllocator._();

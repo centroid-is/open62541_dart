@@ -2,9 +2,9 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 
-import 'allocation.dart' as alloc;
 import 'extensions.dart';
 import 'generated/open62541_bindings.dart' as raw;
+import 'ua_allocation.dart';
 
 class NodeId {
   NodeId._internal(this._namespaceIndex, {dynamic id})
@@ -139,7 +139,7 @@ class NodeId {
 
   raw.UA_NodeId toRaw(raw.open62541 lib) {
     if (_stringId != null) {
-      return lib.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: alloc.malloc).cast());
+      return lib.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: ua_malloc).cast());
     } else if (_numericId != null) {
       return lib.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
     } else {
@@ -148,7 +148,7 @@ class NodeId {
   }
 
   Pointer<raw.UA_NodeId> toRawPointer(raw.open62541 lib) {
-    final nodeId = calloc<raw.UA_NodeId>();
+    final nodeId = ua_calloc<raw.UA_NodeId>();
     nodeId.ref = toRaw(lib);
     return nodeId;
   }
