@@ -16,18 +16,19 @@ class Server {
     int? port,
   }) {
     _lib = raw.open62541(lib);
-    _server = _lib.UA_Server_new();
-    _config = _lib.UA_Server_getConfig(_server);
+    final config = alloc.calloc<raw.UA_ServerConfig>();
 
-    // TODO, this doesnt work when default config has been set, we need to free previosly set logger
-    /*if (logLevel != null) {
-      _config.ref.logging = _lib.UA_Log_Stdout_new(logLevel);
-    }*/
+    if (logLevel != null) {
+      config.ref.logging = _lib.UA_Log_Stdout_new(logLevel);
+    }
     // setMinimal sets the logging level if not set.
-    int res = _lib.UA_ServerConfig_setMinimal(_config, port ?? 4840, ffi.nullptr);
+    int res = _lib.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
     if (res != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to set default server config ${statusCodeToString(res, _lib)}';
     }
+
+    _server = _lib.UA_Server_newWithConfig(config);
+    _config = _lib.UA_Server_getConfig(_server);
   }
 
   late raw.open62541 _lib;

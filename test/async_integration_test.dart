@@ -186,7 +186,7 @@ void main() async {
   });
 
 // todo still crashes because of memsize in addCustomType
-/*
+
   test('Basic struct read and write', () async {
     final structureVariableNodeId = NodeId.fromString(1, "structureVariable");
     final myStructureTypeId = NodeId.fromString(1, "myStructureType");
@@ -197,12 +197,11 @@ void main() async {
 
     server!.addCustomType(myStructureTypeId, structureValue);
 
-    //server!.addDataTypeNode(myStructureTypeId, "myStructureType",
-    //    displayName: LocalizedText("My Structure Type", "en-US"));
+    server!.addDataTypeNode(myStructureTypeId, "myStructureType",
+        displayName: LocalizedText("My Structure Type", "en-US"));
     server!.addVariableNode(structureVariableNodeId, structureValue,
         accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
 
-    print("read");
     final value = await client!.read(structureVariableNodeId);
     expect(value.isObject, isTrue);
     expect(value.typeId, myStructureTypeId);
@@ -216,7 +215,6 @@ void main() async {
     value["b"] = false;
     value["c"] = 154.7;
 
-    print("write");
     await client!.write(structureVariableNodeId, value);
     final value2 = await client!.read(structureVariableNodeId);
 
@@ -224,7 +222,6 @@ void main() async {
     expect(value["b"].value, value2["b"].value);
     expect(value["c"].value, value2["c"].value);
   });
-*/
 
   test('Server string value', () async {
     final value = DynamicValue(value: "Hello World!", typeId: NodeId.uastring, name: "the.string");
