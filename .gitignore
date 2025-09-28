@@ -15,3 +15,7 @@ doc/api/
 *.der
 .env
 .vscode
+mbedtls-*
+lib/libopen62541.dll
+lib/libopen62541.so
+lib/libopen62541.dylib

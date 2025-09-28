@@ -7,6 +7,7 @@ import 'package:open62541/open62541.dart';
 import 'common.dart';
 import 'extensions.dart';
 import 'generated/open62541_bindings.dart' as raw;
+import 'ua_allocation.dart';
 
 class Server {
   Server(
@@ -15,7 +16,7 @@ class Server {
     int? port,
   }) {
     _lib = raw.open62541(lib);
-    final config = calloc<raw.UA_ServerConfig>();
+    final config = ua_calloc<raw.UA_ServerConfig>();
 
     if (logLevel != null) {
       config.ref.logging = _lib.UA_Log_Stdout_new(logLevel);
@@ -99,7 +100,7 @@ class Server {
       NodeId? parentReferenceNodeId,
       NodeId? baseDataVariableType,
       NodeId? typeId}) {
-    ffi.Pointer<raw.UA_VariableAttributes> attr = calloc<raw.UA_VariableAttributes>();
+    ffi.Pointer<raw.UA_VariableAttributes> attr = _lib.UA_VariableAttributes_new();
     attr.ref = _lib.UA_VariableAttributes_default;
 
     final variant = valueToVariant(value, _lib);
@@ -117,7 +118,7 @@ class Server {
       final extObjView = variant.ref.data.cast<raw.UA_ExtensionObject>();
       final length = extObjView.ref.content.encoded.body.length;
 
-      attr.ref.value.data = calloc<raw.UA_Byte>(length).cast();
+      attr.ref.value.data = ua_calloc<raw.UA_Byte>(length).cast();
       attr.ref.value.data
           .cast<raw.UA_Byte>()
           .asTypedList(length)
@@ -131,7 +132,7 @@ class Server {
     if (value.name == null) {
       throw 'Value name must be provided to use as a browse name';
     }
-    final name = _lib.UA_QUALIFIEDNAME(1, value.name!.toNativeUtf8().cast());
+    final name = _lib.UA_QUALIFIEDNAME(1, value.name!.toNativeUtf8(allocator: ua_malloc).cast());
 
     parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
@@ -144,7 +145,7 @@ class Server {
     var returnCode = _lib.UA_Server_addVariableNode(_server, variableNodeId.toRaw(_lib), parentNodeIdRaw,
         parentReferenceNodeIdRaw, name, baseDataVariableTypeRaw, attr.ref, ffi.nullptr, ffi.nullptr);
     _lib.UA_VariableAttributes_delete(attr);
-    calloc.free(variant);
+    ua_calloc.free(variant);
     if (returnCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add variable node ${statusCodeToString(returnCode, _lib)}, nodeId: $variableNodeId';
     }
@@ -152,7 +153,7 @@ class Server {
 
   void addVariableTypeNode(DynamicValue schema, NodeId variableTypeId, String name,
       {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
-    var dattr = calloc<raw.UA_VariableTypeAttributes>();
+    var dattr = _lib.UA_VariableTypeAttributes_new();
     if (displayName != null) {
       dattr.ref.displayName.locale.set(displayName.locale);
       dattr.ref.displayName.text.set(displayName.value);
@@ -167,7 +168,7 @@ class Server {
 
     final parentNodeIdRaw = parentNodeId.toRaw(_lib);
     final referenceTypeIdRaw = referenceTypeId.toRaw(_lib);
-    final qualifiedName = _lib.UA_QUALIFIEDNAME(1, name.toNativeUtf8().cast());
+    final qualifiedName = _lib.UA_QUALIFIEDNAME(1, name.toNativeUtf8(allocator: ua_malloc).cast());
 
     int res = _lib.UA_Server_addVariableTypeNode(_server, variableTypeId.toRaw(_lib), parentNodeIdRaw,
         referenceTypeIdRaw, qualifiedName, parentNodeIdRaw, dattr.ref, ffi.nullptr, ffi.nullptr);
@@ -182,7 +183,7 @@ class Server {
 
   void addDataTypeNode(NodeId requestedNewNodeId, String browseName,
       {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
-    var attr = calloc<raw.UA_DataTypeAttributes>();
+    var attr = _lib.UA_DataTypeAttributes_new();
 
     if (displayName != null) {
       attr.ref.displayName.locale.set(displayName.locale);
@@ -211,7 +212,7 @@ class Server {
       if (nodeId == null) {
         return ffi.nullptr;
       }
-      final ptr = calloc<raw.UA_NodeId>();
+      final ptr = _lib.UA_NodeId_new();
       ptr.ref = nodeId.toRaw(_lib);
       return ptr;
     }
@@ -229,7 +230,7 @@ class Server {
     final referenceType = nodeIdPtrIfNotNull(referenceTypeId);
     final type = nodeIdPtrIfNotNull(typeDefinition);
 
-    final browse = _lib.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8().cast());
+    final browse = _lib.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
 
     final retCode = _lib.UA_Server_addNode(_server, nodeClass, requestedNewNode, parentNode, referenceType, browse,
         type, attr, attributeType, ffi.nullptr, ffi.nullptr);
@@ -255,7 +256,7 @@ class Server {
 
     StreamController<String> controller = StreamController<String>();
 
-    ffi.Pointer<raw.UA_ValueCallback> callback = calloc<raw.UA_ValueCallback>();
+    ffi.Pointer<raw.UA_ValueCallback> callback = ua_calloc<raw.UA_ValueCallback>();
 
     void onRead(
         ffi.Pointer<raw.UA_Server> server,
@@ -285,7 +286,7 @@ class Server {
     controller.onCancel = () {
       // _lib.UA_Server_setVariableNode_valueCallback(_server, variableNodeId.toRaw(_lib), ffi.nullptr); TODO: This cannot call us anymore
       onReadCallback.close();
-      calloc.free(callback);
+      ua_calloc.free(callback);
     };
 
     return controller.stream;
@@ -311,7 +312,7 @@ class Server {
   /// server.writeDescription(nodeId, description);
   /// ```
   void writeDescription(NodeId variableNodeId, LocalizedText description) {
-    ffi.Pointer<raw.UA_LocalizedText> descriptionRaw = calloc<raw.UA_LocalizedText>();
+    ffi.Pointer<raw.UA_LocalizedText> descriptionRaw = _lib.UA_LocalizedText_new();
     descriptionRaw.ref.locale.set(description.locale);
     descriptionRaw.ref.text.set(description.value);
     _lib.UA_Server_writeDescription(_server, variableNodeId.toRaw(_lib), descriptionRaw.ref);
@@ -319,7 +320,7 @@ class Server {
   }
 
   DynamicValue read(NodeId variableNodeId, {Schema? schema}) {
-    final variant = calloc<raw.UA_Variant>();
+    final variant = _lib.UA_Variant_new();
     _lib.UA_Server_readValue(_server, variableNodeId.toRaw(_lib), variant);
     final value = variantToValue(variant.ref, defs: schema);
     _lib.UA_Variant_delete(variant);
@@ -334,12 +335,12 @@ class Server {
 
   // populate structschema for out type
   void addCustomType(NodeId typeId, DynamicValue value) {
-    final array = calloc<raw.UA_DataTypeArray>();
+    final array = ua_calloc<raw.UA_DataTypeArray>();
     if (!value.isObject) {
       throw 'Value must be a object';
     }
     array.ref.typesSize = 1;
-    array.ref.types = calloc<raw.UA_DataType>(1);
+    array.ref.types = ua_calloc<raw.UA_DataType>(1);
     array.ref.types[0].typeId = typeId.toRaw(_lib);
     array.ref.types[0].binaryEncodingId =
         NodeId.fromString(typeId.namespace, "BinaryEncoding_Default:${value.name}").toRaw(_lib);
@@ -349,7 +350,7 @@ class Server {
 
     final memberCount = value.asObject.length;
     array.ref.types[0].membersSize = memberCount;
-    array.ref.types[0].members = calloc<raw.UA_DataTypeMember>(memberCount);
+    array.ref.types[0].members = ua_calloc<raw.UA_DataTypeMember>(memberCount);
     for (var i = 0; i < memberCount; i++) {
       final entry = value.asObject.entries.elementAt(i);
       final member = entry.value;
@@ -358,7 +359,7 @@ class Server {
         // If we contain a member add that first
         addCustomType(member.typeId!, member);
       }
-      array.ref.types[0].members[i].memberName = memberName.toNativeUtf8().cast();
+      array.ref.types[0].members[i].memberName = memberName.toNativeUtf8(allocator: ua_malloc).cast();
       array.ref.types[0].members[i].memberType = _findDataType(member.typeId!);
       array.ref.types[0].members[i].isOptional = member.isOptional;
       array.ref.types[0].members[i].isArray = member.isArray;
@@ -372,10 +373,10 @@ class Server {
   }
 
   ffi.Pointer<raw.UA_DataType> _findDataType(NodeId typeId) {
-    final nodeId = calloc<raw.UA_NodeId>();
+    final nodeId = ua_calloc<raw.UA_NodeId>();
     nodeId.ref = typeId.toRaw(_lib);
     final ret = _lib.UA_Server_findDataType(_server, nodeId);
-    calloc.free(nodeId);
+    ua_calloc.free(nodeId);
     return ret;
   }
 

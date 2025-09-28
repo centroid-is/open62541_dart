@@ -4,6 +4,8 @@ import 'dart:math';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'package:open62541/src/common.dart';
+import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
 import 'common.dart';
 
 void main() async {
@@ -169,6 +171,18 @@ void main() async {
     server!.write(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
     expect((await client!.read(boolNodeId)).value, false);
     expect(server!.read(boolNodeId).value, false);
+  });
+
+  test("Variant create and delete crash test windows", () async {
+    final myStructureTypeId = NodeId.fromString(1, "myStructureType");
+    DynamicValue structureValue = DynamicValue(name: "My Structure Variable", typeId: myStructureTypeId);
+    structureValue["a"] = DynamicValue(value: 2, typeId: NodeId.int32);
+    structureValue["b"] = DynamicValue(value: true, typeId: NodeId.boolean);
+    structureValue["c"] = DynamicValue(value: 5.8, typeId: NodeId.double);
+
+    final libb = raw.open62541(lib);
+    final variant = valueToVariant(structureValue, libb);
+    libb.UA_Variant_delete(variant);
   });
 
   test('Basic struct read and write', () async {

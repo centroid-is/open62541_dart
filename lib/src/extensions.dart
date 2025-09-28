@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'dynamic_value.dart';
 import 'generated/open62541_bindings.dart' as raw;
 import 'node_id.dart';
+import 'ua_allocation.dart';
 
 typedef MonitoringMode = raw.UA_MonitoringMode;
 typedef AttributeId = raw.UA_AttributeId;
@@ -385,7 +386,7 @@ extension UA_StringExtension on raw.UA_String {
   void set(String value) {
     free();
     final bytes = utf8.encode(value);
-    final dataPtr = calloc<Uint8>(bytes.length);
+    final dataPtr = ua_calloc<Uint8>(bytes.length);
 
     final byteList = dataPtr.asTypedList(bytes.length);
     byteList.setAll(0, bytes);
@@ -401,7 +402,7 @@ extension UA_StringExtension on raw.UA_String {
 
   void fromBytes(Iterable<int> bytes) {
     free();
-    data = calloc(bytes.length);
+    data = ua_calloc(bytes.length);
     // memcpy as fast as possible
     data.asTypedList(bytes.length).setRange(0, bytes.length, bytes);
     length = bytes.length;
@@ -411,7 +412,7 @@ extension UA_StringExtension on raw.UA_String {
 
   void free() {
     if (data != nullptr) {
-      calloc.free(data);
+      ua_calloc.free(data);
       data = nullptr;
       length = 0;
     }

@@ -13,6 +13,7 @@ import 'extensions.dart';
 import 'generated/open62541_bindings.dart' as raw;
 import 'node_id.dart';
 import 'types/create_type.dart';
+import 'ua_allocation.dart';
 
 class ClientState {
   SecureChannelState channelState;
@@ -120,7 +121,7 @@ class Client {
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
   }) : _lib = raw.open62541(lib) {
-    final config = calloc<raw.UA_ClientConfig>();
+    final config = ua_calloc<raw.UA_ClientConfig>();
 
     if (logLevel != null) {
       config.ref.logging = _lib.UA_Log_Stdout_new(logLevel);
@@ -142,14 +143,14 @@ class Client {
     }
 
     if (certificate != null && privateKey != null) {
-      ffi.Pointer<raw.UA_ByteString> rawCertificate = calloc<raw.UA_ByteString>();
-      ffi.Pointer<raw.UA_ByteString> rawPrivateKey = calloc<raw.UA_ByteString>();
+      ffi.Pointer<raw.UA_ByteString> rawCertificate = ua_calloc<raw.UA_ByteString>();
+      ffi.Pointer<raw.UA_ByteString> rawPrivateKey = ua_calloc<raw.UA_ByteString>();
 
-      rawCertificate.ref.data = calloc<ffi.Uint8>(certificate.length);
+      rawCertificate.ref.data = ua_calloc<ffi.Uint8>(certificate.length);
       rawCertificate.ref.length = certificate.length;
       rawCertificate.ref.data.asTypedList(certificate.length).setRange(0, certificate.length, certificate);
 
-      rawPrivateKey.ref.data = calloc<ffi.Uint8>(privateKey.length);
+      rawPrivateKey.ref.data = ua_calloc<ffi.Uint8>(privateKey.length);
       rawPrivateKey.ref.length = privateKey.length;
       rawPrivateKey.ref.data.asTypedList(privateKey.length).setRange(0, privateKey.length, privateKey);
 
@@ -157,21 +158,21 @@ class Client {
           config, rawCertificate.ref, rawPrivateKey.ref, ffi.nullptr, 0, ffi.nullptr, 0);
 
       // Accept all certificates
-      ffi.Pointer<raw.UA_CertificateGroup> certificateVerification = calloc<raw.UA_CertificateGroup>();
+      ffi.Pointer<raw.UA_CertificateGroup> certificateVerification = ua_calloc<raw.UA_CertificateGroup>();
       certificateVerification.ref = config.ref.certificateVerification;
       _lib.UA_CertificateGroup_AcceptAll(certificateVerification);
       config.ref.certificateVerification = certificateVerification.ref;
-      calloc.free(certificateVerification);
+      ua_calloc.free(certificateVerification);
 
-      calloc.free(rawCertificate.ref.data);
-      calloc.free(rawPrivateKey.ref.data);
-      calloc.free(rawCertificate);
-      calloc.free(rawPrivateKey);
+      ua_calloc.free(rawCertificate.ref.data);
+      ua_calloc.free(rawPrivateKey.ref.data);
+      ua_calloc.free(rawCertificate);
+      ua_calloc.free(rawPrivateKey);
     }
 
     if (username != null) {
-      _lib.UA_ClientConfig_setAuthenticationUsername(
-          config, username.toNativeUtf8().cast(), password != null ? password.toNativeUtf8().cast() : ffi.nullptr);
+      _lib.UA_ClientConfig_setAuthenticationUsername(config, username.toNativeUtf8(allocator: ua_malloc).cast(),
+          password != null ? password.toNativeUtf8(allocator: ua_malloc).cast() : ffi.nullptr);
     }
 
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
@@ -189,7 +190,7 @@ class Client {
   }
 
   Future<void> connect(String url) async {
-    final instantReturn = _lib.UA_Client_connectAsync(_client, url.toNativeUtf8().cast());
+    final instantReturn = _lib.UA_Client_connectAsync(_client, url.toNativeUtf8(allocator: ua_malloc).cast());
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to connect: ${statusCodeToString(instantReturn, _lib)}';
     }
@@ -263,17 +264,17 @@ class Client {
   }
 
   ClientState get state {
-    ffi.Pointer<ffi.UnsignedInt> state = calloc<ffi.UnsignedInt>();
-    ffi.Pointer<ffi.UnsignedInt> sessionState = calloc<ffi.UnsignedInt>();
-    ffi.Pointer<ffi.Uint32> connectStatus = calloc<ffi.Uint32>();
+    ffi.Pointer<ffi.UnsignedInt> state = ua_calloc<ffi.UnsignedInt>();
+    ffi.Pointer<ffi.UnsignedInt> sessionState = ua_calloc<ffi.UnsignedInt>();
+    ffi.Pointer<ffi.Uint32> connectStatus = ua_calloc<ffi.Uint32>();
     _lib.UA_Client_getState(_client, state, sessionState, connectStatus);
     final retValue = ClientState(
         channelState: raw.UA_SecureChannelState.fromValue(state.value),
         sessionState: raw.UA_SessionState.fromValue(sessionState.value),
         recoveryStatus: connectStatus.value);
-    calloc.free(state);
-    calloc.free(sessionState);
-    calloc.free(connectStatus);
+    ua_calloc.free(state);
+    ua_calloc.free(sessionState);
+    ua_calloc.free(connectStatus);
     return retValue;
   }
 
@@ -300,7 +301,7 @@ class Client {
   // single point of entry for all read operations.
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
     final nodeCount = nodes.entries.map<int>((entry) => entry.value.length).fold(0, (prev, curr) => prev + curr);
-    ffi.Pointer<raw.UA_ReadValueId> readValueId = calloc<raw.UA_ReadValueId>(nodeCount);
+    ffi.Pointer<raw.UA_ReadValueId> readValueId = ua_calloc<raw.UA_ReadValueId>(nodeCount);
     final completer = Completer<Map<NodeId, DynamicValue>>();
     final indorderNodes = [];
     var index = 0;
@@ -314,13 +315,13 @@ class Client {
     }
     assert(index == nodeCount);
 
-    ffi.Pointer<raw.UA_ReadRequest> request = calloc<raw.UA_ReadRequest>();
+    ffi.Pointer<raw.UA_ReadRequest> request = _lib.UA_ReadRequest_new();
     _lib.UA_ReadRequest_init(request);
     request.ref.nodesToRead = readValueId;
     request.ref.nodesToReadSize = nodeCount;
     request.ref.timestampsToReturnAsInt = raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH.value;
 
-    ffi.Pointer<ffi.Uint32> requestIdPtr = calloc<ffi.Uint32>();
+    ffi.Pointer<ffi.Uint32> requestIdPtr = ua_calloc<ffi.Uint32>();
 
     late ffi.NativeCallable<
             ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>
@@ -337,7 +338,7 @@ class Client {
       // Cleanup request and callback method
       callback.close();
       _lib.UA_ReadRequest_delete(request);
-      calloc.free(requestIdPtr);
+      ua_calloc.free(requestIdPtr);
 
       if (voidPointer == ffi.nullptr) {
         completer.completeError('readAttribute callback received null pointer');
@@ -350,14 +351,14 @@ class Client {
       // if we don't do this, the data_value will be freed on a flutter async
       // boundary. f.e. while we fetch the structure of a schema.
       // because the callback we are currently in "returns" before completing.
-      ffi.Pointer<raw.UA_DataValue> source = calloc<raw.UA_DataValue>();
+      ffi.Pointer<raw.UA_DataValue> source = ua_calloc<raw.UA_DataValue>();
       for (var i = 0; i < response.ref.resultsSize; i++) {
-        pointers.add(calloc<raw.UA_DataValue>());
+        pointers.add(_lib.UA_DataValue_new());
         _lib.UA_DataValue_init(pointers.last);
         source.ref = response.ref.results[i];
         _lib.UA_DataValue_copy(source, pointers.last);
       }
-      calloc.free(source);
+      ua_calloc.free(source);
 
       assert(pointers.length == response.ref.resultsSize);
       if (pointers.length != nodeCount && pointers.isEmpty) {
@@ -426,7 +427,7 @@ class Client {
     if (res != raw.UA_STATUSCODE_GOOD) {
       callback.close();
       _lib.UA_ReadRequest_delete(request);
-      calloc.free(requestIdPtr);
+      ua_calloc.free(requestIdPtr);
       completer.completeError('Failed to read attribute: ${statusCodeToString(res, _lib)}');
       return completer.future;
     }
@@ -452,7 +453,7 @@ class Client {
     bool publishingEnabled = true,
     int priority = 0,
   }) {
-    ffi.Pointer<raw.UA_CreateSubscriptionRequest> request = calloc<raw.UA_CreateSubscriptionRequest>();
+    ffi.Pointer<raw.UA_CreateSubscriptionRequest> request = _lib.UA_CreateSubscriptionRequest_new();
     _lib.UA_CreateSubscriptionRequest_init(request);
     request.ref.requestedPublishingInterval = requestedPublishingInterval.inMicroseconds / 1000.0;
     request.ref.requestedLifetimeCount = requestedLifetimeCount;
@@ -528,7 +529,7 @@ class Client {
     var descriptionFailureCount = 0;
 
     // Since the api we are using handles creating multiple monitored items at once, we need to create an array of callbacks
-    final callbacks = calloc<
+    final callbacks = ua_calloc<
         ffi.Pointer<
             ffi.NativeFunction<
                 ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>, ffi.Uint32,
@@ -550,10 +551,10 @@ class Client {
           completer.complete();
         }
       } else {
-        final request = calloc<raw.UA_DeleteMonitoredItemsRequest>();
+        final request = _lib.UA_DeleteMonitoredItemsRequest_new();
         _lib.UA_DeleteMonitoredItemsRequest_init(request);
         request.ref.subscriptionId = subscriptionId;
-        final ids = calloc<ffi.Uint32>(monIds.length);
+        final ids = ua_calloc<ffi.Uint32>(monIds.length);
         for (var i = 0; i < monIds.length; i++) {
           ids[i] = monIds[i];
         }
@@ -584,7 +585,7 @@ class Client {
           }
           _lib.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
           monitorCallback.close();
-          calloc.free(callbacks);
+          ua_calloc.free(callbacks);
           deleteCallback.close();
           monIds.clear();
           completer.complete();
@@ -602,7 +603,8 @@ class Client {
 
     controller.onListen = () async {
       // Create our request
-      ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = calloc<raw.UA_MonitoredItemCreateRequest>(nodeCount);
+      ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest =
+          ua_calloc<raw.UA_MonitoredItemCreateRequest>(nodeCount);
       var index = 0;
       for (var entry in nodes.entries) {
         for (var attribute in entry.value) {
@@ -616,7 +618,7 @@ class Client {
         }
       }
 
-      ffi.Pointer<raw.UA_CreateMonitoredItemsRequest> createRequest = calloc<raw.UA_CreateMonitoredItemsRequest>();
+      ffi.Pointer<raw.UA_CreateMonitoredItemsRequest> createRequest = _lib.UA_CreateMonitoredItemsRequest_new();
       _lib.UA_CreateMonitoredItemsRequest_init(createRequest);
       createRequest.ref.subscriptionId = subscriptionId;
       createRequest.ref.itemsToCreate = monRequest;
@@ -679,11 +681,11 @@ class Client {
               // if we don't do this, the variant will be freed on a flutter async
               // boundary. f.e. while we fetch the structure of a schema.
               // because the callback we are currently in "returns" before completing.
-              final source = calloc<raw.UA_Variant>();
+              final source = ua_calloc<raw.UA_Variant>();
               source.ref = value.ref.value;
-              final variant = calloc<raw.UA_Variant>();
+              final variant = _lib.UA_Variant_new();
               _lib.UA_Variant_copy(source, variant);
-              calloc.free(source);
+              ua_calloc.free(source);
               final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
               // Now that we have crossed an async boundary, we need to fetch a new reference. It might have been updated
               // with a description or other fields while we processed data.
@@ -739,7 +741,7 @@ class Client {
         // Cleanup the request memory
         _lib.UA_CreateMonitoredItemsRequest_delete(createRequest);
         createCallback.close();
-        calloc.free(localRequestId);
+        ua_calloc.free(localRequestId);
 
         late StreamSubscription inactivitySubscription;
         inactivitySubscription = config.subscriptionInactivityStream.listen((inactiveSubscriptionId) {
@@ -764,7 +766,7 @@ class Client {
         cleanup() {
           controller.onCancel = () {}; // Don't invoke the real close callback
           monitorCallback.close();
-          calloc.free(callbacks);
+          ua_calloc.free(callbacks);
           controller.close();
         }
 
@@ -809,7 +811,7 @@ class Client {
           controller.close(); // Call onCancel above
         }
       });
-      localRequestId = calloc<ffi.Uint32>();
+      localRequestId = ua_calloc<ffi.Uint32>();
       final statusCode = _lib.UA_Client_MonitoredItems_createDataChanges_async(
         _client,
         createRequest.ref,
@@ -822,7 +824,7 @@ class Client {
       );
       if (statusCode != raw.UA_STATUSCODE_GOOD) {
         _lib.UA_CreateMonitoredItemsRequest_delete(createRequest);
-        calloc.free(callbacks);
+        ua_calloc.free(callbacks);
         monitorCallback.close();
         createCallback.close();
         controller.addError('Unable to create monitored item: $statusCode ${statusCodeToString(statusCode, _lib)}');
@@ -830,7 +832,7 @@ class Client {
         // Cleanup resources that the close callback was suppose to do
         controller.onCancel = () {}; // Don't invoke the real close callback
         monitorCallback.close();
-        calloc.free(callbacks);
+        ua_calloc.free(callbacks);
       }
     };
 
@@ -874,7 +876,7 @@ class Client {
 
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
     final len = args.length;
-    var inputArgs = calloc<raw.UA_Variant>(len);
+    var inputArgs = ua_calloc<raw.UA_Variant>(len);
     var ptrs = <ffi.Pointer<raw.UA_Variant>>[];
     final argsIter = args.iterator;
 
@@ -1009,10 +1011,10 @@ class Client {
 
   // ignore: unused_element
   ffi.Pointer<raw.UA_DataType> _findDataType(NodeId typeId) {
-    final nodeId = calloc<raw.UA_NodeId>();
+    final nodeId = ua_calloc<raw.UA_NodeId>();
     nodeId.ref = typeId.toRaw(_lib);
     final ret = _lib.UA_Client_findDataType(_client, nodeId);
-    calloc.free(nodeId);
+    ua_calloc.free(nodeId);
     return ret;
   }
 
