@@ -185,8 +185,6 @@ void main() async {
     libb.UA_Variant_delete(variant);
   });
 
-// todo still crashes because of memsize in addCustomType
-
   test('Basic struct read and write', () async {
     final structureVariableNodeId = NodeId.fromString(1, "structureVariable");
     final myStructureTypeId = NodeId.fromString(1, "myStructureType");

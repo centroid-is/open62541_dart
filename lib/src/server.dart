@@ -345,7 +345,7 @@ class Server {
     array.ref.types[0].binaryEncodingId =
         NodeId.fromString(typeId.namespace, "BinaryEncoding_Default:${value.name}").toRaw(_lib);
 
-    array.ref.types[0].memSize = 9; // this number is leading to a memory crash in test on windows
+    array.ref.types[0].memSize = 9;
     array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
 
     final memberCount = value.asObject.length;
