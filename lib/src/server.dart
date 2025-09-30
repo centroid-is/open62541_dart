@@ -34,6 +34,28 @@ class Server {
   late raw.open62541 _lib;
   late ffi.Pointer<raw.UA_Server> _server;
   late ffi.Pointer<raw.UA_ServerConfig> _config;
+  // Shared DataSource dispatchers and handler registries (initialized lazily)
+  ffi.NativeCallable<
+      ffi.Uint32 Function(
+          ffi.Pointer<raw.UA_Server>,
+          ffi.Pointer<raw.UA_NodeId>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Pointer<raw.UA_NodeId>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Bool,
+          ffi.Pointer<raw.UA_NumericRange>,
+          ffi.Pointer<raw.UA_DataValue>)>? _dsReadDispatcher;
+  ffi.NativeCallable<
+      ffi.Uint32 Function(
+          ffi.Pointer<raw.UA_Server>,
+          ffi.Pointer<raw.UA_NodeId>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Pointer<raw.UA_NodeId>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Pointer<raw.UA_NumericRange>,
+          ffi.Pointer<raw.UA_DataValue>)>? _dsWriteDispatcher;
+  final Map<String, DynamicValue Function()> _dataSourceReads = {};
+  final Map<String, int Function(DynamicValue)> _dataSourceWrites = {};
 
   /// Initializes and starts the OPC UA server.
   ///
@@ -181,44 +203,6 @@ class Server {
     }
   }
 
-  /// Adds a Folder object node.
-  ///
-  /// By default this creates a folder named [name] under Root (Organizes) with
-  /// type definition `FolderType`.
-  /// Provide [requestedNewNodeId] to set a specific NodeId; otherwise use a
-  /// random or application-defined id.
-  void addFolderNode(String name,
-      {NodeId? requestedNewNodeId,
-      NodeId? parentNodeId,
-      NodeId? referenceTypeId,
-      LocalizedText? displayName,
-      LocalizedText? description}) {
-    // Defaults to RootFolder organized by Organizes, matching the snippet.
-    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ROOTFOLDER);
-    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
-    final folderType = NodeId.fromNumeric(0, raw.UA_NS0ID_FOLDERTYPE);
-
-    // Build UA_ObjectAttributes for display/description
-    final objAttr = _lib.UA_ObjectAttributes_new();
-    objAttr.ref = _lib.UA_ObjectAttributes_default;
-    if (displayName != null) {
-      objAttr.ref.displayName.locale.set(displayName.locale);
-      objAttr.ref.displayName.text.set(displayName.value);
-    } else {
-      objAttr.ref.displayName.locale.set("");
-      objAttr.ref.displayName.text.set(name);
-    }
-    if (description != null) {
-      objAttr.ref.description.locale.set(description.locale);
-      objAttr.ref.description.text.set(description.value);
-    }
-
-    _addNode(raw.UA_NodeClass.UA_NODECLASS_OBJECT, requestedNewNodeId ?? NodeId.nullId, parentNodeId, referenceTypeId,
-        name, folderType, objAttr.cast(), getType(UaTypes.objectAttributes, _lib));
-
-    _lib.UA_ObjectAttributes_delete(objAttr);
-  }
-
   void addDataTypeNode(NodeId requestedNewNodeId, String browseName,
       {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
     var attr = _lib.UA_DataTypeAttributes_new();
@@ -235,6 +219,146 @@ class Server {
         NodeId.nullId, attr.cast(), getType(UaTypes.dataTypeAttributes, _lib));
 
     _lib.UA_DataTypeAttributes_delete(attr);
+  }
+
+  void _ensureDataSourceDispatchers() {
+    if (_dsReadDispatcher != null && _dsWriteDispatcher != null) return;
+
+    // Read dispatcher: looks up handler by nodeId string and fills value
+    int readCb(
+        ffi.Pointer<raw.UA_Server> server,
+        ffi.Pointer<raw.UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<raw.UA_NodeId> nodeId,
+        ffi.Pointer<ffi.Void> nodeContext,
+        bool includeSourceTimeStamp,
+        ffi.Pointer<raw.UA_NumericRange> range,
+        ffi.Pointer<raw.UA_DataValue> value) {
+      try {
+        final key = nodeId.ref.format();
+        final handler = _dataSourceReads[key];
+        if (handler == null) {
+          return raw.UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        final dyn = handler();
+        final srcVar = valueToVariant(dyn, _lib);
+        final dstVar = value.cast<raw.UA_Variant>();
+        _lib.UA_Variant_copy(srcVar, dstVar);
+        if (includeSourceTimeStamp) {
+          value.ref.sourceTimestamp = _lib.UA_DateTime_now();
+        }
+        value.ref.status = raw.UA_STATUSCODE_GOOD;
+        _lib.UA_Variant_delete(srcVar);
+        return raw.UA_STATUSCODE_GOOD;
+      } catch (_) {
+        return raw.UA_STATUSCODE_BADINTERNALERROR;
+      }
+    }
+
+    int writeCb(
+        ffi.Pointer<raw.UA_Server> server,
+        ffi.Pointer<raw.UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<raw.UA_NodeId> nodeId,
+        ffi.Pointer<ffi.Void> nodeContext,
+        ffi.Pointer<raw.UA_NumericRange> range,
+        ffi.Pointer<raw.UA_DataValue> value) {
+      try {
+        final key = nodeId.ref.format();
+        final handler = _dataSourceWrites[key];
+        if (handler == null) {
+          return raw.UA_STATUSCODE_BADWRITENOTSUPPORTED;
+        }
+        final srcVar = value.cast<raw.UA_Variant>();
+        final dyn = variantToValue(srcVar.ref, defs: null);
+        return handler(dyn);
+      } catch (_) {
+        return raw.UA_STATUSCODE_BADINTERNALERROR;
+      }
+    }
+
+    _dsReadDispatcher = ffi.NativeCallable<
+        ffi.Uint32 Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Bool,
+            ffi.Pointer<raw.UA_NumericRange>,
+            ffi.Pointer<raw.UA_DataValue>)>.isolateLocal(readCb, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
+    _dsWriteDispatcher = ffi.NativeCallable<
+            ffi.Uint32 Function(
+                ffi.Pointer<raw.UA_Server>,
+                ffi.Pointer<raw.UA_NodeId>,
+                ffi.Pointer<ffi.Void>,
+                ffi.Pointer<raw.UA_NodeId>,
+                ffi.Pointer<ffi.Void>,
+                ffi.Pointer<raw.UA_NumericRange>,
+                ffi.Pointer<raw.UA_DataValue>)>.isolateLocal(writeCb,
+        exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
+  }
+
+  /// Adds a data source variable node with shared server-level callbacks.
+  void addDataSourceVariableNode(
+      {required NodeId variableNodeId,
+      required String name,
+      required DynamicValue Function() onRead,
+      int Function(DynamicValue newValue)? onWrite,
+      NodeId? parentNodeId,
+      NodeId? referenceTypeId,
+      NodeId? baseDataVariableType,
+      NodeId? dataTypeId,
+      AccessLevelMask accessLevel = const AccessLevelMask(read: true)}) {
+    _ensureDataSourceDispatchers();
+
+    final attr = _lib.UA_VariableAttributes_new();
+    attr.ref = _lib.UA_VariableAttributes_default;
+    attr.ref.accessLevel = accessLevel.value;
+    attr.ref.userAccessLevel = accessLevel.value;
+    if (dataTypeId != null) {
+      attr.ref.dataType = dataTypeId.toRaw(_lib);
+    }
+
+    final browse = _lib.UA_QUALIFIEDNAME(1, name.toNativeUtf8(allocator: ua_malloc).cast());
+
+    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
+    baseDataVariableType ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
+
+    final ds = ua_calloc<raw.UA_DataSource>();
+
+    // Register handlers by node key
+    final key = variableNodeId.toRaw(_lib).format();
+    ds.ref.read = _dsReadDispatcher!.nativeFunction;
+    // Always provide a write function; it will return BADWRITENOTSUPPORTED if not registered
+    ds.ref.write = ffi.nullptr;
+
+    _dataSourceReads[key] = onRead;
+    if (onWrite != null) {
+      _dataSourceWrites[key] = onWrite;
+      ds.ref.write = _dsWriteDispatcher!.nativeFunction;
+    }
+
+    //TODO: replace with UA_Server_addCallbackValueSourceVariableNode once available in
+    //our version of the library
+
+    // 1) Add a regular variable node first
+    final addStatus = _lib.UA_Server_addVariableNode(_server, variableNodeId.toRaw(_lib), parentNodeId.toRaw(_lib),
+        referenceTypeId.toRaw(_lib), browse, baseDataVariableType.toRaw(_lib), attr.ref, ffi.nullptr, ffi.nullptr);
+
+    _lib.UA_VariableAttributes_delete(attr);
+    ua_calloc.free(ds);
+    if (addStatus != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add variable node for datasource ${statusCodeToString(addStatus, _lib)}, nodeId: $variableNodeId';
+    }
+    // 2) Attach the DataSource backend using the setter API
+    final setStatus = _lib.UA_Server_setVariableNode_dataSource(_server, variableNodeId.toRaw(_lib), ds.ref);
+    if (setStatus != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to attach datasource ${statusCodeToString(setStatus, _lib)}, nodeId: $variableNodeId';
+    }
+    // Mark node as dynamic so server queries data on read
+    _lib.UA_Server_setVariableNodeDynamic(_server, variableNodeId.toRaw(_lib), true);
   }
 
   void _addNode(
@@ -499,6 +623,9 @@ class Server {
   /// ```
   void delete() {
     int ret = _lib.UA_Server_delete(_server);
+    // Cleanup native callbacks if not null
+    _dsReadDispatcher?.close();
+    _dsWriteDispatcher?.close();
     if (ret != 0) {
       throw "Failed to delete server ${statusCodeToString(ret, _lib)}";
     }

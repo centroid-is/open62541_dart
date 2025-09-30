@@ -173,6 +173,69 @@ void main() async {
     expect(server!.read(boolNodeId).value, false);
   });
 
+  test('DataSource variable read and write via shared dispatcher', () async {
+    // Backing state held in Dart, accessed through Server shared datasource callbacks
+    double temperature = 21.5;
+    final tempNodeId = NodeId.fromString(1, "datasource.temperature");
+
+    server!.addDataSourceVariableNode(
+      variableNodeId: tempNodeId,
+      name: "Temperature",
+      dataTypeId: NodeId.double,
+      accessLevel: const AccessLevelMask(read: true, write: true),
+      onRead: () => DynamicValue(name: "Temperature", value: temperature, typeId: NodeId.double),
+      onWrite: (DynamicValue newValue) {
+        temperature = (newValue.value as num).toDouble();
+        return raw.UA_STATUSCODE_GOOD;
+      },
+    );
+    // Also add a second read-only datasource node to ensure the server uses the same shared callbacks
+    int counter = 0;
+    final counterNodeId = NodeId.fromString(1, "datasource.counter");
+    server!.addDataSourceVariableNode(
+      variableNodeId: counterNodeId,
+      name: "Counter",
+      dataTypeId: NodeId.int32,
+      accessLevel: const AccessLevelMask(read: true),
+      onRead: () => DynamicValue(name: "Counter", value: counter, typeId: NodeId.int32),
+    );
+    // Verify initial reads
+    final t1 = await client!.read(tempNodeId);
+    expect((t1.value as num).toDouble(), 21.5);
+    final c1 = await client!.read(counterNodeId);
+    expect(c1.value, 0);
+
+    // Update through client write; server write handler should update backing state
+    await client!.write(tempNodeId, DynamicValue(value: 37.2, typeId: NodeId.double));
+    final t2 = await client!.read(tempNodeId);
+    expect((t2.value as num).toDouble(), 37.2);
+
+    // Ensure server-side state changed
+    expect(temperature, 37.2);
+
+    // Mutate the read-only node's backing state on the server side and verify read via client
+    counter = 5;
+    final c2 = await client!.read(counterNodeId);
+    expect(c2.value, 5);
+
+    // Add a variable with no value
+    final noValueNodeId = NodeId.fromString(1, "datasource.noValue");
+    server!.addDataSourceVariableNode(
+      variableNodeId: noValueNodeId,
+      name: "No Value",
+      dataTypeId: NodeId.int32,
+      accessLevel: const AccessLevelMask(read: true, write: true),
+      onRead: () => throw Exception("No value"),
+    );
+    bool threw = false;
+    try {
+      await client!.read(noValueNodeId);
+    } catch (e) {
+      threw = true;
+    }
+    expect(threw, isTrue);
+  });
+
   test("Variant create and delete crash test windows", () async {
     final myStructureTypeId = NodeId.fromString(1, "myStructureType");
     DynamicValue structureValue = DynamicValue(name: "My Structure Variable", typeId: myStructureTypeId);
