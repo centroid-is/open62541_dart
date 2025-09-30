@@ -181,6 +181,44 @@ class Server {
     }
   }
 
+  /// Adds a Folder object node.
+  ///
+  /// By default this creates a folder named [name] under Root (Organizes) with
+  /// type definition `FolderType`.
+  /// Provide [requestedNewNodeId] to set a specific NodeId; otherwise use a
+  /// random or application-defined id.
+  void addFolderNode(String name,
+      {NodeId? requestedNewNodeId,
+      NodeId? parentNodeId,
+      NodeId? referenceTypeId,
+      LocalizedText? displayName,
+      LocalizedText? description}) {
+    // Defaults to RootFolder organized by Organizes, matching the snippet.
+    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ROOTFOLDER);
+    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
+    final folderType = NodeId.fromNumeric(0, raw.UA_NS0ID_FOLDERTYPE);
+
+    // Build UA_ObjectAttributes for display/description
+    final objAttr = _lib.UA_ObjectAttributes_new();
+    objAttr.ref = _lib.UA_ObjectAttributes_default;
+    if (displayName != null) {
+      objAttr.ref.displayName.locale.set(displayName.locale);
+      objAttr.ref.displayName.text.set(displayName.value);
+    } else {
+      objAttr.ref.displayName.locale.set("");
+      objAttr.ref.displayName.text.set(name);
+    }
+    if (description != null) {
+      objAttr.ref.description.locale.set(description.locale);
+      objAttr.ref.description.text.set(description.value);
+    }
+
+    _addNode(raw.UA_NodeClass.UA_NODECLASS_OBJECT, requestedNewNodeId ?? NodeId.nullId, parentNodeId, referenceTypeId,
+        name, folderType, objAttr.cast(), getType(UaTypes.objectAttributes, _lib));
+
+    _lib.UA_ObjectAttributes_delete(objAttr);
+  }
+
   void addDataTypeNode(NodeId requestedNewNodeId, String browseName,
       {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
     var attr = _lib.UA_DataTypeAttributes_new();

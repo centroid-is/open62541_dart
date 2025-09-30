@@ -245,7 +245,8 @@ enum UaTypes {
   publishedDataSetCustomSourceDataType(raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE),
   readRequest(raw.UA_TYPES_READREQUEST),
   readResponse(raw.UA_TYPES_READRESPONSE),
-  dataTypeAttributes(raw.UA_TYPES_DATATYPEATTRIBUTES);
+  dataTypeAttributes(raw.UA_TYPES_DATATYPEATTRIBUTES),
+  objectAttributes(raw.UA_TYPES_OBJECTATTRIBUTES);
 
   final int value;
   const UaTypes(this.value);
