@@ -101,6 +101,11 @@ class AwaitConnectMessage extends IsolateMessage {
   const AwaitConnectMessage(String requestId) : super(requestId);
 }
 
+class RunIterateMessage extends IsolateMessage {
+  final Duration timeout;
+  const RunIterateMessage(String requestId, this.timeout) : super(requestId);
+}
+
 class StateStreamMessage extends IsolateMessage {
   const StateStreamMessage(String requestId) : super(requestId);
 }
@@ -512,6 +517,25 @@ class ClientIsolate implements ClientApi {
     }
   }
 
+  /// Run iterate in a loop
+  /// The duration is the time for each iteration
+  /// Never returns, unless there was an error
+  Future<void> runIterate({Duration duration = const Duration(milliseconds: 10)}) async {
+    if (_isClosed) throw StateError('ClientIsolate is closed');
+
+    final completer = Completer<void>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(RunIterateMessage(id, duration));
+
+    try {
+      await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
   // Private fields for request tracking
   final Map<String, Completer> _pendingRequests = {};
   final Map<String, StreamController> _streamControllers = {};
@@ -554,7 +578,7 @@ class _IsolateData {
 /// Entry point for the isolate
 void _isolateEntryPoint(_IsolateData data) {
   late Client client;
-  late Timer iterateTimer;
+  Timer? iterateTimer;
   final receivePort = ReceivePort();
   final sendPort = data.sendPort;
 
@@ -583,11 +607,6 @@ void _isolateEntryPoint(_IsolateData data) {
     logLevel: data.logLevel,
     connectivityCheckInterval: data.connectivityCheckInterval,
   );
-
-  // Start the iterate timer
-  iterateTimer = Timer.periodic(const Duration(milliseconds: 10), (timer) {
-    client.runIterate(const Duration(milliseconds: 10));
-  });
 
   // Handle messages from the main isolate
   receivePort.listen((message) async {
@@ -667,12 +686,21 @@ void _isolateEntryPoint(_IsolateData data) {
         }
         activeStreams.clear();
 
-        iterateTimer.cancel();
+        iterateTimer?.cancel();
         await client.delete();
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is AwaitConnectMessage) {
         await client.awaitConnect();
         sendPort.send(IsolateResponse.success(message.requestId, null));
+      } else if (message is RunIterateMessage) {
+        iterateTimer?.cancel();
+        // Start the iterate timer
+        iterateTimer = Timer.periodic(message.timeout, (timer) {
+          if (!client.runIterate(message.timeout)) {
+            iterateTimer?.cancel();
+            sendPort.send(IsolateResponse.error(message.requestId, "Iteratation failed"));
+          }
+        });
       } else if (message is StateStreamMessage) {
         final stream = client.config.stateStream;
 
