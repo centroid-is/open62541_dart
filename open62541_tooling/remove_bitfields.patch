@@ -1,6 +1,6 @@
---- open62541.h	2025-02-19 18:41:05.953099547 +0000
-+++ open62541.h	2025-02-19 18:45:07.725106926 +0000
-@@ -23374,12 +23374,13 @@
+--- open62541.h	2025-11-24 16:53:22
++++ open62541_modified.h	2025-11-24 16:51:51
+@@ -23288,12 +23288,13 @@
      UA_UInt16     sourcePicoseconds;
      UA_UInt16     serverPicoseconds;
      UA_StatusCode status;
@@ -20,9 +20,9 @@
  } UA_DataValue;
  
  /* Copy the DataValue, but use only a subset of the (multidimensional) array of
-@@ -23400,13 +23401,14 @@
-  * A structure that contains detailed error and diagnostic information
+@@ -23311,13 +23312,14 @@
   * associated with a StatusCode. */
+ 
  typedef struct UA_DiagnosticInfo {
 -    UA_Boolean    hasSymbolicId          : 1;
 -    UA_Boolean    hasNamespaceUri        : 1;
@@ -42,7 +42,7 @@
      UA_Int32      symbolicId;
      UA_Int32      namespaceUri;
      UA_Int32      localizedText;
-@@ -23450,16 +23452,17 @@
+@@ -23360,16 +23362,17 @@
      const char *memberName;       /* Human-readable member name */
  #endif
      const UA_DataType *memberType;/* The member data type description */
@@ -70,25 +70,25 @@
  } UA_DataTypeMember;
  
  /* The DataType "kind" is an internal type classification. It is used to
-@@ -23506,13 +23509,14 @@
+@@ -23416,14 +23419,13 @@
      UA_NodeId typeId;           /* The nodeid of the type */
      UA_NodeId binaryEncodingId; /* NodeId of datatype when encoded as binary */
-     //UA_NodeId xmlEncodingId;  /* NodeId of datatype when encoded as XML */
--    UA_UInt32 memSize     : 16; /* Size of the struct in memory */
--    UA_UInt32 typeKind    : 6;  /* Dispatch index for the handling routines */
--    UA_UInt32 pointerFree : 1;  /* The type (and its members) contains no
--                                 * pointers that need to be freed */
--    UA_UInt32 overlayable : 1;  /* The type has the identical memory layout
--                                 * in memory and on the binary stream. */
--    UA_UInt32 membersSize : 8;  /* How many members does the type have? */
-+    // UA_UInt32 memSize     : 16; /* Size of the struct in memory */
-+    // UA_UInt32 typeKind    : 6;  /* Dispatch index for the handling routines */
-+    // UA_UInt32 pointerFree : 1;  /* The type (and its members) contains no
-+    //                              * pointers that need to be freed */
-+    // UA_UInt32 overlayable : 1;  /* The type has the identical memory layout
-+    //                              * in memory and on the binary stream. */
-+    // UA_UInt32 membersSize : 8;  /* How many members does the type have? */
-+    UA_UInt32 substitute;
+     UA_NodeId xmlEncodingId;    /* NodeId of datatype when encoded as XML */
+-    // UA_UInt32 memSize     : 16; /* Size of the struct in memory */
+-    // UA_UInt32 typeKind    : 6;  /* Dispatch index for the handling routines */
+-    // UA_UInt32 pointerFree : 1;  /* The type (and its members) contains no
+-    //                              * pointers that need to be freed */
+-    // UA_UInt32 overlayable : 1;  /* The type has the identical memory layout
+-    //                              * in memory and on the binary stream. */
+-    // UA_UInt32 membersSize : 8;  /* How many members does the type have? */
+-    UA_UInt32 substitute;
++    UA_UInt32 memSize     : 16; /* Size of the struct in memory */
++    UA_UInt32 typeKind    : 6;  /* Dispatch index for the handling routines */
++    UA_UInt32 pointerFree : 1;  /* The type (and its members) contains no
++                                 * pointers that need to be freed */
++    UA_UInt32 overlayable : 1;  /* The type has the identical memory layout
++                                 * in memory and on the binary stream. */
++    UA_UInt32 membersSize : 8;  /* How many members does the type have? */
      UA_DataTypeMember *members;
  };
  

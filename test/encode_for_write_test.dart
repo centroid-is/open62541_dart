@@ -6,7 +6,7 @@ import 'package:test/test.dart';
 import 'package:open62541/src/common.dart';
 import 'package:open62541/src/dynamic_value.dart';
 import 'package:open62541/src/extensions.dart';
-import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
+import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'package:open62541/src/node_id.dart';
 import 'schema_util.dart';
 

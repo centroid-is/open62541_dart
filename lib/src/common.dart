@@ -9,22 +9,22 @@ import 'package:ffi/ffi.dart';
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/types/create_type.dart';
 import 'extensions.dart';
-import 'generated/open62541_bindings.dart' as raw;
+import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
-String statusCodeToString(int statusCode, raw.open62541 lib) {
-  return lib.UA_StatusCode_name(statusCode).cast<Utf8>().toDartString();
+String statusCodeToString(int statusCode) {
+  return raw.UA_StatusCode_name(statusCode).cast<Utf8>().toDartString();
 }
 
-ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType, raw.open62541 lib) {
+ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType) {
   int type = uaType.value;
   if (type < 0 || type > raw.UA_TYPES_COUNT) {
     throw 'Type out of boundary $type';
   }
-  return ffi.Pointer.fromAddress(lib.addresses.UA_TYPES.address + (type * ffi.sizeOf<raw.UA_DataType>()));
+  return ffi.Pointer.fromAddress(raw.UA_TYPES.address + (type * ffi.sizeOf<raw.UA_DataType>()));
 }
 
-ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib) {
+ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
   binarize.ByteWriter wr = binarize.ByteWriter();
   value.set(wr, value, Endian.little, false, true);
   final pointer = ua_calloc<ffi.Uint8>(wr.length);

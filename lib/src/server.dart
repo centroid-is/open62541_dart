@@ -6,7 +6,7 @@ import 'package:ffi/ffi.dart';
 import 'package:open62541/open62541.dart';
 import 'common.dart';
 import 'extensions.dart';
-import 'generated/open62541_bindings.dart' as raw;
+import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
 class Server {

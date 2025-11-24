@@ -6,15 +6,74 @@ import 'package:logging/logging.dart';
 
 void main(){
   final packageRoot = Platform.script.resolve('../');
+  final functions = Functions(
+    include: Declarations.includeSet(
+      {
+      '__UA_Client_AsyncService',
+      '__UA_Server_addNode',
+      '__UA_Server_write',
+      'UA_StatusCode_name',
+      'UA_Variant_new',
+    }),
+    rename:(declaration) {
+      switch (declaration.originalName) {
+        case '__UA_Client_AsyncService':
+          return 'UA_Client_AsyncService';
+        case '__UA_Server_addNode':
+          return 'UA_Server_addNode';
+        case '__UA_Server_write':
+          return 'UA_Server_write_raw';
+        default:
+          return declaration.originalName;
+      }
+    },
+  );
+
+  final globals = Globals(
+    include: Declarations.includeSet(
+      {
+        'UA_TYPES',
+      }
+    )
+  );
+
+  final macros = Macros(
+    include: Declarations.includeSet(
+      {
+        'UA_OPEN62541_VER_MAJOR',
+        'UA_OPEN62541_VER_MINOR',
+        'UA_OPEN62541_VER_PATCH',
+        'UA_OPEN62541_VER_LABEL',
+        'UA_OPEN62541_VER_COMMIT',
+        'UA_OPEN62541_VERSION',
+        'UA_ACCESSLEVELMASK_*', //TODO: How can I do this wildcard?
+        'UA_TYPES_COUNT'
+      }
+    ) 
+  );
+
+  // Define our generator
   final generator = FfiGenerator(
     headers: Headers(
       entryPoints: [
         packageRoot.resolve('third_party/open62541/open62541.h'),
       ],
     ),
-    functions: Functions.includeSet(
-      {''}
+    functions: functions,
+    structs: Structs.includeSet(
+      {
+        'UA_ClientConfig',
+        'UA_Variant',
+        'UA_EnumDefinition',
+        'UA_StructureDefinition'
+      }
     ),
+    typedefs: Typedefs.includeSet(
+      {'UA_Byte'}
+    ),
+    globals: globals,
+    macros: macros,
+    enums: Enums.includeAll,
     output: Output(
       dartFile: packageRoot.resolve('lib/src/third_party/open62541.g.dart'),
       preamble: '''
@@ -31,7 +90,7 @@ void main(){
  *
  * Sources can be found at
  * https://github.com/open62541/open62541
- * 
+ */
 '''
     )
   );
@@ -39,35 +98,3 @@ void main(){
     logger: Logger('')..onRecord.listen((record) => print(record.message)),
   );
 }
-/*
-ffigen:
-  output: lib/src/generated/open62541_bindings.dart
-  name: open62541
-  description: Low level bindings to open62541
-  headers:
-    entry-points:
-      - 'open62541_build/open62541.h'
-  functions:
-    symbol-address:
-      include:
-        - 'UA_*' # Do this to expose all function pointers.
-        - '__UA_Client_AsyncService'
-        - '__UA_Server_addNode'
-        - '__UA_Server_write'
-
-    rename:
-      '__UA_Client_AsyncService': 'UA_Client_AsyncService'
-      '__UA_Server_addNode': 'UA_Server_addNode'
-      '__UA_Server_write': 'UA_Server_write_raw'
-  # UA_TYPES is a list inside the library and we need raw access
-  # To the top level pointer to increment the list.
-  globals:
-    symbol-address:
-      include:
-        - 'UA_TYPES'
-  compiler-opts:
-    - '-Iopen62541_build/install/include/'
-    - '-I/lib/clang/19/include/'
-    - '-Wno-nullability-completeness'
-    - '-Wno-expansion-to-defined'
-    - '-DUA_ENABLE_ENCRYPTION' */

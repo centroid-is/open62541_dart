@@ -15,7 +15,6 @@ Future<Uri> download(Uri outputDirectory, String version) async {
   if (response.statusCode != 200) {
     throw Exception('Error downloading open62541 version $version: ${response.statusCode}');
   }
-
   final archive = ZipDecoder().decodeBytes(response.bodyBytes);
 
   if (!await extractDir.exists()) {
@@ -27,12 +26,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
       final outputStream = OutputFileStream('${extractDir.path.toString()}/${file.name}');
       file.writeContent(outputStream);
       outputStream.closeSync();
-    } else if (file.isDirectory) {
-      final dir = Directory(extractDir.toString() + '/' + file.name);
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
-    }
+    } 
   }
   final version_no_v_prefix = version.substring(1);
   final folder = extractDir.uri.resolve('open62541-$version_no_v_prefix/');
@@ -45,19 +39,15 @@ Future<Uri> download(Uri outputDirectory, String version) async {
 Future<void> main(List<String> args) async {
   final version = "v1.5.0-rc1";
   await build(args, (input, output) async {
-    final packageName = input.packageName;
     final extracted_files = await download(input.outputDirectoryShared, version);
 
-    print(extracted_files);
-
-    final _logger = Logger('')
+    final logger = Logger('')
       ..level = Level.ALL
       // temp fwd to stderr until process logs pass to stdout
       ..onRecord.listen((record) => stderr.writeln(record));
     final builder = CMakeBuilder.create(
       name: 'open62541',
       sourceDir: extracted_files,
-      generator: Generator.ninja,
       buildMode: BuildMode.release,
       defines: {
         'CMAKE_BUILD_TYPE': 'Release',
@@ -67,17 +57,15 @@ Future<void> main(List<String> args) async {
         'UA_ENABLE_ENCRYPTION': 'MBEDTLS',
         'UA_BUILD_EXAMPLES': 'OFF',
         'UA_BUILD_UNIT_TESTS': 'OFF',
-        'UA_ENABLE_AMALGAMATION': 'ON',
         'UA_MULTITHREADING': '0',
         'UA_LOGLEVEL': '100',
+        'UA_ENABLE_AMALGAMATION': 'ON'
       },
       targets: ['install'],
       buildLocal: true,
-      logger: _logger,
+      logger: logger,
     );
 
-    await builder.run(input: input, output: output, logger: _logger);
+    await builder.run(input: input, output: output, logger: logger);
   });
 }
-
-// patch $BUILD_DIR/open62541.h -i $PROJECT_ROOT/open62541_tooling/remove_bitfields.patch
