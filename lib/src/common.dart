@@ -51,12 +51,12 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
   }
 
   final dimensions = getDimensions(value);
-  ffi.Pointer<raw.UA_Variant> variant = lib.UA_Variant_new();
+  ffi.Pointer<raw.UA_Variant> variant = raw.UA_Variant_new();
   variant.ref.data = pointer.cast();
   if (value.isObject || value.isArray && value.asArray.first.isObject) {
-    variant.ref.type = getType(UaTypes.extensionObject, lib);
+    variant.ref.type = getType(UaTypes.extensionObject);
   } else if (id != null) {
-    variant.ref.type = getType(id.toUaTypes(), lib); //TODO: This is not really the correct.
+    variant.ref.type = getType(id.toUaTypes()); //TODO: This is not really the correct.
   } else {
     throw 'Unable to determine type for $value';
   }
@@ -126,45 +126,4 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
   retValue.extObjEncodingId = extObjEncodingId;
 
   return retValue;
-}
-
-/// Loads the open62541 library.
-///
-/// By default, it attempts to load the library dynamically based on the platform:
-/// - Linux: 'libopen62541.so'
-/// - MacOS: 'libopen62541.dylib'
-/// - Windows: 'libopen62541.dll'
-///
-/// If [staticLinking] is true:
-/// - On Android: loads 'libopen62541.so' dynamically (static linking not supported)
-/// - Other platforms: loads from the executable itself
-/// This works with https://pub.dev/packages/open62541_libs
-///
-/// If [local] is true, loads from the package's lib directory.
-/// If [path] is provided, loads from the specified path.
-///
-/// Returns:
-///   A new [ffi.DynamicLibrary] instance.
-ffi.DynamicLibrary loadOpen62541Library({bool staticLinking = false, bool local = false, Uri? path}) {
-  if (staticLinking) {
-    if (Platform.isAndroid) {
-      return ffi.DynamicLibrary.open('libopen62541.so');
-    } else {
-      return ffi.DynamicLibrary.executable();
-    }
-  }
-  var ending = 'so';
-  if (Platform.isMacOS) {
-    ending = 'dylib';
-  } else if (Platform.isWindows) {
-    ending = 'dll';
-  }
-  if (local) {
-    var uri = Isolate.resolvePackageUriSync(Uri.parse('package:open62541/libopen62541.$ending'));
-    return ffi.DynamicLibrary.open(uri!.toFilePath(windows: Platform.isWindows));
-  }
-  if (path != null) {
-    return ffi.DynamicLibrary.open(path.toFilePath(windows: Platform.isWindows));
-  }
-  return ffi.DynamicLibrary.open('libopen62541.$ending');
 }

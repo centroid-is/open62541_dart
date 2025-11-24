@@ -13,8 +13,8 @@ void main() {
     expect(sizeOf<raw.UA_DataType>(), 72);
   });
   test("Verify types", () {
-    expect(getType(UaTypes.readRequest, lib).ref.typeName.cast<Utf8>().toDartString(), "ReadRequest");
-    expect(getType(UaTypes.readResponse, lib).ref.typeName.cast<Utf8>().toDartString(), "ReadResponse");
-    expect(getType(UaTypes.boolean, lib).ref.typeName.cast<Utf8>().toDartString(), "Boolean");
+    expect(getType(UaTypes.readRequest).ref.typeName.cast<Utf8>().toDartString(), "ReadRequest");
+    expect(getType(UaTypes.readResponse).ref.typeName.cast<Utf8>().toDartString(), "ReadResponse");
+    expect(getType(UaTypes.boolean).ref.typeName.cast<Utf8>().toDartString(), "Boolean");
   });
 }

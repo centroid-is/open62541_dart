@@ -13,7 +13,84 @@ void main(){
       '__UA_Server_addNode',
       '__UA_Server_write',
       'UA_StatusCode_name',
+
       'UA_Variant_new',
+      'UA_Variant_delete',
+      'UA_Variant_copy',
+
+      'UA_ClientConfig_setDefault',
+      'UA_Client_delete',
+      'UA_Client_disconnect',
+      'UA_Client_findDataType',
+      'UA_ClientConfig_setDefaultEncryption',
+      'UA_CertificateGroup_AcceptAll',
+      'UA_ClientConfig_setAuthenticationUsername',
+      'UA_Client_newWithConfig',
+      'UA_Client_connectAsync',
+      'UA_Client_run_iterate',
+      'UA_Client_writeValueAttribute_async',
+      'UA_Client_getState',
+      'UA_ReadRequest_init',
+      'UA_ReadRequest_new',
+      'UA_ReadRequest_delete',
+      'UA_DataValue_new',
+      'UA_DataValue_init',
+      'UA_DataValue_delete',
+      'UA_DataValue_copy',
+      'UA_CreateSubscriptionRequest_new',
+      'UA_CreateSubscriptionRequest_init',
+      'UA_CreateSubscriptionRequest_delete',
+      'UA_CreateMonitoredItemsRequest_init',
+      'UA_CreateMonitoredItemsRequest_new',
+      'UA_CreateMonitoredItemsRequest_delete',
+      'UA_Client_Subscriptions_create_async',
+      'UA_DeleteMonitoredItemsRequest_new',
+      'UA_DeleteMonitoredItemsRequest_init',
+      'UA_DeleteMonitoredItemsRequest_delete',
+      'UA_Client_cancelByRequestId',
+      'UA_Client_MonitoredItems_createDataChanges_async',
+      'UA_Client_MonitoredItems_delete_async',
+      'UA_Client_call_async',
+
+
+      'UA_ServerConfig_setMinimal',
+      'UA_Server_newWithConfig',
+      'UA_Server_getConfig',
+      'UA_Server_run_startup',
+      'UA_Server_addVariableNode',
+      'UA_Server_addVariableTypeNode',
+      'UA_Server_addNode',
+      'UA_Server_writeDescription',
+      'UA_Server_readValue',
+      'UA_Server_writeValue',
+      'UA_Server_findDataType',
+      'UA_Server_getLifecycleState',
+      'UA_Server_run_iterate',
+      'UA_Server_run_shutdown',
+      'UA_Server_delete',
+
+
+      'UA_DataTypeAttributes_new',
+      'UA_DataTypeAttributes_delete',
+
+      'UA_VariableTypeAttributes_new',
+      'UA_VariableTypeAttributes_delete',
+      'UA_VariableAttributes_new',
+      'UA_VariableAttributes_delete',
+
+      'UA_LocalizedText_new',
+      'UA_LocalizedText_delete'
+
+      'UA_Log_Stdout_new',
+      'UA_Log_Stdout_delete',
+
+      'UA_NodeId_new',
+      'UA_NodeId_delete',
+      'UA_NODEID_STRING',
+      'UA_NODEID_NUMERIC',
+
+      'UA_QUALIFIEDNAME',
+
     }),
     rename:(declaration) {
       switch (declaration.originalName) {
@@ -33,6 +110,7 @@ void main(){
     include: Declarations.includeSet(
       {
         'UA_TYPES',
+        'UA_VariableAttributes_default',
       }
     )
   );
@@ -47,7 +125,9 @@ void main(){
         'UA_OPEN62541_VER_COMMIT',
         'UA_OPEN62541_VERSION',
         'UA_ACCESSLEVELMASK_*', //TODO: How can I do this wildcard?
-        'UA_TYPES_COUNT'
+        'UA_STATUSCODE_*',
+        'UA_STATUSCODE_GOOD',
+        'UA_TYPES_COUNT',
       }
     ) 
   );
@@ -56,7 +136,7 @@ void main(){
   final generator = FfiGenerator(
     headers: Headers(
       entryPoints: [
-        packageRoot.resolve('third_party/open62541/open62541.h'),
+        packageRoot.resolve('third_party/open62541/open62541_modified.h'),
       ],
     ),
     functions: functions,
@@ -65,11 +145,38 @@ void main(){
         'UA_ClientConfig',
         'UA_Variant',
         'UA_EnumDefinition',
-        'UA_StructureDefinition'
+        'UA_StructureDefinition',
+        'UA_Server',
+        'UA_DataValue',
+        'UA_NumericRange',
+        'UA_ServerConfig',
+        'UA_NodeAttributes',
+        'UA_DataTypeAttributes',
+        'UA_DataTypeArray',
+        'UA_DataTypeMember',
+        'UA_WriteResponse',
+        'UA_ReadValueId',
+        'UA_ReadRequest',
+        'UA_ReadResponse',
+        'UA_CreateSubscriptionRequest',
+        'UA_CreateSubscriptionResponse',
+        'UA_DeleteMonitoredItemsResponse',
+        'UA_MonitoredItemCreateRequest',
+        'UA_MonitoredItemCreateResponse',
+        'UA_CreateMonitoredItemsRequest',
+        'UA_CreateMonitoredItemsResponse',
+        'UA_CallResponse',
+        'UA_CallMethodResult',
+        'UA_DeleteMonitoredItemsRequest',
       }
     ),
     typedefs: Typedefs.includeSet(
-      {'UA_Byte'}
+      {
+        'UA_Byte',
+        'UA_StatusCode',
+        'UA_ByteString',
+        'UA_UInt32',
+      }
     ),
     globals: globals,
     macros: macros,

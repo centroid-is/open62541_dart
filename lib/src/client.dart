@@ -109,8 +109,7 @@ class ClientConfig {
 typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
 
 class Client {
-  Client(
-    ffi.DynamicLibrary lib, {
+  Client({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
     String? username,
@@ -120,16 +119,16 @@ class Client {
     Uint8List? privateKey,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
-  }) : _lib = raw.open62541(lib) {
+  }) {
     final config = ua_calloc<raw.UA_ClientConfig>();
 
     if (logLevel != null) {
-      config.ref.logging = _lib.UA_Log_Stdout_new(logLevel);
+      config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
     }
 
     // The event loop logger is set to the config logger if defined
     // No need to modify the eventloop logger.
-    _lib.UA_ClientConfig_setDefault(config);
+    raw.UA_ClientConfig_setDefault(config);
 
     if (secureChannelLifeTime != null) {
       config.ref.secureChannelLifeTime = secureChannelLifeTime.inMilliseconds;
@@ -154,13 +153,13 @@ class Client {
       rawPrivateKey.ref.length = privateKey.length;
       rawPrivateKey.ref.data.asTypedList(privateKey.length).setRange(0, privateKey.length, privateKey);
 
-      _lib.UA_ClientConfig_setDefaultEncryption(
+      raw.UA_ClientConfig_setDefaultEncryption(
           config, rawCertificate.ref, rawPrivateKey.ref, ffi.nullptr, 0, ffi.nullptr, 0);
 
       // Accept all certificates
       ffi.Pointer<raw.UA_CertificateGroup> certificateVerification = ua_calloc<raw.UA_CertificateGroup>();
       certificateVerification.ref = config.ref.certificateVerification;
-      _lib.UA_CertificateGroup_AcceptAll(certificateVerification);
+      raw.UA_CertificateGroup_AcceptAll(certificateVerification);
       config.ref.certificateVerification = certificateVerification.ref;
       ua_calloc.free(certificateVerification);
 
@@ -171,13 +170,13 @@ class Client {
     }
 
     if (username != null) {
-      _lib.UA_ClientConfig_setAuthenticationUsername(config, username.toNativeUtf8(allocator: ua_malloc).cast(),
+      raw.UA_ClientConfig_setAuthenticationUsername(config, username.toNativeUtf8(allocator: ua_malloc).cast(),
           password != null ? password.toNativeUtf8(allocator: ua_malloc).cast() : ffi.nullptr);
     }
 
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
     _clientConfig = ClientConfig(config);
-    _client = _lib.UA_Client_newWithConfig(config);
+    _client = raw.UA_Client_newWithConfig(config);
   }
 
   ClientConfig get config => _clientConfig;
@@ -190,9 +189,9 @@ class Client {
   }
 
   Future<void> connect(String url) async {
-    final instantReturn = _lib.UA_Client_connectAsync(_client, url.toNativeUtf8(allocator: ua_malloc).cast());
+    final instantReturn = raw.UA_Client_connectAsync(_client, url.toNativeUtf8(allocator: ua_malloc).cast());
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to connect: ${statusCodeToString(instantReturn, _lib)}';
+      throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
     }
     await awaitConnect();
   }
@@ -201,7 +200,7 @@ class Client {
     if (_client != ffi.nullptr) {
       // Get the client state
       int ms = iterate.inMilliseconds;
-      return _lib.UA_Client_run_iterate(_client, ms) == raw.UA_STATUSCODE_GOOD;
+      return raw.UA_Client_run_iterate(_client, ms) == raw.UA_STATUSCODE_GOOD;
     }
     return false;
   }
@@ -209,7 +208,7 @@ class Client {
   Future<void> write(NodeId nodeId, DynamicValue value) {
     Completer<void> completer = Completer<void>();
 
-    final variant = valueToVariant(value, _lib);
+    final variant = valueToVariant(value);
 
     late ffi.NativeCallable<
         ffi.Void Function(
@@ -234,16 +233,16 @@ class Client {
       if (completer.isCompleted) {
         return; // Request timed out already
       }
-      _lib.UA_Variant_delete(variant);
+      raw.UA_Variant_delete(variant);
       if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
         completer.completeError(
-          'Failed to write value: ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}',
+          'Failed to write value: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
         );
         return;
       }
       if (response.ref.results.value != raw.UA_STATUSCODE_GOOD) {
         completer.completeError(
-          'Failed to write value: ${statusCodeToString(response.ref.results.value, _lib)}',
+          'Failed to write value: ${statusCodeToString(response.ref.results.value)}',
         );
         return;
       }
@@ -252,9 +251,9 @@ class Client {
       // Close our callback so it can be garbage collected
       callback.close();
     });
-    _lib.UA_Client_writeValueAttribute_async(
+    raw.UA_Client_writeValueAttribute_async(
       _client,
-      nodeId.toRaw(_lib),
+      nodeId.toRaw(),
       variant,
       callback.nativeFunction,
       ffi.nullptr,
@@ -267,7 +266,7 @@ class Client {
     ffi.Pointer<ffi.UnsignedInt> state = ua_calloc<ffi.UnsignedInt>();
     ffi.Pointer<ffi.UnsignedInt> sessionState = ua_calloc<ffi.UnsignedInt>();
     ffi.Pointer<ffi.Uint32> connectStatus = ua_calloc<ffi.Uint32>();
-    _lib.UA_Client_getState(_client, state, sessionState, connectStatus);
+    raw.UA_Client_getState(_client, state, sessionState, connectStatus);
     final retValue = ClientState(
         channelState: raw.UA_SecureChannelState.fromValue(state.value),
         sessionState: raw.UA_SessionState.fromValue(sessionState.value),
@@ -307,7 +306,7 @@ class Client {
     var index = 0;
     for (var entry in nodes.entries) {
       for (var attributeId in entry.value) {
-        readValueId[index].nodeId = entry.key.toRaw(_lib);
+        readValueId[index].nodeId = entry.key.toRaw();
         readValueId[index].attributeId = attributeId.value;
         index++;
         indorderNodes.add((entry.key, attributeId));
@@ -315,8 +314,8 @@ class Client {
     }
     assert(index == nodeCount);
 
-    ffi.Pointer<raw.UA_ReadRequest> request = _lib.UA_ReadRequest_new();
-    _lib.UA_ReadRequest_init(request);
+    ffi.Pointer<raw.UA_ReadRequest> request = raw.UA_ReadRequest_new();
+    raw.UA_ReadRequest_init(request);
     request.ref.nodesToRead = readValueId;
     request.ref.nodesToReadSize = nodeCount;
     request.ref.timestampsToReturnAsInt = raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH.value;
@@ -337,7 +336,7 @@ class Client {
     ) async {
       // Cleanup request and callback method
       callback.close();
-      _lib.UA_ReadRequest_delete(request);
+      raw.UA_ReadRequest_delete(request);
       ua_calloc.free(requestIdPtr);
 
       if (voidPointer == ffi.nullptr) {
@@ -353,10 +352,10 @@ class Client {
       // because the callback we are currently in "returns" before completing.
       ffi.Pointer<raw.UA_DataValue> source = ua_calloc<raw.UA_DataValue>();
       for (var i = 0; i < response.ref.resultsSize; i++) {
-        pointers.add(_lib.UA_DataValue_new());
-        _lib.UA_DataValue_init(pointers.last);
+        pointers.add(raw.UA_DataValue_new());
+        raw.UA_DataValue_init(pointers.last);
         source.ref = response.ref.results[i];
-        _lib.UA_DataValue_copy(source, pointers.last);
+        raw.UA_DataValue_copy(source, pointers.last);
       }
       ua_calloc.free(source);
 
@@ -373,7 +372,7 @@ class Client {
       for (var i = 0; i < pointers.length; i++) {
         if (pointers[i].ref.status != raw.UA_STATUSCODE_GOOD) {
           completer.completeError(
-              'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status, _lib)} NodeId: ${indorderNodes[i].$1} AttributeId: ${indorderNodes[i].$2}');
+              'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status)} NodeId: ${indorderNodes[i].$1} AttributeId: ${indorderNodes[i].$2}');
           break; // Break here to cleanup pointers memory below
         }
         final status = pointers[i].ref.status;
@@ -410,25 +409,25 @@ class Client {
         retVal[indorderNodes[i].$1] = reference;
       }
       for (var element in pointers) {
-        _lib.UA_DataValue_delete(element);
+        raw.UA_DataValue_delete(element);
       }
       if (!completer.isCompleted) completer.complete(retVal);
     });
 
-    int res = _lib.UA_Client_AsyncService(
+    int res = raw.UA_Client_AsyncService(
       _client,
       request.cast(),
-      getType(UaTypes.readRequest, _lib),
+      getType(UaTypes.readRequest),
       callback.nativeFunction,
-      getType(UaTypes.readResponse, _lib),
+      getType(UaTypes.readResponse),
       ffi.nullptr,
       requestIdPtr,
     );
     if (res != raw.UA_STATUSCODE_GOOD) {
       callback.close();
-      _lib.UA_ReadRequest_delete(request);
+      raw.UA_ReadRequest_delete(request);
       ua_calloc.free(requestIdPtr);
-      completer.completeError('Failed to read attribute: ${statusCodeToString(res, _lib)}');
+      completer.completeError('Failed to read attribute: ${statusCodeToString(res)}');
       return completer.future;
     }
 
@@ -453,8 +452,8 @@ class Client {
     bool publishingEnabled = true,
     int priority = 0,
   }) {
-    ffi.Pointer<raw.UA_CreateSubscriptionRequest> request = _lib.UA_CreateSubscriptionRequest_new();
-    _lib.UA_CreateSubscriptionRequest_init(request);
+    ffi.Pointer<raw.UA_CreateSubscriptionRequest> request = raw.UA_CreateSubscriptionRequest_new();
+    raw.UA_CreateSubscriptionRequest_init(request);
     request.ref.requestedPublishingInterval = requestedPublishingInterval.inMicroseconds / 1000.0;
     request.ref.requestedLifetimeCount = requestedLifetimeCount;
     request.ref.requestedMaxKeepAliveCount = requestedMaxKeepAliveCount;
@@ -481,17 +480,17 @@ class Client {
         ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
             ffi.Pointer<raw.UA_CreateSubscriptionResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
         ffi.Pointer<ffi.Void> somedata, int requestId, ffi.Pointer<raw.UA_CreateSubscriptionResponse> response) {
-      _lib.UA_CreateSubscriptionRequest_delete(request);
+      raw.UA_CreateSubscriptionRequest_delete(request);
       callback.close();
       if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
         completer.completeError(
-            'unable to create subscription ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}');
+            'unable to create subscription ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
         return;
       }
       completer.complete(response.ref.subscriptionId);
     });
 
-    _lib.UA_Client_Subscriptions_create_async(
+    raw.UA_Client_Subscriptions_create_async(
       _client,
       request.ref,
       ffi.nullptr,
@@ -547,12 +546,12 @@ class Client {
           throw 'This should not happen';
         } else {
           // The monitored item request has not yet returned
-          _lib.UA_Client_cancelByRequestId(_client, localRequestId.value, ffi.nullptr);
+          raw.UA_Client_cancelByRequestId(_client, localRequestId.value, ffi.nullptr);
           completer.complete();
         }
       } else {
-        final request = _lib.UA_DeleteMonitoredItemsRequest_new();
-        _lib.UA_DeleteMonitoredItemsRequest_init(request);
+        final request = raw.UA_DeleteMonitoredItemsRequest_new();
+        raw.UA_DeleteMonitoredItemsRequest_init(request);
         request.ref.subscriptionId = subscriptionId;
         final ids = ua_calloc<ffi.Uint32>(monIds.length);
         for (var i = 0; i < monIds.length; i++) {
@@ -579,18 +578,18 @@ class Client {
             for (var i = 0; i < response.ref.resultsSize; i++) {
               if (response.ref.results[i] != raw.UA_STATUSCODE_GOOD) {
                 stderr.write(
-                    "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value, _lib)}");
+                    "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}");
               }
             }
           }
-          _lib.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
+          raw.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
           monitorCallback.close();
           ua_calloc.free(callbacks);
           deleteCallback.close();
           monIds.clear();
           completer.complete();
         });
-        _lib.UA_Client_MonitoredItems_delete_async(
+        raw.UA_Client_MonitoredItems_delete_async(
           _client,
           request.ref,
           deleteCallback.nativeFunction,
@@ -608,7 +607,7 @@ class Client {
       var index = 0;
       for (var entry in nodes.entries) {
         for (var attribute in entry.value) {
-          monRequest[index].itemToMonitor.nodeId = entry.key.toRaw(_lib);
+          monRequest[index].itemToMonitor.nodeId = entry.key.toRaw();
           monRequest[index].itemToMonitor.attributeId = attribute.value;
           monRequest[index].monitoringModeAsInt = monitoringMode.value;
           monRequest[index].requestedParameters.samplingInterval = samplingInterval.inMicroseconds / 1000.0;
@@ -618,8 +617,8 @@ class Client {
         }
       }
 
-      ffi.Pointer<raw.UA_CreateMonitoredItemsRequest> createRequest = _lib.UA_CreateMonitoredItemsRequest_new();
-      _lib.UA_CreateMonitoredItemsRequest_init(createRequest);
+      ffi.Pointer<raw.UA_CreateMonitoredItemsRequest> createRequest = raw.UA_CreateMonitoredItemsRequest_new();
+      raw.UA_CreateMonitoredItemsRequest_init(createRequest);
       createRequest.ref.subscriptionId = subscriptionId;
       createRequest.ref.itemsToCreate = monRequest;
       createRequest.ref.itemsToCreateSize = nodeCount;
@@ -654,7 +653,7 @@ class Client {
           return;
         }
         if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
-          controller.addError('Failed to read value: ${statusCodeToString(value.ref.status, _lib)}');
+          controller.addError('Failed to read value: ${statusCodeToString(value.ref.status)}');
           return;
         }
         try {
@@ -683,8 +682,8 @@ class Client {
               // because the callback we are currently in "returns" before completing.
               final source = ua_calloc<raw.UA_Variant>();
               source.ref = value.ref.value;
-              final variant = _lib.UA_Variant_new();
-              _lib.UA_Variant_copy(source, variant);
+              final variant = raw.UA_Variant_new();
+              raw.UA_Variant_copy(source, variant);
               ua_calloc.free(source);
               final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
               // Now that we have crossed an async boundary, we need to fetch a new reference. It might have been updated
@@ -695,7 +694,7 @@ class Client {
               reference.value = data.value;
               reference.typeId = reference.typeId ?? data.typeId;
               reference.enumFields = data.enumFields;
-              _lib.UA_Variant_delete(variant);
+              raw.UA_Variant_delete(variant);
             case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
               final temporary =
                   DynamicValue.fromDataTypeDefinition(reference.typeId ?? ref.type.ref.typeId.toNodeId(), ref);
@@ -739,7 +738,7 @@ class Client {
               ffi.Pointer<raw.UA_CreateMonitoredItemsResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
           ffi.Pointer<ffi.Void> userdata, int requestId, ffi.Pointer<raw.UA_CreateMonitoredItemsResponse> response) {
         // Cleanup the request memory
-        _lib.UA_CreateMonitoredItemsRequest_delete(createRequest);
+        raw.UA_CreateMonitoredItemsRequest_delete(createRequest);
         createCallback.close();
         ua_calloc.free(localRequestId);
 
@@ -807,12 +806,12 @@ class Client {
         }
         if (failures.isNotEmpty) {
           controller.addError(
-              "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value, _lib)}").join(", ")}");
+              "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value)}").join(", ")}");
           controller.close(); // Call onCancel above
         }
       });
       localRequestId = ua_calloc<ffi.Uint32>();
-      final statusCode = _lib.UA_Client_MonitoredItems_createDataChanges_async(
+      final statusCode = raw.UA_Client_MonitoredItems_createDataChanges_async(
         _client,
         createRequest.ref,
         ffi.nullptr,
@@ -823,11 +822,11 @@ class Client {
         localRequestId,
       );
       if (statusCode != raw.UA_STATUSCODE_GOOD) {
-        _lib.UA_CreateMonitoredItemsRequest_delete(createRequest);
+        raw.UA_CreateMonitoredItemsRequest_delete(createRequest);
         ua_calloc.free(callbacks);
         monitorCallback.close();
         createCallback.close();
-        controller.addError('Unable to create monitored item: $statusCode ${statusCodeToString(statusCode, _lib)}');
+        controller.addError('Unable to create monitored item: $statusCode ${statusCodeToString(statusCode)}');
 
         // Cleanup resources that the close callback was suppose to do
         controller.onCancel = () {}; // Don't invoke the real close callback
@@ -882,7 +881,7 @@ class Client {
 
     for (var i = 0; i < len; i++) {
       argsIter.moveNext();
-      final ptr = valueToVariant(argsIter.current, _lib);
+      final ptr = valueToVariant(argsIter.current);
       ptrs.add(ptr);
       inputArgs[i] = ptr.ref;
     }
@@ -909,13 +908,13 @@ class Client {
         final results = ref.results.ref;
         if (results.statusCode != raw.UA_STATUSCODE_GOOD) {
           return completer.completeError(
-            "Results error on call to $objectId $methodId failed with ${statusCodeToString(results.statusCode, _lib)}",
+            "Results error on call to $objectId $methodId failed with ${statusCodeToString(results.statusCode)}",
             StackTrace.current,
           );
         }
         if (ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
           return completer.completeError(
-            "Header error on call to $objectId $methodId failed with ${statusCodeToString(ref.responseHeader.serviceResult, _lib)}",
+            "Header error on call to $objectId $methodId failed with ${statusCodeToString(ref.responseHeader.serviceResult)}",
             StackTrace.current,
           );
         }
@@ -934,15 +933,15 @@ class Client {
       } finally {
         // cleanup input arguments
         for (var ptr in ptrs) {
-          _lib.UA_Variant_delete(ptr);
+          raw.UA_Variant_delete(ptr);
         }
       }
     });
 
-    final statusCode = _lib.UA_Client_call_async(
+    final statusCode = raw.UA_Client_call_async(
       _client,
-      objectId.toRaw(_lib),
-      methodId.toRaw(_lib),
+      objectId.toRaw(),
+      methodId.toRaw(),
       len,
       inputArgs,
       callbackInner.nativeFunction,
@@ -950,7 +949,7 @@ class Client {
       ffi.nullptr,
     );
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Unable to call method: $statusCode ${statusCodeToString(statusCode, _lib)}';
+      throw 'Unable to call method: $statusCode ${statusCodeToString(statusCode)}';
     }
     return completer.future;
   }
@@ -1012,16 +1011,16 @@ class Client {
   // ignore: unused_element
   ffi.Pointer<raw.UA_DataType> _findDataType(NodeId typeId) {
     final nodeId = ua_calloc<raw.UA_NodeId>();
-    nodeId.ref = typeId.toRaw(_lib);
-    final ret = _lib.UA_Client_findDataType(_client, nodeId);
+    nodeId.ref = typeId.toRaw();
+    final ret = raw.UA_Client_findDataType(_client, nodeId);
     ua_calloc.free(nodeId);
     return ret;
   }
 
   void disconnect() {
-    final statusCode = _lib.UA_Client_disconnect(_client);
+    final statusCode = raw.UA_Client_disconnect(_client);
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Unable to disconnect: $statusCode ${statusCodeToString(statusCode, _lib)}';
+      throw 'Unable to disconnect: $statusCode ${statusCodeToString(statusCode)}';
     }
   }
 
@@ -1029,14 +1028,13 @@ class Client {
     ffi.Pointer<raw.UA_Client> client = _client;
     _client = ffi.nullptr;
     await Future.delayed(Duration(milliseconds: 10));
-    _lib.UA_Client_delete(client);
+    raw.UA_Client_delete(client);
     // Client_delete calls client config state callbacks
     // Need to close the config after deleting the client
     // s.t. the native callbacks are not closed when called
     await _clientConfig.close();
   }
 
-  final raw.open62541 _lib;
   late ffi.Pointer<raw.UA_Client> _client;
   late final ClientConfig _clientConfig;
 }

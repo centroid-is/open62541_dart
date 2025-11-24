@@ -137,19 +137,19 @@ class NodeId {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
   }
 
-  raw.UA_NodeId toRaw(raw.open62541 lib) {
+  raw.UA_NodeId toRaw() {
     if (_stringId != null) {
-      return lib.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: ua_malloc).cast());
+      return raw.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: ua_malloc).cast());
     } else if (_numericId != null) {
-      return lib.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
+      return raw.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
     } else {
       throw 'NodeId is not initialized or unimplemented';
     }
   }
 
-  Pointer<raw.UA_NodeId> toRawPointer(raw.open62541 lib) {
+  Pointer<raw.UA_NodeId> toRawPointer() {
     final nodeId = ua_calloc<raw.UA_NodeId>();
-    nodeId.ref = toRaw(lib);
+    nodeId.ref = toRaw();
     return nodeId;
   }
 

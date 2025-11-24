@@ -9,15 +9,13 @@ import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'common.dart';
 
 void main() async {
-  final lib = loadOpen62541Library(local: true);
-
   int port = Random().nextInt(10000) + 4840;
   Client? client;
   Server? server;
 
   setUp(() async {
-    server = setupServer(lib, port);
-    client = await setupClient(lib, port);
+    server = setupServer(port);
+    client = await setupClient(port);
   });
 
   test('Basic read and write boolean async', () async {
@@ -180,9 +178,8 @@ void main() async {
     structureValue["b"] = DynamicValue(value: true, typeId: NodeId.boolean);
     structureValue["c"] = DynamicValue(value: 5.8, typeId: NodeId.double);
 
-    final libb = raw.open62541(lib);
-    final variant = valueToVariant(structureValue, libb);
-    libb.UA_Variant_delete(variant);
+    final variant = valueToVariant(structureValue);
+    raw.UA_Variant_delete(variant);
   });
 
   test('Basic struct read and write', () async {

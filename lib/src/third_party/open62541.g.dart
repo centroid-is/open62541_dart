@@ -19,18 +19,160 @@
 // ignore_for_file: type=lint, unused_import
 import 'dart:ffi' as ffi;
 
-@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Uint32)>()
+@ffi.Native<ffi.Pointer<ffi.Char> Function(UA_StatusCode)>()
 external ffi.Pointer<ffi.Char> UA_StatusCode_name(int code);
+
+@ffi.Native<UA_NodeId Function(ffi.Uint16, UA_UInt32)>()
+external UA_NodeId UA_NODEID_NUMERIC(int nsIndex, int identifier);
+
+@ffi.Native<UA_NodeId Function(ffi.Uint16, ffi.Pointer<ffi.Char>)>()
+external UA_NodeId UA_NODEID_STRING(int nsIndex, ffi.Pointer<ffi.Char> chars);
+
+@ffi.Native<UA_QualifiedName Function(ffi.Uint16, ffi.Pointer<ffi.Char>)>()
+external UA_QualifiedName UA_QUALIFIEDNAME(int nsIndex, ffi.Pointer<ffi.Char> chars);
 
 @ffi.Array.multi([388])
 @ffi.Native<ffi.Array<UA_DataType>>()
 external ffi.Array<UA_DataType> UA_TYPES;
 
+@ffi.Native<ffi.Pointer<UA_NodeId> Function()>()
+external ffi.Pointer<UA_NodeId> UA_NodeId_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_NodeId>)>()
+external void UA_NodeId_delete(ffi.Pointer<UA_NodeId> p);
+
+@ffi.Native<ffi.Pointer<UA_LocalizedText> Function()>()
+external ffi.Pointer<UA_LocalizedText> UA_LocalizedText_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_DataValue>)>()
+external void UA_DataValue_init(ffi.Pointer<UA_DataValue> p);
+
+@ffi.Native<ffi.Pointer<UA_DataValue> Function()>()
+external ffi.Pointer<UA_DataValue> UA_DataValue_new();
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_DataValue>, ffi.Pointer<UA_DataValue>)>()
+external int UA_DataValue_copy(ffi.Pointer<UA_DataValue> src, ffi.Pointer<UA_DataValue> dst);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_DataValue>)>()
+external void UA_DataValue_delete(ffi.Pointer<UA_DataValue> p);
+
 @ffi.Native<ffi.Pointer<UA_Variant> Function()>()
 external ffi.Pointer<UA_Variant> UA_Variant_new();
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Variant>, ffi.Pointer<UA_Variant>)>()
+external int UA_Variant_copy(ffi.Pointer<UA_Variant> src, ffi.Pointer<UA_Variant> dst);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_Variant>)>()
+external void UA_Variant_delete(ffi.Pointer<UA_Variant> p);
+
+@ffi.Native<ffi.Pointer<UA_VariableAttributes> Function()>()
+external ffi.Pointer<UA_VariableAttributes> UA_VariableAttributes_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_VariableAttributes>)>()
+external void UA_VariableAttributes_delete(ffi.Pointer<UA_VariableAttributes> p);
+
+@ffi.Native<ffi.Pointer<UA_VariableTypeAttributes> Function()>()
+external ffi.Pointer<UA_VariableTypeAttributes> UA_VariableTypeAttributes_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_VariableTypeAttributes>)>()
+external void UA_VariableTypeAttributes_delete(ffi.Pointer<UA_VariableTypeAttributes> p);
+
+@ffi.Native<ffi.Pointer<UA_DataTypeAttributes> Function()>()
+external ffi.Pointer<UA_DataTypeAttributes> UA_DataTypeAttributes_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_DataTypeAttributes>)>()
+external void UA_DataTypeAttributes_delete(ffi.Pointer<UA_DataTypeAttributes> p);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_ReadRequest>)>()
+external void UA_ReadRequest_init(ffi.Pointer<UA_ReadRequest> p);
+
+@ffi.Native<ffi.Pointer<UA_ReadRequest> Function()>()
+external ffi.Pointer<UA_ReadRequest> UA_ReadRequest_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_ReadRequest>)>()
+external void UA_ReadRequest_delete(ffi.Pointer<UA_ReadRequest> p);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_CreateMonitoredItemsRequest>)>()
+external void UA_CreateMonitoredItemsRequest_init(ffi.Pointer<UA_CreateMonitoredItemsRequest> p);
+
+@ffi.Native<ffi.Pointer<UA_CreateMonitoredItemsRequest> Function()>()
+external ffi.Pointer<UA_CreateMonitoredItemsRequest> UA_CreateMonitoredItemsRequest_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_CreateMonitoredItemsRequest>)>()
+external void UA_CreateMonitoredItemsRequest_delete(ffi.Pointer<UA_CreateMonitoredItemsRequest> p);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_DeleteMonitoredItemsRequest>)>()
+external void UA_DeleteMonitoredItemsRequest_init(ffi.Pointer<UA_DeleteMonitoredItemsRequest> p);
+
+@ffi.Native<ffi.Pointer<UA_DeleteMonitoredItemsRequest> Function()>()
+external ffi.Pointer<UA_DeleteMonitoredItemsRequest> UA_DeleteMonitoredItemsRequest_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_DeleteMonitoredItemsRequest>)>()
+external void UA_DeleteMonitoredItemsRequest_delete(ffi.Pointer<UA_DeleteMonitoredItemsRequest> p);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_CreateSubscriptionRequest>)>()
+external void UA_CreateSubscriptionRequest_init(ffi.Pointer<UA_CreateSubscriptionRequest> p);
+
+@ffi.Native<ffi.Pointer<UA_CreateSubscriptionRequest> Function()>()
+external ffi.Pointer<UA_CreateSubscriptionRequest> UA_CreateSubscriptionRequest_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_CreateSubscriptionRequest>)>()
+external void UA_CreateSubscriptionRequest_delete(ffi.Pointer<UA_CreateSubscriptionRequest> p);
+
+/// .. _default-node-attributes:
+///
+/// Default Node Attributes
+/// -----------------------
+/// Default node attributes to simplify the use of the AddNodes services. For
+/// example, Setting the ValueRank and AccessLevel to zero is often an unintended
+/// setting and leads to errors that are hard to track down.
+@ffi.Native<UA_VariableAttributes>()
+external final UA_VariableAttributes UA_VariableAttributes_default;
+
+@ffi.Native<ffi.Pointer<UA_Client> Function(ffi.Pointer<UA_ClientConfig>)>()
+external ffi.Pointer<UA_Client> UA_Client_newWithConfig(ffi.Pointer<UA_ClientConfig> config);
+
 @ffi.Native<
-  ffi.Uint32 Function(
+  ffi.Void Function(
+    ffi.Pointer<UA_Client>,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<UA_StatusCode>,
+  )
+>()
+external void UA_Client_getState(
+  ffi.Pointer<UA_Client> client,
+  ffi.Pointer<ffi.UnsignedInt> channelState,
+  ffi.Pointer<ffi.UnsignedInt> sessionState,
+  ffi.Pointer<UA_StatusCode> connectStatus,
+);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_Client>)>()
+external void UA_Client_delete(ffi.Pointer<UA_Client> client);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Client>, UA_UInt32)>()
+external int UA_Client_run_iterate(ffi.Pointer<UA_Client> client, int timeout);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Client>, ffi.Pointer<ffi.Char>)>()
+external int UA_Client_connectAsync(ffi.Pointer<UA_Client> client, ffi.Pointer<ffi.Char> endpointUrl);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Client>)>()
+external int UA_Client_disconnect(ffi.Pointer<UA_Client> client);
+
+/// Client Utility Functions
+/// ------------------------
+@ffi.Native<ffi.Pointer<UA_DataType> Function(ffi.Pointer<UA_Client>, ffi.Pointer<UA_NodeId>)>()
+external ffi.Pointer<UA_DataType> UA_Client_findDataType(ffi.Pointer<UA_Client> client, ffi.Pointer<UA_NodeId> typeId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>()
+external int UA_ClientConfig_setAuthenticationUsername(
+  ffi.Pointer<UA_ClientConfig> config,
+  ffi.Pointer<ffi.Char> username,
+  ffi.Pointer<ffi.Char> password,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(
     ffi.Pointer<UA_Client>,
     ffi.Pointer<ffi.Void>,
     ffi.Pointer<UA_DataType>,
@@ -39,14 +181,14 @@ external ffi.Pointer<UA_Variant> UA_Variant_new();
         ffi.Void Function(
           ffi.Pointer<UA_Client> client,
           ffi.Pointer<ffi.Void> userdata,
-          ffi.Uint32 requestId,
+          UA_UInt32 requestId,
           ffi.Pointer<ffi.Void> response,
         )
       >
     >,
     ffi.Pointer<UA_DataType>,
     ffi.Pointer<ffi.Void>,
-    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<UA_UInt32>,
   )
 >(symbol: '__UA_Client_AsyncService')
 external int UA_Client_AsyncService(
@@ -58,7 +200,7 @@ external int UA_Client_AsyncService(
       ffi.Void Function(
         ffi.Pointer<UA_Client> client,
         ffi.Pointer<ffi.Void> userdata,
-        ffi.Uint32 requestId,
+        UA_UInt32 requestId,
         ffi.Pointer<ffi.Void> response,
       )
     >
@@ -66,7 +208,423 @@ external int UA_Client_AsyncService(
   callback,
   ffi.Pointer<UA_DataType> responseType,
   ffi.Pointer<ffi.Void> userdata,
-  ffi.Pointer<ffi.Uint32> requestId,
+  ffi.Pointer<UA_UInt32> requestId,
+);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Client>, UA_UInt32, ffi.Pointer<UA_UInt32>)>()
+external int UA_Client_cancelByRequestId(
+  ffi.Pointer<UA_Client> client,
+  int requestId,
+  ffi.Pointer<UA_UInt32> cancelCount,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Client>,
+    UA_NodeId,
+    ffi.Pointer<UA_Variant>,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Void Function(
+          ffi.Pointer<UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          UA_UInt32 requestId,
+          ffi.Pointer<UA_WriteResponse> wr,
+        )
+      >
+    >,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_UInt32>,
+  )
+>()
+external int UA_Client_writeValueAttribute_async(
+  ffi.Pointer<UA_Client> client,
+  UA_NodeId nodeId,
+  ffi.Pointer<UA_Variant> attr,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Client> client,
+        ffi.Pointer<ffi.Void> userdata,
+        UA_UInt32 requestId,
+        ffi.Pointer<UA_WriteResponse> wr,
+      )
+    >
+  >
+  callback,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<UA_UInt32> reqId,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Client>,
+    UA_NodeId,
+    UA_NodeId,
+    ffi.Size,
+    ffi.Pointer<UA_Variant>,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Void Function(
+          ffi.Pointer<UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          UA_UInt32 requestId,
+          ffi.Pointer<UA_CallResponse> cr,
+        )
+      >
+    >,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_UInt32>,
+  )
+>()
+external int UA_Client_call_async(
+  ffi.Pointer<UA_Client> client,
+  UA_NodeId objectId,
+  UA_NodeId methodId,
+  int inputSize,
+  ffi.Pointer<UA_Variant> input,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Client> client,
+        ffi.Pointer<ffi.Void> userdata,
+        UA_UInt32 requestId,
+        ffi.Pointer<UA_CallResponse> cr,
+      )
+    >
+  >
+  callback,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<UA_UInt32> reqId,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Client>,
+    UA_CreateSubscriptionRequest,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Void Function(
+          ffi.Pointer<UA_Client> client,
+          UA_UInt32 subId,
+          ffi.Pointer<ffi.Void> subContext,
+          ffi.Pointer<UA_StatusChangeNotification> notification,
+        )
+      >
+    >,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Void Function(ffi.Pointer<UA_Client> client, UA_UInt32 subId, ffi.Pointer<ffi.Void> subContext)
+      >
+    >,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Void Function(
+          ffi.Pointer<UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          UA_UInt32 requestId,
+          ffi.Pointer<UA_CreateSubscriptionResponse> response,
+        )
+      >
+    >,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_UInt32>,
+  )
+>()
+external int UA_Client_Subscriptions_create_async(
+  ffi.Pointer<UA_Client> client,
+  UA_CreateSubscriptionRequest request,
+  ffi.Pointer<ffi.Void> subscriptionContext,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Client> client,
+        UA_UInt32 subId,
+        ffi.Pointer<ffi.Void> subContext,
+        ffi.Pointer<UA_StatusChangeNotification> notification,
+      )
+    >
+  >
+  statusChangeCallback,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(ffi.Pointer<UA_Client> client, UA_UInt32 subId, ffi.Pointer<ffi.Void> subContext)
+    >
+  >
+  deleteCallback,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Client> client,
+        ffi.Pointer<ffi.Void> userdata,
+        UA_UInt32 requestId,
+        ffi.Pointer<UA_CreateSubscriptionResponse> response,
+      )
+    >
+  >
+  callback,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<UA_UInt32> requestId,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Client>,
+    UA_CreateMonitoredItemsRequest,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<
+      ffi.Pointer<
+        ffi.NativeFunction<
+          ffi.Void Function(
+            ffi.Pointer<UA_Client> client,
+            UA_UInt32 subId,
+            ffi.Pointer<ffi.Void> subContext,
+            UA_UInt32 monId,
+            ffi.Pointer<ffi.Void> monContext,
+            ffi.Pointer<UA_DataValue> value,
+          )
+        >
+      >
+    >,
+    ffi.Pointer<
+      ffi.Pointer<
+        ffi.NativeFunction<
+          ffi.Void Function(
+            ffi.Pointer<UA_Client> client,
+            UA_UInt32 subId,
+            ffi.Pointer<ffi.Void> subContext,
+            UA_UInt32 monId,
+            ffi.Pointer<ffi.Void> monContext,
+          )
+        >
+      >
+    >,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Void Function(
+          ffi.Pointer<UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          UA_UInt32 requestId,
+          ffi.Pointer<UA_CreateMonitoredItemsResponse> response,
+        )
+      >
+    >,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_UInt32>,
+  )
+>()
+external int UA_Client_MonitoredItems_createDataChanges_async(
+  ffi.Pointer<UA_Client> client,
+  UA_CreateMonitoredItemsRequest request,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> contexts,
+  ffi.Pointer<
+    ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Void Function(
+          ffi.Pointer<UA_Client> client,
+          UA_UInt32 subId,
+          ffi.Pointer<ffi.Void> subContext,
+          UA_UInt32 monId,
+          ffi.Pointer<ffi.Void> monContext,
+          ffi.Pointer<UA_DataValue> value,
+        )
+      >
+    >
+  >
+  callbacks,
+  ffi.Pointer<
+    ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Void Function(
+          ffi.Pointer<UA_Client> client,
+          UA_UInt32 subId,
+          ffi.Pointer<ffi.Void> subContext,
+          UA_UInt32 monId,
+          ffi.Pointer<ffi.Void> monContext,
+        )
+      >
+    >
+  >
+  deleteCallbacks,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Client> client,
+        ffi.Pointer<ffi.Void> userdata,
+        UA_UInt32 requestId,
+        ffi.Pointer<UA_CreateMonitoredItemsResponse> response,
+      )
+    >
+  >
+  createCallback,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<UA_UInt32> requestId,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Client>,
+    UA_DeleteMonitoredItemsRequest,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Void Function(
+          ffi.Pointer<UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          UA_UInt32 requestId,
+          ffi.Pointer<UA_DeleteMonitoredItemsResponse> response,
+        )
+      >
+    >,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_UInt32>,
+  )
+>()
+external int UA_Client_MonitoredItems_delete_async(
+  ffi.Pointer<UA_Client> client,
+  UA_DeleteMonitoredItemsRequest request,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Client> client,
+        ffi.Pointer<ffi.Void> userdata,
+        UA_UInt32 requestId,
+        ffi.Pointer<UA_DeleteMonitoredItemsResponse> response,
+      )
+    >
+  >
+  callback,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<UA_UInt32> requestId,
+);
+
+@ffi.Native<ffi.Pointer<UA_Server> Function(ffi.Pointer<UA_ServerConfig>)>()
+external ffi.Pointer<UA_Server> UA_Server_newWithConfig(ffi.Pointer<UA_ServerConfig> config);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>)>()
+external int UA_Server_delete(ffi.Pointer<UA_Server> server);
+
+@ffi.Native<ffi.Pointer<UA_ServerConfig> Function(ffi.Pointer<UA_Server>)>()
+external ffi.Pointer<UA_ServerConfig> UA_Server_getConfig(ffi.Pointer<UA_Server> server);
+
+@ffi.Native<ffi.UnsignedInt Function(ffi.Pointer<UA_Server>)>(symbol: 'UA_Server_getLifecycleState')
+external int _UA_Server_getLifecycleState(ffi.Pointer<UA_Server> server);
+
+UA_LifecycleState UA_Server_getLifecycleState(ffi.Pointer<UA_Server> server) =>
+    UA_LifecycleState.fromValue(_UA_Server_getLifecycleState(server));
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>)>()
+external int UA_Server_run_startup(ffi.Pointer<UA_Server> server);
+
+@ffi.Native<ffi.Uint16 Function(ffi.Pointer<UA_Server>, ffi.Bool)>()
+external int UA_Server_run_iterate(ffi.Pointer<UA_Server> server, bool waitInternal);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>)>()
+external int UA_Server_run_shutdown(ffi.Pointer<UA_Server> server);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_Variant>)>()
+external int UA_Server_readValue(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_Variant> out);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_LocalizedText)>()
+external int UA_Server_writeDescription(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_LocalizedText description);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_Variant)>()
+external int UA_Server_writeValue(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_Variant value);
+
+/// By default, when adding a VariableNode, the value from the
+/// ``UA_VariableAttributes`` is used. The methods following afterwards can be
+/// used to override the value source.
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Server>,
+    UA_NodeId,
+    UA_NodeId,
+    UA_NodeId,
+    UA_QualifiedName,
+    UA_NodeId,
+    UA_VariableAttributes,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_NodeId>,
+  )
+>()
+external int UA_Server_addVariableNode(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId requestedNewNodeId,
+  UA_NodeId parentNodeId,
+  UA_NodeId referenceTypeId,
+  UA_QualifiedName browseName,
+  UA_NodeId typeDefinition,
+  UA_VariableAttributes attr,
+  ffi.Pointer<ffi.Void> nodeContext,
+  ffi.Pointer<UA_NodeId> outNewNodeId,
+);
+
+/// VariableTypeNode
+/// ~~~~~~~~~~~~~~~~
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Server>,
+    UA_NodeId,
+    UA_NodeId,
+    UA_NodeId,
+    UA_QualifiedName,
+    UA_NodeId,
+    UA_VariableTypeAttributes,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_NodeId>,
+  )
+>()
+external int UA_Server_addVariableTypeNode(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId requestedNewNodeId,
+  UA_NodeId parentNodeId,
+  UA_NodeId referenceTypeId,
+  UA_QualifiedName browseName,
+  UA_NodeId typeDefinition,
+  UA_VariableTypeAttributes attr,
+  ffi.Pointer<ffi.Void> nodeContext,
+  ffi.Pointer<UA_NodeId> outNewNodeId,
+);
+
+/// Utility Functions
+/// -----------------
+@ffi.Native<ffi.Pointer<UA_DataType> Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_NodeId>)>()
+external ffi.Pointer<UA_DataType> UA_Server_findDataType(ffi.Pointer<UA_Server> server, ffi.Pointer<UA_NodeId> typeId);
+
+/// amalgamated original file "/plugins/include/open62541/plugin/certificategroup_default.h"
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_CertificateGroup>)>()
+external void UA_CertificateGroup_AcceptAll(ffi.Pointer<UA_CertificateGroup> certGroup);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>, ffi.Uint16, ffi.Pointer<UA_ByteString>)>()
+external int UA_ServerConfig_setMinimal(
+  ffi.Pointer<UA_ServerConfig> config,
+  int portNumber,
+  ffi.Pointer<UA_ByteString> certificate,
+);
+
+/// amalgamated original file "/plugins/include/open62541/client_config_default.h"
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig>)>()
+external int UA_ClientConfig_setDefault(ffi.Pointer<UA_ClientConfig> config);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_ClientConfig>,
+    UA_ByteString,
+    UA_ByteString,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Size,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Size,
+  )
+>()
+external int UA_ClientConfig_setDefaultEncryption(
+  ffi.Pointer<UA_ClientConfig> config,
+  UA_ByteString localCertificate,
+  UA_ByteString privateKey,
+  ffi.Pointer<UA_ByteString> trustList,
+  int trustListSize,
+  ffi.Pointer<UA_ByteString> revocationList,
+  int revocationListSize,
 );
 
 enum idtype_t {
@@ -384,6 +942,32 @@ enum UA_LifecycleState {
 typedef UA_Byte = ffi.Uint8;
 typedef DartUA_Byte = int;
 
+/// UInt32
+/// ^^^^^^
+/// An integer value between 0 and 4 294 967 295.
+typedef UA_UInt32 = ffi.Uint32;
+typedef DartUA_UInt32 = int;
+
+/// .. _statuscode:
+///
+/// StatusCode
+/// ^^^^^^^^^^
+/// A numeric identifier for an error or condition that is associated with a
+/// value or an operation. See the section :ref:`statuscodes` for the meaning of
+/// a specific code.
+///
+/// Each StatusCode has one of three "severity" bit-flags:
+/// Good, Uncertain, Bad. An additional reason is indicated by the SubCode
+/// bitfield.
+///
+/// - A StatusCode with severity Good means that the value is of good quality.
+/// - A StatusCode with severity Uncertain means that the quality of the value is
+/// uncertain for reasons indicated by the SubCode.
+/// - A StatusCode with severity Bad means that the value is not usable for
+/// reasons indicated by the SubCode.
+typedef UA_StatusCode = ffi.Uint32;
+typedef DartUA_StatusCode = int;
+
 /// String
 /// ^^^^^^
 /// A sequence of Unicode characters. Strings are just an array of UA_Byte.
@@ -398,7 +982,7 @@ final class UA_String extends ffi.Struct {
 /// ^^^^
 /// A 16 byte value that can be used as a globally unique identifier.
 final class UA_Guid extends ffi.Struct {
-  @ffi.Uint32()
+  @UA_UInt32()
   external int data1;
 
   @ffi.Uint16()
@@ -410,6 +994,11 @@ final class UA_Guid extends ffi.Struct {
   @ffi.Array.multi([8])
   external ffi.Array<UA_Byte> data4;
 }
+
+/// ByteString
+/// ^^^^^^^^^^
+/// A sequence of octets.
+typedef UA_ByteString = UA_String;
 
 /// .. _nodeid:
 ///
@@ -435,14 +1024,14 @@ enum UA_NodeIdType {
 }
 
 final class UnnamedUnion extends ffi.Union {
-  @ffi.Uint32()
+  @UA_UInt32()
   external int numeric;
 
   external UA_String string;
 
   external UA_Guid guid;
 
-  external UA_String byteString;
+  external UA_ByteString byteString;
 }
 
 final class UA_NodeId extends ffi.Struct {
@@ -457,6 +1046,18 @@ final class UA_NodeId extends ffi.Struct {
   external UnnamedUnion identifier;
 }
 
+/// .. _qualifiedname:
+///
+/// QualifiedName
+/// ^^^^^^^^^^^^^
+/// A name qualified by a namespace.
+final class UA_QualifiedName extends ffi.Struct {
+  @ffi.Uint16()
+  external int namespaceIndex;
+
+  external UA_String name;
+}
+
 /// LocalizedText
 /// ^^^^^^^^^^^^^
 /// Human readable text with an optional locale identifier.
@@ -464,6 +1065,24 @@ final class UA_LocalizedText extends ffi.Struct {
   external UA_String locale;
 
   external UA_String text;
+}
+
+/// .. _numericrange:
+///
+/// NumericRange
+/// ^^^^^^^^^^^^
+/// NumericRanges are used to indicate subsets of a (multidimensional) array.
+/// They no official data type in the OPC UA standard and are transmitted only
+/// with a string encoding, such as "1:2,0:3,5". The colon separates min/max
+/// index and the comma separates dimensions. A single value indicates a range
+/// with a single element (min==max).
+final class UA_NumericRangeDimension extends ffi.Opaque {}
+
+final class UA_NumericRange extends ffi.Struct {
+  @ffi.Size()
+  external int dimensionsSize;
+
+  external ffi.Pointer<UA_NumericRangeDimension> dimensions;
 }
 
 /// .. _generic-types:
@@ -492,7 +1111,14 @@ final class UA_LocalizedText extends ffi.Struct {
 ///
 /// Specializations, such as ``UA_Int32_new()`` are derived from the generic
 /// type operations as static inline functions.
-final class UA_DataTypeMember extends ffi.Opaque {}
+final class UA_DataTypeMember extends ffi.Struct {
+  external ffi.Pointer<ffi.Char> memberName;
+
+  external ffi.Pointer<UA_DataType> memberType;
+
+  @UA_Byte()
+  external int substitute;
+}
 
 /// .. _variant:
 ///
@@ -535,7 +1161,7 @@ final class UA_DataType extends ffi.Struct {
 
   external UA_NodeId xmlEncodingId;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int substitute;
 
   external ffi.Pointer<UA_DataTypeMember> members;
@@ -571,7 +1197,7 @@ final class UA_Variant extends ffi.Struct {
   @ffi.Size()
   external int arrayDimensionsSize;
 
-  external ffi.Pointer<ffi.Uint32> arrayDimensions;
+  external ffi.Pointer<UA_UInt32> arrayDimensions;
 }
 
 /// .. _extensionobject:
@@ -605,7 +1231,7 @@ enum UA_ExtensionObjectEncoding {
 final class UnnamedStruct extends ffi.Struct {
   external UA_NodeId typeId;
 
-  external UA_String body;
+  external UA_ByteString body;
 }
 
 final class UnnamedStruct$1 extends ffi.Struct {
@@ -627,6 +1253,61 @@ final class UA_ExtensionObject extends ffi.Struct {
   UA_ExtensionObjectEncoding get encoding => UA_ExtensionObjectEncoding.fromValue(encodingAsInt);
 
   external UnnamedUnion$1 content;
+}
+
+/// .. _datavalue:
+///
+/// DataValue
+/// ^^^^^^^^^
+/// A data value with an associated status code and timestamps.
+final class UA_DataValue extends ffi.Struct {
+  external UA_Variant value;
+
+  @ffi.Int64()
+  external int sourceTimestamp;
+
+  @ffi.Int64()
+  external int serverTimestamp;
+
+  @ffi.Uint16()
+  external int sourcePicoseconds;
+
+  @ffi.Uint16()
+  external int serverPicoseconds;
+
+  @UA_StatusCode()
+  external int status;
+
+  @UA_Byte()
+  external int substitute;
+}
+
+/// DiagnosticInfo
+/// ^^^^^^^^^^^^^^
+/// A structure that contains detailed error and diagnostic information
+/// associated with a StatusCode.
+final class UA_DiagnosticInfo extends ffi.Struct {
+  @UA_Byte()
+  external int substitute;
+
+  @ffi.Int32()
+  external int symbolicId;
+
+  @ffi.Int32()
+  external int namespaceUri;
+
+  @ffi.Int32()
+  external int localizedText;
+
+  @ffi.Int32()
+  external int locale;
+
+  external UA_String additionalInfo;
+
+  @UA_StatusCode()
+  external int innerStatusCode;
+
+  external ffi.Pointer<UA_DiagnosticInfo> innerDiagnosticInfo;
 }
 
 enum UA_DataTypeKind {
@@ -701,7 +1382,17 @@ enum UA_DataTypeKind {
   };
 }
 
-final class UA_DataTypeArray extends ffi.Opaque {}
+final class UA_DataTypeArray extends ffi.Struct {
+  external ffi.Pointer<UA_DataTypeArray> next;
+
+  @ffi.Size()
+  external int typesSize;
+
+  external ffi.Pointer<UA_DataType> types;
+
+  @ffi.Bool()
+  external bool cleanup;
+}
 
 enum UA_NamingRuleType {
   UA_NAMINGRULETYPE_MANDATORY(1),
@@ -1269,6 +1960,46 @@ final class UA_ApplicationDescription extends ffi.Struct {
   external ffi.Pointer<UA_String> discoveryUrls;
 }
 
+final class UA_RequestHeader extends ffi.Struct {
+  external UA_NodeId authenticationToken;
+
+  @ffi.Int64()
+  external int timestamp;
+
+  @UA_UInt32()
+  external int requestHandle;
+
+  @UA_UInt32()
+  external int returnDiagnostics;
+
+  external UA_String auditEntryId;
+
+  @UA_UInt32()
+  external int timeoutHint;
+
+  external UA_ExtensionObject additionalHeader;
+}
+
+final class UA_ResponseHeader extends ffi.Struct {
+  @ffi.Int64()
+  external int timestamp;
+
+  @UA_UInt32()
+  external int requestHandle;
+
+  @UA_StatusCode()
+  external int serviceResult;
+
+  external UA_DiagnosticInfo serviceDiagnostics;
+
+  @ffi.Size()
+  external int stringTableSize;
+
+  external ffi.Pointer<UA_String> stringTable;
+
+  external UA_ExtensionObject additionalHeader;
+}
+
 enum UA_MessageSecurityMode {
   UA_MESSAGESECURITYMODE_INVALID(0),
   UA_MESSAGESECURITYMODE_NONE(1),
@@ -1329,7 +2060,7 @@ final class UA_EndpointDescription extends ffi.Struct {
 
   external UA_ApplicationDescription server;
 
-  external UA_String serverCertificate;
+  external UA_ByteString serverCertificate;
 
   @ffi.UnsignedInt()
   external int securityModeAsInt;
@@ -1446,6 +2177,116 @@ enum UA_NodeAttributesMask {
     _ => throw ArgumentError('Unknown value for UA_NodeAttributesMask: $value'),
   };
 }
+
+final class UA_NodeAttributes extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedAttributes;
+
+  external UA_LocalizedText displayName;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt32()
+  external int writeMask;
+
+  @UA_UInt32()
+  external int userWriteMask;
+}
+
+final class UA_VariableAttributes extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedAttributes;
+
+  external UA_LocalizedText displayName;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt32()
+  external int writeMask;
+
+  @UA_UInt32()
+  external int userWriteMask;
+
+  external UA_Variant value;
+
+  external UA_NodeId dataType;
+
+  @ffi.Int32()
+  external int valueRank;
+
+  @ffi.Size()
+  external int arrayDimensionsSize;
+
+  external ffi.Pointer<UA_UInt32> arrayDimensions;
+
+  @UA_Byte()
+  external int accessLevel;
+
+  @UA_Byte()
+  external int userAccessLevel;
+
+  @ffi.Double()
+  external double minimumSamplingInterval;
+
+  @ffi.Bool()
+  external bool historizing;
+}
+
+final class UA_VariableTypeAttributes extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedAttributes;
+
+  external UA_LocalizedText displayName;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt32()
+  external int writeMask;
+
+  @UA_UInt32()
+  external int userWriteMask;
+
+  external UA_Variant value;
+
+  external UA_NodeId dataType;
+
+  @ffi.Int32()
+  external int valueRank;
+
+  @ffi.Size()
+  external int arrayDimensionsSize;
+
+  external ffi.Pointer<UA_UInt32> arrayDimensions;
+
+  @ffi.Bool()
+  external bool isAbstract;
+}
+
+final class UA_DataTypeAttributes extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedAttributes;
+
+  external UA_LocalizedText displayName;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt32()
+  external int writeMask;
+
+  @UA_UInt32()
+  external int userWriteMask;
+
+  @ffi.Bool()
+  external bool isAbstract;
+}
+
+final class UA_AddNodesItem extends ffi.Opaque {}
+
+final class UA_AddReferencesItem extends ffi.Opaque {}
+
+final class UA_DeleteNodesItem extends ffi.Opaque {}
+
+final class UA_DeleteReferencesItem extends ffi.Opaque {}
 
 enum UA_BrowseDirection {
   UA_BROWSEDIRECTION_FORWARD(0),
@@ -1569,6 +2410,72 @@ enum UA_TimestampsToReturn {
   };
 }
 
+final class UA_ReadValueId extends ffi.Struct {
+  external UA_NodeId nodeId;
+
+  @UA_UInt32()
+  external int attributeId;
+
+  external UA_String indexRange;
+
+  external UA_QualifiedName dataEncoding;
+}
+
+final class UA_ReadRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Double()
+  external double maxAge;
+
+  @ffi.UnsignedInt()
+  external int timestampsToReturnAsInt;
+
+  UA_TimestampsToReturn get timestampsToReturn => UA_TimestampsToReturn.fromValue(timestampsToReturnAsInt);
+
+  @ffi.Size()
+  external int nodesToReadSize;
+
+  external ffi.Pointer<UA_ReadValueId> nodesToRead;
+}
+
+final class UA_ReadResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_DataValue> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
+
+final class UA_HistoryReadValueId extends ffi.Opaque {}
+
+final class UA_ReadRawModifiedDetails extends ffi.Opaque {}
+
+final class UA_ReadAtTimeDetails extends ffi.Opaque {}
+
+final class UA_HistoryData extends ffi.Opaque {}
+
+final class UA_HistoryReadResponse extends ffi.Opaque {}
+
+final class UA_WriteResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_StatusCode> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
+
 enum UA_HistoryUpdateType {
   UA_HISTORYUPDATETYPE_INSERT(1),
   UA_HISTORYUPDATETYPE_REPLACE(2),
@@ -1607,6 +2514,48 @@ enum UA_PerformUpdateType {
     2147483647 => __UA_PERFORMUPDATETYPE_FORCE32BIT,
     _ => throw ArgumentError('Unknown value for UA_PerformUpdateType: $value'),
   };
+}
+
+final class UA_UpdateDataDetails extends ffi.Opaque {}
+
+final class UA_DeleteRawModifiedDetails extends ffi.Opaque {}
+
+final class UA_DeleteEventDetails extends ffi.Opaque {}
+
+final class UA_HistoryUpdateResult extends ffi.Opaque {}
+
+final class UA_CallMethodResult extends ffi.Struct {
+  @UA_StatusCode()
+  external int statusCode;
+
+  @ffi.Size()
+  external int inputArgumentResultsSize;
+
+  external ffi.Pointer<UA_StatusCode> inputArgumentResults;
+
+  @ffi.Size()
+  external int inputArgumentDiagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> inputArgumentDiagnosticInfos;
+
+  @ffi.Size()
+  external int outputArgumentsSize;
+
+  external ffi.Pointer<UA_Variant> outputArguments;
+}
+
+final class UA_CallResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_CallMethodResult> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
 }
 
 enum UA_MonitoringMode {
@@ -1661,6 +2610,151 @@ enum UA_DeadbandType {
     2147483647 => __UA_DEADBANDTYPE_FORCE32BIT,
     _ => throw ArgumentError('Unknown value for UA_DeadbandType: $value'),
   };
+}
+
+final class UA_EventFilter extends ffi.Opaque {}
+
+final class UA_MonitoringParameters extends ffi.Struct {
+  @UA_UInt32()
+  external int clientHandle;
+
+  @ffi.Double()
+  external double samplingInterval;
+
+  external UA_ExtensionObject filter;
+
+  @UA_UInt32()
+  external int queueSize;
+
+  @ffi.Bool()
+  external bool discardOldest;
+}
+
+final class UA_MonitoredItemCreateRequest extends ffi.Struct {
+  external UA_ReadValueId itemToMonitor;
+
+  @ffi.UnsignedInt()
+  external int monitoringModeAsInt;
+
+  UA_MonitoringMode get monitoringMode => UA_MonitoringMode.fromValue(monitoringModeAsInt);
+
+  external UA_MonitoringParameters requestedParameters;
+}
+
+final class UA_MonitoredItemCreateResult extends ffi.Opaque {}
+
+final class UA_CreateMonitoredItemsRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @UA_UInt32()
+  external int subscriptionId;
+
+  @ffi.UnsignedInt()
+  external int timestampsToReturnAsInt;
+
+  UA_TimestampsToReturn get timestampsToReturn => UA_TimestampsToReturn.fromValue(timestampsToReturnAsInt);
+
+  @ffi.Size()
+  external int itemsToCreateSize;
+
+  external ffi.Pointer<UA_MonitoredItemCreateRequest> itemsToCreate;
+}
+
+final class UA_CreateMonitoredItemsResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_MonitoredItemCreateResult> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
+
+final class UA_DeleteMonitoredItemsRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @UA_UInt32()
+  external int subscriptionId;
+
+  @ffi.Size()
+  external int monitoredItemIdsSize;
+
+  external ffi.Pointer<UA_UInt32> monitoredItemIds;
+}
+
+final class UA_DeleteMonitoredItemsResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_StatusCode> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
+
+final class UA_CreateSubscriptionRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Double()
+  external double requestedPublishingInterval;
+
+  @UA_UInt32()
+  external int requestedLifetimeCount;
+
+  @UA_UInt32()
+  external int requestedMaxKeepAliveCount;
+
+  @UA_UInt32()
+  external int maxNotificationsPerPublish;
+
+  @ffi.Bool()
+  external bool publishingEnabled;
+
+  @UA_Byte()
+  external int priority;
+}
+
+final class UA_CreateSubscriptionResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @UA_UInt32()
+  external int subscriptionId;
+
+  @ffi.Double()
+  external double revisedPublishingInterval;
+
+  @UA_UInt32()
+  external int revisedLifetimeCount;
+
+  @UA_UInt32()
+  external int revisedMaxKeepAliveCount;
+}
+
+final class UA_EventFieldList extends ffi.Opaque {}
+
+final class UA_StatusChangeNotification extends ffi.Opaque {}
+
+final class UA_BuildInfo extends ffi.Struct {
+  external UA_String productUri;
+
+  external UA_String manufacturerName;
+
+  external UA_String productName;
+
+  external UA_String softwareVersion;
+
+  external UA_String buildNumber;
+
+  @ffi.Int64()
+  external int buildDate;
 }
 
 enum UA_RedundancySupport {
@@ -1784,6 +2878,14 @@ final class UA_EnumDefinition extends ffi.Struct {
   external ffi.Pointer<UA_EnumField> fields;
 }
 
+final class UA_ReadEventDetails extends ffi.Opaque {}
+
+final class UA_ReadProcessedDetails extends ffi.Opaque {}
+
+final class UA_HistoryModifiedData extends ffi.Opaque {}
+
+final class UA_HistoryEvent extends ffi.Opaque {}
+
 /// .. _logging:
 ///
 /// Logging Plugin API
@@ -1860,6 +2962,27 @@ enum UA_LogCategory {
 
 final class UA_Logger extends ffi.Opaque {}
 
+/// amalgamated original file "/include/open62541/util.h"
+final class UA_Server extends ffi.Opaque {}
+
+/// Range Definition
+/// ----------------
+final class UA_UInt32Range extends ffi.Struct {
+  @UA_UInt32()
+  external int min;
+
+  @UA_UInt32()
+  external int max;
+}
+
+final class UA_DurationRange extends ffi.Struct {
+  @ffi.Double()
+  external double min;
+
+  @ffi.Double()
+  external double max;
+}
+
 /// Key Value Map
 /// -------------
 /// Helper functions to work with configuration parameters in an array of
@@ -1876,26 +2999,243 @@ final class UA_KeyValueMap extends ffi.Struct {
 /// Binary Connection Config Parameters
 /// -----------------------------------
 final class UA_ConnectionConfig extends ffi.Struct {
-  @ffi.Uint32()
+  @UA_UInt32()
   external int protocolVersion;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int recvBufferSize;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int sendBufferSize;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int localMaxMessageSize;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int remoteMaxMessageSize;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int localMaxChunkCount;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int remoteMaxChunkCount;
+}
+
+/// .. _access-control:
+///
+/// AccessControl Plugin API
+/// ========================
+/// The access control callback is used to authenticate sessions and grant access
+/// rights accordingly.
+///
+/// The ``sessionId`` and ``sessionContext`` can be both NULL. This is the case
+/// when, for example, a MonitoredItem (the underlying Subscription) is detached
+/// from its Session but continues to run.
+final class UA_AccessControl extends ffi.Struct {
+  external ffi.Pointer<ffi.Void> context;
+
+  external ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_AccessControl> ac)>> clear;
+
+  @ffi.Size()
+  external int userTokenPoliciesSize;
+
+  external ffi.Pointer<UA_UserTokenPolicy> userTokenPolicies;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      UA_StatusCode Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_EndpointDescription> endpointDescription,
+        ffi.Pointer<UA_ByteString> secureChannelRemoteCertificate,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<UA_ExtensionObject> userIdentityToken,
+        ffi.Pointer<ffi.Pointer<ffi.Void>> sessionContext,
+      )
+    >
+  >
+  activateSession;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+      )
+    >
+  >
+  closeSession;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      UA_UInt32 Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_NodeId> nodeId,
+        ffi.Pointer<ffi.Void> nodeContext,
+      )
+    >
+  >
+  getUserRightsMask;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      UA_Byte Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_NodeId> nodeId,
+        ffi.Pointer<ffi.Void> nodeContext,
+      )
+    >
+  >
+  getUserAccessLevel;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Bool Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_NodeId> methodId,
+        ffi.Pointer<ffi.Void> methodContext,
+      )
+    >
+  >
+  getUserExecutable;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Bool Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_NodeId> methodId,
+        ffi.Pointer<ffi.Void> methodContext,
+        ffi.Pointer<UA_NodeId> objectId,
+        ffi.Pointer<ffi.Void> objectContext,
+      )
+    >
+  >
+  getUserExecutableOnObject;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Bool Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_AddNodesItem> item,
+      )
+    >
+  >
+  allowAddNode;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Bool Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_AddReferencesItem> item,
+      )
+    >
+  >
+  allowAddReference;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Bool Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_DeleteNodesItem> item,
+      )
+    >
+  >
+  allowDeleteNode;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Bool Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_DeleteReferencesItem> item,
+      )
+    >
+  >
+  allowDeleteReference;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Bool Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_NodeId> nodeId,
+        ffi.Pointer<ffi.Void> nodeContext,
+      )
+    >
+  >
+  allowBrowseNode;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Bool Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> oldSessionId,
+        ffi.Pointer<ffi.Void> oldSessionContext,
+        ffi.Pointer<UA_NodeId> newSessionId,
+        ffi.Pointer<ffi.Void> newSessionContext,
+      )
+    >
+  >
+  allowTransferSubscription;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Bool Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_NodeId> nodeId,
+        ffi.UnsignedInt performInsertReplace,
+        ffi.Pointer<UA_DataValue> value,
+      )
+    >
+  >
+  allowHistoryUpdateUpdateData;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Bool Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_AccessControl> ac,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_NodeId> nodeId,
+        ffi.Int64 startTimestamp,
+        ffi.Int64 endTimestamp,
+        ffi.Bool isDeleteModified,
+      )
+    >
+  >
+  allowHistoryUpdateDeleteRawModified;
 }
 
 /// CertificateGroup Plugin API
@@ -1919,37 +3259,37 @@ final class UA_CertificateGroup extends ffi.Struct {
 
   external ffi.Pointer<
     ffi.NativeFunction<
-      ffi.Uint32 Function(ffi.Pointer<UA_CertificateGroup> certGroup, ffi.Pointer<UA_TrustListDataType> trustList)
+      UA_StatusCode Function(ffi.Pointer<UA_CertificateGroup> certGroup, ffi.Pointer<UA_TrustListDataType> trustList)
     >
   >
   getTrustList;
 
   external ffi.Pointer<
     ffi.NativeFunction<
-      ffi.Uint32 Function(ffi.Pointer<UA_CertificateGroup> certGroup, ffi.Pointer<UA_TrustListDataType> trustList)
+      UA_StatusCode Function(ffi.Pointer<UA_CertificateGroup> certGroup, ffi.Pointer<UA_TrustListDataType> trustList)
     >
   >
   setTrustList;
 
   external ffi.Pointer<
     ffi.NativeFunction<
-      ffi.Uint32 Function(ffi.Pointer<UA_CertificateGroup> certGroup, ffi.Pointer<UA_TrustListDataType> trustList)
+      UA_StatusCode Function(ffi.Pointer<UA_CertificateGroup> certGroup, ffi.Pointer<UA_TrustListDataType> trustList)
     >
   >
   addToTrustList;
 
   external ffi.Pointer<
     ffi.NativeFunction<
-      ffi.Uint32 Function(ffi.Pointer<UA_CertificateGroup> certGroup, ffi.Pointer<UA_TrustListDataType> trustList)
+      UA_StatusCode Function(ffi.Pointer<UA_CertificateGroup> certGroup, ffi.Pointer<UA_TrustListDataType> trustList)
     >
   >
   removeFromTrustList;
 
   external ffi.Pointer<
     ffi.NativeFunction<
-      ffi.Uint32 Function(
+      UA_StatusCode Function(
         ffi.Pointer<UA_CertificateGroup> certGroup,
-        ffi.Pointer<ffi.Pointer<UA_String>> rejectedList,
+        ffi.Pointer<ffi.Pointer<UA_ByteString>> rejectedList,
         ffi.Pointer<ffi.Size> rejectedListSize,
       )
     >
@@ -1958,11 +3298,11 @@ final class UA_CertificateGroup extends ffi.Struct {
 
   external ffi.Pointer<
     ffi.NativeFunction<
-      ffi.Uint32 Function(
+      UA_StatusCode Function(
         ffi.Pointer<UA_CertificateGroup> certGroup,
-        ffi.Pointer<UA_String> certificate,
+        ffi.Pointer<UA_ByteString> certificate,
         ffi.Bool isTrusted,
-        ffi.Pointer<ffi.Pointer<UA_String>> crls,
+        ffi.Pointer<ffi.Pointer<UA_ByteString>> crls,
         ffi.Pointer<ffi.Size> crlsSize,
       )
     >
@@ -1971,7 +3311,7 @@ final class UA_CertificateGroup extends ffi.Struct {
 
   external ffi.Pointer<
     ffi.NativeFunction<
-      ffi.Uint32 Function(ffi.Pointer<UA_CertificateGroup> certGroup, ffi.Pointer<UA_String> certificate)
+      UA_StatusCode Function(ffi.Pointer<UA_CertificateGroup> certGroup, ffi.Pointer<UA_ByteString> certificate)
     >
   >
   verifyCertificate;
@@ -1980,6 +3320,14 @@ final class UA_CertificateGroup extends ffi.Struct {
 }
 
 final class UA_SecurityPolicy extends ffi.Opaque {}
+
+/// PubSub SecurityPolicy
+/// ---------------------
+///
+/// For PubSub encryption, the message nonce is part of the (unencrypted)
+/// SecurityHeader. The nonce is required for the de- and encryption and has to
+/// be set in the channel context before de/encrypting.
+final class UA_PubSubSecurityPolicy extends ffi.Opaque {}
 
 /// amalgamated original file "/include/open62541/plugin/eventloop.h"
 final class UA_EventLoop extends ffi.Opaque {}
@@ -2078,6 +3426,186 @@ enum UA_EventSourceType {
   };
 }
 
+final class UA_HistoryDatabase extends ffi.Struct {
+  external ffi.Pointer<ffi.Void> context;
+
+  external ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_HistoryDatabase> hdb)>> clear;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> hdbContext,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_NodeId> nodeId,
+        ffi.Bool historizing,
+        ffi.Pointer<UA_DataValue> value,
+      )
+    >
+  >
+  setValue;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> hdbContext,
+        ffi.Pointer<UA_NodeId> originId,
+        ffi.Pointer<UA_NodeId> emitterId,
+        ffi.Pointer<UA_EventFilter> historicalEventFilter,
+        ffi.Pointer<UA_EventFieldList> fieldList,
+      )
+    >
+  >
+  setEvent;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> hdbContext,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_RequestHeader> requestHeader,
+        ffi.Pointer<UA_ReadRawModifiedDetails> historyReadDetails,
+        ffi.UnsignedInt timestampsToReturn,
+        ffi.Bool releaseContinuationPoints,
+        ffi.Size nodesToReadSize,
+        ffi.Pointer<UA_HistoryReadValueId> nodesToRead,
+        ffi.Pointer<UA_HistoryReadResponse> response,
+        ffi.Pointer<ffi.Pointer<UA_HistoryData>> historyData,
+      )
+    >
+  >
+  readRaw;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> hdbContext,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_RequestHeader> requestHeader,
+        ffi.Pointer<UA_ReadRawModifiedDetails> historyReadDetails,
+        ffi.UnsignedInt timestampsToReturn,
+        ffi.Bool releaseContinuationPoints,
+        ffi.Size nodesToReadSize,
+        ffi.Pointer<UA_HistoryReadValueId> nodesToRead,
+        ffi.Pointer<UA_HistoryReadResponse> response,
+        ffi.Pointer<ffi.Pointer<UA_HistoryModifiedData>> historyData,
+      )
+    >
+  >
+  readModified;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> hdbContext,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_RequestHeader> requestHeader,
+        ffi.Pointer<UA_ReadEventDetails> historyReadDetails,
+        ffi.UnsignedInt timestampsToReturn,
+        ffi.Bool releaseContinuationPoints,
+        ffi.Size nodesToReadSize,
+        ffi.Pointer<UA_HistoryReadValueId> nodesToRead,
+        ffi.Pointer<UA_HistoryReadResponse> response,
+        ffi.Pointer<ffi.Pointer<UA_HistoryEvent>> historyData,
+      )
+    >
+  >
+  readEvent;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> hdbContext,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_RequestHeader> requestHeader,
+        ffi.Pointer<UA_ReadProcessedDetails> historyReadDetails,
+        ffi.UnsignedInt timestampsToReturn,
+        ffi.Bool releaseContinuationPoints,
+        ffi.Size nodesToReadSize,
+        ffi.Pointer<UA_HistoryReadValueId> nodesToRead,
+        ffi.Pointer<UA_HistoryReadResponse> response,
+        ffi.Pointer<ffi.Pointer<UA_HistoryData>> historyData,
+      )
+    >
+  >
+  readProcessed;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> hdbContext,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_RequestHeader> requestHeader,
+        ffi.Pointer<UA_ReadAtTimeDetails> historyReadDetails,
+        ffi.UnsignedInt timestampsToReturn,
+        ffi.Bool releaseContinuationPoints,
+        ffi.Size nodesToReadSize,
+        ffi.Pointer<UA_HistoryReadValueId> nodesToRead,
+        ffi.Pointer<UA_HistoryReadResponse> response,
+        ffi.Pointer<ffi.Pointer<UA_HistoryData>> historyData,
+      )
+    >
+  >
+  readAtTime;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> hdbContext,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_RequestHeader> requestHeader,
+        ffi.Pointer<UA_UpdateDataDetails> details,
+        ffi.Pointer<UA_HistoryUpdateResult> result,
+      )
+    >
+  >
+  updateData;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> hdbContext,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_RequestHeader> requestHeader,
+        ffi.Pointer<UA_DeleteRawModifiedDetails> details,
+        ffi.Pointer<UA_HistoryUpdateResult> result,
+      )
+    >
+  >
+  deleteRawModified;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> hdbContext,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_RequestHeader> requestHeader,
+        ffi.Pointer<UA_DeleteEventDetails> details,
+        ffi.Pointer<UA_HistoryUpdateResult> result,
+      )
+    >
+  >
+  deleteEvent;
+}
+
 /// amalgamated original file "/include/open62541/client.h"
 final class UA_Client extends ffi.Opaque {}
 
@@ -2105,7 +3633,7 @@ final class UA_ClientConfig extends ffi.Struct {
 
   external ffi.Pointer<UA_Logger> logging;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int timeout;
 
   external UA_ApplicationDescription clientDescription;
@@ -2146,15 +3674,15 @@ final class UA_ClientConfig extends ffi.Struct {
   @ffi.Size()
   external int namespacesSize;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int secureChannelLifeTime;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int requestedSessionTimeout;
 
   external UA_ConnectionConfig localConnectionConfig;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int connectivityCheckInterval;
 
   external ffi.Pointer<
@@ -2184,10 +3712,10 @@ final class UA_ClientConfig extends ffi.Struct {
 
   external UA_CertificateGroup certificateVerification;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int maxTrustListSize;
 
-  @ffi.Uint32()
+  @UA_UInt32()
   external int maxRejectedListSize;
 
   @ffi.Size()
@@ -2203,7 +3731,7 @@ final class UA_ClientConfig extends ffi.Struct {
         ffi.Pointer<UA_Client> client,
         ffi.UnsignedInt channelState,
         ffi.UnsignedInt sessionState,
-        ffi.Uint32 connectStatus,
+        UA_StatusCode connectStatus,
       )
     >
   >
@@ -2216,7 +3744,7 @@ final class UA_ClientConfig extends ffi.Struct {
 
   external ffi.Pointer<
     ffi.NativeFunction<
-      ffi.Void Function(ffi.Pointer<UA_Client> client, ffi.Uint32 subscriptionId, ffi.Pointer<ffi.Void> subContext)
+      ffi.Void Function(ffi.Pointer<UA_Client> client, UA_UInt32 subscriptionId, ffi.Pointer<ffi.Void> subContext)
     >
   >
   subscriptionInactivityCallback;
@@ -2229,7 +3757,7 @@ final class UA_ClientConfig extends ffi.Struct {
   external int sessionLocaleIdsSize;
 
   external ffi.Pointer<
-    ffi.NativeFunction<ffi.Uint32 Function(ffi.Pointer<UA_ClientConfig> cc, ffi.Pointer<UA_String> password)>
+    ffi.NativeFunction<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig> cc, ffi.Pointer<UA_ByteString> password)>
   >
   privateKeyPasswordCallback;
 }
@@ -2383,6 +3911,49 @@ enum UA_PubSubComponentType {
   };
 }
 
+/// Global PubSub Configuration
+/// ---------------------------
+/// The following PubSub configuration structure is part of the server-config.
+/// It configures behavior that is valid for all PubSubComponents.
+final class UA_PubSubConfiguration extends ffi.Struct {
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      UA_StatusCode Function(
+        ffi.Pointer<UA_Server> server,
+        UA_NodeId id,
+        ffi.UnsignedInt componentType,
+        ffi.Bool remove,
+      )
+    >
+  >
+  componentLifecycleCallback;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(ffi.Pointer<UA_Server> server, UA_NodeId id, ffi.Pointer<ffi.UnsignedInt> targetState)
+    >
+  >
+  beforeStateChangeCallback;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(ffi.Pointer<UA_Server> server, UA_NodeId id, ffi.UnsignedInt state, UA_StatusCode status)
+    >
+  >
+  stateChangeCallback;
+
+  @ffi.Bool()
+  external bool enableDeltaFrames;
+
+  @ffi.Bool()
+  external bool enableInformationModelMethods;
+
+  @ffi.Size()
+  external int securityPoliciesSize;
+
+  external ffi.Pointer<UA_PubSubSecurityPolicy> securityPolicies;
+}
+
 /// PublishedDataSet
 /// ----------------
 /// The PublishedDataSets (PDS) are containers for the published information. The
@@ -2513,6 +4084,305 @@ enum UA_PubSubOffsetType {
     11 => UA_PUBSUBOFFSETTYPE_DATASETFIELD_RAW,
     _ => throw ArgumentError('Unknown value for UA_PubSubOffsetType: $value'),
   };
+}
+
+final class UA_Nodestore extends ffi.Opaque {}
+
+/// Global constructor and destructor callbacks used for every node type.
+/// It gets set in the server config.
+final class UA_GlobalNodeLifecycle extends ffi.Opaque {}
+
+/// .. _server-configuration:
+///
+/// Server Configuration
+/// --------------------
+/// The configuration structure is passed to the server during initialization.
+/// The server expects that the configuration is not modified during runtime.
+/// Currently, only one server can use a configuration at a time. During
+/// shutdown, the server will clean up the parts of the configuration that are
+/// modified at runtime through the provided API.
+///
+/// Examples for configurations are provided in the ``/plugins`` folder.
+/// The usual usage is as follows:
+///
+/// 1. Create a server configuration with default settings as a starting point
+/// 2. Modifiy the configuration, e.g. by adding a server certificate
+/// 3. Instantiate a server with it
+/// 4. After shutdown of the server, clean up the configuration (free memory)
+///
+/// The :ref:`tutorials` provide a good starting point for this.
+final class UA_ServerConfig extends ffi.Struct {
+  external ffi.Pointer<ffi.Void> context;
+
+  external ffi.Pointer<UA_Logger> logging;
+
+  external UA_BuildInfo buildInfo;
+
+  external UA_ApplicationDescription applicationDescription;
+
+  @ffi.Double()
+  external double shutdownDelay;
+
+  external ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_Server> server, ffi.UnsignedInt state)>>
+  notifyLifecycleState;
+
+  @ffi.UnsignedInt()
+  external int verifyRequestTimestampAsInt;
+
+  UA_RuleHandling get verifyRequestTimestamp => UA_RuleHandling.fromValue(verifyRequestTimestampAsInt);
+
+  @ffi.UnsignedInt()
+  external int allowEmptyVariablesAsInt;
+
+  UA_RuleHandling get allowEmptyVariables => UA_RuleHandling.fromValue(allowEmptyVariablesAsInt);
+
+  @ffi.UnsignedInt()
+  external int allowAllCertificateUrisAsInt;
+
+  UA_RuleHandling get allowAllCertificateUris => UA_RuleHandling.fromValue(allowAllCertificateUrisAsInt);
+
+  external ffi.Pointer<UA_DataTypeArray> customDataTypes;
+
+  external ffi.Pointer<UA_EventLoop> eventLoop;
+
+  @ffi.Bool()
+  external bool externalEventLoop;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_Server> server, ffi.UnsignedInt type, UA_KeyValueMap payload)>
+  >
+  globalNotificationCallback;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_Server> server, ffi.UnsignedInt type, UA_KeyValueMap payload)>
+  >
+  lifecycleNotificationCallback;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_Server> server, ffi.UnsignedInt type, UA_KeyValueMap payload)>
+  >
+  serviceNotificationCallback;
+
+  external ffi.Pointer<UA_String> serverUrls;
+
+  @ffi.Size()
+  external int serverUrlsSize;
+
+  @ffi.Bool()
+  external bool tcpEnabled;
+
+  @UA_UInt32()
+  external int tcpBufSize;
+
+  @UA_UInt32()
+  external int tcpMaxMsgSize;
+
+  @UA_UInt32()
+  external int tcpMaxChunks;
+
+  @ffi.Bool()
+  external bool tcpReuseAddr;
+
+  @ffi.Size()
+  external int securityPoliciesSize;
+
+  external ffi.Pointer<UA_SecurityPolicy> securityPolicies;
+
+  @ffi.Size()
+  external int endpointsSize;
+
+  external ffi.Pointer<UA_EndpointDescription> endpoints;
+
+  @ffi.Bool()
+  external bool securityPolicyNoneDiscoveryOnly;
+
+  @ffi.Bool()
+  external bool allowNonePolicyPassword;
+
+  external UA_CertificateGroup secureChannelPKI;
+
+  external UA_CertificateGroup sessionPKI;
+
+  external UA_AccessControl accessControl;
+
+  external ffi.Pointer<UA_Nodestore> nodestore;
+
+  external ffi.Pointer<UA_GlobalNodeLifecycle> nodeLifecycle;
+
+  @ffi.Bool()
+  external bool modellingRulesOnInstances;
+
+  @ffi.Uint16()
+  external int maxSecureChannels;
+
+  @UA_UInt32()
+  external int maxSecurityTokenLifetime;
+
+  @ffi.Uint16()
+  external int maxSessions;
+
+  @ffi.Double()
+  external double maxSessionTimeout;
+
+  @UA_UInt32()
+  external int maxNodesPerRead;
+
+  @UA_UInt32()
+  external int maxNodesPerWrite;
+
+  @UA_UInt32()
+  external int maxNodesPerMethodCall;
+
+  @UA_UInt32()
+  external int maxNodesPerBrowse;
+
+  @UA_UInt32()
+  external int maxNodesPerRegisterNodes;
+
+  @UA_UInt32()
+  external int maxNodesPerTranslateBrowsePathsToNodeIds;
+
+  @UA_UInt32()
+  external int maxNodesPerNodeManagement;
+
+  @UA_UInt32()
+  external int maxMonitoredItemsPerCall;
+
+  @UA_UInt32()
+  external int maxReferencesPerNode;
+
+  @UA_UInt32()
+  external int maxTrustListSize;
+
+  @UA_UInt32()
+  external int maxRejectedListSize;
+
+  @ffi.Double()
+  external double asyncOperationTimeout;
+
+  @ffi.Size()
+  external int maxAsyncOperationQueueSize;
+
+  external ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_Server> server, ffi.Pointer<ffi.Void> out)>>
+  asyncOperationCancelCallback;
+
+  @UA_UInt32()
+  external int discoveryCleanupTimeout;
+
+  @ffi.Bool()
+  external bool subscriptionsEnabled;
+
+  @UA_UInt32()
+  external int maxSubscriptions;
+
+  @UA_UInt32()
+  external int maxSubscriptionsPerSession;
+
+  external UA_DurationRange publishingIntervalLimits;
+
+  external UA_UInt32Range lifeTimeCountLimits;
+
+  external UA_UInt32Range keepAliveCountLimits;
+
+  @UA_UInt32()
+  external int maxNotificationsPerPublish;
+
+  @ffi.Bool()
+  external bool enableRetransmissionQueue;
+
+  @UA_UInt32()
+  external int maxRetransmissionQueueSize;
+
+  @UA_UInt32()
+  external int maxEventsPerNode;
+
+  @UA_UInt32()
+  external int maxMonitoredItems;
+
+  @UA_UInt32()
+  external int maxMonitoredItemsPerSubscription;
+
+  external UA_DurationRange samplingIntervalLimits;
+
+  external UA_UInt32Range queueSizeLimits;
+
+  @UA_UInt32()
+  external int maxPublishReqPerSession;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_NodeId> nodeId,
+        ffi.Pointer<ffi.Void> nodeContext,
+        UA_UInt32 attibuteId,
+        ffi.Bool removed,
+      )
+    >
+  >
+  monitoredItemRegisterCallback;
+
+  @ffi.Bool()
+  external bool pubsubEnabled;
+
+  external UA_PubSubConfiguration pubSubConfig;
+
+  @ffi.Bool()
+  external bool historizingEnabled;
+
+  external UA_HistoryDatabase historyDatabase;
+
+  @ffi.Bool()
+  external bool accessHistoryDataCapability;
+
+  @UA_UInt32()
+  external int maxReturnDataValues;
+
+  @ffi.Bool()
+  external bool accessHistoryEventsCapability;
+
+  @UA_UInt32()
+  external int maxReturnEventValues;
+
+  @ffi.Bool()
+  external bool insertDataCapability;
+
+  @ffi.Bool()
+  external bool insertEventCapability;
+
+  @ffi.Bool()
+  external bool insertAnnotationsCapability;
+
+  @ffi.Bool()
+  external bool replaceDataCapability;
+
+  @ffi.Bool()
+  external bool replaceEventCapability;
+
+  @ffi.Bool()
+  external bool updateDataCapability;
+
+  @ffi.Bool()
+  external bool updateEventCapability;
+
+  @ffi.Bool()
+  external bool deleteRawCapability;
+
+  @ffi.Bool()
+  external bool deleteEventCapability;
+
+  @ffi.Bool()
+  external bool deleteAtTimeDataCapability;
+
+  @UA_UInt32()
+  external int reverseReconnectInterval;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<UA_StatusCode Function(ffi.Pointer<UA_ServerConfig> sc, ffi.Pointer<UA_ByteString> password)>
+  >
+  privateKeyPasswordCallback;
 }
 
 /// .. _server-node-management:
@@ -2710,5 +4580,7 @@ const String UA_OPEN62541_VER_LABEL = '-rc1';
 const String UA_OPEN62541_VER_COMMIT = 'unknown-commit';
 
 const String UA_OPEN62541_VERSION = 'v1.5.0-rc1';
+
+const int UA_STATUSCODE_GOOD = 0;
 
 const int UA_TYPES_COUNT = 388;
