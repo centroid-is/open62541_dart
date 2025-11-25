@@ -220,7 +220,7 @@ void main() {
     }
   });
 
-// Skip this test for now, need to build a variant to test this
+  // Skip this test for now, need to build a variant to test this
   test('Create DynamicValue schema', () {
     var fpNodeId = NodeId.fromString(4, "fp");
     List<DynamicValue> spFields = [

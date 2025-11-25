@@ -30,28 +30,33 @@ class ClientState {
 class ClientConfig {
   ClientConfig(this._clientConfig) {
     // Intercept callbacks
-    _state = ffi.NativeCallable<
-        ffi.Void Function(
-          ffi.Pointer<raw.UA_Client> client,
-          ffi.UnsignedInt channelState,
-          ffi.UnsignedInt sessionState,
-          raw.UA_StatusCode connectStatus,
-        )>.isolateLocal(
-      (ffi.Pointer<raw.UA_Client> client, int channelState, int sessionState, int recoveryStatus) => _stateStream.add(
-        ClientState(
-          channelState: raw.UA_SecureChannelState.fromValue(channelState),
-          sessionState: raw.UA_SessionState.fromValue(sessionState),
-          recoveryStatus: recoveryStatus,
-        ),
-      ),
-    );
+    _state =
+        ffi.NativeCallable<
+          ffi.Void Function(
+            ffi.Pointer<raw.UA_Client> client,
+            ffi.UnsignedInt channelState,
+            ffi.UnsignedInt sessionState,
+            raw.UA_StatusCode connectStatus,
+          )
+        >.isolateLocal(
+          (ffi.Pointer<raw.UA_Client> client, int channelState, int sessionState, int recoveryStatus) =>
+              _stateStream.add(
+                ClientState(
+                  channelState: raw.UA_SecureChannelState.fromValue(channelState),
+                  sessionState: raw.UA_SessionState.fromValue(sessionState),
+                  recoveryStatus: recoveryStatus,
+                ),
+              ),
+        );
     _clientConfig.ref.stateCallback = _state.nativeFunction;
-    _subscriptionInactivityCallback = ffi.NativeCallable<
-        ffi.Void Function(
-            ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal(_subscriptionInactivityC);
+    _subscriptionInactivityCallback =
+        ffi.NativeCallable<
+          ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+        >.isolateLocal(_subscriptionInactivityC);
     _clientConfig.ref.subscriptionInactivityCallback = _subscriptionInactivityCallback.nativeFunction;
-    _inactivityCallback =
-        ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>)>.isolateLocal(_inactivityCallbackC);
+    _inactivityCallback = ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>)>.isolateLocal(
+      _inactivityCallbackC,
+    );
     _clientConfig.ref.inactivityCallback = _inactivityCallback.nativeFunction;
   }
 
@@ -95,14 +100,16 @@ class ClientConfig {
   final StreamController<int> _subscriptionInactivity = StreamController<int>.broadcast();
   final StreamController<void> _inactivity = StreamController<void>.broadcast();
   late ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Client> client,
-        ffi.UnsignedInt channelState,
-        ffi.UnsignedInt sessionState,
-        raw.UA_StatusCode connectStatus,
-      )> _state;
+    ffi.Void Function(
+      ffi.Pointer<raw.UA_Client> client,
+      ffi.UnsignedInt channelState,
+      ffi.UnsignedInt sessionState,
+      raw.UA_StatusCode connectStatus,
+    )
+  >
+  _state;
   late ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>
-      _subscriptionInactivityCallback;
+  _subscriptionInactivityCallback;
   late ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>)> _inactivityCallback;
 }
 
@@ -154,7 +161,14 @@ class Client {
       rawPrivateKey.ref.data.asTypedList(privateKey.length).setRange(0, privateKey.length, privateKey);
 
       raw.UA_ClientConfig_setDefaultEncryption(
-          config, rawCertificate.ref, rawPrivateKey.ref, ffi.nullptr, 0, ffi.nullptr, 0);
+        config,
+        rawCertificate.ref,
+        rawPrivateKey.ref,
+        ffi.nullptr,
+        0,
+        ffi.nullptr,
+        0,
+      );
 
       // Accept all certificates
       ffi.Pointer<raw.UA_CertificateGroup> certificateVerification = ua_calloc<raw.UA_CertificateGroup>();
@@ -170,8 +184,11 @@ class Client {
     }
 
     if (username != null) {
-      raw.UA_ClientConfig_setAuthenticationUsername(config, username.toNativeUtf8(allocator: ua_malloc).cast(),
-          password != null ? password.toNativeUtf8(allocator: ua_malloc).cast() : ffi.nullptr);
+      raw.UA_ClientConfig_setAuthenticationUsername(
+        config,
+        username.toNativeUtf8(allocator: ua_malloc).cast(),
+        password != null ? password.toNativeUtf8(allocator: ua_malloc).cast() : ffi.nullptr,
+      );
     }
 
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
@@ -211,46 +228,48 @@ class Client {
     final variant = valueToVariant(value);
 
     late ffi.NativeCallable<
-        ffi.Void Function(
-          ffi.Pointer<raw.UA_Client>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Uint32,
-          ffi.Pointer<raw.UA_WriteResponse>,
-        )> callback;
+      ffi.Void Function(
+        ffi.Pointer<raw.UA_Client>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Uint32,
+        ffi.Pointer<raw.UA_WriteResponse>,
+      )
+    >
+    callback;
     // Create callback for this specific write request
-    callback = ffi.NativeCallable<
-        ffi.Void Function(
-          ffi.Pointer<raw.UA_Client>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Uint32,
-          ffi.Pointer<raw.UA_WriteResponse>,
-        )>.isolateLocal((
-      ffi.Pointer<raw.UA_Client> client,
-      ffi.Pointer<ffi.Void> userdata,
-      int reqId,
-      ffi.Pointer<raw.UA_WriteResponse> response,
-    ) {
-      if (completer.isCompleted) {
-        return; // Request timed out already
-      }
-      raw.UA_Variant_delete(variant);
-      if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-        completer.completeError(
-          'Failed to write value: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
-        );
-        return;
-      }
-      if (response.ref.results.value != raw.UA_STATUSCODE_GOOD) {
-        completer.completeError(
-          'Failed to write value: ${statusCodeToString(response.ref.results.value)}',
-        );
-        return;
-      }
-      completer.complete();
+    callback =
+        ffi.NativeCallable<
+          ffi.Void Function(
+            ffi.Pointer<raw.UA_Client>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Uint32,
+            ffi.Pointer<raw.UA_WriteResponse>,
+          )
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          int reqId,
+          ffi.Pointer<raw.UA_WriteResponse> response,
+        ) {
+          if (completer.isCompleted) {
+            return; // Request timed out already
+          }
+          raw.UA_Variant_delete(variant);
+          if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+            completer.completeError(
+              'Failed to write value: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
+            );
+            return;
+          }
+          if (response.ref.results.value != raw.UA_STATUSCODE_GOOD) {
+            completer.completeError('Failed to write value: ${statusCodeToString(response.ref.results.value)}');
+            return;
+          }
+          completer.complete();
 
-      // Close our callback so it can be garbage collected
-      callback.close();
-    });
+          // Close our callback so it can be garbage collected
+          callback.close();
+        });
     raw.UA_Client_writeValueAttribute_async(
       _client,
       nodeId.toRaw(),
@@ -268,9 +287,10 @@ class Client {
     ffi.Pointer<ffi.Uint32> connectStatus = ua_calloc<ffi.Uint32>();
     raw.UA_Client_getState(_client, state, sessionState, connectStatus);
     final retValue = ClientState(
-        channelState: raw.UA_SecureChannelState.fromValue(state.value),
-        sessionState: raw.UA_SessionState.fromValue(sessionState.value),
-        recoveryStatus: connectStatus.value);
+      channelState: raw.UA_SecureChannelState.fromValue(state.value),
+      sessionState: raw.UA_SessionState.fromValue(sessionState.value),
+      recoveryStatus: connectStatus.value,
+    );
     ua_calloc.free(state);
     ua_calloc.free(sessionState);
     ua_calloc.free(connectStatus);
@@ -323,96 +343,102 @@ class Client {
     ffi.Pointer<ffi.Uint32> requestIdPtr = ua_calloc<ffi.Uint32>();
 
     late ffi.NativeCallable<
-            ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>
-        callback;
+      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+    >
+    callback;
 
-    callback = ffi.NativeCallable<
-        ffi.Void Function(
-            ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal((
-      ffi.Pointer<raw.UA_Client> client,
-      ffi.Pointer<ffi.Void> userdata,
-      int requestId,
-      ffi.Pointer<ffi.Void> voidPointer,
-    ) async {
-      // Cleanup request and callback method
-      callback.close();
-      raw.UA_ReadRequest_delete(request);
-      ua_calloc.free(requestIdPtr);
+    callback =
+        ffi.NativeCallable<
+          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          int requestId,
+          ffi.Pointer<ffi.Void> voidPointer,
+        ) async {
+          // Cleanup request and callback method
+          callback.close();
+          raw.UA_ReadRequest_delete(request);
+          ua_calloc.free(requestIdPtr);
 
-      if (voidPointer == ffi.nullptr) {
-        completer.completeError('readAttribute callback received null pointer');
-        return;
-      }
-      ffi.Pointer<raw.UA_ReadResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
-      List<ffi.Pointer<raw.UA_DataValue>> pointers = [];
+          if (voidPointer == ffi.nullptr) {
+            completer.completeError('readAttribute callback received null pointer');
+            return;
+          }
+          ffi.Pointer<raw.UA_ReadResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
+          List<ffi.Pointer<raw.UA_DataValue>> pointers = [];
 
-      // Steal the data_value pointer from open62541 so they don't delete it
-      // if we don't do this, the data_value will be freed on a flutter async
-      // boundary. f.e. while we fetch the structure of a schema.
-      // because the callback we are currently in "returns" before completing.
-      ffi.Pointer<raw.UA_DataValue> source = ua_calloc<raw.UA_DataValue>();
-      for (var i = 0; i < response.ref.resultsSize; i++) {
-        pointers.add(raw.UA_DataValue_new());
-        raw.UA_DataValue_init(pointers.last);
-        source.ref = response.ref.results[i];
-        raw.UA_DataValue_copy(source, pointers.last);
-      }
-      ua_calloc.free(source);
+          // Steal the data_value pointer from open62541 so they don't delete it
+          // if we don't do this, the data_value will be freed on a flutter async
+          // boundary. f.e. while we fetch the structure of a schema.
+          // because the callback we are currently in "returns" before completing.
+          ffi.Pointer<raw.UA_DataValue> source = ua_calloc<raw.UA_DataValue>();
+          for (var i = 0; i < response.ref.resultsSize; i++) {
+            pointers.add(raw.UA_DataValue_new());
+            raw.UA_DataValue_init(pointers.last);
+            source.ref = response.ref.results[i];
+            raw.UA_DataValue_copy(source, pointers.last);
+          }
+          ua_calloc.free(source);
 
-      assert(pointers.length == response.ref.resultsSize);
-      if (pointers.length != nodeCount && pointers.isEmpty) {
-        completer.completeError(
-            "The connection might be broken, got no response when reading attributes for nodes: $nodes",
-            StackTrace.current);
-        return;
-      }
-      assert(nodeCount == pointers.length);
+          assert(pointers.length == response.ref.resultsSize);
+          if (pointers.length != nodeCount && pointers.isEmpty) {
+            completer.completeError(
+              "The connection might be broken, got no response when reading attributes for nodes: $nodes",
+              StackTrace.current,
+            );
+            return;
+          }
+          assert(nodeCount == pointers.length);
 
-      final retVal = <NodeId, DynamicValue>{};
-      for (var i = 0; i < pointers.length; i++) {
-        if (pointers[i].ref.status != raw.UA_STATUSCODE_GOOD) {
-          completer.completeError(
-              'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status)} NodeId: ${indorderNodes[i].$1} AttributeId: ${indorderNodes[i].$2}');
-          break; // Break here to cleanup pointers memory below
-        }
-        final status = pointers[i].ref.status;
-        final ok = status == raw.UA_STATUSCODE_GOOD;
-        var reference = retVal[indorderNodes[i].$1] ?? DynamicValue();
-        raw.UA_Variant? value = ok ? pointers[i].ref.value : null;
+          final retVal = <NodeId, DynamicValue>{};
+          for (var i = 0; i < pointers.length; i++) {
+            if (pointers[i].ref.status != raw.UA_STATUSCODE_GOOD) {
+              completer.completeError(
+                'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status)} NodeId: ${indorderNodes[i].$1} AttributeId: ${indorderNodes[i].$2}',
+              );
+              break; // Break here to cleanup pointers memory below
+            }
+            final status = pointers[i].ref.status;
+            final ok = status == raw.UA_STATUSCODE_GOOD;
+            var reference = retVal[indorderNodes[i].$1] ?? DynamicValue();
+            raw.UA_Variant? value = ok ? pointers[i].ref.value : null;
 
-        switch (indorderNodes[i].$2) {
-          case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
-            final description = value!.data.cast<raw.UA_LocalizedText>();
-            reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
-          case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
-            final displayName = value!.data.cast<raw.UA_LocalizedText>();
-            reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
-          case AttributeId.UA_ATTRIBUTEID_DATATYPE:
-            final dataType = value!.data.cast<raw.UA_NodeId>();
-            reference.typeId = dataType.ref.toNodeId();
-          case AttributeId.UA_ATTRIBUTEID_VALUE:
-            final temporary = await _variantToValueAutoSchema(value!, reference.typeId);
-            reference.value = temporary.value;
-            reference.typeId = reference.typeId ?? temporary.typeId; // Prefer explicitly fetched type id
-            reference.enumFields = reference.enumFields ?? temporary.enumFields;
-            reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
-          case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
-            final temporary =
-                DynamicValue.fromDataTypeDefinition(reference.typeId ?? value!.type.ref.typeId.toNodeId(), value!);
-            reference.value = temporary.value;
-            reference.typeId = reference.typeId ?? temporary.typeId;
-            reference.enumFields = reference.enumFields ?? temporary.enumFields;
-            reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
-          default:
-            throw 'Unhandled attribute id ${indorderNodes[i].$2}';
-        }
-        retVal[indorderNodes[i].$1] = reference;
-      }
-      for (var element in pointers) {
-        raw.UA_DataValue_delete(element);
-      }
-      if (!completer.isCompleted) completer.complete(retVal);
-    });
+            switch (indorderNodes[i].$2) {
+              case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
+                final description = value!.data.cast<raw.UA_LocalizedText>();
+                reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
+              case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
+                final displayName = value!.data.cast<raw.UA_LocalizedText>();
+                reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
+              case AttributeId.UA_ATTRIBUTEID_DATATYPE:
+                final dataType = value!.data.cast<raw.UA_NodeId>();
+                reference.typeId = dataType.ref.toNodeId();
+              case AttributeId.UA_ATTRIBUTEID_VALUE:
+                final temporary = await _variantToValueAutoSchema(value!, reference.typeId);
+                reference.value = temporary.value;
+                reference.typeId = reference.typeId ?? temporary.typeId; // Prefer explicitly fetched type id
+                reference.enumFields = reference.enumFields ?? temporary.enumFields;
+                reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
+              case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
+                final temporary = DynamicValue.fromDataTypeDefinition(
+                  reference.typeId ?? value!.type.ref.typeId.toNodeId(),
+                  value!,
+                );
+                reference.value = temporary.value;
+                reference.typeId = reference.typeId ?? temporary.typeId;
+                reference.enumFields = reference.enumFields ?? temporary.enumFields;
+                reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
+              default:
+                throw 'Unhandled attribute id ${indorderNodes[i].$2}';
+            }
+            retVal[indorderNodes[i].$1] = reference;
+          }
+          for (var element in pointers) {
+            raw.UA_DataValue_delete(element);
+          }
+          if (!completer.isCompleted) completer.complete(retVal);
+        });
 
     int res = raw.UA_Client_AsyncService(
       _client,
@@ -473,22 +499,39 @@ class Client {
 
     final completer = Completer<int>();
     late ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
-            ffi.Pointer<raw.UA_CreateSubscriptionResponse>)> callback;
+      ffi.Void Function(
+        ffi.Pointer<raw.UA_Client>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Uint32,
+        ffi.Pointer<raw.UA_CreateSubscriptionResponse>,
+      )
+    >
+    callback;
 
-    callback = ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
-            ffi.Pointer<raw.UA_CreateSubscriptionResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
-        ffi.Pointer<ffi.Void> somedata, int requestId, ffi.Pointer<raw.UA_CreateSubscriptionResponse> response) {
-      raw.UA_CreateSubscriptionRequest_delete(request);
-      callback.close();
-      if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-        completer.completeError(
-            'unable to create subscription ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
-        return;
-      }
-      completer.complete(response.ref.subscriptionId);
-    });
+    callback =
+        ffi.NativeCallable<
+          ffi.Void Function(
+            ffi.Pointer<raw.UA_Client>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Uint32,
+            ffi.Pointer<raw.UA_CreateSubscriptionResponse>,
+          )
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.Pointer<ffi.Void> somedata,
+          int requestId,
+          ffi.Pointer<raw.UA_CreateSubscriptionResponse> response,
+        ) {
+          raw.UA_CreateSubscriptionRequest_delete(request);
+          callback.close();
+          if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+            completer.completeError(
+              'unable to create subscription ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
+            );
+            return;
+          }
+          completer.complete(response.ref.subscriptionId);
+        });
 
     raw.UA_Client_Subscriptions_create_async(
       _client,
@@ -520,19 +563,37 @@ class Client {
 
     // We define our monitor callback here so we can use it in the onListen and onCancel closures
     late ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>, ffi.Uint32,
-            ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)> monitorCallback;
+      ffi.Void Function(
+        ffi.Pointer<raw.UA_Client>,
+        ffi.Uint32,
+        ffi.Pointer<ffi.Void>,
+        ffi.Uint32,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<raw.UA_DataValue>,
+      )
+    >
+    monitorCallback;
 
     // figure out the size of the node set
     final nodeCount = nodes.entries.map<int>((entry) => entry.value.length).fold(0, (prev, curr) => prev + curr);
     var descriptionFailureCount = 0;
 
     // Since the api we are using handles creating multiple monitored items at once, we need to create an array of callbacks
-    final callbacks = ua_calloc<
-        ffi.Pointer<
+    final callbacks =
+        ua_calloc<
+          ffi.Pointer<
             ffi.NativeFunction<
-                ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>, ffi.Uint32,
-                    ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)>>>(nodeCount);
+              ffi.Void Function(
+                ffi.Pointer<raw.UA_Client>,
+                ffi.Uint32,
+                ffi.Pointer<ffi.Void>,
+                ffi.Uint32,
+                ffi.Pointer<ffi.Void>,
+                ffi.Pointer<raw.UA_DataValue>,
+              )
+            >
+          >
+        >(nodeCount);
 
     // Store the monitored item id here so we can use it in the onCancel closure
     List<int> monIds = [];
@@ -562,33 +623,52 @@ class Client {
         request.ref.subscriptionId = subscriptionId;
 
         late ffi.NativeCallable<
-            ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
-                ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse>)> deleteCallback;
-        deleteCallback = ffi.NativeCallable<
-            ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
-                ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
-            ffi.Pointer<ffi.Void> userdata, int requestId, ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse> response) {
-          if (response == ffi.nullptr) {
-            stderr.write(
-                "Error deleting monitored item, nullptr provided connection propably already closed. Client cleanup.");
-          } else if (response.ref.resultsSize == 0) {
-            stderr.write(
-                "Error deleting monitored item, no results provided, connection propably already closed. Client cleanup.");
-          } else {
-            for (var i = 0; i < response.ref.resultsSize; i++) {
-              if (response.ref.results[i] != raw.UA_STATUSCODE_GOOD) {
+          ffi.Void Function(
+            ffi.Pointer<raw.UA_Client>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Uint32,
+            ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse>,
+          )
+        >
+        deleteCallback;
+        deleteCallback =
+            ffi.NativeCallable<
+              ffi.Void Function(
+                ffi.Pointer<raw.UA_Client>,
+                ffi.Pointer<ffi.Void>,
+                ffi.Uint32,
+                ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse>,
+              )
+            >.isolateLocal((
+              ffi.Pointer<raw.UA_Client> client,
+              ffi.Pointer<ffi.Void> userdata,
+              int requestId,
+              ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse> response,
+            ) {
+              if (response == ffi.nullptr) {
                 stderr.write(
-                    "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}");
+                  "Error deleting monitored item, nullptr provided connection propably already closed. Client cleanup.",
+                );
+              } else if (response.ref.resultsSize == 0) {
+                stderr.write(
+                  "Error deleting monitored item, no results provided, connection propably already closed. Client cleanup.",
+                );
+              } else {
+                for (var i = 0; i < response.ref.resultsSize; i++) {
+                  if (response.ref.results[i] != raw.UA_STATUSCODE_GOOD) {
+                    stderr.write(
+                      "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}",
+                    );
+                  }
+                }
               }
-            }
-          }
-          raw.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
-          monitorCallback.close();
-          ua_calloc.free(callbacks);
-          deleteCallback.close();
-          monIds.clear();
-          completer.complete();
-        });
+              raw.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
+              monitorCallback.close();
+              ua_calloc.free(callbacks);
+              deleteCallback.close();
+              monIds.clear();
+              completer.complete();
+            });
         raw.UA_Client_MonitoredItems_delete_async(
           _client,
           request.ref,
@@ -602,8 +682,9 @@ class Client {
 
     controller.onListen = () async {
       // Create our request
-      ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest =
-          ua_calloc<raw.UA_MonitoredItemCreateRequest>(nodeCount);
+      ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = ua_calloc<raw.UA_MonitoredItemCreateRequest>(
+        nodeCount,
+      );
       var index = 0;
       for (var entry in nodes.entries) {
         for (var attribute in entry.value) {
@@ -627,102 +708,106 @@ class Client {
       Set<int> seenMonIds = {};
 
       // Assign our monitor callback pointer, This one stays alive for the duration of the stream
-      monitorCallback = ffi.NativeCallable<
-          ffi.Void Function(
-            ffi.Pointer<raw.UA_Client>,
-            ffi.Uint32,
-            ffi.Pointer<ffi.Void>,
-            ffi.Uint32,
-            ffi.Pointer<ffi.Void>,
-            ffi.Pointer<raw.UA_DataValue>,
-          )>.isolateLocal((
-        ffi.Pointer<raw.UA_Client> client,
-        int subId,
-        ffi.Pointer<ffi.Void> subContext,
-        int monId,
-        ffi.Pointer<ffi.Void> monContext,
-        ffi.Pointer<raw.UA_DataValue> value,
-      ) async {
-        // Don't process the data if we are closed
-        if (controller.isClosed) {
-          stderr.writeln("Stream closed, data still sent from monitored item $monId");
-          return;
-        }
-        if (value == ffi.nullptr) {
-          controller.addError('Failed to read value, nullptr provided');
-          return;
-        }
-        if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
-          controller.addError('Failed to read value: ${statusCodeToString(value.ref.status)}');
-          return;
-        }
-        try {
-          //TODO: Find the stuff we used to create the request
-          final temp = monIdToNodeAndAttribute[monId]!;
-          final nodeId = temp.item1;
-          final attributeId = temp.item2;
-
-          var reference = latestValues[nodeId] ?? DynamicValue();
-          final ref = value.ref.value;
-
-          switch (attributeId) {
-            case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
-              final description = ref.data.cast<raw.UA_LocalizedText>();
-              reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
-            case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
-              final displayName = ref.data.cast<raw.UA_LocalizedText>();
-              reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
-            case AttributeId.UA_ATTRIBUTEID_DATATYPE:
-              final dataType = ref.data.cast<raw.UA_NodeId>();
-              reference.typeId = dataType.ref.toNodeId();
-            case AttributeId.UA_ATTRIBUTEID_VALUE:
-              // Steal the variant pointer from open62541 so they don't delete it
-              // if we don't do this, the variant will be freed on a flutter async
-              // boundary. f.e. while we fetch the structure of a schema.
-              // because the callback we are currently in "returns" before completing.
-              final source = ua_calloc<raw.UA_Variant>();
-              source.ref = value.ref.value;
-              final variant = raw.UA_Variant_new();
-              raw.UA_Variant_copy(source, variant);
-              ua_calloc.free(source);
-              final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
-              // Now that we have crossed an async boundary, we need to fetch a new reference. It might have been updated
-              // with a description or other fields while we processed data.
-              reference = latestValues[nodeId] ?? reference;
-
-              // Update the values of the fields
-              reference.value = data.value;
-              reference.typeId = reference.typeId ?? data.typeId;
-              reference.enumFields = data.enumFields;
-              raw.UA_Variant_delete(variant);
-            case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
-              final temporary =
-                  DynamicValue.fromDataTypeDefinition(reference.typeId ?? ref.type.ref.typeId.toNodeId(), ref);
-              reference.value = temporary.value;
-              reference.typeId = reference.typeId ?? temporary.typeId;
-              reference.enumFields = reference.enumFields ?? temporary.enumFields;
-            default:
-              throw 'Unhandled attribute id $attributeId';
-          }
-
-          // Update the seenmonIds after processing
-          seenMonIds.add(monId);
-
-          latestValues[nodeId] = reference;
-          if (controller.isClosed) {
-            return; // While processing the data the controller might have been closed
-          }
-          try {
-            if (seenMonIds.length == nodeCount - descriptionFailureCount) {
-              controller.add(latestValues);
+      monitorCallback =
+          ffi.NativeCallable<
+            ffi.Void Function(
+              ffi.Pointer<raw.UA_Client>,
+              ffi.Uint32,
+              ffi.Pointer<ffi.Void>,
+              ffi.Uint32,
+              ffi.Pointer<ffi.Void>,
+              ffi.Pointer<raw.UA_DataValue>,
+            )
+          >.isolateLocal((
+            ffi.Pointer<raw.UA_Client> client,
+            int subId,
+            ffi.Pointer<ffi.Void> subContext,
+            int monId,
+            ffi.Pointer<ffi.Void> monContext,
+            ffi.Pointer<raw.UA_DataValue> value,
+          ) async {
+            // Don't process the data if we are closed
+            if (controller.isClosed) {
+              stderr.writeln("Stream closed, data still sent from monitored item $monId");
+              return;
             }
-          } catch (e) {
-            stderr.write("Error adding data: $e");
-          }
-        } catch (e) {
-          stderr.write("Error converting data for: ${monIdToNodeAndAttribute[monId]} to type $DynamicValue: $e");
-        }
-      });
+            if (value == ffi.nullptr) {
+              controller.addError('Failed to read value, nullptr provided');
+              return;
+            }
+            if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
+              controller.addError('Failed to read value: ${statusCodeToString(value.ref.status)}');
+              return;
+            }
+            try {
+              //TODO: Find the stuff we used to create the request
+              final temp = monIdToNodeAndAttribute[monId]!;
+              final nodeId = temp.item1;
+              final attributeId = temp.item2;
+
+              var reference = latestValues[nodeId] ?? DynamicValue();
+              final ref = value.ref.value;
+
+              switch (attributeId) {
+                case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
+                  final description = ref.data.cast<raw.UA_LocalizedText>();
+                  reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
+                case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
+                  final displayName = ref.data.cast<raw.UA_LocalizedText>();
+                  reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
+                case AttributeId.UA_ATTRIBUTEID_DATATYPE:
+                  final dataType = ref.data.cast<raw.UA_NodeId>();
+                  reference.typeId = dataType.ref.toNodeId();
+                case AttributeId.UA_ATTRIBUTEID_VALUE:
+                  // Steal the variant pointer from open62541 so they don't delete it
+                  // if we don't do this, the variant will be freed on a flutter async
+                  // boundary. f.e. while we fetch the structure of a schema.
+                  // because the callback we are currently in "returns" before completing.
+                  final source = ua_calloc<raw.UA_Variant>();
+                  source.ref = value.ref.value;
+                  final variant = raw.UA_Variant_new();
+                  raw.UA_Variant_copy(source, variant);
+                  ua_calloc.free(source);
+                  final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
+                  // Now that we have crossed an async boundary, we need to fetch a new reference. It might have been updated
+                  // with a description or other fields while we processed data.
+                  reference = latestValues[nodeId] ?? reference;
+
+                  // Update the values of the fields
+                  reference.value = data.value;
+                  reference.typeId = reference.typeId ?? data.typeId;
+                  reference.enumFields = data.enumFields;
+                  raw.UA_Variant_delete(variant);
+                case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
+                  final temporary = DynamicValue.fromDataTypeDefinition(
+                    reference.typeId ?? ref.type.ref.typeId.toNodeId(),
+                    ref,
+                  );
+                  reference.value = temporary.value;
+                  reference.typeId = reference.typeId ?? temporary.typeId;
+                  reference.enumFields = reference.enumFields ?? temporary.enumFields;
+                default:
+                  throw 'Unhandled attribute id $attributeId';
+              }
+
+              // Update the seenmonIds after processing
+              seenMonIds.add(monId);
+
+              latestValues[nodeId] = reference;
+              if (controller.isClosed) {
+                return; // While processing the data the controller might have been closed
+              }
+              try {
+                if (seenMonIds.length == nodeCount - descriptionFailureCount) {
+                  controller.add(latestValues);
+                }
+              } catch (e) {
+                stderr.write("Error adding data: $e");
+              }
+            } catch (e) {
+              stderr.write("Error converting data for: ${monIdToNodeAndAttribute[monId]} to type $DynamicValue: $e");
+            }
+          });
 
       // Set all the callbacks to have the same handler function
       for (var i = 0; i < nodeCount; i++) {
@@ -731,85 +816,103 @@ class Client {
 
       // Define the callback that is invoked when the monitored item is created
       late ffi.NativeCallable<
-          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
-              ffi.Pointer<raw.UA_CreateMonitoredItemsResponse>)> createCallback;
-      createCallback = ffi.NativeCallable<
-          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
-              ffi.Pointer<raw.UA_CreateMonitoredItemsResponse>)>.isolateLocal((ffi.Pointer<raw.UA_Client> client,
-          ffi.Pointer<ffi.Void> userdata, int requestId, ffi.Pointer<raw.UA_CreateMonitoredItemsResponse> response) {
-        // Cleanup the request memory
-        raw.UA_CreateMonitoredItemsRequest_delete(createRequest);
-        createCallback.close();
-        ua_calloc.free(localRequestId);
+        ffi.Void Function(
+          ffi.Pointer<raw.UA_Client>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Uint32,
+          ffi.Pointer<raw.UA_CreateMonitoredItemsResponse>,
+        )
+      >
+      createCallback;
+      createCallback =
+          ffi.NativeCallable<
+            ffi.Void Function(
+              ffi.Pointer<raw.UA_Client>,
+              ffi.Pointer<ffi.Void>,
+              ffi.Uint32,
+              ffi.Pointer<raw.UA_CreateMonitoredItemsResponse>,
+            )
+          >.isolateLocal((
+            ffi.Pointer<raw.UA_Client> client,
+            ffi.Pointer<ffi.Void> userdata,
+            int requestId,
+            ffi.Pointer<raw.UA_CreateMonitoredItemsResponse> response,
+          ) {
+            // Cleanup the request memory
+            raw.UA_CreateMonitoredItemsRequest_delete(createRequest);
+            createCallback.close();
+            ua_calloc.free(localRequestId);
 
-        late StreamSubscription inactivitySubscription;
-        inactivitySubscription = config.subscriptionInactivityStream.listen((inactiveSubscriptionId) {
-          if (controller.isClosed) {
-            inactivitySubscription.cancel();
-            return;
-          }
-          if (inactiveSubscriptionId == subscriptionId) {
-            controller.addError(Inactivity());
-          }
-        });
-        late StreamSubscription stateSubscription;
-        stateSubscription = config.stateStream.listen((state) {
-          if (controller.isClosed) {
-            stateSubscription.cancel();
-            return;
-          }
-          if (state.channelState == SecureChannelState.UA_SECURECHANNELSTATE_CLOSED) {
-            controller.addError(SecureChannelClosed());
-          }
-        });
-        cleanup() {
-          controller.onCancel = () {}; // Don't invoke the real close callback
-          monitorCallback.close();
-          ua_calloc.free(callbacks);
-          controller.close();
-        }
+            late StreamSubscription inactivitySubscription;
+            inactivitySubscription = config.subscriptionInactivityStream.listen((inactiveSubscriptionId) {
+              if (controller.isClosed) {
+                inactivitySubscription.cancel();
+                return;
+              }
+              if (inactiveSubscriptionId == subscriptionId) {
+                controller.addError(Inactivity());
+              }
+            });
+            late StreamSubscription stateSubscription;
+            stateSubscription = config.stateStream.listen((state) {
+              if (controller.isClosed) {
+                stateSubscription.cancel();
+                return;
+              }
+              if (state.channelState == SecureChannelState.UA_SECURECHANNELSTATE_CLOSED) {
+                controller.addError(SecureChannelClosed());
+              }
+            });
+            cleanup() {
+              controller.onCancel = () {}; // Don't invoke the real close callback
+              monitorCallback.close();
+              ua_calloc.free(callbacks);
+              controller.close();
+            }
 
-        if (response == ffi.nullptr) {
-          controller.addError('ffi pointer is null');
-          cleanup();
-          return;
-        } else if (response.ref.resultsSize == 0) {
-          controller.addError('No results for create monitored item');
-          cleanup();
-          return;
-        } else if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-          controller.addError(
-              'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
-          cleanup();
-          return;
-        }
+            if (response == ffi.nullptr) {
+              controller.addError('ffi pointer is null');
+              cleanup();
+              return;
+            } else if (response.ref.resultsSize == 0) {
+              controller.addError('No results for create monitored item');
+              cleanup();
+              return;
+            } else if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+              controller.addError(
+                'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
+              );
+              cleanup();
+              return;
+            }
 
-        assert(response.ref.resultsSize == nodeCount);
-        int index = 0;
-        Map<Tuple2<NodeId, AttributeId>, int> failures = {};
-        for (var node in nodes.keys) {
-          for (var attribute in nodes[node]!) {
-            if (response.ref.results[index].statusCode == raw.UA_STATUSCODE_GOOD) {
-              monIds.add(response.ref.results[index].monitoredItemId);
-              monIdToNodeAndAttribute[response.ref.results[index].monitoredItemId] = Tuple2(node, attribute);
-            } else {
-              // Allow for the description attribute to be missing
-              if (response.ref.results[index].statusCode != raw.UA_STATUSCODE_BADATTRIBUTEIDINVALID &&
-                  attribute != AttributeId.UA_ATTRIBUTEID_DESCRIPTION) {
-                failures[Tuple2(node, attribute)] = response.ref.results[index].statusCode;
-              } else {
-                descriptionFailureCount++;
+            assert(response.ref.resultsSize == nodeCount);
+            int index = 0;
+            Map<Tuple2<NodeId, AttributeId>, int> failures = {};
+            for (var node in nodes.keys) {
+              for (var attribute in nodes[node]!) {
+                if (response.ref.results[index].statusCode == raw.UA_STATUSCODE_GOOD) {
+                  monIds.add(response.ref.results[index].monitoredItemId);
+                  monIdToNodeAndAttribute[response.ref.results[index].monitoredItemId] = Tuple2(node, attribute);
+                } else {
+                  // Allow for the description attribute to be missing
+                  if (response.ref.results[index].statusCode != raw.UA_STATUSCODE_BADATTRIBUTEIDINVALID &&
+                      attribute != AttributeId.UA_ATTRIBUTEID_DESCRIPTION) {
+                    failures[Tuple2(node, attribute)] = response.ref.results[index].statusCode;
+                  } else {
+                    descriptionFailureCount++;
+                  }
+                }
+                index++;
               }
             }
-            index++;
-          }
-        }
-        if (failures.isNotEmpty) {
-          controller.addError(
-              "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value)}").join(", ")}");
-          controller.close(); // Call onCancel above
-        }
-      });
+            if (failures.isNotEmpty) {
+              controller.addError(
+                "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value)}").join(", ")}",
+              );
+              controller.close(); // Call onCancel above
+            }
+          });
       localRequestId = ua_calloc<ffi.Uint32>();
       final statusCode = raw.UA_Client_MonitoredItems_createDataChanges_async(
         _client,
@@ -854,7 +957,7 @@ class Client {
           AttributeId.UA_ATTRIBUTEID_VALUE,
           AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
           AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
-        ]
+        ],
       },
       subscriptionId,
       monitoringMode: monitoringMode,
@@ -886,57 +989,63 @@ class Client {
       inputArgs[i] = ptr.ref;
     }
     final completer = Completer<List<DynamicValue>>();
-    final callbackInner = ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32,
-            ffi.Pointer<raw.UA_CallResponse>)>.isolateLocal((
-      ffi.Pointer<raw.UA_Client> client,
-      ffi.Pointer<ffi.Void> userdata,
-      int requestId,
-      ffi.Pointer<raw.UA_CallResponse> cr,
-    ) async {
-      try {
-        final ref = cr.ref;
-        if (ref.resultsSize == 0) {
-          return completer.completeError("No results for call to $objectId $methodId", StackTrace.current);
-        }
-        if (ref.resultsSize > 1) {
-          return completer.completeError(
-            "Unsupported, multiple results for call to $objectId $methodId",
-            StackTrace.current,
-          );
-        }
-        final results = ref.results.ref;
-        if (results.statusCode != raw.UA_STATUSCODE_GOOD) {
-          return completer.completeError(
-            "Results error on call to $objectId $methodId failed with ${statusCodeToString(results.statusCode)}",
-            StackTrace.current,
-          );
-        }
-        if (ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-          return completer.completeError(
-            "Header error on call to $objectId $methodId failed with ${statusCodeToString(ref.responseHeader.serviceResult)}",
-            StackTrace.current,
-          );
-        }
-        if (results.outputArgumentsSize == 0) {
-          completer.complete([]);
-        } else {
-          final result = <DynamicValue>[];
-          for (var i = 0; i < results.outputArgumentsSize; i++) {
-            result.add(await _variantToValueAutoSchema(results.outputArguments[i]));
+    final callbackInner =
+        ffi.NativeCallable<
+          ffi.Void Function(
+            ffi.Pointer<raw.UA_Client>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Uint32,
+            ffi.Pointer<raw.UA_CallResponse>,
+          )
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          int requestId,
+          ffi.Pointer<raw.UA_CallResponse> cr,
+        ) async {
+          try {
+            final ref = cr.ref;
+            if (ref.resultsSize == 0) {
+              return completer.completeError("No results for call to $objectId $methodId", StackTrace.current);
+            }
+            if (ref.resultsSize > 1) {
+              return completer.completeError(
+                "Unsupported, multiple results for call to $objectId $methodId",
+                StackTrace.current,
+              );
+            }
+            final results = ref.results.ref;
+            if (results.statusCode != raw.UA_STATUSCODE_GOOD) {
+              return completer.completeError(
+                "Results error on call to $objectId $methodId failed with ${statusCodeToString(results.statusCode)}",
+                StackTrace.current,
+              );
+            }
+            if (ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+              return completer.completeError(
+                "Header error on call to $objectId $methodId failed with ${statusCodeToString(ref.responseHeader.serviceResult)}",
+                StackTrace.current,
+              );
+            }
+            if (results.outputArgumentsSize == 0) {
+              completer.complete([]);
+            } else {
+              final result = <DynamicValue>[];
+              for (var i = 0; i < results.outputArgumentsSize; i++) {
+                result.add(await _variantToValueAutoSchema(results.outputArguments[i]));
+              }
+              completer.complete(result);
+            }
+          } catch (e) {
+            stderr.write("Error calling callback: $e");
+            completer.completeError(e, StackTrace.current);
+          } finally {
+            // cleanup input arguments
+            for (var ptr in ptrs) {
+              raw.UA_Variant_delete(ptr);
+            }
           }
-          completer.complete(result);
-        }
-      } catch (e) {
-        stderr.write("Error calling callback: $e");
-        completer.completeError(e, StackTrace.current);
-      } finally {
-        // cleanup input arguments
-        for (var ptr in ptrs) {
-          raw.UA_Variant_delete(ptr);
-        }
-      }
-    });
+        });
 
     final statusCode = raw.UA_Client_call_async(
       _client,
@@ -957,10 +1066,8 @@ class Client {
   Future<Schema> buildSchema(NodeId nodeIdType) async {
     var map = Schema();
     map[nodeIdType] = (await readAttribute({
-      nodeIdType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION]
-    }))
-        .values
-        .first;
+      nodeIdType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION],
+    })).values.first;
     final val = map[nodeIdType]!;
     if (val.typeId == NodeId.structureDefinition) {
       val.typeId =

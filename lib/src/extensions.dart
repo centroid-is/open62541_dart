@@ -371,7 +371,8 @@ extension UA_StructFieldFormat on raw.UA_StructureDefinition {
 
   String _formatField(raw.UA_StructureField field, int depth) {
     final indent = '  ' * (depth + 1);
-    final fieldStr = '''$indent{
+    final fieldStr =
+        '''$indent{
 $indent  structureName: ${field.name.value},
 $indent  name: ${field.fieldName},
 $indent  NodeId: ${field.dataType.format()}${field.dimensions.isEmpty ? '' : ','}${field.dimensions.isEmpty ? '' : '''

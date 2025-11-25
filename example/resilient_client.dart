@@ -39,17 +39,24 @@ void main(List<String> args) async {
     if (value.sessionState == SessionState.UA_SESSIONSTATE_ACTIVATED && sessionLost) {
       sessionLost = false;
       final subscriptionId = await c.subscriptionCreate();
-      c.monitoredItems({
-        id: [AttributeId.UA_ATTRIBUTEID_VALUE],
-      }, samplingInterval: Duration(milliseconds: 3000), subscriptionId).listen((value) {
-        print(value.values.first.asDateTime);
-      }).onError((error) {
-        if (error is Inactivity) {
-          print("Inactivity reported for subscription containing our monitored item");
-        } else {
-          throw error;
-        }
-      });
+      c
+          .monitoredItems(
+            {
+              id: [AttributeId.UA_ATTRIBUTEID_VALUE],
+            },
+            samplingInterval: Duration(milliseconds: 3000),
+            subscriptionId,
+          )
+          .listen((value) {
+            print(value.values.first.asDateTime);
+          })
+          .onError((error) {
+            if (error is Inactivity) {
+              print("Inactivity reported for subscription containing our monitored item");
+            } else {
+              throw error;
+            }
+          });
     }
   });
 

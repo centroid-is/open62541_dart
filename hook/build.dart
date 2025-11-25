@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
@@ -27,7 +26,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
       final outputStream = OutputFileStream('${extractDir.path.toString()}/${file.name}');
       file.writeContent(outputStream);
       outputStream.closeSync();
-    } 
+    }
   }
   final version_no_v_prefix = version.substring(1);
   final folder = extractDir.uri.resolve('open62541-$version_no_v_prefix/');
@@ -77,7 +76,7 @@ Future<void> main(List<String> args) async {
       OS.windows => "install/lib/libopen62541.dll",
       OS.android => "install/lib/libopen62541.so",
       OS.iOS => "install/lib/libopen62541.dylib",
-      _ => throw UnsupportedError("Unsupported OS")
+      _ => throw UnsupportedError("Unsupported OS"),
     };
     output.assets.code.add(
       CodeAsset(

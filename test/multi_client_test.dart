@@ -22,8 +22,9 @@ void main() async {
     print("Setup starting");
     for (var port in serverPorts) {
       final server = setupServer(port, logLevel: logLevel);
-      serversAndClients[server] =
-          await Future.wait(List.generate(clientPerServer, (index) => setupClient(port, logLevel: logLevel)));
+      serversAndClients[server] = await Future.wait(
+        List.generate(clientPerServer, (index) => setupClient(port, logLevel: logLevel)),
+      );
     }
     print("Setup complete");
   });

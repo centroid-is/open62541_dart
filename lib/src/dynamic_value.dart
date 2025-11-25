@@ -297,8 +297,12 @@ class DynamicValue extends PayloadType<DynamicValue> {
       final enumFields = <int, EnumField>{};
       for (int i = 0; i < enumDefinition.ref.fieldsSize; i++) {
         final field = enumDefinition.ref.fields[i];
-        enumFields[field.value] =
-            EnumField(field.value, field.name.value, field.displayName.localizedText, field.description.localizedText);
+        enumFields[field.value] = EnumField(
+          field.value,
+          field.name.value,
+          field.displayName.localizedText,
+          field.description.localizedText,
+        );
       }
       tree.enumFields = enumFields;
       //TODO: This only supports int32 enums for now

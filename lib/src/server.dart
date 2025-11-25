@@ -10,10 +10,7 @@ import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
 class Server {
-  Server({
-    LogLevel? logLevel,
-    int? port,
-  }) {
+  Server({LogLevel? logLevel, int? port}) {
     final config = ua_calloc<raw.UA_ServerConfig>();
 
     if (logLevel != null) {
@@ -91,12 +88,15 @@ class Server {
   /// );
   /// server.addVariableNode(nodeId, value);
   /// ```
-  void addVariableNode(NodeId variableNodeId, DynamicValue value,
-      {AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
-      NodeId? parentNodeId,
-      NodeId? parentReferenceNodeId,
-      NodeId? baseDataVariableType,
-      NodeId? typeId}) {
+  void addVariableNode(
+    NodeId variableNodeId,
+    DynamicValue value, {
+    AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
+    NodeId? parentNodeId,
+    NodeId? parentReferenceNodeId,
+    NodeId? baseDataVariableType,
+    NodeId? typeId,
+  }) {
     ffi.Pointer<raw.UA_VariableAttributes> attr = raw.UA_VariableAttributes_new();
     attr.ref = raw.UA_VariableAttributes_default;
 
@@ -139,8 +139,17 @@ class Server {
     final parentReferenceNodeIdRaw = parentReferenceNodeId.toRaw();
     final baseDataVariableTypeRaw = baseDataVariableType.toRaw();
 
-    var returnCode = raw.UA_Server_addVariableNode(_server, variableNodeId.toRaw(), parentNodeIdRaw,
-        parentReferenceNodeIdRaw, name, baseDataVariableTypeRaw, attr.ref, ffi.nullptr, ffi.nullptr);
+    var returnCode = raw.UA_Server_addVariableNode(
+      _server,
+      variableNodeId.toRaw(),
+      parentNodeIdRaw,
+      parentReferenceNodeIdRaw,
+      name,
+      baseDataVariableTypeRaw,
+      attr.ref,
+      ffi.nullptr,
+      ffi.nullptr,
+    );
     raw.UA_VariableAttributes_delete(attr);
     ua_calloc.free(variant);
     if (returnCode != raw.UA_STATUSCODE_GOOD) {
@@ -148,8 +157,14 @@ class Server {
     }
   }
 
-  void addVariableTypeNode(DynamicValue schema, NodeId variableTypeId, String name,
-      {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
+  void addVariableTypeNode(
+    DynamicValue schema,
+    NodeId variableTypeId,
+    String name, {
+    LocalizedText? displayName,
+    NodeId? parentNodeId,
+    NodeId? referenceTypeId,
+  }) {
     var dattr = raw.UA_VariableTypeAttributes_new();
     if (displayName != null) {
       dattr.ref.displayName.locale.set(displayName.locale);
@@ -167,8 +182,17 @@ class Server {
     final referenceTypeIdRaw = referenceTypeId.toRaw();
     final qualifiedName = raw.UA_QUALIFIEDNAME(1, name.toNativeUtf8(allocator: ua_malloc).cast());
 
-    int res = raw.UA_Server_addVariableTypeNode(_server, variableTypeId.toRaw(), parentNodeIdRaw,
-        referenceTypeIdRaw, qualifiedName, parentNodeIdRaw, dattr.ref, ffi.nullptr, ffi.nullptr);
+    int res = raw.UA_Server_addVariableTypeNode(
+      _server,
+      variableTypeId.toRaw(),
+      parentNodeIdRaw,
+      referenceTypeIdRaw,
+      qualifiedName,
+      parentNodeIdRaw,
+      dattr.ref,
+      ffi.nullptr,
+      ffi.nullptr,
+    );
 
     raw.UA_Variant_delete(variant);
     raw.UA_VariableTypeAttributes_delete(dattr);
@@ -178,8 +202,13 @@ class Server {
     }
   }
 
-  void addDataTypeNode(NodeId requestedNewNodeId, String browseName,
-      {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
+  void addDataTypeNode(
+    NodeId requestedNewNodeId,
+    String browseName, {
+    LocalizedText? displayName,
+    NodeId? parentNodeId,
+    NodeId? referenceTypeId,
+  }) {
     var attr = raw.UA_DataTypeAttributes_new();
 
     if (displayName != null) {
@@ -190,27 +219,46 @@ class Server {
     parentNodeId ??= NodeId.structure;
     referenceTypeId ??= NodeId.hasSubtype;
 
-    _addNode(raw.UA_NodeClass.UA_NODECLASS_DATATYPE, requestedNewNodeId, parentNodeId, referenceTypeId, browseName,
-        NodeId.nullId, attr.cast(), getType(UaTypes.dataTypeAttributes));
+    _addNode(
+      raw.UA_NodeClass.UA_NODECLASS_DATATYPE,
+      requestedNewNodeId,
+      parentNodeId,
+      referenceTypeId,
+      browseName,
+      NodeId.nullId,
+      attr.cast(),
+      getType(UaTypes.dataTypeAttributes),
+    );
 
     raw.UA_DataTypeAttributes_delete(attr);
   }
 
   void _addNode(
-      raw.UA_NodeClass nodeClass,
-      NodeId requestedNewNodeId,
-      NodeId parentNodeId,
-      NodeId referenceTypeId,
-      String browseName,
-      NodeId typeDefinition,
-      ffi.Pointer<raw.UA_NodeAttributes> attr,
-      ffi.Pointer<raw.UA_DataType> attributeType) {
-
+    raw.UA_NodeClass nodeClass,
+    NodeId requestedNewNodeId,
+    NodeId parentNodeId,
+    NodeId referenceTypeId,
+    String browseName,
+    NodeId typeDefinition,
+    ffi.Pointer<raw.UA_NodeAttributes> attr,
+    ffi.Pointer<raw.UA_DataType> attributeType,
+  ) {
     final browse = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
 
     //TODO: It seems this method has been removed.
-    var retCode = raw.UA_Server_addNode_begin(_server, nodeClass, requestedNewNodeId.toRaw(), parentNodeId.toRaw(), referenceTypeId.toRaw(), browse,
-        typeDefinition.toRaw(), attr.cast(), attributeType, ffi.nullptr, ffi.nullptr);
+    var retCode = raw.UA_Server_addNode_begin(
+      _server,
+      nodeClass,
+      requestedNewNodeId.toRaw(),
+      parentNodeId.toRaw(),
+      referenceTypeId.toRaw(),
+      browse,
+      typeDefinition.toRaw(),
+      attr.cast(),
+      attributeType,
+      ffi.nullptr,
+      ffi.nullptr,
+    );
 
     if (retCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add node begin ${statusCodeToString(retCode)}';
@@ -237,37 +285,41 @@ class Server {
     ffi.Pointer<raw.UA_CallbackValueSource> callback = ua_calloc<raw.UA_CallbackValueSource>();
 
     raw.UA_UInt32 onRead(
-        ffi.Pointer<raw.UA_Server> server,
-        ffi.Pointer<raw.UA_NodeId> sessionId,
-        ffi.Pointer<ffi.Void> sessionContext,
-        ffi.Pointer<raw.UA_NodeId> nodeId,
-        ffi.Pointer<ffi.Void> nodeContext,
-        ffi.Bool includeSourceTimeStamp,
-        ffi.Pointer<raw.UA_NumericRange> range,
-        ffi.Pointer<raw.UA_DataValue> value) {
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionContext,
+      ffi.Pointer<raw.UA_NodeId> nodeId,
+      ffi.Pointer<ffi.Void> nodeContext,
+      ffi.Bool includeSourceTimeStamp,
+      ffi.Pointer<raw.UA_NumericRange> range,
+      ffi.Pointer<raw.UA_DataValue> value,
+    ) {
       // TODO: Implement the read callback logic
       controller.add("Read callback triggered");
       return raw.UA_STATUSCODE_GOOD as raw.UA_StatusCode;
     }
 
-    final onReadCallback = ffi.NativeCallable<
-        raw.UA_UInt32 Function(
-            ffi.Pointer<raw.UA_Server>,
-            ffi.Pointer<raw.UA_NodeId>,
-            ffi.Pointer<ffi.Void>,
-            ffi.Pointer<raw.UA_NodeId>,
-            ffi.Pointer<ffi.Void>,
-            ffi.Bool,
-            ffi.Pointer<raw.UA_NumericRange>,
-            ffi.Pointer<raw.UA_DataValue>
-            )>.isolateLocal(onRead);
+    //TODO: FIX
+    // final onReadCallback = ffi.NativeCallable<
+    //     raw.UA_UInt32 Function(
+    //         ffi.Pointer<raw.UA_Server>,
+    //         ffi.Pointer<raw.UA_NodeId>,
+    //         ffi.Pointer<ffi.Void>,
+    //         ffi.Pointer<raw.UA_NodeId>,
+    //         ffi.Pointer<ffi.Void>,
+    //         ffi.Bool,
+    //         ffi.Pointer<raw.UA_NumericRange>,
+    //         ffi.Pointer<raw.UA_DataValue>
+    //         )>.isolateLocal(onRead);
 
-    callback.ref.read = onReadCallback.nativeFunction;
+    //callback.ref.read = onReadCallback.nativeFunction;
     raw.UA_Server_setVariableNode_callbackValueSource(_server, variableNodeId.toRaw(), callback.ref);
 
     controller.onCancel = () {
       // _lib.UA_Server_setVariableNode_valueCallback(_server, variableNodeId.toRaw(_lib), ffi.nullptr); TODO: This cannot call us anymore
-      onReadCallback.close();
+
+      //TODO: FIX
+      //onReadCallback.close();
       ua_calloc.free(callback);
     };
 
@@ -324,8 +376,10 @@ class Server {
     array.ref.typesSize = 1;
     array.ref.types = ua_calloc<raw.UA_DataType>(1);
     array.ref.types[0].typeId = typeId.toRaw();
-    array.ref.types[0].binaryEncodingId =
-        NodeId.fromString(typeId.namespace, "BinaryEncoding_Default:${value.name}").toRaw();
+    array.ref.types[0].binaryEncodingId = NodeId.fromString(
+      typeId.namespace,
+      "BinaryEncoding_Default:${value.name}",
+    ).toRaw();
 
     array.ref.types[0].memSize = 9;
     array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;

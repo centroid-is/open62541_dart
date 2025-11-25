@@ -31,16 +31,16 @@ void main() async {
     addBasicVariables(server!);
     // Set current value to false to get a change
     await client!.write(
-        boolNodeId,
-        DynamicValue(
-            value: true,
-            typeId: NodeId.boolean)); // It seems we get a value straigt away, make it match the first in the list
+      boolNodeId,
+      DynamicValue(value: true, typeId: NodeId.boolean),
+    ); // It seems we get a value straigt away, make it match the first in the list
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     final items = [true, false, true, false];
     final comp = Completer<void>();
     int counter = 0;
-    final stream =
-        client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10)).map<bool>((event) {
+    final stream = client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10)).map<bool>((
+      event,
+    ) {
       counter = counter + 1;
       if (counter == items.length) {
         comp.complete();
@@ -58,31 +58,31 @@ void main() async {
     addBasicVariables(server!);
     // Set current value to false to get a change
     await client!.write(
-        boolNodeId,
-        DynamicValue(
-            value: true,
-            typeId: NodeId.boolean)); // It seems we get a value straigt away, make it match the first in the list
+      boolNodeId,
+      DynamicValue(value: true, typeId: NodeId.boolean),
+    ); // It seems we get a value straigt away, make it match the first in the list
     await client!.write(
-        intNodeId,
-        DynamicValue(
-            value: 1,
-            typeId: NodeId.int32)); // It seems we get a value straigt away, make it match the first in the list
+      intNodeId,
+      DynamicValue(value: 1, typeId: NodeId.int32),
+    ); // It seems we get a value straigt away, make it match the first in the list
     final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
     int boolCounter = 0;
     int intCounter = 0;
     final comp = Completer<void>();
     final items = [true, false, true, false];
     final intItems = [1, 2, 3, 4];
-    final boolStream =
-        client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10)).map<bool>((event) {
-      boolCounter = boolCounter + 1;
-      if (boolCounter == items.length && intCounter == intItems.length) {
-        comp.complete();
-      }
-      return event.value;
-    });
-    final intStream =
-        client!.monitor(intNodeId, subscription, samplingInterval: Duration(milliseconds: 10)).map<int>((event) {
+    final boolStream = client!
+        .monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10))
+        .map<bool>((event) {
+          boolCounter = boolCounter + 1;
+          if (boolCounter == items.length && intCounter == intItems.length) {
+            comp.complete();
+          }
+          return event.value;
+        });
+    final intStream = client!.monitor(intNodeId, subscription, samplingInterval: Duration(milliseconds: 10)).map<int>((
+      event,
+    ) {
       intCounter = intCounter + 1;
       if (boolCounter == items.length && intCounter == intItems.length) {
         comp.complete();
@@ -127,13 +127,18 @@ void main() async {
     expect(value.description, description);
   });
 
-  test('Just run the server so we can connect with a client', () async {
-    addBasicVariables(server!);
-    await Future.delayed(Duration(minutes: 10));
-    // expect((await client!.read(boolNodeId)).value, false);
-    // await client!.write(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
-    // expect((await client!.read(boolNodeId)).value, true);
-  }, timeout: Timeout(Duration(minutes: 10)), skip: true);
+  test(
+    'Just run the server so we can connect with a client',
+    () async {
+      addBasicVariables(server!);
+      await Future.delayed(Duration(minutes: 10));
+      // expect((await client!.read(boolNodeId)).value, false);
+      // await client!.write(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
+      // expect((await client!.read(boolNodeId)).value, true);
+    },
+    timeout: Timeout(Duration(minutes: 10)),
+    skip: true,
+  );
 
   test('Partial read failures should return partial data', () async {
     final doesNotExist = NodeId.fromString(1, "does.not.exist");
@@ -148,7 +153,7 @@ void main() async {
         AttributeId.UA_ATTRIBUTEID_VALUE, // This fails
         AttributeId.UA_ATTRIBUTEID_DESCRIPTION, // This fails
         AttributeId.UA_ATTRIBUTEID_ROLEPERMISSIONS, // This fails
-      ]
+      ],
     });
 
     expect(value.length, 2);
@@ -192,10 +197,17 @@ void main() async {
 
     server!.addCustomType(myStructureTypeId, structureValue);
 
-    server!.addDataTypeNode(myStructureTypeId, "myStructureType",
-        displayName: LocalizedText("My Structure Type", "en-US"));
-    server!.addVariableNode(structureVariableNodeId, structureValue,
-        accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
+    server!.addDataTypeNode(
+      myStructureTypeId,
+      "myStructureType",
+      displayName: LocalizedText("My Structure Type", "en-US"),
+    );
+    server!.addVariableNode(
+      structureVariableNodeId,
+      structureValue,
+      accessLevel: AccessLevelMask(read: true, write: true),
+      typeId: myStructureTypeId,
+    );
 
     final value = await client!.read(structureVariableNodeId);
     expect(value.isObject, isTrue);
@@ -240,11 +252,18 @@ void main() async {
 
     server!.addCustomType(myStructureTypeId, structureValue);
 
-    server!.addDataTypeNode(myStructureTypeId, "myStructureType",
-        displayName: LocalizedText("My Structure Type", "en-US"));
+    server!.addDataTypeNode(
+      myStructureTypeId,
+      "myStructureType",
+      displayName: LocalizedText("My Structure Type", "en-US"),
+    );
 
-    server!.addVariableNode(structureVariableNodeId, structureValue,
-        accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
+    server!.addVariableNode(
+      structureVariableNodeId,
+      structureValue,
+      accessLevel: AccessLevelMask(read: true, write: true),
+      typeId: myStructureTypeId,
+    );
 
     final value = await client!.read(structureVariableNodeId);
     print(value);
@@ -277,8 +296,11 @@ void main() async {
 
     server!.addCustomType(myStructureTypeId, structureValue);
 
-    server!.addDataTypeNode(myStructureTypeId, "myStructureType",
-        displayName: LocalizedText("My Structure Type", "en-US"));
+    server!.addDataTypeNode(
+      myStructureTypeId,
+      "myStructureType",
+      displayName: LocalizedText("My Structure Type", "en-US"),
+    );
 
     DynamicValue arrayValue = DynamicValue(name: "My Array Variable", typeId: myStructureTypeId);
     arrayValue[0] = DynamicValue.from(structureValue);
@@ -298,8 +320,12 @@ void main() async {
     arrayValue[3]["b"] = false;
     arrayValue[3]["c"] = 8.8;
 
-    server!.addVariableNode(structureVariableNodeId, arrayValue,
-        accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
+    server!.addVariableNode(
+      structureVariableNodeId,
+      arrayValue,
+      accessLevel: AccessLevelMask(read: true, write: true),
+      typeId: myStructureTypeId,
+    );
 
     final value = await client!.read(structureVariableNodeId);
     print(value);
