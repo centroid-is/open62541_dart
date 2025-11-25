@@ -32,8 +32,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
       outputStream.closeSync();
     }
   }
-  final versionNoPrefix = version.substring(1);
-  final folder = extractDir.uri.resolve('open62541-$versionNoPrefix/');
+  final folder = extractDir.listSync().firstWhere((element) => element is Directory).uri;
   if (!await Directory.fromUri(folder).exists()) {
     throw Exception('Error extracting open62541 version $version: extracted directory not found');
   }
