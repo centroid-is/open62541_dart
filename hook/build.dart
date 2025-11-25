@@ -50,6 +50,7 @@ Future<void> main(List<String> args) async {
       name: name,
       sourceDir: extractedFiles,
       buildMode: BuildMode.release,
+      generator: Platform.isWindows ? Generator.make : Generator.defaultGenerator,
       defines: {
         'CMAKE_BUILD_TYPE': 'Release',
         'CMAKE_INSTALL_PREFIX': '${input.outputDirectory.toFilePath()}/install',
