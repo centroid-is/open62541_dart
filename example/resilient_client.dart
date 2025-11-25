@@ -20,7 +20,6 @@ void main(List<String> args) async {
   final password = args.length < 3 ? null : args[2];
   print("Connecting to server ($endpoint) as $username");
   var c = Client(
-    loadOpen62541Library(local: true),
     username: username,
     password: password,
     securityMode: MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,

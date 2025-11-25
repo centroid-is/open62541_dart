@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
@@ -41,12 +42,13 @@ Future<void> main(List<String> args) async {
   await build(args, (input, output) async {
     final extracted_files = await download(input.outputDirectoryShared, version);
 
+    final name = 'open62541';
     final logger = Logger('')
       ..level = Level.ALL
       // temp fwd to stderr until process logs pass to stdout
       ..onRecord.listen((record) => stderr.writeln(record));
     final builder = CMakeBuilder.create(
-      name: 'open62541',
+      name: name,
       sourceDir: extracted_files,
       buildMode: BuildMode.release,
       defines: {
@@ -59,7 +61,7 @@ Future<void> main(List<String> args) async {
         'UA_BUILD_UNIT_TESTS': 'OFF',
         'UA_MULTITHREADING': '0',
         'UA_LOGLEVEL': '100',
-        'UA_ENABLE_AMALGAMATION': 'ON'
+        //'UA_ENABLE_AMALGAMATION': 'ON'
       },
       targets: ['install'],
       buildLocal: true,
@@ -67,5 +69,23 @@ Future<void> main(List<String> args) async {
     );
 
     await builder.run(input: input, output: output, logger: logger);
+
+    // manually add assets
+    final libPath = switch (input.config.code.targetOS) {
+      OS.linux => "install/lib/libopen62541.so",
+      OS.macOS => "install/lib/libopen62541.dylib",
+      OS.windows => "install/lib/libopen62541.dll",
+      OS.android => "install/lib/libopen62541.so",
+      OS.iOS => "install/lib/libopen62541.dylib",
+      _ => throw UnsupportedError("Unsupported OS")
+    };
+    output.assets.code.add(
+      CodeAsset(
+        package: 'open62541/src/third_party',
+        name: '$name.g.dart',
+        linkMode: DynamicLoadingBundled(),
+        file: input.outputDirectory.resolve(libPath),
+      ),
+    );
   });
 }

@@ -21,7 +21,7 @@ ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType) {
   if (type < 0 || type > raw.UA_TYPES_COUNT) {
     throw 'Type out of boundary $type';
   }
-  return ffi.Pointer.fromAddress(raw.UA_TYPES.address + (type * ffi.sizeOf<raw.UA_DataType>()));
+  return ffi.Pointer.fromAddress(ffi.Native.addressOf(raw.UA_TYPES).address + (type * ffi.sizeOf<raw.UA_DataType>()));
 }
 
 ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {

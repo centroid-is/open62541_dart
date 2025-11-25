@@ -779,7 +779,7 @@ class Client {
           return;
         } else if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
           controller.addError(
-              'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}');
+              'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
           cleanup();
           return;
         }

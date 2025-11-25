@@ -174,7 +174,7 @@ class Server {
     raw.UA_VariableTypeAttributes_delete(dattr);
 
     if (res != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to add variable type node ${statusCodeToString(res, _lib)}';
+      throw 'Failed to add variable type node ${statusCodeToString(res)}';
     }
   }
 
@@ -205,41 +205,21 @@ class Server {
       NodeId typeDefinition,
       ffi.Pointer<raw.UA_NodeAttributes> attr,
       ffi.Pointer<raw.UA_DataType> attributeType) {
-    nodeIdPtrIfNotNull(NodeId? nodeId) {
-      if (nodeId == null) {
-        return ffi.nullptr;
-      }
-      final ptr = raw.UA_NodeId_new();
-      ptr.ref = nodeId.toRaw();
-      return ptr;
-    }
-
-    freeNodeIdIfNotNull(ffi.Pointer<raw.UA_NodeId> nodeId) {
-      if (nodeId != ffi.nullptr) {
-        raw.UA_NodeId_delete(nodeId);
-      }
-    }
-
-    // This is dereferenced in the underlying c code. Throw errors here
-    // to avoid a segfault in the c code. which is harder to debug.
-    final requestedNewNode = nodeIdPtrIfNotNull(requestedNewNodeId);
-    final parentNode = nodeIdPtrIfNotNull(parentNodeId);
-    final referenceType = nodeIdPtrIfNotNull(referenceTypeId);
-    final type = nodeIdPtrIfNotNull(typeDefinition);
 
     final browse = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
 
     //TODO: It seems this method has been removed.
-    final retCode = raw.UA_Server_addNode(_server, nodeClass, requestedNewNode, parentNode, referenceType, browse,
-        type, attr, attributeType, ffi.nullptr, ffi.nullptr);
-
-    freeNodeIdIfNotNull(requestedNewNode);
-    freeNodeIdIfNotNull(parentNode);
-    freeNodeIdIfNotNull(referenceType);
-    freeNodeIdIfNotNull(type);
+    var retCode = raw.UA_Server_addNode_begin(_server, nodeClass, requestedNewNodeId.toRaw(), parentNodeId.toRaw(), referenceTypeId.toRaw(), browse,
+        typeDefinition.toRaw(), attr.cast(), attributeType, ffi.nullptr, ffi.nullptr);
 
     if (retCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to add node ${statusCodeToString(retCode, _lib)}';
+      throw 'Failed to add node begin ${statusCodeToString(retCode)}';
+    }
+
+    retCode = raw.UA_Server_addNode_finish(_server, requestedNewNodeId.toRaw());
+
+    if (retCode != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add node finish ${statusCodeToString(retCode)}';
     }
   }
 
@@ -254,34 +234,36 @@ class Server {
 
     StreamController<String> controller = StreamController<String>();
 
-    // TODO: This type is only linked to a function that is marked as deprecated.
-    ffi.Pointer<raw.UA_ValueCallback> callback = ua_calloc<raw.UA_ValueCallback>();
+    ffi.Pointer<raw.UA_CallbackValueSource> callback = ua_calloc<raw.UA_CallbackValueSource>();
 
-    void onRead(
+    raw.UA_UInt32 onRead(
         ffi.Pointer<raw.UA_Server> server,
         ffi.Pointer<raw.UA_NodeId> sessionId,
         ffi.Pointer<ffi.Void> sessionContext,
         ffi.Pointer<raw.UA_NodeId> nodeId,
         ffi.Pointer<ffi.Void> nodeContext,
+        ffi.Bool includeSourceTimeStamp,
         ffi.Pointer<raw.UA_NumericRange> range,
         ffi.Pointer<raw.UA_DataValue> value) {
       // TODO: Implement the read callback logic
       controller.add("Read callback triggered");
+      return raw.UA_STATUSCODE_GOOD as raw.UA_StatusCode;
     }
 
     final onReadCallback = ffi.NativeCallable<
-        ffi.Void Function(
+        raw.UA_UInt32 Function(
             ffi.Pointer<raw.UA_Server>,
             ffi.Pointer<raw.UA_NodeId>,
             ffi.Pointer<ffi.Void>,
             ffi.Pointer<raw.UA_NodeId>,
             ffi.Pointer<ffi.Void>,
+            ffi.Bool,
             ffi.Pointer<raw.UA_NumericRange>,
-            ffi.Pointer<raw.UA_DataValue>)>.isolateLocal(onRead);
+            ffi.Pointer<raw.UA_DataValue>
+            )>.isolateLocal(onRead);
 
-    //TODO: All this is marked as deprecated 
-    callback.ref.onRead = onReadCallback.nativeFunction;
-    raw.UA_Server_setVariableNode_valueCallback(_server, variableNodeId.toRaw(), callback.ref);
+    callback.ref.read = onReadCallback.nativeFunction;
+    raw.UA_Server_setVariableNode_callbackValueSource(_server, variableNodeId.toRaw(), callback.ref);
 
     controller.onCancel = () {
       // _lib.UA_Server_setVariableNode_valueCallback(_server, variableNodeId.toRaw(_lib), ffi.nullptr); TODO: This cannot call us anymore
