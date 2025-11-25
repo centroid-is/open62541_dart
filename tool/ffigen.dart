@@ -115,21 +115,27 @@ void main(){
     )
   );
 
+  final macroList = [
+    'UA_OPEN62541_VER_MAJOR',
+    'UA_OPEN62541_VER_MINOR',
+    'UA_OPEN62541_VER_PATCH',
+    'UA_OPEN62541_VER_LABEL',
+    'UA_OPEN62541_VER_COMMIT',
+    'UA_OPEN62541_VERSION',
+    'UA_TYPES_COUNT',
+  ];
+
   final macros = Macros(
-    include: Declarations.includeSet(
-      {
-        'UA_OPEN62541_VER_MAJOR',
-        'UA_OPEN62541_VER_MINOR',
-        'UA_OPEN62541_VER_PATCH',
-        'UA_OPEN62541_VER_LABEL',
-        'UA_OPEN62541_VER_COMMIT',
-        'UA_OPEN62541_VERSION',
-        'UA_ACCESSLEVELMASK_*', //TODO: How can I do this wildcard?
-        'UA_STATUSCODE_*',
-        'UA_STATUSCODE_GOOD',
-        'UA_TYPES_COUNT',
-      }
-    ) 
+    include: (decl){
+      if(decl.originalName.startsWith('UA_ACCESSLEVELMASK_') ||
+         decl.originalName.startsWith('UA_STATUSCODE_') ||
+         decl.originalName.startsWith('UA_NS0ID_')
+        )
+        {
+          return true;
+        }
+      return macroList.contains(decl.originalName);
+    }
   );
 
   // Define our generator
@@ -168,6 +174,8 @@ void main(){
         'UA_CallResponse',
         'UA_CallMethodResult',
         'UA_DeleteMonitoredItemsRequest',
+        'UA_DataType',
+        'UA_Logger',
       }
     ),
     typedefs: Typedefs.includeSet(
@@ -175,7 +183,15 @@ void main(){
         'UA_Byte',
         'UA_StatusCode',
         'UA_ByteString',
+        'UA_Float',
+        'UA_Double',
+        'UA_Int64',
+        'UA_UInt64',
+        'UA_Int32',
         'UA_UInt32',
+        'UA_Int16',
+        'UA_UInt16',
+        'UA_SByte',
       }
     ),
     globals: globals,

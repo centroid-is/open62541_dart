@@ -6,6 +6,7 @@ import 'package:binarize/binarize.dart';
 import '../third_party/open62541.g.dart' as raw;
 import '../ua_allocation.dart';
 
+
 // TODO this file has a lot of boilerplate, can we make it better?
 
 class BooleanPayload extends PayloadType<bool> {
