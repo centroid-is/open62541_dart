@@ -28,8 +28,8 @@ Future<Uri> download(Uri outputDirectory, String version) async {
       outputStream.closeSync();
     }
   }
-  final version_no_v_prefix = version.substring(1);
-  final folder = extractDir.uri.resolve('open62541-$version_no_v_prefix/');
+  final versionNoPrefix = version.substring(1);
+  final folder = extractDir.uri.resolve('open62541-$versionNoPrefix/');
   if (!await Directory.fromUri(folder).exists()) {
     throw Exception('Error extracting open62541 version $version: extracted directory not found');
   }
@@ -39,7 +39,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
 Future<void> main(List<String> args) async {
   final version = "v1.5.0-rc1";
   await build(args, (input, output) async {
-    final extracted_files = await download(input.outputDirectoryShared, version);
+    final extractedFiles = await download(input.outputDirectoryShared, version);
 
     final name = 'open62541';
     final logger = Logger('')
@@ -48,7 +48,7 @@ Future<void> main(List<String> args) async {
       ..onRecord.listen((record) => stderr.writeln(record));
     final builder = CMakeBuilder.create(
       name: name,
-      sourceDir: extracted_files,
+      sourceDir: extractedFiles,
       buildMode: BuildMode.release,
       defines: {
         'CMAKE_BUILD_TYPE': 'Release',

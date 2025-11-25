@@ -169,7 +169,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     throw StateError('Invalid key type: ${key.runtimeType}');
   }
 
-  operator []=(dynamic key, dynamic passed) {
+  void operator []=(dynamic key, dynamic passed) {
     // Try to acomidate people setting trivial values directly
     DynamicValue innerValue;
     if (passed is DynamicValue) {

@@ -25,4 +25,3 @@ export 'src/third_party/open62541.g.dart'
 export 'src/node_id.dart' show NodeId;
 export 'src/server.dart' show Server;
 export 'src/types/errors.dart' show Inactivity;
-export 'src/common.dart' show loadOpen62541Library;

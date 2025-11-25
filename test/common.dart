@@ -1,5 +1,3 @@
-import 'dart:ffi';
-
 import 'package:open62541/open62541.dart';
 
 final boolNodeId = NodeId.fromString(1, "the.bool");

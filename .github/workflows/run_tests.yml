@@ -57,14 +57,5 @@ jobs:
         run: |
           choco install openssl
 
-      - name: Build open62541 library
-        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
-        run: ./open62541_tooling/build_lib.sh
-
-      - name: Build open62541 library windows
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: ./open62541_tooling/build_lib.ps1
-
       - name: Run tests
         run: dart test

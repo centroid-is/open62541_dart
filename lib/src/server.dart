@@ -284,20 +284,21 @@ class Server {
 
     ffi.Pointer<raw.UA_CallbackValueSource> callback = ua_calloc<raw.UA_CallbackValueSource>();
 
-    raw.UA_UInt32 onRead(
-      ffi.Pointer<raw.UA_Server> server,
-      ffi.Pointer<raw.UA_NodeId> sessionId,
-      ffi.Pointer<ffi.Void> sessionContext,
-      ffi.Pointer<raw.UA_NodeId> nodeId,
-      ffi.Pointer<ffi.Void> nodeContext,
-      ffi.Bool includeSourceTimeStamp,
-      ffi.Pointer<raw.UA_NumericRange> range,
-      ffi.Pointer<raw.UA_DataValue> value,
-    ) {
-      // TODO: Implement the read callback logic
-      controller.add("Read callback triggered");
-      return raw.UA_STATUSCODE_GOOD as raw.UA_StatusCode;
-    }
+    //TODO : FIX
+    // raw.UA_UInt32 onRead(
+    //   ffi.Pointer<raw.UA_Server> server,
+    //   ffi.Pointer<raw.UA_NodeId> sessionId,
+    //   ffi.Pointer<ffi.Void> sessionContext,
+    //   ffi.Pointer<raw.UA_NodeId> nodeId,
+    //   ffi.Pointer<ffi.Void> nodeContext,
+    //   ffi.Bool includeSourceTimeStamp,
+    //   ffi.Pointer<raw.UA_NumericRange> range,
+    //   ffi.Pointer<raw.UA_DataValue> value,
+    // ) {
+    //   // TODO: Implement the read callback logic
+    //   controller.add("Read callback triggered");
+    //   return raw.UA_STATUSCODE_GOOD as raw.UA_StatusCode;
+    // }
 
     //TODO: FIX
     // final onReadCallback = ffi.NativeCallable<
