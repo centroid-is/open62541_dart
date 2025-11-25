@@ -55,7 +55,7 @@ Future<void> main(List<String> args) async {
         'CMAKE_INSTALL_PREFIX': '${input.outputDirectory.toFilePath()}/install',
         'BUILD_SHARED_LIBS': 'ON',
         'UA_ENABLE_INLINABLE_EXPORT': 'ON',
-        'UA_ENABLE_ENCRYPTION': 'MBEDTLS',
+        'UA_ENABLE_ENCRYPTION': Platform.isWindows ? 'OPENSSL' : 'MBEDTLS',
         'UA_BUILD_EXAMPLES': 'OFF',
         'UA_BUILD_UNIT_TESTS': 'OFF',
         'UA_MULTITHREADING': '0',
