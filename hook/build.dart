@@ -10,7 +10,11 @@ import 'package:http/http.dart' as http;
 Future<Uri> download(Uri outputDirectory, String version) async {
   final extractDir = Directory.fromUri(outputDirectory.resolve('download/'));
 
-  final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
+  //final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
+
+  // Use fork for now for windows, See: https://github.com/open62541/open62541/pull/7562
+  final url = Uri.parse('https://github.com/centroid-is/open62541/archive/refs/heads/includes.zip');
+  // final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
   final response = await http.get(url);
   if (response.statusCode != 200) {
     throw Exception('Error downloading open62541 version $version: ${response.statusCode}');
@@ -50,7 +54,7 @@ Future<void> main(List<String> args) async {
       name: name,
       sourceDir: extractedFiles,
       buildMode: BuildMode.release,
-      generator: Platform.isWindows ? Generator.ninja : Generator.defaultGenerator,
+      generator: Generator.defaultGenerator,
       defines: {
         'CMAKE_BUILD_TYPE': 'Release',
         'CMAKE_INSTALL_PREFIX': '${input.outputDirectory.toFilePath()}/install',
