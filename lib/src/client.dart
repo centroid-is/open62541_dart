@@ -10,8 +10,8 @@ import 'package:open62541/src/types/errors.dart';
 import 'common.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
-import 'third_party/open62541.g.dart' as raw;
 import 'node_id.dart';
+import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
 import 'ua_allocation.dart';
 

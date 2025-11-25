@@ -5,9 +5,9 @@ import 'package:binarize/binarize.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/extensions.dart';
-import 'third_party/open62541.g.dart' as raw;
 import 'package:open62541/src/types/payloads.dart';
 import 'node_id.dart';
+import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
 import 'ua_allocation.dart';
 

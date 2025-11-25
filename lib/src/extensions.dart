@@ -5,8 +5,8 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'dynamic_value.dart';
-import 'third_party/open62541.g.dart' as raw;
 import 'node_id.dart';
+import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
 typedef MonitoringMode = raw.UA_MonitoringMode;
