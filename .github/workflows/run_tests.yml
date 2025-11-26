@@ -55,7 +55,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          choco install openssl
+          choco --yes --no-progress install openssl
 
       - name: Run tests
         run: dart test
