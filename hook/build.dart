@@ -64,7 +64,7 @@ Future<void> main(List<String> args) async {
         'UA_BUILD_UNIT_TESTS': 'OFF',
         'UA_MULTITHREADING': '0',
         'UA_LOGLEVEL': '100',
-        //'UA_ENABLE_AMALGAMATION': 'ON'
+        'UA_ENABLE_AMALGAMATION': 'ON'
       },
       targets: ['install'],
       buildLocal: true,
