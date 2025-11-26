@@ -59,7 +59,7 @@ Future<void> main(List<String> args) async {
         'CMAKE_INSTALL_PREFIX': '${input.outputDirectory.toFilePath()}/install',
         'BUILD_SHARED_LIBS': 'ON',
         'UA_ENABLE_INLINABLE_EXPORT': 'ON',
-        'UA_ENABLE_ENCRYPTION': Platform.isWindows ? 'OPENSSL' : 'MBEDTLS',
+        'UA_ENABLE_ENCRYPTION': input.config.code.targetOS == OS.windows ? 'OPENSSL' : 'MBEDTLS',
         'UA_BUILD_EXAMPLES': 'OFF',
         'UA_BUILD_UNIT_TESTS': 'OFF',
         'UA_MULTITHREADING': '0',
@@ -77,7 +77,7 @@ Future<void> main(List<String> args) async {
     final libPath = switch (input.config.code.targetOS) {
       OS.linux => "install/lib/libopen62541.so",
       OS.macOS => "install/lib/libopen62541.dylib",
-      OS.windows => "install/lib/libopen62541.dll",
+      OS.windows => "install/bin/open62541.dll",
       OS.android => "install/lib/libopen62541.so",
       OS.iOS => "install/lib/libopen62541.dylib",
       _ => throw UnsupportedError("Unsupported OS"),
