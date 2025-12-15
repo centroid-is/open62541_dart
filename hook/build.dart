@@ -12,7 +12,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
 
   //final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
 
-  // Use fork for now for windows, See: https://github.com/open62541/open62541/pull/7562
+  // Use fork for now for windows, See: https://github.com/open62541/open62541/pull/7564
   final url = Uri.parse('https://github.com/centroid-is/open62541/archive/refs/heads/includes.zip');
   // final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
   final response = await http.get(url);
