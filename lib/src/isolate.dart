@@ -483,6 +483,22 @@ class ClientIsolate implements ClientApi {
     if (_isClosed) return;
     _isClosed = true;
 
+    // Cancel all pending requests with an error before cleanup
+    final pendingToCancel = Map<String, Completer>.from(_pendingRequests);
+    for (final entry in pendingToCancel.entries) {
+      if (!entry.value.isCompleted) {
+        entry.value.completeError(StateError('ClientIsolate closed'));
+      }
+    }
+    _pendingRequests.clear();
+
+    // Close all stream controllers
+    for (final controller in _streamControllers.values) {
+      controller.close();
+    }
+    _streamControllers.clear();
+
+    // Send delete message to isolate
     final completer = Completer<void>();
     final id = _generateId();
     _pendingRequests[id] = completer;
@@ -490,7 +506,12 @@ class ClientIsolate implements ClientApi {
     _sendPort.send(DeleteMessage(id));
 
     try {
-      await completer.future;
+      await completer.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          // If isolate doesn't respond, continue with cleanup
+        },
+      );
     } finally {
       _pendingRequests.remove(id);
     }
