@@ -9,6 +9,15 @@ import 'node_id.dart';
 import 'extensions.dart';
 import 'client_api.dart';
 
+/// Exception thrown when an operation is attempted on a closed [ClientIsolate].
+class ClientIsolateClosedException implements Exception {
+  final String message;
+  const ClientIsolateClosedException([this.message = 'ClientIsolate is closed']);
+
+  @override
+  String toString() => message;
+}
+
 /// Message types for communication between main isolate and client isolate
 abstract class IsolateMessage {
   final String requestId;
@@ -270,7 +279,7 @@ class ClientIsolate implements ClientApi {
   /// Connect to an OPC UA server
   @override
   Future<void> connect(String url) async {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<void>();
     final id = _generateId();
@@ -288,7 +297,7 @@ class ClientIsolate implements ClientApi {
   /// Read a value from the server
   @override
   Future<DynamicValue> read(NodeId nodeId) async {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<DynamicValue>();
     final id = _generateId();
@@ -306,7 +315,7 @@ class ClientIsolate implements ClientApi {
   /// Write a value to the server
   @override
   Future<void> write(NodeId nodeId, DynamicValue value) async {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<void>();
     final id = _generateId();
@@ -324,7 +333,7 @@ class ClientIsolate implements ClientApi {
   /// Read multiple attributes
   @override
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<Map<NodeId, DynamicValue>>();
     final id = _generateId();
@@ -349,7 +358,7 @@ class ClientIsolate implements ClientApi {
     bool publishingEnabled = true,
     int priority = 0,
   }) async {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<int>();
     final id = _generateId();
@@ -382,7 +391,7 @@ class ClientIsolate implements ClientApi {
     bool discardOldest = true,
     int queueSize = 1,
   }) {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final controller = StreamController<DynamicValue>();
     final id = _generateId();
@@ -410,7 +419,7 @@ class ClientIsolate implements ClientApi {
   /// Call a method
   @override
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<List<DynamicValue>>();
     final id = _generateId();
@@ -427,7 +436,7 @@ class ClientIsolate implements ClientApi {
 
   /// Get the current client state
   Future<ClientState> get state async {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<ClientState>();
     final id = _generateId();
@@ -445,7 +454,7 @@ class ClientIsolate implements ClientApi {
   /// Get a stream of client state changes
   @override
   Stream<ClientState> get stateStream {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final controller = StreamController<ClientState>();
     final id = _generateId();
@@ -462,7 +471,7 @@ class ClientIsolate implements ClientApi {
 
   /// Disconnect from the server
   Future<void> disconnect() async {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<void>();
     final id = _generateId();
@@ -487,7 +496,7 @@ class ClientIsolate implements ClientApi {
     final pendingToCancel = Map<String, Completer>.from(_pendingRequests);
     for (final entry in pendingToCancel.entries) {
       if (!entry.value.isCompleted) {
-        entry.value.completeError(StateError('ClientIsolate closed'));
+        entry.value.completeError(const ClientIsolateClosedException());
       }
     }
     _pendingRequests.clear();
@@ -523,7 +532,7 @@ class ClientIsolate implements ClientApi {
   /// Wait for the connection to be fully established
   @override
   Future<void> awaitConnect() async {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<void>();
     final id = _generateId();
@@ -542,7 +551,7 @@ class ClientIsolate implements ClientApi {
   /// The duration is the time for each iteration
   /// Never returns, unless there was an error
   Future<void> runIterate({Duration duration = const Duration(milliseconds: 10)}) async {
-    if (_isClosed) throw StateError('ClientIsolate is closed');
+    if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<void>();
     final id = _generateId();
