@@ -133,6 +133,26 @@ class NodeId {
     return NodeId.fromNumeric(0, 2258);
   }
 
+  static NodeId get rootFolder {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_ROOTFOLDER);
+  }
+
+  static NodeId get objectsFolder {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+  }
+
+  static NodeId get typesFolder {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_TYPESFOLDER);
+  }
+
+  static NodeId get viewsFolder {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_VIEWSFOLDER);
+  }
+
+  static NodeId get hierarchicalReferences {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_HIERARCHICALREFERENCES);
+  }
+
   static NodeId get hasSubtype {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
   }

@@ -90,6 +90,25 @@ class CallMessage extends IsolateMessage {
   const CallMessage(super.requestId, this.objectId, this.methodId, this.args);
 }
 
+class BrowseMessage extends IsolateMessage {
+  final NodeId nodeId;
+  final int direction;
+  final NodeId? referenceTypeId;
+  final bool includeSubtypes;
+  final int nodeClassMask;
+  final int resultMask;
+
+  const BrowseMessage(
+    String requestId,
+    this.nodeId, {
+    this.direction = 0,
+    this.referenceTypeId,
+    this.includeSubtypes = true,
+    this.nodeClassMask = 0,
+    this.resultMask = 63,
+  }) : super(requestId);
+}
+
 class DisconnectMessage extends IsolateMessage {
   const DisconnectMessage(super.requestId);
 }
@@ -428,6 +447,95 @@ class ClientIsolate implements ClientApi {
     }
   }
 
+  /// Browse a node
+  @override
+  Future<List<BrowseResultItem>> browse(
+    NodeId nodeId, {
+    int direction = 0,
+    NodeId? referenceTypeId,
+    bool includeSubtypes = true,
+    int nodeClassMask = 0,
+    int resultMask = 63,
+  }) async {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final completer = Completer<List<BrowseResultItem>>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(BrowseMessage(
+      id,
+      nodeId,
+      direction: direction,
+      referenceTypeId: referenceTypeId,
+      includeSubtypes: includeSubtypes,
+      nodeClassMask: nodeClassMask,
+      resultMask: resultMask,
+    ));
+
+    try {
+      return await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
+  /// Recursively browse the address space tree
+  @override
+  Stream<BrowseTreeItem> browseTree(
+    NodeId root, {
+    int maxDepth = 100,
+    NodeId? referenceTypeId,
+    bool includeSubtypes = true,
+    Set<NodeClass> recurseInto = const {
+      NodeClass.UA_NODECLASS_OBJECT,
+      NodeClass.UA_NODECLASS_VIEW,
+    },
+  }) {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final controller = StreamController<BrowseTreeItem>();
+
+    () async {
+      final visited = <NodeId>{};
+
+      Future<void> walk(NodeId nodeId, int depth) async {
+        if (depth > maxDepth || controller.isClosed) return;
+        if (visited.contains(nodeId)) return;
+        visited.add(nodeId);
+
+        final children = await browse(
+          nodeId,
+          referenceTypeId: referenceTypeId,
+          includeSubtypes: includeSubtypes,
+        );
+
+        for (final child in children) {
+          if (controller.isClosed) return;
+          controller.add(BrowseTreeItem(
+            item: child,
+            depth: depth,
+            parentNodeId: nodeId,
+          ));
+
+          if (recurseInto.contains(child.nodeClass)) {
+            await walk(child.nodeId, depth + 1);
+          }
+        }
+      }
+
+      try {
+        await walk(root, 0);
+      } catch (e) {
+        controller.addError(e);
+      } finally {
+        controller.close();
+      }
+    }();
+
+    return controller.stream;
+  }
+
   /// Get the current client state
   Future<ClientState> get state async {
     if (_isClosed) throw const ClientIsolateClosedException();
@@ -708,6 +816,16 @@ void _isolateEntryPoint(_IsolateData data) {
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is CallMessage) {
         final result = await client.call(message.objectId, message.methodId, message.args);
+        sendPort.send(IsolateResponse.success(message.requestId, result));
+      } else if (message is BrowseMessage) {
+        final result = await client.browse(
+          message.nodeId,
+          direction: message.direction,
+          referenceTypeId: message.referenceTypeId,
+          includeSubtypes: message.includeSubtypes,
+          nodeClassMask: message.nodeClassMask,
+          resultMask: message.resultMask,
+        );
         sendPort.send(IsolateResponse.success(message.requestId, result));
       } else if (message is GetStateMessage) {
         final result = client.state;

@@ -34,6 +34,26 @@ abstract class ClientApi {
     int queueSize = 1,
   });
 
+  Future<List<BrowseResultItem>> browse(
+    NodeId nodeId, {
+    int direction = 0,
+    NodeId? referenceTypeId,
+    bool includeSubtypes = true,
+    int nodeClassMask = 0,
+    int resultMask = 63,
+  });
+
+  Stream<BrowseTreeItem> browseTree(
+    NodeId root, {
+    int maxDepth = 100,
+    NodeId? referenceTypeId,
+    bool includeSubtypes = true,
+    Set<NodeClass> recurseInto = const {
+      NodeClass.UA_NODECLASS_OBJECT,
+      NodeClass.UA_NODECLASS_VIEW,
+    },
+  });
+
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args);
 
   Future<void> delete();

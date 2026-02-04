@@ -16,6 +16,55 @@ import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
 import 'ua_allocation.dart';
 
+typedef NodeClass = raw.UA_NodeClass;
+
+class BrowseResultItem {
+  final NodeId referenceTypeId;
+  final bool isForward;
+  final NodeId nodeId;
+  final String browseName;
+  final String displayName;
+  final NodeClass nodeClass;
+  final NodeId? typeDefinition;
+
+  const BrowseResultItem({
+    required this.referenceTypeId,
+    required this.isForward,
+    required this.nodeId,
+    required this.browseName,
+    required this.displayName,
+    required this.nodeClass,
+    this.typeDefinition,
+  });
+
+  @override
+  String toString() {
+    return 'BrowseResultItem(displayName: $displayName, nodeId: $nodeId, nodeClass: $nodeClass)';
+  }
+}
+
+class BrowseTreeItem {
+  final BrowseResultItem item;
+  final int depth;
+  final NodeId parentNodeId;
+
+  const BrowseTreeItem({
+    required this.item,
+    required this.depth,
+    required this.parentNodeId,
+  });
+
+  NodeId get nodeId => item.nodeId;
+  String get displayName => item.displayName;
+  String get browseName => item.browseName;
+  NodeClass get nodeClass => item.nodeClass;
+
+  @override
+  String toString() {
+    return '${"  " * depth}${item.displayName} (${item.nodeId}) [${item.nodeClass}]';
+  }
+}
+
 class ClientState {
   SecureChannelState channelState;
   SessionState sessionState;
@@ -482,6 +531,331 @@ class Client implements ClientApi {
     assert(results.length == 1);
     assert(results.containsKey(nodeId));
     return results[nodeId]!.typeId!;
+  }
+
+  @override
+  Future<List<BrowseResultItem>> browse(
+    NodeId nodeId, {
+    int direction = 0,
+    NodeId? referenceTypeId,
+    bool includeSubtypes = true,
+    int nodeClassMask = 0,
+    int resultMask = 63,
+  }) async {
+    final results = await _browseRequest(nodeId,
+        direction: direction,
+        referenceTypeId: referenceTypeId,
+        includeSubtypes: includeSubtypes,
+        nodeClassMask: nodeClassMask,
+        resultMask: resultMask);
+    return results;
+  }
+
+  @override
+  Stream<BrowseTreeItem> browseTree(
+    NodeId root, {
+    int maxDepth = 100,
+    NodeId? referenceTypeId,
+    bool includeSubtypes = true,
+    Set<NodeClass> recurseInto = const {
+      NodeClass.UA_NODECLASS_OBJECT,
+      NodeClass.UA_NODECLASS_VIEW,
+    },
+  }) {
+    final controller = StreamController<BrowseTreeItem>();
+
+    () async {
+      final visited = <NodeId>{};
+
+      Future<void> walk(NodeId nodeId, int depth) async {
+        if (depth > maxDepth || controller.isClosed) return;
+        if (visited.contains(nodeId)) return;
+        visited.add(nodeId);
+
+        final children = await browse(
+          nodeId,
+          referenceTypeId: referenceTypeId,
+          includeSubtypes: includeSubtypes,
+        );
+
+        for (final child in children) {
+          if (controller.isClosed) return;
+          controller.add(BrowseTreeItem(
+            item: child,
+            depth: depth,
+            parentNodeId: nodeId,
+          ));
+
+          if (recurseInto.contains(child.nodeClass)) {
+            await walk(child.nodeId, depth + 1);
+          }
+        }
+      }
+
+      try {
+        await walk(root, 0);
+      } catch (e) {
+        controller.addError(e);
+      } finally {
+        controller.close();
+      }
+    }();
+
+    return controller.stream;
+  }
+
+  Future<List<BrowseResultItem>> _browseRequest(
+    NodeId nodeId, {
+    required int direction,
+    NodeId? referenceTypeId,
+    required bool includeSubtypes,
+    required int nodeClassMask,
+    required int resultMask,
+  }) {
+    final completer = Completer<List<BrowseResultItem>>();
+
+    final request = _lib.UA_BrowseRequest_new();
+    _lib.UA_BrowseRequest_init(request);
+
+    final browseDescription = ua_calloc<raw.UA_BrowseDescription>();
+    _lib.UA_BrowseDescription_init(browseDescription);
+    browseDescription.ref.nodeId = nodeId.toRaw(_lib);
+    browseDescription.ref.browseDirectionAsInt = direction;
+    browseDescription.ref.includeSubtypes = includeSubtypes;
+    browseDescription.ref.nodeClassMask = nodeClassMask;
+    browseDescription.ref.resultMask = resultMask;
+    if (referenceTypeId != null) {
+      browseDescription.ref.referenceTypeId = referenceTypeId.toRaw(_lib);
+    }
+
+    request.ref.nodesToBrowse = browseDescription;
+    request.ref.nodesToBrowseSize = 1;
+    request.ref.requestedMaxReferencesPerNode = 0;
+
+    ffi.Pointer<ffi.Uint32> requestIdPtr = ua_calloc<ffi.Uint32>();
+
+    late ffi.NativeCallable<
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>,
+            raw.UA_UInt32, ffi.Pointer<ffi.Void>)> callback;
+
+    callback = ffi.NativeCallable<
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>,
+            raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal((
+      ffi.Pointer<raw.UA_Client> client,
+      ffi.Pointer<ffi.Void> userdata,
+      int requestId,
+      ffi.Pointer<ffi.Void> voidPointer,
+    ) async {
+      callback.close();
+      _lib.UA_BrowseRequest_delete(request);
+      ua_calloc.free(requestIdPtr);
+
+      if (voidPointer == ffi.nullptr) {
+        completer.completeError('Browse callback received null pointer');
+        return;
+      }
+
+      ffi.Pointer<raw.UA_BrowseResponse> response =
+          ffi.Pointer.fromAddress(voidPointer.address);
+
+      if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+        completer.completeError(
+            'Browse failed: ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}');
+        return;
+      }
+
+      if (response.ref.resultsSize == 0) {
+        completer.complete([]);
+        return;
+      }
+
+      final browseResult = response.ref.results[0];
+      if (browseResult.statusCode != raw.UA_STATUSCODE_GOOD) {
+        completer.completeError(
+            'Browse result error: ${statusCodeToString(browseResult.statusCode, _lib)}');
+        return;
+      }
+
+      final items = _extractReferences(browseResult);
+
+      // Handle continuation point
+      if (browseResult.continuationPoint.length > 0) {
+        // Copy continuation point before response is freed
+        final cpCopy = _lib.UA_ByteString_new();
+        _lib.UA_ByteString_copy(
+            ffi.Pointer<raw.UA_ByteString>.fromAddress(
+                browseResult.continuationPoint.data.address -
+                    ffi.sizeOf<ffi.Size>()),
+            // We can't take address of struct field, so allocate and copy
+            cpCopy);
+
+        // Actually, let's copy manually since we can't easily get the pointer
+        final cpData = ua_calloc<ffi.Uint8>(browseResult.continuationPoint.length);
+        cpData
+            .asTypedList(browseResult.continuationPoint.length)
+            .setRange(0, browseResult.continuationPoint.length,
+                browseResult.continuationPoint.data.asTypedList(browseResult.continuationPoint.length));
+
+        _lib.UA_ByteString_delete(cpCopy);
+
+        try {
+          final moreItems = await _browseNext(cpData, browseResult.continuationPoint.length);
+          items.addAll(moreItems);
+        } catch (e) {
+          completer.completeError(e);
+          return;
+        }
+      }
+
+      completer.complete(items);
+    });
+
+    int res = _lib.UA_Client_AsyncService(
+      _client,
+      request.cast(),
+      getType(UaTypes.browseRequest, _lib),
+      callback.nativeFunction,
+      getType(UaTypes.browseResponse, _lib),
+      ffi.nullptr,
+      requestIdPtr,
+    );
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      callback.close();
+      _lib.UA_BrowseRequest_delete(request);
+      ua_calloc.free(requestIdPtr);
+      completer.completeError('Failed to browse: ${statusCodeToString(res, _lib)}');
+    }
+
+    return completer.future;
+  }
+
+  Future<List<BrowseResultItem>> _browseNext(
+      ffi.Pointer<ffi.Uint8> continuationPointData, int continuationPointLength) {
+    final completer = Completer<List<BrowseResultItem>>();
+
+    final request = ua_calloc<raw.UA_BrowseNextRequest>();
+    request.ref.releaseContinuationPoints = false;
+    final cp = ua_calloc<raw.UA_ByteString>();
+    cp.ref.data = continuationPointData;
+    cp.ref.length = continuationPointLength;
+    request.ref.continuationPoints = cp;
+    request.ref.continuationPointsSize = 1;
+
+    ffi.Pointer<ffi.Uint32> requestIdPtr = ua_calloc<ffi.Uint32>();
+
+    late ffi.NativeCallable<
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>,
+            raw.UA_UInt32, ffi.Pointer<ffi.Void>)> callback;
+
+    callback = ffi.NativeCallable<
+        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>,
+            raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal((
+      ffi.Pointer<raw.UA_Client> client,
+      ffi.Pointer<ffi.Void> userdata,
+      int requestId,
+      ffi.Pointer<ffi.Void> voidPointer,
+    ) async {
+      callback.close();
+      ua_calloc.free(requestIdPtr);
+
+      // Clean up: free the continuation point data and the request
+      ua_calloc.free(continuationPointData);
+      ua_calloc.free(cp);
+      ua_calloc.free(request);
+
+      if (voidPointer == ffi.nullptr) {
+        completer.completeError('BrowseNext callback received null pointer');
+        return;
+      }
+
+      ffi.Pointer<raw.UA_BrowseNextResponse> response =
+          ffi.Pointer.fromAddress(voidPointer.address);
+
+      if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+        completer.completeError(
+            'BrowseNext failed: ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}');
+        return;
+      }
+
+      if (response.ref.resultsSize == 0) {
+        completer.complete([]);
+        return;
+      }
+
+      final browseResult = response.ref.results[0];
+      if (browseResult.statusCode != raw.UA_STATUSCODE_GOOD) {
+        completer.completeError(
+            'BrowseNext result error: ${statusCodeToString(browseResult.statusCode, _lib)}');
+        return;
+      }
+
+      final items = _extractReferences(browseResult);
+
+      // Continue if there are more results
+      if (browseResult.continuationPoint.length > 0) {
+        final nextCpData = ua_calloc<ffi.Uint8>(browseResult.continuationPoint.length);
+        nextCpData
+            .asTypedList(browseResult.continuationPoint.length)
+            .setRange(0, browseResult.continuationPoint.length,
+                browseResult.continuationPoint.data.asTypedList(browseResult.continuationPoint.length));
+        try {
+          final moreItems = await _browseNext(nextCpData, browseResult.continuationPoint.length);
+          items.addAll(moreItems);
+        } catch (e) {
+          completer.completeError(e);
+          return;
+        }
+      }
+
+      completer.complete(items);
+    });
+
+    int res = _lib.UA_Client_AsyncService(
+      _client,
+      request.cast(),
+      getType(UaTypes.browseNextRequest, _lib),
+      callback.nativeFunction,
+      getType(UaTypes.browseNextResponse, _lib),
+      ffi.nullptr,
+      requestIdPtr,
+    );
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      callback.close();
+      ua_calloc.free(continuationPointData);
+      ua_calloc.free(cp);
+      ua_calloc.free(request);
+      ua_calloc.free(requestIdPtr);
+      completer.completeError('Failed to browse next: ${statusCodeToString(res, _lib)}');
+    }
+
+    return completer.future;
+  }
+
+  static NodeId? _tryNodeId(raw.UA_NodeId rawNodeId) {
+    try {
+      return rawNodeId.toNodeId();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  List<BrowseResultItem> _extractReferences(raw.UA_BrowseResult browseResult) {
+    final items = <BrowseResultItem>[];
+    for (var i = 0; i < browseResult.referencesSize; i++) {
+      final ref = browseResult.references[i];
+      final nodeId = _tryNodeId(ref.nodeId.nodeId);
+      if (nodeId == null) continue;
+      items.add(BrowseResultItem(
+        referenceTypeId: _tryNodeId(ref.referenceTypeId) ?? NodeId.nullId,
+        isForward: ref.isForward,
+        nodeId: nodeId,
+        browseName: ref.browseName.name.value,
+        displayName: ref.displayName.text.value,
+        nodeClass: ref.nodeClass,
+        typeDefinition: _tryNodeId(ref.typeDefinition.nodeId),
+      ));
+    }
+    return items;
   }
 
   @override
