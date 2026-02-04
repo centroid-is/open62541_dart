@@ -245,6 +245,10 @@ enum UaTypes {
   publishedDataSetCustomSourceDataType(raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE),
   readRequest(raw.UA_TYPES_READREQUEST),
   readResponse(raw.UA_TYPES_READRESPONSE),
+  browseRequest(raw.UA_TYPES_BROWSEREQUEST),
+  browseResponse(raw.UA_TYPES_BROWSERESPONSE),
+  browseNextRequest(raw.UA_TYPES_BROWSENEXTREQUEST),
+  browseNextResponse(raw.UA_TYPES_BROWSENEXTRESPONSE),
   dataTypeAttributes(raw.UA_TYPES_DATATYPEATTRIBUTES);
 
   final int value;
