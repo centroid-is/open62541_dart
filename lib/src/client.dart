@@ -553,7 +553,7 @@ class Client implements ClientApi {
     NodeId? referenceTypeId,
     bool includeSubtypes = true,
     int nodeClassMask = 0,
-    int resultMask = 63,
+    int resultMask = BrowseResultMask.all,
   }) async {
     final results = await _browseRequest(nodeId,
         direction: direction,
