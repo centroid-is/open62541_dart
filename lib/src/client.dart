@@ -18,6 +18,19 @@ import 'client_api.dart';
 
 typedef NodeClass = raw.UA_NodeClass;
 
+class BrowseResultMask {
+  static const int none = 0;
+  static const int referenceTypeId = 1;
+  static const int isForward = 2;
+  static const int nodeClass = 4;
+  static const int browseName = 8;
+  static const int displayName = 16;
+  static const int typeDefinition = 32;
+  static const int all = 63;
+  static const int referenceTypeInfo = 3;
+  static const int targetInfo = 60;
+}
+
 class BrowseResultItem {
   final NodeId referenceTypeId;
   final bool isForward;
