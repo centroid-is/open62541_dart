@@ -684,7 +684,7 @@ external int UA_Server_addNode_finish(ffi.Pointer<UA_Server> server, UA_NodeId n
 @ffi.Native<ffi.Pointer<UA_DataType> Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_NodeId>)>()
 external ffi.Pointer<UA_DataType> UA_Server_findDataType(ffi.Pointer<UA_Server> server, ffi.Pointer<UA_NodeId> typeId);
 
-/// amalgamated original file "/plugins/include/open62541/plugin/certificategroup_default.h"
+/// amalgamated original file "-includes/plugins/include/open62541/plugin/certificategroup_default.h"
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_CertificateGroup>)>()
 external void UA_CertificateGroup_AcceptAll(ffi.Pointer<UA_CertificateGroup> certGroup);
 
@@ -700,7 +700,7 @@ external int UA_ServerConfig_setMinimal(
   ffi.Pointer<UA_ByteString> certificate,
 );
 
-/// amalgamated original file "/plugins/include/open62541/client_config_default.h"
+/// amalgamated original file "-includes/plugins/include/open62541/client_config_default.h"
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig>)>()
 external int UA_ClientConfig_setDefault(ffi.Pointer<UA_ClientConfig> config);
 
@@ -1330,14 +1330,8 @@ final class UA_DataType extends ffi.Struct {
 
   external UA_NodeId xmlEncodingId;
 
-  @UA_UInt16()
-  external int memSize;
-
-  @UA_Byte()
+  @UA_UInt32()
   external int substitute;
-
-  @UA_Byte()
-  external int membersSize;
 
   external ffi.Pointer<UA_DataTypeMember> members;
 }
@@ -3145,14 +3139,13 @@ enum UA_LogCategory {
   UA_LOGCATEGORY_SESSION(2),
   UA_LOGCATEGORY_SERVER(3),
   UA_LOGCATEGORY_CLIENT(4),
-  UA_LOGCATEGORY_APPLICATION(5),
-  UA_LOGCATEGORY_SECURITY(6),
+  UA_LOGCATEGORY_USERLAND(5),
+  UA_LOGCATEGORY_SECURITYPOLICY(6),
   UA_LOGCATEGORY_EVENTLOOP(7),
   UA_LOGCATEGORY_PUBSUB(8),
   UA_LOGCATEGORY_DISCOVERY(9);
 
-  static const UA_LOGCATEGORY_USERLAND = UA_LOGCATEGORY_APPLICATION;
-  static const UA_LOGCATEGORY_SECURITYPOLICY = UA_LOGCATEGORY_SECURITY;
+  static const UA_LOGCATEGORY_SECURITY = UA_LOGCATEGORY_SECURITYPOLICY;
 
   final int value;
   const UA_LogCategory(this.value);
@@ -3163,8 +3156,8 @@ enum UA_LogCategory {
     2 => UA_LOGCATEGORY_SESSION,
     3 => UA_LOGCATEGORY_SERVER,
     4 => UA_LOGCATEGORY_CLIENT,
-    5 => UA_LOGCATEGORY_APPLICATION,
-    6 => UA_LOGCATEGORY_SECURITY,
+    5 => UA_LOGCATEGORY_USERLAND,
+    6 => UA_LOGCATEGORY_SECURITYPOLICY,
     7 => UA_LOGCATEGORY_EVENTLOOP,
     8 => UA_LOGCATEGORY_PUBSUB,
     9 => UA_LOGCATEGORY_DISCOVERY,
@@ -3173,10 +3166,8 @@ enum UA_LogCategory {
 
   @override
   String toString() {
-    if (this == UA_LOGCATEGORY_APPLICATION)
-      return "UA_LogCategory.UA_LOGCATEGORY_APPLICATION, UA_LogCategory.UA_LOGCATEGORY_USERLAND";
-    if (this == UA_LOGCATEGORY_SECURITY)
-      return "UA_LogCategory.UA_LOGCATEGORY_SECURITY, UA_LogCategory.UA_LOGCATEGORY_SECURITYPOLICY";
+    if (this == UA_LOGCATEGORY_SECURITYPOLICY)
+      return "UA_LogCategory.UA_LOGCATEGORY_SECURITYPOLICY, UA_LogCategory.UA_LOGCATEGORY_SECURITY";
     return super.toString();
   }
 }
@@ -3212,7 +3203,7 @@ final class UA_Logger extends ffi.Struct {
   external ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_Logger> logger)>> clear;
 }
 
-/// amalgamated original file "/include/open62541/util.h"
+/// amalgamated original file "-includes/include/open62541/util.h"
 final class UA_Server extends ffi.Opaque {}
 
 /// Range Definition
@@ -3571,22 +3562,6 @@ final class UA_CertificateGroup extends ffi.Struct {
 
 final class UA_SecurityPolicy extends ffi.Opaque {}
 
-enum UA_SecurityPolicyType {
-  UA_SECURITYPOLICYTYPE_NONE(0),
-  UA_SECURITYPOLICYTYPE_RSA(1),
-  UA_SECURITYPOLICYTYPE_ECC(2);
-
-  final int value;
-  const UA_SecurityPolicyType(this.value);
-
-  static UA_SecurityPolicyType fromValue(int value) => switch (value) {
-    0 => UA_SECURITYPOLICYTYPE_NONE,
-    1 => UA_SECURITYPOLICYTYPE_RSA,
-    2 => UA_SECURITYPOLICYTYPE_ECC,
-    _ => throw ArgumentError('Unknown value for UA_SecurityPolicyType: $value'),
-  };
-}
-
 /// PubSub SecurityPolicy
 /// ---------------------
 ///
@@ -3595,7 +3570,7 @@ enum UA_SecurityPolicyType {
 /// be set in the channel context before de/encrypting.
 final class UA_PubSubSecurityPolicy extends ffi.Opaque {}
 
-/// amalgamated original file "/include/open62541/plugin/eventloop.h"
+/// amalgamated original file "-includes/include/open62541/plugin/eventloop.h"
 final class UA_EventLoop extends ffi.Opaque {}
 
 /// EventLoop Plugin API
@@ -3872,16 +3847,28 @@ final class UA_HistoryDatabase extends ffi.Struct {
   deleteEvent;
 }
 
-/// amalgamated original file "/include/open62541/client.h"
+/// amalgamated original file "-includes/include/open62541/client.h"
 final class UA_Client extends ffi.Opaque {}
 
 /// .. _client-config:
 ///
 /// Client Configuration
 /// --------------------
-/// The configuration used for setting connection parameters and additional
-/// client settings. The :ref:`tutorials` provide examples for many of the
-/// client settings.
+///
+/// The client configuration is used for setting connection parameters and
+/// additional settings used by the client.
+/// The configuration should not be modified after it is passed to a client.
+/// Currently, only one client can use a configuration at a time.
+///
+/// Examples for configurations are provided in the ``/plugins`` folder.
+/// The usual usage is as follows:
+///
+/// 1. Create a client configuration with default settings as a starting point
+/// 2. Modifiy the configuration, e.g. modifying the timeout
+/// 3. Instantiate a client with it
+/// 4. After shutdown of the client, clean up the configuration (free memory)
+///
+/// The :ref:`tutorials` provide a good starting point for this.
 final class UA_ClientConfig extends ffi.Struct {
   external ffi.Pointer<ffi.Void> clientContext;
 
@@ -3896,12 +3883,12 @@ final class UA_ClientConfig extends ffi.Struct {
 
   external UA_ExtensionObject userIdentityToken;
 
-  external UA_String sessionName;
+  @ffi.UnsignedInt()
+  external int securityModeAsInt;
 
-  external ffi.Pointer<UA_String> sessionLocaleIds;
+  UA_MessageSecurityMode get securityMode => UA_MessageSecurityMode.fromValue(securityModeAsInt);
 
-  @ffi.Size()
-  external int sessionLocaleIdsSize;
+  external UA_String securityPolicyUri;
 
   @ffi.Bool()
   external bool noSession;
@@ -3911,6 +3898,22 @@ final class UA_ClientConfig extends ffi.Struct {
 
   @ffi.Bool()
   external bool noNewSession;
+
+  external UA_EndpointDescription endpoint;
+
+  external UA_UserTokenPolicy userTokenPolicy;
+
+  external UA_String applicationUri;
+
+  @ffi.Bool()
+  external bool tcpReuseAddr;
+
+  external ffi.Pointer<UA_DataTypeArray> customDataTypes;
+
+  external ffi.Pointer<UA_String> namespaces;
+
+  @ffi.Size()
+  external int namespacesSize;
 
   @UA_UInt32()
   external int secureChannelLifeTime;
@@ -3922,57 +3925,6 @@ final class UA_ClientConfig extends ffi.Struct {
 
   @UA_UInt32()
   external int connectivityCheckInterval;
-
-  @ffi.Bool()
-  external bool tcpReuseAddr;
-
-  external UA_EndpointDescription endpoint;
-
-  external UA_UserTokenPolicy userTokenPolicy;
-
-  external UA_String applicationUri;
-
-  @ffi.UnsignedInt()
-  external int securityModeAsInt;
-
-  UA_MessageSecurityMode get securityMode => UA_MessageSecurityMode.fromValue(securityModeAsInt);
-
-  external UA_String securityPolicyUri;
-
-  external UA_String authSecurityPolicyUri;
-
-  @ffi.Size()
-  external int securityPoliciesSize;
-
-  external ffi.Pointer<UA_SecurityPolicy> securityPolicies;
-
-  external UA_CertificateGroup certificateVerification;
-
-  @ffi.Size()
-  external int authSecurityPoliciesSize;
-
-  external ffi.Pointer<UA_SecurityPolicy> authSecurityPolicies;
-
-  @ffi.Bool()
-  external bool allowNonePolicyPassword;
-
-  @UA_UInt32()
-  external int maxTrustListSize;
-
-  @UA_UInt32()
-  external int maxRejectedListSize;
-
-  external ffi.Pointer<
-    ffi.NativeFunction<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig> cc, ffi.Pointer<UA_ByteString> password)>
-  >
-  privateKeyPasswordCallback;
-
-  external ffi.Pointer<UA_DataTypeArray> customDataTypes;
-
-  external ffi.Pointer<UA_String> namespaces;
-
-  @ffi.Size()
-  external int namespacesSize;
 
   external ffi.Pointer<
     ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_Client> client, ffi.UnsignedInt type, UA_KeyValueMap payload)>
@@ -3989,6 +3941,31 @@ final class UA_ClientConfig extends ffi.Struct {
   >
   serviceNotificationCallback;
 
+  external ffi.Pointer<UA_EventLoop> eventLoop;
+
+  @ffi.Bool()
+  external bool externalEventLoop;
+
+  @ffi.Size()
+  external int securityPoliciesSize;
+
+  external ffi.Pointer<UA_SecurityPolicy> securityPolicies;
+
+  external UA_CertificateGroup certificateVerification;
+
+  @UA_UInt32()
+  external int maxTrustListSize;
+
+  @UA_UInt32()
+  external int maxRejectedListSize;
+
+  @ffi.Size()
+  external int authSecurityPoliciesSize;
+
+  external ffi.Pointer<UA_SecurityPolicy> authSecurityPolicies;
+
+  external UA_String authSecurityPolicyUri;
+
   external ffi.Pointer<
     ffi.NativeFunction<
       ffi.Void Function(
@@ -4003,6 +3980,9 @@ final class UA_ClientConfig extends ffi.Struct {
 
   external ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_Client> client)>> inactivityCallback;
 
+  @UA_UInt16()
+  external int outStandingPublishRequests;
+
   external ffi.Pointer<
     ffi.NativeFunction<
       ffi.Void Function(ffi.Pointer<UA_Client> client, UA_UInt32 subscriptionId, ffi.Pointer<ffi.Void> subContext)
@@ -4010,13 +3990,17 @@ final class UA_ClientConfig extends ffi.Struct {
   >
   subscriptionInactivityCallback;
 
-  @UA_UInt16()
-  external int outStandingPublishRequests;
+  external UA_String sessionName;
 
-  external ffi.Pointer<UA_EventLoop> eventLoop;
+  external ffi.Pointer<UA_String> sessionLocaleIds;
 
-  @ffi.Bool()
-  external bool externalEventLoop;
+  @ffi.Size()
+  external int sessionLocaleIdsSize;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig> cc, ffi.Pointer<UA_ByteString> password)>
+  >
+  privateKeyPasswordCallback;
 }
 
 /// .. _pubsub:
@@ -4914,11 +4898,11 @@ const int UA_OPEN62541_VER_MINOR = 5;
 
 const int UA_OPEN62541_VER_PATCH = 0;
 
-const String UA_OPEN62541_VER_LABEL = '';
+const String UA_OPEN62541_VER_LABEL = '-rc1';
 
 const String UA_OPEN62541_VER_COMMIT = 'unknown-commit';
 
-const String UA_OPEN62541_VERSION = 'v1.5.0';
+const String UA_OPEN62541_VERSION = 'v1.5.0-rc1';
 
 const int UA_STATUSCODE_INFOTYPE_DATAVALUE = 1024;
 
