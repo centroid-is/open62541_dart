@@ -270,15 +270,11 @@ extension UA_DataTypeMemberExtension on raw.UA_DataTypeMember {
 
 // ignore: camel_case_extensions
 extension UA_DataTypeExtension on raw.UA_DataType {
-  int get memSize => substitute & 0xFFFF; // First 16 bits
-  set memSize(int value) => substitute = (substitute & 0xFFFF0000) | value; // First 16 bits
-  raw.UA_DataTypeKind get typeKind => raw.UA_DataTypeKind.fromValue((substitute >> 16) & 0x3F); // Next 6 bits
-  set typeKind(raw.UA_DataTypeKind value) =>
-      substitute = (substitute & 0xFFC0FFFF) | ((value.value & 0x3F) << 16); // Next 6 bits
-  bool get pointerFree => ((substitute >> 22) & 0x1) == 1; // Next 1 bit
-  bool get overlayable => ((substitute >> 23) & 0x1) == 1; // Next 1 bit
-  int get membersSize => (substitute >> 24) & 0xFF; // Last 8 bits
-  set membersSize(int value) => substitute = (substitute & 0x00FFFFFF) | ((value << 24) & 0xFF000000); // Last 8 bits
+  // Only typeKind(6), pointerFree(1), overlayable(1) are packed in substitute (1 byte).
+  raw.UA_DataTypeKind get typeKind => raw.UA_DataTypeKind.fromValue(substitute & 0x3F); // Bits 0-5
+  set typeKind(raw.UA_DataTypeKind value) => substitute = (substitute & 0xC0) | (value.value & 0x3F); // Bits 0-5
+  bool get pointerFree => ((substitute >> 6) & 0x1) == 1; // Bit 6
+  bool get overlayable => ((substitute >> 7) & 0x1) == 1; // Bit 7
 
   String format() {
     final nId = binaryEncodingId.format();

@@ -1,6 +1,6 @@
---- open62541.h	2025-11-24 16:53:22
-+++ open62541_modified.h	2025-11-24 16:51:51
-@@ -23288,12 +23288,13 @@
+--- open62541.h	2026-02-05 14:08:38.248673770 +0000
++++ open62541_modified.h	2026-02-05 14:47:49.272017496 +0000
+@@ -23413,12 +23413,13 @@
      UA_UInt16     sourcePicoseconds;
      UA_UInt16     serverPicoseconds;
      UA_StatusCode status;
@@ -20,7 +20,7 @@
  } UA_DataValue;
  
  /* Copy the DataValue, but use only a subset of the (multidimensional) array of
-@@ -23311,13 +23312,14 @@
+@@ -23436,13 +23437,14 @@
   * associated with a StatusCode. */
  
  typedef struct UA_DiagnosticInfo {
@@ -42,7 +42,7 @@
      UA_Int32      symbolicId;
      UA_Int32      namespaceUri;
      UA_Int32      localizedText;
-@@ -23360,16 +23362,17 @@
+@@ -23488,16 +23490,17 @@
      const char *memberName;       /* Human-readable member name */
  #endif
      const UA_DataType *memberType;/* The member data type description */
@@ -70,25 +70,21 @@
  } UA_DataTypeMember;
  
  /* The DataType "kind" is an internal type classification. It is used to
-@@ -23416,14 +23419,15 @@
-     UA_NodeId typeId;           /* The nodeid of the type */
+@@ -23545,11 +23548,12 @@
      UA_NodeId binaryEncodingId; /* NodeId of datatype when encoded as binary */
      UA_NodeId xmlEncodingId;    /* NodeId of datatype when encoded as XML */
--    UA_UInt32 memSize     : 16; /* Size of the struct in memory */
+     UA_UInt16 memSize;          /* Size of the struct in memory */
 -    UA_UInt32 typeKind    : 6;  /* Dispatch index for the handling routines */
 -    UA_UInt32 pointerFree : 1;  /* The type (and its members) contains no
 -                                 * pointers that need to be freed */
 -    UA_UInt32 overlayable : 1;  /* The type has the identical memory layout
 -                                 * in memory and on the binary stream. */
--    UA_UInt32 membersSize : 8;  /* How many members does the type have? */
-+    // UA_UInt32 memSize     : 16; /* Size of the struct in memory */
 +    // UA_UInt32 typeKind    : 6;  /* Dispatch index for the handling routines */
 +    // UA_UInt32 pointerFree : 1;  /* The type (and its members) contains no
 +    //                              * pointers that need to be freed */
 +    // UA_UInt32 overlayable : 1;  /* The type has the identical memory layout
 +    //                              * in memory and on the binary stream. */
-+    // UA_UInt32 membersSize : 8;  /* How many members does the type have? */
-+    UA_UInt32 substitute;
++    UA_Byte   substitute;
+     UA_Byte   membersSize;      /* How many members does the type have? */
      UA_DataTypeMember *members;
  };
- 
