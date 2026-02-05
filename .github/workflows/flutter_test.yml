@@ -1,0 +1,170 @@
+name: Flutter Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: flutter-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build libgtk-3-dev
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Create Flutter project structure
+        working-directory: flutter_example
+        run: flutter create --platforms=linux .
+
+      - name: Get dependencies
+        working-directory: flutter_example
+        run: flutter pub get
+
+      - name: Run tests
+        working-directory: flutter_example
+        run: flutter test test/library_test.dart
+
+  windows:
+    name: Windows Test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Create Flutter project structure
+        working-directory: flutter_example
+        run: flutter create --platforms=windows .
+
+      - name: Get dependencies
+        working-directory: flutter_example
+        run: flutter pub get
+
+      - name: Run tests
+        working-directory: flutter_example
+        run: flutter test test/library_test.dart
+
+  macos:
+    name: macOS Test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Create Flutter project structure
+        working-directory: flutter_example
+        run: flutter create --platforms=macos .
+
+      - name: Get dependencies
+        working-directory: flutter_example
+        run: flutter pub get
+
+      - name: Run tests
+        working-directory: flutter_example
+        run: flutter test test/library_test.dart
+
+  android:
+    name: Android Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Create Flutter project structure
+        working-directory: flutter_example
+        run: flutter create --platforms=android .
+
+      - name: Get dependencies
+        working-directory: flutter_example
+        run: flutter pub get
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run integration tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          profile: Nexus 6
+          working-directory: flutter_example
+          script: flutter test integration_test/library_test.dart --timeout 20m
+
+  ios:
+    name: iOS Test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Create Flutter project structure
+        working-directory: flutter_example
+        run: flutter create --platforms=ios .
+
+      - name: Get dependencies
+        working-directory: flutter_example
+        run: flutter pub get
+
+      - name: Boot iOS Simulator
+        run: |
+          xcrun simctl list devices available
+          DEVICE_ID=$(xcrun simctl list devices available | grep "iPhone 17" | head -1 | grep -oE '[A-F0-9-]{36}')
+          if [ -z "$DEVICE_ID" ]; then
+            DEVICE_ID=$(xcrun simctl list devices available | grep "iPhone" | head -1 | grep -oE '[A-F0-9-]{36}')
+          fi
+          echo "Booting simulator: $DEVICE_ID"
+          xcrun simctl boot "$DEVICE_ID" || true
+          # Wait for simulator to be fully booted
+          xcrun simctl bootstatus "$DEVICE_ID" -b
+          echo "DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
+
+      - name: Run integration tests
+        working-directory: flutter_example
+        run: |
+          # Check simulator status
+          xcrun simctl list devices booted
+          # Run with verbose to see where it gets stuck
+          flutter test integration_test/library_test.dart -d $DEVICE_ID --verbose 2>&1 | tee test_output.txt || true
+          # Show last 100 lines if it fails
+          tail -100 test_output.txt
+          # Check for crash logs
+          find ~/Library/Logs/DiagnosticReports -name "*.crash" -mmin -10 2>/dev/null | head -5 || true

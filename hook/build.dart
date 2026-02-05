@@ -34,9 +34,16 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
   return folder;
 }
 
+String _targetKey(BuildInput input) {
+  final os = input.config.code.targetOS.toString();
+  final arch = input.config.code.targetArchitecture.toString();
+  return '$os-$arch';
+}
+
 Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger logger) async {
+  final targetKey = _targetKey(input);
   final mbedtlsBase = input.outputDirectoryShared.resolve('mbedtls/');
-  final installPrefix = mbedtlsBase.resolve('install/');
+  final installPrefix = mbedtlsBase.resolve('install-$targetKey/');
 
   // Skip if already built
   final includeCheck = File.fromUri(installPrefix.resolve('include/mbedtls/ssl.h'));
