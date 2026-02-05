@@ -18,6 +18,10 @@ dependencies:
   tuple: ^2.0.2
 platforms:
   linux:
+  windows:
+  macos:
+  android:
+  ios:
 topics:
   - network
   - industrial
