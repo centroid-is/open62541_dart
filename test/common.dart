@@ -1,5 +1,3 @@
-import 'dart:ffi';
-
 import 'package:open62541/open62541.dart';
 
 final boolNodeId = NodeId.fromString(1, "the.bool");
@@ -24,8 +22,8 @@ void addBasicVariables(Server server) {
   server.addVariableNode(stringNodeId, stringValue);
 }
 
-Server setupServer(DynamicLibrary lib, int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR}) {
-  final server = Server(lib, port: port, logLevel: logLevel);
+Server setupServer(int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR}) {
+  final server = Server(port: port, logLevel: logLevel);
   server.start();
 
   // Run the server while we test
@@ -40,8 +38,8 @@ Server setupServer(DynamicLibrary lib, int port, {LogLevel logLevel = LogLevel.U
   return server;
 }
 
-Future<Client> setupClient(DynamicLibrary lib, int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_FATAL}) async {
-  final client = Client(lib, logLevel: logLevel);
+Future<Client> setupClient(int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_FATAL}) async {
+  final client = Client(logLevel: logLevel);
   // Run the client while we connect
   () async {
     while (client.runIterate(Duration(milliseconds: 10))) {

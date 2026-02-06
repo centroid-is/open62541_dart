@@ -70,12 +70,12 @@ Example of change
 >     UA_Byte          hasBitfield;
 ```
 
-Then you can generate the bindings with
+# Regenerate bindings
 ```bash
-dart run ffigen
+cp .dart_tool/hooks_runner/shared/open62541/build/download/open62541-includes/build/linux/x64/open62541.h third_party/open62541/open62541.h
+bash open62541_tooling/patch_header.sh
+CPATH="/usr/lib/clang/21/include:/usr/include" dart run tool/ffigen.dart
 ```
-
-Some clang errors have been turned off to disable errors coming from macos's pthread library and other standard libraries
 
 
 ## Notes

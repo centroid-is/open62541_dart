@@ -1,0 +1,25 @@
+name: open62541_example
+description: Example app to test open62541 on mobile platforms.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ^3.9.0
+  flutter: '>=3.32.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.2
+  open62541:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

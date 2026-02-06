@@ -5,9 +5,9 @@ import 'package:binarize/binarize.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/extensions.dart';
-import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
 import 'package:open62541/src/types/payloads.dart';
 import 'node_id.dart';
+import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
 import 'ua_allocation.dart';
 
@@ -169,7 +169,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
     throw StateError('Invalid key type: ${key.runtimeType}');
   }
 
-  operator []=(dynamic key, dynamic passed) {
+  void operator []=(dynamic key, dynamic passed) {
     // Try to acomidate people setting trivial values directly
     DynamicValue innerValue;
     if (passed is DynamicValue) {
@@ -297,8 +297,12 @@ class DynamicValue extends PayloadType<DynamicValue> {
       final enumFields = <int, EnumField>{};
       for (int i = 0; i < enumDefinition.ref.fieldsSize; i++) {
         final field = enumDefinition.ref.fields[i];
-        enumFields[field.value] =
-            EnumField(field.value, field.name.value, field.displayName.localizedText, field.description.localizedText);
+        enumFields[field.value] = EnumField(
+          field.value,
+          field.name.value,
+          field.displayName.localizedText,
+          field.description.localizedText,
+        );
       }
       tree.enumFields = enumFields;
       //TODO: This only supports int32 enums for now

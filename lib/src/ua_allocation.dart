@@ -29,14 +29,10 @@ final Pointer<NativeFunction<UaPosixFreeNative>> uaPosixFreePointer = Native.add
 final DynamicLibrary ucrtbaselib = DynamicLibrary.open(debug ? 'ucrtbased.dll' : 'ucrtbase.dll');
 
 typedef WinMalloc = Pointer Function(int);
-final WinMalloc winMalloc = ucrtbaselib.lookupFunction<UaPosixMallocNative, WinMalloc>(
-  'malloc',
-);
+final WinMalloc winMalloc = ucrtbaselib.lookupFunction<UaPosixMallocNative, WinMalloc>('malloc');
 
 typedef WinCalloc = Pointer Function(int, int);
-final WinCalloc winCalloc = ucrtbaselib.lookupFunction<UaPosixCallocNative, WinCalloc>(
-  'calloc',
-);
+final WinCalloc winCalloc = ucrtbaselib.lookupFunction<UaPosixCallocNative, WinCalloc>('calloc');
 
 typedef WinFree = void Function(Pointer);
 final Pointer<NativeFunction<UaPosixFreeNative>> winFreePointer = ucrtbaselib.lookup('free');

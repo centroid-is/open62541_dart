@@ -3,13 +3,13 @@ import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 
 import 'extensions.dart';
-import 'generated/open62541_bindings.dart' as raw;
+import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
 class NodeId {
   NodeId._internal(this._namespaceIndex, {dynamic id})
-      : _stringId = id is String ? id : null,
-        _numericId = id is int ? id : null {
+    : _stringId = id is String ? id : null,
+      _numericId = id is int ? id : null {
     if (_stringId == null && _numericId == null) {
       throw 'NodeId is not initialized or unimplemented';
     }
@@ -137,19 +137,19 @@ class NodeId {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
   }
 
-  raw.UA_NodeId toRaw(raw.open62541 lib) {
+  raw.UA_NodeId toRaw() {
     if (_stringId != null) {
-      return lib.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: ua_malloc).cast());
+      return raw.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: ua_malloc).cast());
     } else if (_numericId != null) {
-      return lib.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
+      return raw.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
     } else {
       throw 'NodeId is not initialized or unimplemented';
     }
   }
 
-  Pointer<raw.UA_NodeId> toRawPointer(raw.open62541 lib) {
+  Pointer<raw.UA_NodeId> toRawPointer() {
     final nodeId = ua_calloc<raw.UA_NodeId>();
-    nodeId.ref = toRaw(lib);
+    nodeId.ref = toRaw();
     return nodeId;
   }
 

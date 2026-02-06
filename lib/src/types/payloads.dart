@@ -3,7 +3,7 @@ import 'dart:ffi' as ffi;
 
 import 'package:binarize/binarize.dart';
 
-import '../generated/open62541_bindings.dart' as raw;
+import '../third_party/open62541.g.dart' as raw;
 import '../ua_allocation.dart';
 
 // TODO this file has a lot of boilerplate, can we make it better?
@@ -190,7 +190,7 @@ class UA_DateTimePayload extends PayloadType<DateTime> {
   @override
   DateTime get(ByteReader reader, [Endian? endian]) {
     final dateTimeRaw = reader.int64(endian);
-    if (dateTimeRaw == 0 /* Don't have to check platform, it goes earlier then opcua epoch*/) {
+    if (dateTimeRaw == 0 /* Don't have to check platform, it goes earlier then opcua epoch*/ ) {
       return DateTime(-271821, 04, 20);
     } else if (dateTimeRaw == maxint) {
       return DateTime(275760, 09, 13);
@@ -204,7 +204,7 @@ class UA_DateTimePayload extends PayloadType<DateTime> {
   void set(ByteWriter writer, DateTime value, [Endian? endian]) {
     if (value.isBefore(
       opcuaEpoch,
-    ) /* Eearliest representable by development platform is lower then opcua epoch. Don't need to check it. */) {
+    ) /* Eearliest representable by development platform is lower then opcua epoch. Don't need to check it. */ ) {
       writer.int64(0, endian);
     } else if (value.isAfter(DateTime(9999, 12, 31, 11, 59, 58, 999, 999))) {
       writer.int64(maxint, endian);
