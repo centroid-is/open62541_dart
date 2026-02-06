@@ -1,7 +1,7 @@
 import 'client.dart';
-import 'node_id.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
+import 'node_id.dart';
 
 abstract class ClientApi {
   Future<void> awaitConnect();

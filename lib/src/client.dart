@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:tuple/tuple.dart';
 
 import 'package:open62541/src/types/errors.dart';
+import 'client_api.dart';
 import 'common.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
@@ -14,7 +15,6 @@ import 'node_id.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
 import 'ua_allocation.dart';
-import 'client_api.dart';
 
 class ClientState {
   SecureChannelState channelState;

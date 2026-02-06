@@ -4,10 +4,10 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'client.dart';
-import 'dynamic_value.dart';
-import 'node_id.dart';
-import 'extensions.dart';
 import 'client_api.dart';
+import 'dynamic_value.dart';
+import 'extensions.dart';
+import 'node_id.dart';
 
 /// Exception thrown when an operation is attempted on a closed [ClientIsolate].
 class ClientIsolateClosedException implements Exception {
