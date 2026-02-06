@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:isolate';
-import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'client.dart';
@@ -125,12 +124,8 @@ class StreamDataMessage<T> {
   final String? error;
   final bool isError;
 
-  const StreamDataMessage.success(this.streamId, this.data)
-      : error = null,
-        isError = false;
-  const StreamDataMessage.error(this.streamId, this.error)
-      : data = null,
-        isError = true;
+  const StreamDataMessage.success(this.streamId, this.data) : error = null, isError = false;
+  const StreamDataMessage.error(this.streamId, this.error) : data = null, isError = true;
 }
 
 /// Response wrapper for isolate communication
@@ -140,19 +135,14 @@ class IsolateResponse<T> {
   final String? error;
   final bool isError;
 
-  const IsolateResponse.success(this.requestId, this.data)
-      : error = null,
-        isError = false;
-  const IsolateResponse.error(this.requestId, this.error)
-      : data = null,
-        isError = true;
+  const IsolateResponse.success(this.requestId, this.data) : error = null, isError = false;
+  const IsolateResponse.error(this.requestId, this.error) : data = null, isError = true;
 
   bool get isSuccess => !isError;
 }
 
 class ClientIsolate implements ClientApi {
   ClientIsolate._({
-    required this.libraryPath,
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
     String? username,
@@ -164,7 +154,6 @@ class ClientIsolate implements ClientApi {
     Duration connectivityCheckInterval = const Duration(seconds: 1),
   }) {
     _initIsolate(
-      libraryPath: libraryPath,
       secureChannelLifeTime: secureChannelLifeTime,
       requestedSessionTimeout: requestedSessionTimeout,
       username: username,
@@ -179,7 +168,6 @@ class ClientIsolate implements ClientApi {
 
   /// Factory constructor that creates a ClientIsolate with the specified configuration
   static Future<ClientIsolate> create({
-    required String libraryPath,
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
     String? username,
@@ -192,7 +180,6 @@ class ClientIsolate implements ClientApi {
     Duration iterateInterval = const Duration(milliseconds: 10),
   }) async {
     final isolate = ClientIsolate._(
-      libraryPath: libraryPath,
       secureChannelLifeTime: secureChannelLifeTime,
       requestedSessionTimeout: requestedSessionTimeout,
       username: username,
@@ -208,8 +195,6 @@ class ClientIsolate implements ClientApi {
     return isolate;
   }
 
-  final String libraryPath;
-
   late final Isolate _isolate;
   late final SendPort _sendPort;
   late final ReceivePort _receivePort;
@@ -218,7 +203,6 @@ class ClientIsolate implements ClientApi {
   bool _isClosed = false;
 
   void _initIsolate({
-    required String libraryPath,
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
     String? username,
@@ -234,7 +218,6 @@ class ClientIsolate implements ClientApi {
     _isolate = await Isolate.spawn(
       _isolateEntryPoint,
       _IsolateData(
-        libraryPath: libraryPath,
         secureChannelLifeTime: secureChannelLifeTime,
         requestedSessionTimeout: requestedSessionTimeout,
         username: username,
@@ -364,15 +347,17 @@ class ClientIsolate implements ClientApi {
     final id = _generateId();
     _pendingRequests[id] = completer;
 
-    _sendPort.send(SubscriptionCreateMessage(
-      id,
-      requestedPublishingInterval: requestedPublishingInterval,
-      requestedLifetimeCount: requestedLifetimeCount,
-      requestedMaxKeepAliveCount: requestedMaxKeepAliveCount,
-      maxNotificationsPerPublish: maxNotificationsPerPublish,
-      publishingEnabled: publishingEnabled,
-      priority: priority,
-    ));
+    _sendPort.send(
+      SubscriptionCreateMessage(
+        id,
+        requestedPublishingInterval: requestedPublishingInterval,
+        requestedLifetimeCount: requestedLifetimeCount,
+        requestedMaxKeepAliveCount: requestedMaxKeepAliveCount,
+        maxNotificationsPerPublish: maxNotificationsPerPublish,
+        publishingEnabled: publishingEnabled,
+        priority: priority,
+      ),
+    );
 
     try {
       return await completer.future;
@@ -397,15 +382,17 @@ class ClientIsolate implements ClientApi {
     final id = _generateId();
     _streamControllers[id] = controller;
 
-    _sendPort.send(MonitorMessage(
-      id,
-      nodeId,
-      subscriptionId,
-      monitoringMode: monitoringMode,
-      samplingInterval: samplingInterval,
-      discardOldest: discardOldest,
-      queueSize: queueSize,
-    ));
+    _sendPort.send(
+      MonitorMessage(
+        id,
+        nodeId,
+        subscriptionId,
+        monitoringMode: monitoringMode,
+        samplingInterval: samplingInterval,
+        discardOldest: discardOldest,
+        queueSize: queueSize,
+      ),
+    );
 
     controller.onCancel = () {
       _streamControllers.remove(id);
@@ -578,7 +565,6 @@ class ClientIsolate implements ClientApi {
 
 /// Data structure passed to the isolate
 class _IsolateData {
-  final String libraryPath;
   final Duration? secureChannelLifeTime;
   final Duration? requestedSessionTimeout;
   final String? username;
@@ -591,7 +577,6 @@ class _IsolateData {
   final SendPort sendPort;
 
   _IsolateData({
-    required this.libraryPath,
     this.secureChannelLifeTime,
     this.requestedSessionTimeout,
     this.username,
@@ -618,15 +603,7 @@ void _isolateEntryPoint(_IsolateData data) {
   // Send our receive port back to the main isolate
   sendPort.send(receivePort.sendPort);
 
-  // Initialize the client
-  late ffi.DynamicLibrary lib;
-  if (data.libraryPath.isEmpty) {
-    lib = ffi.DynamicLibrary.executable();
-  } else {
-    lib = ffi.DynamicLibrary.open(data.libraryPath);
-  }
   client = Client(
-    lib,
     secureChannelLifeTime: data.secureChannelLifeTime,
     requestedSessionTimeout: data.requestedSessionTimeout,
     username: data.username,
