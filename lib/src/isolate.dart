@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -621,6 +622,9 @@ void _isolateEntryPoint(_IsolateData data) {
   // Track active streams
   final Map<String, StreamSubscription> activeStreams = {};
 
+  // Track endpoint for error messages
+  String? endpoint;
+
   // Send our receive port back to the main isolate
   sendPort.send(receivePort.sendPort);
 
@@ -640,6 +644,7 @@ void _isolateEntryPoint(_IsolateData data) {
   receivePort.listen((message) async {
     try {
       if (message is ConnectMessage) {
+        endpoint = message.url;
         await client.connect(message.url);
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is ReadMessage) {
@@ -677,11 +682,10 @@ void _isolateEntryPoint(_IsolateData data) {
             sendPort.send(StreamDataMessage.success(message.requestId, value));
           },
           onError: (error) {
-            print("Stream error: $error");
+            stderr.writeln("[${endpoint ?? 'unknown'}] Stream error: $error");
             sendPort.send(StreamDataMessage.error(message.requestId, error.toString()));
           },
           onDone: () {
-            print("Stream done");
             activeStreams.remove(message.requestId);
           },
         );
@@ -708,6 +712,7 @@ void _isolateEntryPoint(_IsolateData data) {
         client.disconnect();
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is DeleteMessage) {
+        stderr.writeln("[${endpoint ?? 'unknown'}] Shutting down isolate (${activeStreams.length} active streams)");
         // Cancel all active streams
         for (final subscription in activeStreams.values) {
           await subscription.cancel();
@@ -725,21 +730,20 @@ void _isolateEntryPoint(_IsolateData data) {
         // Start the iterate timer
         iterateTimer = Timer.periodic(message.timeout, (timer) {
           if (!client.runIterate(message.timeout)) {
+            stderr.writeln("[${endpoint ?? 'unknown'}] runIterate failed, stopping event loop");
             iterateTimer?.cancel();
-            sendPort.send(IsolateResponse.error(message.requestId, "Iteratation failed"));
+            sendPort.send(IsolateResponse.error(message.requestId, "Iteration failed"));
           }
         });
       } else if (message is StateStreamMessage) {
         final stream = client.config.stateStream;
 
-        print("got listen to state stream");
-
         final subscription = stream.listen(
           (state) {
-            print("got state: $state");
             sendPort.send(StreamDataMessage.success(message.requestId, state));
           },
           onError: (error) {
+            stderr.writeln("[${endpoint ?? 'unknown'}] State stream error: $error");
             sendPort.send(StreamDataMessage.error(message.requestId, error.toString()));
           },
           onDone: () {
@@ -753,7 +757,7 @@ void _isolateEntryPoint(_IsolateData data) {
         sendPort.send(IsolateResponse.success(message.requestId, null));
       }
     } catch (e) {
-      print("Error in isolate: $e");
+      stderr.writeln("[${endpoint ?? 'unknown'}] Error in isolate: $e");
       if (message is IsolateMessage) {
         sendPort.send(IsolateResponse.error(message.requestId, e.toString()));
       }
