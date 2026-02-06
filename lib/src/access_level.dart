@@ -1,4 +1,4 @@
-import 'generated/open62541_bindings.dart' as raw;
+import 'third_party/open62541.g.dart' as raw;
 
 class AccessLevelMask {
   final bool read;

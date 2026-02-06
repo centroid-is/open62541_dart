@@ -6,14 +6,13 @@ import 'package:test/test.dart';
 import 'package:open62541/src/common.dart';
 import 'package:open62541/src/dynamic_value.dart';
 import 'package:open62541/src/extensions.dart';
-import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
 import 'package:open62541/src/node_id.dart';
+import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'schema_util.dart';
 
 void main() {
-  final lib = raw.open62541(loadOpen62541Library(local: true));
   void testSimpleTypes(DynamicValue value) {
-    final variant = valueToVariant(value, lib);
+    final variant = valueToVariant(value);
     final decoded = variantToValue(variant.ref);
     expect(value.isArray, decoded.isArray);
     if (value.isArray) {
@@ -116,7 +115,7 @@ void main() {
     val["s1"] = DynamicValue(value: "some string", typeId: NodeId.uastring);
     val["s2"] = DynamicValue(value: "other string", typeId: NodeId.uastring);
     val["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
-    final variant = valueToVariant(val, lib);
+    final variant = valueToVariant(val);
 
     DynamicValue sp = DynamicValue(typeId: spNodeId);
 
@@ -152,7 +151,7 @@ void main() {
     val3["s3"] = DynamicValue(value: "third string", typeId: NodeId.uastring);
 
     DynamicValue parent = DynamicValue.fromList([val1, val2, val3], typeId: val1.typeId);
-    final variant = valueToVariant(parent, lib);
+    final variant = valueToVariant(parent);
 
     var spNodeId = NodeId.fromString(4, "Omars string struct");
     DynamicValue sp = DynamicValue(typeId: spNodeId);
@@ -187,7 +186,7 @@ void main() {
     variant.ref.arrayDimensions = calloc(2);
     variant.ref.arrayDimensions[0] = 4;
     variant.ref.arrayDimensions[1] = 2;
-    variant.ref.type = getType(UaTypes.int16, lib);
+    variant.ref.type = getType(UaTypes.int16);
     final value = variantToValue(variant.ref);
 
     expect(value.isArray, true);
@@ -208,12 +207,12 @@ void main() {
     expect(value[3][0].asInt, 7);
     expect(value[3][1].asInt, 8);
 
-    final variantEncoded = valueToVariant(value, lib);
+    final variantEncoded = valueToVariant(value);
     expect(variantEncoded.ref.arrayLength, 8);
     final variantData = variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
     expect(variantData, data);
-    lib.UA_Variant_delete(variant);
-    lib.UA_Variant_delete(variantEncoded);
+    raw.UA_Variant_delete(variant);
+    raw.UA_Variant_delete(variantEncoded);
   });
   test('4x4x2 boolean array', () {
     var data = [
@@ -260,7 +259,7 @@ void main() {
     variant.ref.arrayDimensions[0] = 4;
     variant.ref.arrayDimensions[1] = 4;
     variant.ref.arrayDimensions[2] = 2;
-    variant.ref.type = getType(UaTypes.boolean, lib);
+    variant.ref.type = getType(UaTypes.boolean);
     void expectArrayDyn(DynamicValue value) {
       expect(value.isArray, true);
       expect(value[0].isArray, true);
@@ -324,15 +323,15 @@ void main() {
     final dynValueFromBuffer = variantToValue(variant.ref);
     expectArrayDyn(dynValueFromBuffer);
 
-    final variantEncoded = valueToVariant(dynValueFromBuffer, lib);
+    final variantEncoded = valueToVariant(dynValueFromBuffer);
     expect(variantEncoded.ref.arrayLength, 32);
     final variantData = variantEncoded.ref.data.cast<Uint8>().asTypedList(data.length);
     expect(variantData, data);
 
     final decoded = variantToValue(variantEncoded.ref);
     expectArrayDyn(decoded);
-    lib.UA_Variant_delete(variant);
-    lib.UA_Variant_delete(variantEncoded);
+    raw.UA_Variant_delete(variant);
+    raw.UA_Variant_delete(variantEncoded);
   });
 
   // BIG TODO generated test, verify its correctness
@@ -446,7 +445,7 @@ void main() {
     variant.ref.arrayDimensions[0] = 2;
     variant.ref.arrayDimensions[1] = 3;
     variant.ref.arrayDimensions[2] = 4;
-    variant.ref.type = getType(UaTypes.int16, lib);
+    variant.ref.type = getType(UaTypes.int16);
 
     var spNodeId = NodeId.fromString(4, "Omars string struct");
 
@@ -473,7 +472,7 @@ void main() {
     expect(value[1][0][0]["s2"].asString, "bM");
     expect(value[1][0][0]["s3"].asString, "cM");
 
-    lib.UA_Variant_delete(variant);
+    raw.UA_Variant_delete(variant);
   }, skip: "Todo: make this test from real data");
 
   test('Array of nested struct', () {
@@ -810,9 +809,9 @@ void main() {
     ext[2].encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
 
     // Set types
-    ext[0].content.encoded.typeId = atvId.toRaw(lib);
-    ext[1].content.encoded.typeId = atvId.toRaw(lib);
-    ext[2].content.encoded.typeId = atvId.toRaw(lib);
+    ext[0].content.encoded.typeId = atvId.toRaw();
+    ext[1].content.encoded.typeId = atvId.toRaw();
+    ext[2].content.encoded.typeId = atvId.toRaw();
 
     // Set the data
     ext[0].content.encoded.body.length = data[0].length;
@@ -832,7 +831,7 @@ void main() {
     variant.ref.data = ext.cast();
     variant.ref.arrayLength = 3;
     variant.ref.arrayDimensionsSize = 0;
-    variant.ref.type = getType(UaTypes.extensionObject, lib);
+    variant.ref.type = getType(UaTypes.extensionObject);
 
     var hmiNodeId = NodeId.fromString(4, "FB_ATV.HMI");
 
@@ -948,14 +947,14 @@ void main() {
 
     expectArrayDyn(value);
 
-    final variantEncoded = valueToVariant(value, lib);
+    final variantEncoded = valueToVariant(value);
     expect(variantEncoded.ref.arrayLength, 3);
     final dynValueAgain = variantToValue(variantEncoded.ref, defs: defs, dataTypeId: atvId);
     expectArrayDyn(dynValueAgain);
 
     // I presume this erases the data correctly
-    lib.UA_Variant_delete(variant);
-    lib.UA_Variant_delete(variantEncoded);
+    raw.UA_Variant_delete(variant);
+    raw.UA_Variant_delete(variantEncoded);
   });
 
   // TODO: Multi dimensional arrays inside structs

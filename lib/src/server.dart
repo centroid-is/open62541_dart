@@ -6,32 +6,26 @@ import 'package:ffi/ffi.dart';
 import 'package:open62541/open62541.dart';
 import 'common.dart';
 import 'extensions.dart';
-import 'generated/open62541_bindings.dart' as raw;
+import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
 class Server {
-  Server(
-    ffi.DynamicLibrary lib, {
-    LogLevel? logLevel,
-    int? port,
-  }) {
-    _lib = raw.open62541(lib);
+  Server({LogLevel? logLevel, int? port}) {
     final config = ua_calloc<raw.UA_ServerConfig>();
 
     if (logLevel != null) {
-      config.ref.logging = _lib.UA_Log_Stdout_new(logLevel);
+      config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
     }
     // setMinimal sets the logging level if not set.
-    int res = _lib.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
+    int res = raw.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
     if (res != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to set default server config ${statusCodeToString(res, _lib)}';
+      throw 'Failed to set default server config ${statusCodeToString(res)}';
     }
 
-    _server = _lib.UA_Server_newWithConfig(config);
-    _config = _lib.UA_Server_getConfig(_server);
+    _server = raw.UA_Server_newWithConfig(config);
+    _config = raw.UA_Server_getConfig(_server);
   }
 
-  late raw.open62541 _lib;
   late ffi.Pointer<raw.UA_Server> _server;
   late ffi.Pointer<raw.UA_ServerConfig> _config;
 
@@ -58,9 +52,9 @@ class Server {
   /// }
   /// ```
   void start() {
-    int retCode = _lib.UA_Server_run_startup(_server);
+    int retCode = raw.UA_Server_run_startup(_server);
     if (retCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to start server ${statusCodeToString(retCode, _lib)}';
+      throw 'Failed to start server ${statusCodeToString(retCode)}';
     }
   }
 
@@ -94,16 +88,19 @@ class Server {
   /// );
   /// server.addVariableNode(nodeId, value);
   /// ```
-  void addVariableNode(NodeId variableNodeId, DynamicValue value,
-      {AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
-      NodeId? parentNodeId,
-      NodeId? parentReferenceNodeId,
-      NodeId? baseDataVariableType,
-      NodeId? typeId}) {
-    ffi.Pointer<raw.UA_VariableAttributes> attr = _lib.UA_VariableAttributes_new();
-    attr.ref = _lib.UA_VariableAttributes_default;
+  void addVariableNode(
+    NodeId variableNodeId,
+    DynamicValue value, {
+    AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
+    NodeId? parentNodeId,
+    NodeId? parentReferenceNodeId,
+    NodeId? baseDataVariableType,
+    NodeId? typeId,
+  }) {
+    ffi.Pointer<raw.UA_VariableAttributes> attr = raw.UA_VariableAttributes_new();
+    attr.ref = raw.UA_VariableAttributes_default;
 
-    final variant = valueToVariant(value, _lib);
+    final variant = valueToVariant(value);
     typeId ??= value.typeId;
 
     // The returned variant is a encoded extension object. extract that and set the scalar value of the variant
@@ -127,63 +124,92 @@ class Server {
       attr.ref.value = variant.ref;
     }
     attr.ref.accessLevel = accessLevel.value;
-    attr.ref.dataType = typeId!.toRaw(_lib);
+    attr.ref.dataType = typeId!.toRaw();
 
     if (value.name == null) {
       throw 'Value name must be provided to use as a browse name';
     }
-    final name = _lib.UA_QUALIFIEDNAME(1, value.name!.toNativeUtf8(allocator: ua_malloc).cast());
+    final name = raw.UA_QUALIFIEDNAME(1, value.name!.toNativeUtf8(allocator: ua_malloc).cast());
 
     parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
     baseDataVariableType ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
 
-    final parentNodeIdRaw = parentNodeId.toRaw(_lib);
-    final parentReferenceNodeIdRaw = parentReferenceNodeId.toRaw(_lib);
-    final baseDataVariableTypeRaw = baseDataVariableType.toRaw(_lib);
+    final parentNodeIdRaw = parentNodeId.toRaw();
+    final parentReferenceNodeIdRaw = parentReferenceNodeId.toRaw();
+    final baseDataVariableTypeRaw = baseDataVariableType.toRaw();
 
-    var returnCode = _lib.UA_Server_addVariableNode(_server, variableNodeId.toRaw(_lib), parentNodeIdRaw,
-        parentReferenceNodeIdRaw, name, baseDataVariableTypeRaw, attr.ref, ffi.nullptr, ffi.nullptr);
-    _lib.UA_VariableAttributes_delete(attr);
+    var returnCode = raw.UA_Server_addVariableNode(
+      _server,
+      variableNodeId.toRaw(),
+      parentNodeIdRaw,
+      parentReferenceNodeIdRaw,
+      name,
+      baseDataVariableTypeRaw,
+      attr.ref,
+      ffi.nullptr,
+      ffi.nullptr,
+    );
+    raw.UA_VariableAttributes_delete(attr);
     ua_calloc.free(variant);
     if (returnCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to add variable node ${statusCodeToString(returnCode, _lib)}, nodeId: $variableNodeId';
+      throw 'Failed to add variable node ${statusCodeToString(returnCode)}, nodeId: $variableNodeId';
     }
   }
 
-  void addVariableTypeNode(DynamicValue schema, NodeId variableTypeId, String name,
-      {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
-    var dattr = _lib.UA_VariableTypeAttributes_new();
+  void addVariableTypeNode(
+    DynamicValue schema,
+    NodeId variableTypeId,
+    String name, {
+    LocalizedText? displayName,
+    NodeId? parentNodeId,
+    NodeId? referenceTypeId,
+  }) {
+    var dattr = raw.UA_VariableTypeAttributes_new();
     if (displayName != null) {
       dattr.ref.displayName.locale.set(displayName.locale);
       dattr.ref.displayName.text.set(displayName.value);
     }
-    dattr.ref.dataType = variableTypeId.toRaw(_lib);
+    dattr.ref.dataType = variableTypeId.toRaw();
     dattr.ref.valueRank = raw.UA_VALUERANK_SCALAR;
-    final variant = valueToVariant(schema, _lib);
+    final variant = valueToVariant(schema);
     dattr.ref.value = variant.ref;
 
     parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
     referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
 
-    final parentNodeIdRaw = parentNodeId.toRaw(_lib);
-    final referenceTypeIdRaw = referenceTypeId.toRaw(_lib);
-    final qualifiedName = _lib.UA_QUALIFIEDNAME(1, name.toNativeUtf8(allocator: ua_malloc).cast());
+    final parentNodeIdRaw = parentNodeId.toRaw();
+    final referenceTypeIdRaw = referenceTypeId.toRaw();
+    final qualifiedName = raw.UA_QUALIFIEDNAME(1, name.toNativeUtf8(allocator: ua_malloc).cast());
 
-    int res = _lib.UA_Server_addVariableTypeNode(_server, variableTypeId.toRaw(_lib), parentNodeIdRaw,
-        referenceTypeIdRaw, qualifiedName, parentNodeIdRaw, dattr.ref, ffi.nullptr, ffi.nullptr);
+    int res = raw.UA_Server_addVariableTypeNode(
+      _server,
+      variableTypeId.toRaw(),
+      parentNodeIdRaw,
+      referenceTypeIdRaw,
+      qualifiedName,
+      parentNodeIdRaw,
+      dattr.ref,
+      ffi.nullptr,
+      ffi.nullptr,
+    );
 
-    _lib.UA_Variant_delete(variant);
-    _lib.UA_VariableTypeAttributes_delete(dattr);
+    raw.UA_Variant_delete(variant);
+    raw.UA_VariableTypeAttributes_delete(dattr);
 
     if (res != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to add variable type node ${statusCodeToString(res, _lib)}';
+      throw 'Failed to add variable type node ${statusCodeToString(res)}';
     }
   }
 
-  void addDataTypeNode(NodeId requestedNewNodeId, String browseName,
-      {LocalizedText? displayName, NodeId? parentNodeId, NodeId? referenceTypeId}) {
-    var attr = _lib.UA_DataTypeAttributes_new();
+  void addDataTypeNode(
+    NodeId requestedNewNodeId,
+    String browseName, {
+    LocalizedText? displayName,
+    NodeId? parentNodeId,
+    NodeId? referenceTypeId,
+  }) {
+    var attr = raw.UA_DataTypeAttributes_new();
 
     if (displayName != null) {
       attr.ref.displayName.locale.set(displayName.locale);
@@ -193,55 +219,55 @@ class Server {
     parentNodeId ??= NodeId.structure;
     referenceTypeId ??= NodeId.hasSubtype;
 
-    _addNode(raw.UA_NodeClass.UA_NODECLASS_DATATYPE, requestedNewNodeId, parentNodeId, referenceTypeId, browseName,
-        NodeId.nullId, attr.cast(), getType(UaTypes.dataTypeAttributes, _lib));
+    _addNode(
+      raw.UA_NodeClass.UA_NODECLASS_DATATYPE,
+      requestedNewNodeId,
+      parentNodeId,
+      referenceTypeId,
+      browseName,
+      NodeId.nullId,
+      attr.cast(),
+      getType(UaTypes.dataTypeAttributes),
+    );
 
-    _lib.UA_DataTypeAttributes_delete(attr);
+    raw.UA_DataTypeAttributes_delete(attr);
   }
 
   void _addNode(
-      raw.UA_NodeClass nodeClass,
-      NodeId requestedNewNodeId,
-      NodeId parentNodeId,
-      NodeId referenceTypeId,
-      String browseName,
-      NodeId typeDefinition,
-      ffi.Pointer<raw.UA_NodeAttributes> attr,
-      ffi.Pointer<raw.UA_DataType> attributeType) {
-    nodeIdPtrIfNotNull(NodeId? nodeId) {
-      if (nodeId == null) {
-        return ffi.nullptr;
-      }
-      final ptr = _lib.UA_NodeId_new();
-      ptr.ref = nodeId.toRaw(_lib);
-      return ptr;
-    }
+    raw.UA_NodeClass nodeClass,
+    NodeId requestedNewNodeId,
+    NodeId parentNodeId,
+    NodeId referenceTypeId,
+    String browseName,
+    NodeId typeDefinition,
+    ffi.Pointer<raw.UA_NodeAttributes> attr,
+    ffi.Pointer<raw.UA_DataType> attributeType,
+  ) {
+    final browse = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
 
-    freeNodeIdIfNotNull(ffi.Pointer<raw.UA_NodeId> nodeId) {
-      if (nodeId != ffi.nullptr) {
-        _lib.UA_NodeId_delete(nodeId);
-      }
-    }
-
-    // This is dereferenced in the underlying c code. Throw errors here
-    // to avoid a segfault in the c code. which is harder to debug.
-    final requestedNewNode = nodeIdPtrIfNotNull(requestedNewNodeId);
-    final parentNode = nodeIdPtrIfNotNull(parentNodeId);
-    final referenceType = nodeIdPtrIfNotNull(referenceTypeId);
-    final type = nodeIdPtrIfNotNull(typeDefinition);
-
-    final browse = _lib.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
-
-    final retCode = _lib.UA_Server_addNode(_server, nodeClass, requestedNewNode, parentNode, referenceType, browse,
-        type, attr, attributeType, ffi.nullptr, ffi.nullptr);
-
-    freeNodeIdIfNotNull(requestedNewNode);
-    freeNodeIdIfNotNull(parentNode);
-    freeNodeIdIfNotNull(referenceType);
-    freeNodeIdIfNotNull(type);
+    //TODO: It seems this method has been removed.
+    var retCode = raw.UA_Server_addNode_begin(
+      _server,
+      nodeClass,
+      requestedNewNodeId.toRaw(),
+      parentNodeId.toRaw(),
+      referenceTypeId.toRaw(),
+      browse,
+      typeDefinition.toRaw(),
+      attr.cast(),
+      attributeType,
+      ffi.nullptr,
+      ffi.nullptr,
+    );
 
     if (retCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to add node ${statusCodeToString(retCode, _lib)}';
+      throw 'Failed to add node begin ${statusCodeToString(retCode)}';
+    }
+
+    retCode = raw.UA_Server_addNode_finish(_server, requestedNewNodeId.toRaw());
+
+    if (retCode != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add node finish ${statusCodeToString(retCode)}';
     }
   }
 
@@ -256,36 +282,45 @@ class Server {
 
     StreamController<String> controller = StreamController<String>();
 
-    ffi.Pointer<raw.UA_ValueCallback> callback = ua_calloc<raw.UA_ValueCallback>();
+    ffi.Pointer<raw.UA_CallbackValueSource> callback = ua_calloc<raw.UA_CallbackValueSource>();
 
-    void onRead(
-        ffi.Pointer<raw.UA_Server> server,
-        ffi.Pointer<raw.UA_NodeId> sessionId,
-        ffi.Pointer<ffi.Void> sessionContext,
-        ffi.Pointer<raw.UA_NodeId> nodeId,
-        ffi.Pointer<ffi.Void> nodeContext,
-        ffi.Pointer<raw.UA_NumericRange> range,
-        ffi.Pointer<raw.UA_DataValue> value) {
-      // TODO: Implement the read callback logic
-      controller.add("Read callback triggered");
-    }
+    //TODO : FIX
+    // raw.UA_UInt32 onRead(
+    //   ffi.Pointer<raw.UA_Server> server,
+    //   ffi.Pointer<raw.UA_NodeId> sessionId,
+    //   ffi.Pointer<ffi.Void> sessionContext,
+    //   ffi.Pointer<raw.UA_NodeId> nodeId,
+    //   ffi.Pointer<ffi.Void> nodeContext,
+    //   ffi.Bool includeSourceTimeStamp,
+    //   ffi.Pointer<raw.UA_NumericRange> range,
+    //   ffi.Pointer<raw.UA_DataValue> value,
+    // ) {
+    //   // TODO: Implement the read callback logic
+    //   controller.add("Read callback triggered");
+    //   return raw.UA_STATUSCODE_GOOD as raw.UA_StatusCode;
+    // }
 
-    final onReadCallback = ffi.NativeCallable<
-        ffi.Void Function(
-            ffi.Pointer<raw.UA_Server>,
-            ffi.Pointer<raw.UA_NodeId>,
-            ffi.Pointer<ffi.Void>,
-            ffi.Pointer<raw.UA_NodeId>,
-            ffi.Pointer<ffi.Void>,
-            ffi.Pointer<raw.UA_NumericRange>,
-            ffi.Pointer<raw.UA_DataValue>)>.isolateLocal(onRead);
+    //TODO: FIX
+    // final onReadCallback = ffi.NativeCallable<
+    //     raw.UA_UInt32 Function(
+    //         ffi.Pointer<raw.UA_Server>,
+    //         ffi.Pointer<raw.UA_NodeId>,
+    //         ffi.Pointer<ffi.Void>,
+    //         ffi.Pointer<raw.UA_NodeId>,
+    //         ffi.Pointer<ffi.Void>,
+    //         ffi.Bool,
+    //         ffi.Pointer<raw.UA_NumericRange>,
+    //         ffi.Pointer<raw.UA_DataValue>
+    //         )>.isolateLocal(onRead);
 
-    callback.ref.onRead = onReadCallback.nativeFunction;
-    _lib.UA_Server_setVariableNode_valueCallback(_server, variableNodeId.toRaw(_lib), callback.ref);
+    //callback.ref.read = onReadCallback.nativeFunction;
+    raw.UA_Server_setVariableNode_callbackValueSource(_server, variableNodeId.toRaw(), callback.ref);
 
     controller.onCancel = () {
       // _lib.UA_Server_setVariableNode_valueCallback(_server, variableNodeId.toRaw(_lib), ffi.nullptr); TODO: This cannot call us anymore
-      onReadCallback.close();
+
+      //TODO: FIX
+      //onReadCallback.close();
       ua_calloc.free(callback);
     };
 
@@ -312,25 +347,25 @@ class Server {
   /// server.writeDescription(nodeId, description);
   /// ```
   void writeDescription(NodeId variableNodeId, LocalizedText description) {
-    ffi.Pointer<raw.UA_LocalizedText> descriptionRaw = _lib.UA_LocalizedText_new();
+    ffi.Pointer<raw.UA_LocalizedText> descriptionRaw = raw.UA_LocalizedText_new();
     descriptionRaw.ref.locale.set(description.locale);
     descriptionRaw.ref.text.set(description.value);
-    _lib.UA_Server_writeDescription(_server, variableNodeId.toRaw(_lib), descriptionRaw.ref);
-    _lib.UA_LocalizedText_delete(descriptionRaw);
+    raw.UA_Server_writeDescription(_server, variableNodeId.toRaw(), descriptionRaw.ref);
+    raw.UA_LocalizedText_delete(descriptionRaw);
   }
 
   DynamicValue read(NodeId variableNodeId, {Schema? schema}) {
-    final variant = _lib.UA_Variant_new();
-    _lib.UA_Server_readValue(_server, variableNodeId.toRaw(_lib), variant);
+    final variant = raw.UA_Variant_new();
+    raw.UA_Server_readValue(_server, variableNodeId.toRaw(), variant);
     final value = variantToValue(variant.ref, defs: schema);
-    _lib.UA_Variant_delete(variant);
+    raw.UA_Variant_delete(variant);
     return value;
   }
 
   void write(NodeId variableNodeId, DynamicValue value) {
-    final variant = valueToVariant(value, _lib);
-    _lib.UA_Server_writeValue(_server, variableNodeId.toRaw(_lib), variant.ref);
-    _lib.UA_Variant_delete(variant);
+    final variant = valueToVariant(value);
+    raw.UA_Server_writeValue(_server, variableNodeId.toRaw(), variant.ref);
+    raw.UA_Variant_delete(variant);
   }
 
   // populate structschema for out type
@@ -341,9 +376,11 @@ class Server {
     }
     array.ref.typesSize = 1;
     array.ref.types = ua_calloc<raw.UA_DataType>(1);
-    array.ref.types[0].typeId = typeId.toRaw(_lib);
-    array.ref.types[0].binaryEncodingId =
-        NodeId.fromString(typeId.namespace, "BinaryEncoding_Default:${value.name}").toRaw(_lib);
+    array.ref.types[0].typeId = typeId.toRaw();
+    array.ref.types[0].binaryEncodingId = NodeId.fromString(
+      typeId.namespace,
+      "BinaryEncoding_Default:${value.name}",
+    ).toRaw();
 
     array.ref.types[0].memSize = 9;
     array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
@@ -374,8 +411,8 @@ class Server {
 
   ffi.Pointer<raw.UA_DataType> _findDataType(NodeId typeId) {
     final nodeId = ua_calloc<raw.UA_NodeId>();
-    nodeId.ref = typeId.toRaw(_lib);
-    final ret = _lib.UA_Server_findDataType(_server, nodeId);
+    nodeId.ref = typeId.toRaw();
+    final ret = raw.UA_Server_findDataType(_server, nodeId);
     ua_calloc.free(nodeId);
     return ret;
   }
@@ -405,13 +442,13 @@ class Server {
   bool runIterate({bool waitInterval = true}) {
     if (_server != ffi.nullptr) {
       // Check if the server is running
-      final state = _lib.UA_Server_getLifecycleState(_server);
+      final state = raw.UA_Server_getLifecycleState(_server);
       if (state == raw.UA_LifecycleState.UA_LIFECYCLESTATE_STOPPED) {
         return false;
       }
       // This function returns the time in ms it can wait before the next iteration
       // This number is kind of high and I am unsure of the purpose. For now I will just ignore it.
-      _lib.UA_Server_run_iterate(_server, waitInterval);
+      raw.UA_Server_run_iterate(_server, waitInterval);
       return true;
     }
     return false;
@@ -435,9 +472,9 @@ class Server {
   /// }
   /// ```
   void shutdown() {
-    int ret = _lib.UA_Server_run_shutdown(_server);
+    int ret = raw.UA_Server_run_shutdown(_server);
     if (ret != 0) {
-      throw "Failed to shutdown server ${statusCodeToString(ret, _lib)}";
+      throw "Failed to shutdown server ${statusCodeToString(ret)}";
     }
   }
 
@@ -460,9 +497,9 @@ class Server {
   /// }
   /// ```
   void delete() {
-    int ret = _lib.UA_Server_delete(_server);
+    int ret = raw.UA_Server_delete(_server);
     if (ret != 0) {
-      throw "Failed to delete server ${statusCodeToString(ret, _lib)}";
+      throw "Failed to delete server ${statusCodeToString(ret)}";
     }
   }
 }

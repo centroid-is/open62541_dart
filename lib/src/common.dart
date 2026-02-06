@@ -1,6 +1,4 @@
 import 'dart:ffi' as ffi;
-import 'dart:io';
-import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:binarize/binarize.dart' as binarize;
@@ -9,22 +7,23 @@ import 'package:ffi/ffi.dart';
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/types/create_type.dart';
 import 'extensions.dart';
-import 'generated/open62541_bindings.dart' as raw;
+import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
-String statusCodeToString(int statusCode, raw.open62541 lib) {
-  return lib.UA_StatusCode_name(statusCode).cast<Utf8>().toDartString();
+String statusCodeToString(int statusCode) {
+  return raw.UA_StatusCode_name(statusCode).cast<Utf8>().toDartString();
 }
 
-ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType, raw.open62541 lib) {
+ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType) {
   int type = uaType.value;
   if (type < 0 || type > raw.UA_TYPES_COUNT) {
     throw 'Type out of boundary $type';
   }
-  return ffi.Pointer.fromAddress(lib.addresses.UA_TYPES.address + (type * ffi.sizeOf<raw.UA_DataType>()));
+  final baseAddress = ffi.Native.addressOf<raw.UA_DataType>(raw.UA_TYPES);
+  return ffi.Pointer.fromAddress(baseAddress.address + (type * ffi.sizeOf<raw.UA_DataType>()));
 }
 
-ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib) {
+ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
   binarize.ByteWriter wr = binarize.ByteWriter();
   value.set(wr, value, Endian.little, false, true);
   final pointer = ua_calloc<ffi.Uint8>(wr.length);
@@ -51,12 +50,12 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value, raw.open62541 lib
   }
 
   final dimensions = getDimensions(value);
-  ffi.Pointer<raw.UA_Variant> variant = lib.UA_Variant_new();
+  ffi.Pointer<raw.UA_Variant> variant = raw.UA_Variant_new();
   variant.ref.data = pointer.cast();
   if (value.isObject || value.isArray && value.asArray.first.isObject) {
-    variant.ref.type = getType(UaTypes.extensionObject, lib);
+    variant.ref.type = getType(UaTypes.extensionObject);
   } else if (id != null) {
-    variant.ref.type = getType(id.toUaTypes(), lib); //TODO: This is not really the correct.
+    variant.ref.type = getType(id.toUaTypes()); //TODO: This is not really the correct.
   } else {
     throw 'Unable to determine type for $value';
   }
@@ -126,45 +125,4 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
   retValue.extObjEncodingId = extObjEncodingId;
 
   return retValue;
-}
-
-/// Loads the open62541 library.
-///
-/// By default, it attempts to load the library dynamically based on the platform:
-/// - Linux: 'libopen62541.so'
-/// - MacOS: 'libopen62541.dylib'
-/// - Windows: 'libopen62541.dll'
-///
-/// If [staticLinking] is true:
-/// - On Android: loads 'libopen62541.so' dynamically (static linking not supported)
-/// - Other platforms: loads from the executable itself
-/// This works with https://pub.dev/packages/open62541_libs
-///
-/// If [local] is true, loads from the package's lib directory.
-/// If [path] is provided, loads from the specified path.
-///
-/// Returns:
-///   A new [ffi.DynamicLibrary] instance.
-ffi.DynamicLibrary loadOpen62541Library({bool staticLinking = false, bool local = false, Uri? path}) {
-  if (staticLinking) {
-    if (Platform.isAndroid) {
-      return ffi.DynamicLibrary.open('libopen62541.so');
-    } else {
-      return ffi.DynamicLibrary.executable();
-    }
-  }
-  var ending = 'so';
-  if (Platform.isMacOS) {
-    ending = 'dylib';
-  } else if (Platform.isWindows) {
-    ending = 'dll';
-  }
-  if (local) {
-    var uri = Isolate.resolvePackageUriSync(Uri.parse('package:open62541/libopen62541.$ending'));
-    return ffi.DynamicLibrary.open(uri!.toFilePath(windows: Platform.isWindows));
-  }
-  if (path != null) {
-    return ffi.DynamicLibrary.open(path.toFilePath(windows: Platform.isWindows));
-  }
-  return ffi.DynamicLibrary.open('libopen62541.$ending');
 }

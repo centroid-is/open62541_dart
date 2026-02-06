@@ -20,7 +20,6 @@ void main(List<String> args) async {
   final password = args.length < 3 ? null : args[2];
   print("Connecting to server ($endpoint) as $username");
   var c = Client(
-    loadOpen62541Library(local: true),
     username: username,
     password: password,
     securityMode: MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
@@ -40,17 +39,24 @@ void main(List<String> args) async {
     if (value.sessionState == SessionState.UA_SESSIONSTATE_ACTIVATED && sessionLost) {
       sessionLost = false;
       final subscriptionId = await c.subscriptionCreate();
-      c.monitoredItems({
-        id: [AttributeId.UA_ATTRIBUTEID_VALUE],
-      }, samplingInterval: Duration(milliseconds: 3000), subscriptionId).listen((value) {
-        print(value.values.first.asDateTime);
-      }).onError((error) {
-        if (error is Inactivity) {
-          print("Inactivity reported for subscription containing our monitored item");
-        } else {
-          throw error;
-        }
-      });
+      c
+          .monitoredItems(
+            {
+              id: [AttributeId.UA_ATTRIBUTEID_VALUE],
+            },
+            samplingInterval: Duration(milliseconds: 3000),
+            subscriptionId,
+          )
+          .listen((value) {
+            print(value.values.first.asDateTime);
+          })
+          .onError((error) {
+            if (error is Inactivity) {
+              print("Inactivity reported for subscription containing our monitored item");
+            } else {
+              throw error;
+            }
+          });
     }
   });
 
