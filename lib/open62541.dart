@@ -1,7 +1,7 @@
 library;
 
 export 'src/access_level.dart' show AccessLevelMask;
-export 'src/client.dart' show Client;
+export 'src/client.dart' show Client, ClientState;
 export 'src/dynamic_value.dart' show DynamicValue, LocalizedText, EnumField, Schema;
 export 'src/extensions.dart'
     show
@@ -25,3 +25,5 @@ export 'src/third_party/open62541.g.dart'
 export 'src/node_id.dart' show NodeId;
 export 'src/server.dart' show Server;
 export 'src/types/errors.dart' show Inactivity;
+export 'src/isolate.dart' show ClientIsolate;
+export 'src/client_api.dart' show ClientApi;
