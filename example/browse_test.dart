@@ -1,8 +1,7 @@
 import 'package:open62541/open62541.dart';
 
 void main() async {
-  final lib = loadOpen62541Library(local: true);
-  final client = Client(lib);
+  final client = Client();
 
   print("Connecting to opc.tcp://10.50.10.10:4840 ...");
   client.connect("opc.tcp://10.50.10.10:4840");
@@ -25,11 +24,9 @@ void main() async {
 
   // Recursive tree walk
   print("\n=== Browse tree from Root (maxDepth: 3) ===");
-  await client.browseTree(
-    NodeId.rootFolder,
-    maxDepth: 3,
-    referenceTypeId: NodeId.hierarchicalReferences,
-  ).listen((item) {
+  await client.browseTree(NodeId.rootFolder, maxDepth: 3, referenceTypeId: NodeId.hierarchicalReferences).listen((
+    item,
+  ) {
     print(item);
   }).asFuture();
 

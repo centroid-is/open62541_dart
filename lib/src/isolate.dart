@@ -99,14 +99,14 @@ class BrowseMessage extends IsolateMessage {
   final int resultMask;
 
   const BrowseMessage(
-    String requestId,
+    super.requestId,
     this.nodeId, {
     this.direction = 0,
     this.referenceTypeId,
     this.includeSubtypes = true,
     this.nodeClassMask = 0,
     this.resultMask = BrowseResultMask.all,
-  }) : super(requestId);
+  });
 }
 
 class DisconnectMessage extends IsolateMessage {
@@ -463,15 +463,17 @@ class ClientIsolate implements ClientApi {
     final id = _generateId();
     _pendingRequests[id] = completer;
 
-    _sendPort.send(BrowseMessage(
-      id,
-      nodeId,
-      direction: direction,
-      referenceTypeId: referenceTypeId,
-      includeSubtypes: includeSubtypes,
-      nodeClassMask: nodeClassMask,
-      resultMask: resultMask,
-    ));
+    _sendPort.send(
+      BrowseMessage(
+        id,
+        nodeId,
+        direction: direction,
+        referenceTypeId: referenceTypeId,
+        includeSubtypes: includeSubtypes,
+        nodeClassMask: nodeClassMask,
+        resultMask: resultMask,
+      ),
+    );
 
     try {
       return await completer.future;
@@ -487,10 +489,7 @@ class ClientIsolate implements ClientApi {
     int maxDepth = 100,
     NodeId? referenceTypeId,
     bool includeSubtypes = true,
-    Set<NodeClass> recurseInto = const {
-      NodeClass.UA_NODECLASS_OBJECT,
-      NodeClass.UA_NODECLASS_VIEW,
-    },
+    Set<NodeClass> recurseInto = const {NodeClass.UA_NODECLASS_OBJECT, NodeClass.UA_NODECLASS_VIEW},
   }) {
     if (_isClosed) throw const ClientIsolateClosedException();
 
@@ -504,19 +503,11 @@ class ClientIsolate implements ClientApi {
         if (visited.contains(nodeId)) return;
         visited.add(nodeId);
 
-        final children = await browse(
-          nodeId,
-          referenceTypeId: referenceTypeId,
-          includeSubtypes: includeSubtypes,
-        );
+        final children = await browse(nodeId, referenceTypeId: referenceTypeId, includeSubtypes: includeSubtypes);
 
         for (final child in children) {
           if (controller.isClosed) return;
-          controller.add(BrowseTreeItem(
-            item: child,
-            depth: depth,
-            parentNodeId: nodeId,
-          ));
+          controller.add(BrowseTreeItem(item: child, depth: depth, parentNodeId: nodeId));
 
           if (recurseInto.contains(child.nodeClass)) {
             await walk(child.nodeId, depth + 1);

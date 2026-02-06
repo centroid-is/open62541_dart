@@ -89,10 +89,7 @@ abstract class ClientApi {
     int maxDepth = 100,
     NodeId? referenceTypeId,
     bool includeSubtypes = true,
-    Set<NodeClass> recurseInto = const {
-      NodeClass.UA_NODECLASS_OBJECT,
-      NodeClass.UA_NODECLASS_VIEW,
-    },
+    Set<NodeClass> recurseInto = const {NodeClass.UA_NODECLASS_OBJECT, NodeClass.UA_NODECLASS_VIEW},
   });
 
   /// Calls a method on the server.

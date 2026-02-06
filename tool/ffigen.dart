@@ -52,6 +52,15 @@ Future<void> main() async {
       'UA_Client_MonitoredItems_delete_async',
       'UA_Client_call_async',
 
+      // Browse functions
+      'UA_BrowseRequest_new',
+      'UA_BrowseRequest_init',
+      'UA_BrowseRequest_delete',
+      'UA_BrowseNextRequest_new',
+      'UA_BrowseNextRequest_init',
+      'UA_BrowseNextRequest_delete',
+      'UA_BrowseDescription_init',
+
       'UA_ServerConfig_setMinimal',
       'UA_Server_newWithConfig',
       'UA_Server_getConfig',
@@ -173,6 +182,14 @@ Future<void> main() async {
       'UA_DeleteMonitoredItemsRequest',
       'UA_DataType',
       'UA_Logger',
+      // Browse structs
+      'UA_BrowseRequest',
+      'UA_BrowseResponse',
+      'UA_BrowseNextRequest',
+      'UA_BrowseNextResponse',
+      'UA_BrowseDescription',
+      'UA_BrowseResult',
+      'UA_ReferenceDescription',
     }),
     typedefs: Typedefs.includeSet({
       'UA_Byte',

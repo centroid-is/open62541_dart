@@ -61,11 +61,7 @@ class BrowseTreeItem {
   final int depth;
   final NodeId parentNodeId;
 
-  const BrowseTreeItem({
-    required this.item,
-    required this.depth,
-    required this.parentNodeId,
-  });
+  const BrowseTreeItem({required this.item, required this.depth, required this.parentNodeId});
 
   NodeId get nodeId => item.nodeId;
   String get displayName => item.displayName;
@@ -555,12 +551,14 @@ class Client implements ClientApi {
     int nodeClassMask = 0,
     int resultMask = BrowseResultMask.all,
   }) async {
-    final results = await _browseRequest(nodeId,
-        direction: direction,
-        referenceTypeId: referenceTypeId,
-        includeSubtypes: includeSubtypes,
-        nodeClassMask: nodeClassMask,
-        resultMask: resultMask);
+    final results = await _browseRequest(
+      nodeId,
+      direction: direction,
+      referenceTypeId: referenceTypeId,
+      includeSubtypes: includeSubtypes,
+      nodeClassMask: nodeClassMask,
+      resultMask: resultMask,
+    );
     return results;
   }
 
@@ -570,10 +568,7 @@ class Client implements ClientApi {
     int maxDepth = 100,
     NodeId? referenceTypeId,
     bool includeSubtypes = true,
-    Set<NodeClass> recurseInto = const {
-      NodeClass.UA_NODECLASS_OBJECT,
-      NodeClass.UA_NODECLASS_VIEW,
-    },
+    Set<NodeClass> recurseInto = const {NodeClass.UA_NODECLASS_OBJECT, NodeClass.UA_NODECLASS_VIEW},
   }) {
     final controller = StreamController<BrowseTreeItem>();
 
@@ -585,19 +580,11 @@ class Client implements ClientApi {
         if (visited.contains(nodeId)) return;
         visited.add(nodeId);
 
-        final children = await browse(
-          nodeId,
-          referenceTypeId: referenceTypeId,
-          includeSubtypes: includeSubtypes,
-        );
+        final children = await browse(nodeId, referenceTypeId: referenceTypeId, includeSubtypes: includeSubtypes);
 
         for (final child in children) {
           if (controller.isClosed) return;
-          controller.add(BrowseTreeItem(
-            item: child,
-            depth: depth,
-            parentNodeId: nodeId,
-          ));
+          controller.add(BrowseTreeItem(item: child, depth: depth, parentNodeId: nodeId));
 
           if (recurseInto.contains(child.nodeClass)) {
             await walk(child.nodeId, depth + 1);
@@ -627,18 +614,18 @@ class Client implements ClientApi {
   }) {
     final completer = Completer<List<BrowseResultItem>>();
 
-    final request = _lib.UA_BrowseRequest_new();
-    _lib.UA_BrowseRequest_init(request);
+    final request = raw.UA_BrowseRequest_new();
+    raw.UA_BrowseRequest_init(request);
 
     final browseDescription = ua_calloc<raw.UA_BrowseDescription>();
-    _lib.UA_BrowseDescription_init(browseDescription);
-    browseDescription.ref.nodeId = nodeId.toRaw(_lib);
+    raw.UA_BrowseDescription_init(browseDescription);
+    browseDescription.ref.nodeId = nodeId.toRaw();
     browseDescription.ref.browseDirectionAsInt = direction;
     browseDescription.ref.includeSubtypes = includeSubtypes;
     browseDescription.ref.nodeClassMask = nodeClassMask;
     browseDescription.ref.resultMask = resultMask;
     if (referenceTypeId != null) {
-      browseDescription.ref.referenceTypeId = referenceTypeId.toRaw(_lib);
+      browseDescription.ref.referenceTypeId = referenceTypeId.toRaw();
     }
 
     request.ref.nodesToBrowse = browseDescription;
@@ -648,105 +635,99 @@ class Client implements ClientApi {
     ffi.Pointer<ffi.Uint32> requestIdPtr = ua_calloc<ffi.Uint32>();
 
     late ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>,
-            raw.UA_UInt32, ffi.Pointer<ffi.Void>)> callback;
+      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+    >
+    callback;
 
-    callback = ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>,
-            raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal((
-      ffi.Pointer<raw.UA_Client> client,
-      ffi.Pointer<ffi.Void> userdata,
-      int requestId,
-      ffi.Pointer<ffi.Void> voidPointer,
-    ) async {
-      callback.close();
-      _lib.UA_BrowseRequest_delete(request);
-      ua_calloc.free(requestIdPtr);
+    callback =
+        ffi.NativeCallable<
+          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          int requestId,
+          ffi.Pointer<ffi.Void> voidPointer,
+        ) async {
+          callback.close();
+          raw.UA_BrowseRequest_delete(request);
+          ua_calloc.free(requestIdPtr);
 
-      if (voidPointer == ffi.nullptr) {
-        completer.completeError('Browse callback received null pointer');
-        return;
-      }
+          if (voidPointer == ffi.nullptr) {
+            completer.completeError('Browse callback received null pointer');
+            return;
+          }
 
-      ffi.Pointer<raw.UA_BrowseResponse> response =
-          ffi.Pointer.fromAddress(voidPointer.address);
+          ffi.Pointer<raw.UA_BrowseResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
 
-      if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-        completer.completeError(
-            'Browse failed: ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}');
-        return;
-      }
+          if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+            completer.completeError('Browse failed: ${statusCodeToString(response.ref.responseHeader.serviceResult)}');
+            return;
+          }
 
-      if (response.ref.resultsSize == 0) {
-        completer.complete([]);
-        return;
-      }
+          if (response.ref.resultsSize == 0) {
+            completer.complete([]);
+            return;
+          }
 
-      final browseResult = response.ref.results[0];
-      if (browseResult.statusCode != raw.UA_STATUSCODE_GOOD) {
-        completer.completeError(
-            'Browse result error: ${statusCodeToString(browseResult.statusCode, _lib)}');
-        return;
-      }
+          final browseResult = response.ref.results[0];
+          if (browseResult.statusCode != raw.UA_STATUSCODE_GOOD) {
+            completer.completeError('Browse result error: ${statusCodeToString(browseResult.statusCode)}');
+            return;
+          }
 
-      final items = _extractReferences(browseResult);
+          final items = _extractReferences(browseResult);
 
-      // Handle continuation point
-      if (browseResult.continuationPoint.length > 0) {
-        // Copy continuation point before response is freed
-        final cpCopy = _lib.UA_ByteString_new();
-        _lib.UA_ByteString_copy(
-            ffi.Pointer<raw.UA_ByteString>.fromAddress(
-                browseResult.continuationPoint.data.address -
-                    ffi.sizeOf<ffi.Size>()),
-            // We can't take address of struct field, so allocate and copy
-            cpCopy);
+          // Handle continuation point
+          if (browseResult.continuationPoint.length > 0) {
+            // Copy continuation point data before response is freed
+            final cpData = ua_calloc<ffi.Uint8>(browseResult.continuationPoint.length);
+            cpData
+                .asTypedList(browseResult.continuationPoint.length)
+                .setRange(
+                  0,
+                  browseResult.continuationPoint.length,
+                  browseResult.continuationPoint.data.asTypedList(browseResult.continuationPoint.length),
+                );
 
-        // Actually, let's copy manually since we can't easily get the pointer
-        final cpData = ua_calloc<ffi.Uint8>(browseResult.continuationPoint.length);
-        cpData
-            .asTypedList(browseResult.continuationPoint.length)
-            .setRange(0, browseResult.continuationPoint.length,
-                browseResult.continuationPoint.data.asTypedList(browseResult.continuationPoint.length));
+            try {
+              final moreItems = await _browseNext(cpData, browseResult.continuationPoint.length);
+              items.addAll(moreItems);
+            } catch (e) {
+              completer.completeError(e);
+              return;
+            }
+          }
 
-        _lib.UA_ByteString_delete(cpCopy);
+          completer.complete(items);
+        });
 
-        try {
-          final moreItems = await _browseNext(cpData, browseResult.continuationPoint.length);
-          items.addAll(moreItems);
-        } catch (e) {
-          completer.completeError(e);
-          return;
-        }
-      }
-
-      completer.complete(items);
-    });
-
-    int res = _lib.UA_Client_AsyncService(
+    int res = raw.UA_Client_AsyncService(
       _client,
       request.cast(),
-      getType(UaTypes.browseRequest, _lib),
+      getType(UaTypes.browseRequest),
       callback.nativeFunction,
-      getType(UaTypes.browseResponse, _lib),
+      getType(UaTypes.browseResponse),
       ffi.nullptr,
       requestIdPtr,
     );
     if (res != raw.UA_STATUSCODE_GOOD) {
       callback.close();
-      _lib.UA_BrowseRequest_delete(request);
+      raw.UA_BrowseRequest_delete(request);
       ua_calloc.free(requestIdPtr);
-      completer.completeError('Failed to browse: ${statusCodeToString(res, _lib)}');
+      completer.completeError('Failed to browse: ${statusCodeToString(res)}');
     }
 
     return completer.future;
   }
 
   Future<List<BrowseResultItem>> _browseNext(
-      ffi.Pointer<ffi.Uint8> continuationPointData, int continuationPointLength) {
+    ffi.Pointer<ffi.Uint8> continuationPointData,
+    int continuationPointLength,
+  ) {
     final completer = Completer<List<BrowseResultItem>>();
 
-    final request = ua_calloc<raw.UA_BrowseNextRequest>();
+    final request = raw.UA_BrowseNextRequest_new();
+    raw.UA_BrowseNextRequest_init(request);
     request.ref.releaseContinuationPoints = false;
     final cp = ua_calloc<raw.UA_ByteString>();
     cp.ref.data = continuationPointData;
@@ -757,78 +738,82 @@ class Client implements ClientApi {
     ffi.Pointer<ffi.Uint32> requestIdPtr = ua_calloc<ffi.Uint32>();
 
     late ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>,
-            raw.UA_UInt32, ffi.Pointer<ffi.Void>)> callback;
+      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+    >
+    callback;
 
-    callback = ffi.NativeCallable<
-        ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>,
-            raw.UA_UInt32, ffi.Pointer<ffi.Void>)>.isolateLocal((
-      ffi.Pointer<raw.UA_Client> client,
-      ffi.Pointer<ffi.Void> userdata,
-      int requestId,
-      ffi.Pointer<ffi.Void> voidPointer,
-    ) async {
-      callback.close();
-      ua_calloc.free(requestIdPtr);
+    callback =
+        ffi.NativeCallable<
+          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          int requestId,
+          ffi.Pointer<ffi.Void> voidPointer,
+        ) async {
+          callback.close();
+          ua_calloc.free(requestIdPtr);
 
-      // Clean up: free the continuation point data and the request
-      ua_calloc.free(continuationPointData);
-      ua_calloc.free(cp);
-      ua_calloc.free(request);
+          // Clean up: free the continuation point data and the request
+          ua_calloc.free(continuationPointData);
+          ua_calloc.free(cp);
+          raw.UA_BrowseNextRequest_delete(request);
 
-      if (voidPointer == ffi.nullptr) {
-        completer.completeError('BrowseNext callback received null pointer');
-        return;
-      }
+          if (voidPointer == ffi.nullptr) {
+            completer.completeError('BrowseNext callback received null pointer');
+            return;
+          }
 
-      ffi.Pointer<raw.UA_BrowseNextResponse> response =
-          ffi.Pointer.fromAddress(voidPointer.address);
+          ffi.Pointer<raw.UA_BrowseNextResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
 
-      if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-        completer.completeError(
-            'BrowseNext failed: ${statusCodeToString(response.ref.responseHeader.serviceResult, _lib)}');
-        return;
-      }
+          if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+            completer.completeError(
+              'BrowseNext failed: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
+            );
+            return;
+          }
 
-      if (response.ref.resultsSize == 0) {
-        completer.complete([]);
-        return;
-      }
+          if (response.ref.resultsSize == 0) {
+            completer.complete([]);
+            return;
+          }
 
-      final browseResult = response.ref.results[0];
-      if (browseResult.statusCode != raw.UA_STATUSCODE_GOOD) {
-        completer.completeError(
-            'BrowseNext result error: ${statusCodeToString(browseResult.statusCode, _lib)}');
-        return;
-      }
+          final browseResult = response.ref.results[0];
+          if (browseResult.statusCode != raw.UA_STATUSCODE_GOOD) {
+            completer.completeError('BrowseNext result error: ${statusCodeToString(browseResult.statusCode)}');
+            return;
+          }
 
-      final items = _extractReferences(browseResult);
+          final items = _extractReferences(browseResult);
 
-      // Continue if there are more results
-      if (browseResult.continuationPoint.length > 0) {
-        final nextCpData = ua_calloc<ffi.Uint8>(browseResult.continuationPoint.length);
-        nextCpData
-            .asTypedList(browseResult.continuationPoint.length)
-            .setRange(0, browseResult.continuationPoint.length,
-                browseResult.continuationPoint.data.asTypedList(browseResult.continuationPoint.length));
-        try {
-          final moreItems = await _browseNext(nextCpData, browseResult.continuationPoint.length);
-          items.addAll(moreItems);
-        } catch (e) {
-          completer.completeError(e);
-          return;
-        }
-      }
+          // Continue if there are more results
+          if (browseResult.continuationPoint.length > 0) {
+            final nextCpData = ua_calloc<ffi.Uint8>(browseResult.continuationPoint.length);
+            nextCpData
+                .asTypedList(browseResult.continuationPoint.length)
+                .setRange(
+                  0,
+                  browseResult.continuationPoint.length,
+                  browseResult.continuationPoint.data.asTypedList(browseResult.continuationPoint.length),
+                );
+            try {
+              final moreItems = await _browseNext(nextCpData, browseResult.continuationPoint.length);
+              items.addAll(moreItems);
+            } catch (e) {
+              completer.completeError(e);
+              return;
+            }
+          }
 
-      completer.complete(items);
-    });
+          completer.complete(items);
+        });
 
-    int res = _lib.UA_Client_AsyncService(
+    int res = raw.UA_Client_AsyncService(
       _client,
       request.cast(),
-      getType(UaTypes.browseNextRequest, _lib),
+      getType(UaTypes.browseNextRequest),
       callback.nativeFunction,
-      getType(UaTypes.browseNextResponse, _lib),
+      getType(UaTypes.browseNextResponse),
       ffi.nullptr,
       requestIdPtr,
     );
@@ -836,9 +821,9 @@ class Client implements ClientApi {
       callback.close();
       ua_calloc.free(continuationPointData);
       ua_calloc.free(cp);
-      ua_calloc.free(request);
+      raw.UA_BrowseNextRequest_delete(request);
       ua_calloc.free(requestIdPtr);
-      completer.completeError('Failed to browse next: ${statusCodeToString(res, _lib)}');
+      completer.completeError('Failed to browse next: ${statusCodeToString(res)}');
     }
 
     return completer.future;
@@ -858,15 +843,17 @@ class Client implements ClientApi {
       final ref = browseResult.references[i];
       final nodeId = _tryNodeId(ref.nodeId.nodeId);
       if (nodeId == null) continue;
-      items.add(BrowseResultItem(
-        referenceTypeId: _tryNodeId(ref.referenceTypeId) ?? NodeId.nullId,
-        isForward: ref.isForward,
-        nodeId: nodeId,
-        browseName: ref.browseName.name.value,
-        displayName: ref.displayName.text.value,
-        nodeClass: ref.nodeClass,
-        typeDefinition: _tryNodeId(ref.typeDefinition.nodeId),
-      ));
+      items.add(
+        BrowseResultItem(
+          referenceTypeId: _tryNodeId(ref.referenceTypeId) ?? NodeId.nullId,
+          isForward: ref.isForward,
+          nodeId: nodeId,
+          browseName: ref.browseName.name.value,
+          displayName: ref.displayName.text.value,
+          nodeClass: ref.nodeClass,
+          typeDefinition: _tryNodeId(ref.typeDefinition.nodeId),
+        ),
+      );
     }
     return items;
   }
