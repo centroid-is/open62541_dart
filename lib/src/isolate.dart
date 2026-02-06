@@ -26,23 +26,23 @@ abstract class IsolateMessage {
 
 class ConnectMessage extends IsolateMessage {
   final String url;
-  const ConnectMessage(String requestId, this.url) : super(requestId);
+  const ConnectMessage(super.requestId, this.url);
 }
 
 class ReadMessage extends IsolateMessage {
   final NodeId nodeId;
-  const ReadMessage(String requestId, this.nodeId) : super(requestId);
+  const ReadMessage(super.requestId, this.nodeId);
 }
 
 class WriteMessage extends IsolateMessage {
   final NodeId nodeId;
   final DynamicValue value;
-  const WriteMessage(String requestId, this.nodeId, this.value) : super(requestId);
+  const WriteMessage(super.requestId, this.nodeId, this.value);
 }
 
 class ReadAttributeMessage extends IsolateMessage {
   final ReadAttributeParam nodes;
-  const ReadAttributeMessage(String requestId, this.nodes) : super(requestId);
+  const ReadAttributeMessage(super.requestId, this.nodes);
 }
 
 class SubscriptionCreateMessage extends IsolateMessage {
@@ -54,14 +54,14 @@ class SubscriptionCreateMessage extends IsolateMessage {
   final int priority;
 
   const SubscriptionCreateMessage(
-    String requestId, {
+    super.requestId, {
     this.requestedPublishingInterval = const Duration(milliseconds: 100),
     this.requestedLifetimeCount = 10000,
     this.requestedMaxKeepAliveCount = 10,
     this.maxNotificationsPerPublish = 0,
     this.publishingEnabled = true,
     this.priority = 0,
-  }) : super(requestId);
+  });
 }
 
 class MonitorMessage extends IsolateMessage {
@@ -73,50 +73,50 @@ class MonitorMessage extends IsolateMessage {
   final int queueSize;
 
   const MonitorMessage(
-    String requestId,
+    super.requestId,
     this.nodeId,
     this.subscriptionId, {
     this.monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
     this.samplingInterval = const Duration(milliseconds: 100),
     this.discardOldest = true,
     this.queueSize = 1,
-  }) : super(requestId);
+  });
 }
 
 class CallMessage extends IsolateMessage {
   final NodeId objectId;
   final NodeId methodId;
   final List<DynamicValue> args;
-  const CallMessage(String requestId, this.objectId, this.methodId, this.args) : super(requestId);
+  const CallMessage(super.requestId, this.objectId, this.methodId, this.args);
 }
 
 class DisconnectMessage extends IsolateMessage {
-  const DisconnectMessage(String requestId) : super(requestId);
+  const DisconnectMessage(super.requestId);
 }
 
 class DeleteMessage extends IsolateMessage {
-  const DeleteMessage(String requestId) : super(requestId);
+  const DeleteMessage(super.requestId);
 }
 
 class GetStateMessage extends IsolateMessage {
-  const GetStateMessage(String requestId) : super(requestId);
+  const GetStateMessage(super.requestId);
 }
 
 class MonitorCancelMessage extends IsolateMessage {
-  const MonitorCancelMessage(String requestId) : super(requestId);
+  const MonitorCancelMessage(super.requestId);
 }
 
 class AwaitConnectMessage extends IsolateMessage {
-  const AwaitConnectMessage(String requestId) : super(requestId);
+  const AwaitConnectMessage(super.requestId);
 }
 
 class RunIterateMessage extends IsolateMessage {
   final Duration timeout;
-  const RunIterateMessage(String requestId, this.timeout) : super(requestId);
+  const RunIterateMessage(super.requestId, this.timeout);
 }
 
 class StateStreamMessage extends IsolateMessage {
-  const StateStreamMessage(String requestId) : super(requestId);
+  const StateStreamMessage(super.requestId);
 }
 
 class StreamDataMessage<T> {
