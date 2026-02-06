@@ -391,53 +391,58 @@ class Client {
           }
           assert(nodeCount == pointers.length);
 
-          final retVal = <NodeId, DynamicValue>{};
-          for (var i = 0; i < pointers.length; i++) {
-            if (pointers[i].ref.status != raw.UA_STATUSCODE_GOOD) {
-              completer.completeError(
-                'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status)} NodeId: ${indorderNodes[i].$1} AttributeId: ${indorderNodes[i].$2}',
-              );
-              break; // Break here to cleanup pointers memory below
-            }
-            final status = pointers[i].ref.status;
-            final ok = status == raw.UA_STATUSCODE_GOOD;
-            var reference = retVal[indorderNodes[i].$1] ?? DynamicValue();
-            raw.UA_Variant? value = ok ? pointers[i].ref.value : null;
-
-            switch (indorderNodes[i].$2) {
-              case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
-                final description = value!.data.cast<raw.UA_LocalizedText>();
-                reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
-              case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
-                final displayName = value!.data.cast<raw.UA_LocalizedText>();
-                reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
-              case AttributeId.UA_ATTRIBUTEID_DATATYPE:
-                final dataType = value!.data.cast<raw.UA_NodeId>();
-                reference.typeId = dataType.ref.toNodeId();
-              case AttributeId.UA_ATTRIBUTEID_VALUE:
-                final temporary = await _variantToValueAutoSchema(value!, reference.typeId);
-                reference.value = temporary.value;
-                reference.typeId = reference.typeId ?? temporary.typeId; // Prefer explicitly fetched type id
-                reference.enumFields = reference.enumFields ?? temporary.enumFields;
-                reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
-              case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
-                final temporary = DynamicValue.fromDataTypeDefinition(
-                  reference.typeId ?? value!.type.ref.typeId.toNodeId(),
-                  value!,
+          try {
+            final retVal = <NodeId, DynamicValue>{};
+            for (var i = 0; i < pointers.length; i++) {
+              if (pointers[i].ref.status != raw.UA_STATUSCODE_GOOD) {
+                completer.completeError(
+                  'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status)} NodeId: ${indorderNodes[i].$1} AttributeId: ${indorderNodes[i].$2}',
                 );
-                reference.value = temporary.value;
-                reference.typeId = reference.typeId ?? temporary.typeId;
-                reference.enumFields = reference.enumFields ?? temporary.enumFields;
-                reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
-              default:
-                throw 'Unhandled attribute id ${indorderNodes[i].$2}';
+                break; // Break here to cleanup pointers memory below
+              }
+              final status = pointers[i].ref.status;
+              final ok = status == raw.UA_STATUSCODE_GOOD;
+              var reference = retVal[indorderNodes[i].$1] ?? DynamicValue();
+              raw.UA_Variant? value = ok ? pointers[i].ref.value : null;
+
+              switch (indorderNodes[i].$2) {
+                case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
+                  final description = value!.data.cast<raw.UA_LocalizedText>();
+                  reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
+                case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
+                  final displayName = value!.data.cast<raw.UA_LocalizedText>();
+                  reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
+                case AttributeId.UA_ATTRIBUTEID_DATATYPE:
+                  final dataType = value!.data.cast<raw.UA_NodeId>();
+                  reference.typeId = dataType.ref.toNodeId();
+                case AttributeId.UA_ATTRIBUTEID_VALUE:
+                  final temporary = await _variantToValueAutoSchema(value!, reference.typeId);
+                  reference.value = temporary.value;
+                  reference.typeId = reference.typeId ?? temporary.typeId; // Prefer explicitly fetched type id
+                  reference.enumFields = reference.enumFields ?? temporary.enumFields;
+                  reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
+                case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
+                  final temporary = DynamicValue.fromDataTypeDefinition(
+                    reference.typeId ?? value!.type.ref.typeId.toNodeId(),
+                    value!,
+                  );
+                  reference.value = temporary.value;
+                  reference.typeId = reference.typeId ?? temporary.typeId;
+                  reference.enumFields = reference.enumFields ?? temporary.enumFields;
+                  reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
+                default:
+                  throw 'Unhandled attribute id ${indorderNodes[i].$2}';
+              }
+              retVal[indorderNodes[i].$1] = reference;
             }
-            retVal[indorderNodes[i].$1] = reference;
+            if (!completer.isCompleted) completer.complete(retVal);
+          } catch (e, st) {
+            if (!completer.isCompleted) completer.completeError(e, st);
+          } finally {
+            for (var element in pointers) {
+              raw.UA_DataValue_delete(element);
+            }
           }
-          for (var element in pointers) {
-            raw.UA_DataValue_delete(element);
-          }
-          if (!completer.isCompleted) completer.complete(retVal);
         });
 
     int res = raw.UA_Client_AsyncService(
