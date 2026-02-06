@@ -201,6 +201,7 @@ class ClientIsolate implements ClientApi {
   final Completer<void> _initCompleter = Completer<void>();
 
   bool _isClosed = false;
+  String? _currentIterateRequestId;
 
   void _initIsolate({
     Duration? secureChannelLifeTime,
@@ -213,25 +214,29 @@ class ClientIsolate implements ClientApi {
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
   }) async {
-    _receivePort = ReceivePort();
+    try {
+      _receivePort = ReceivePort();
 
-    _isolate = await Isolate.spawn(
-      _isolateEntryPoint,
-      _IsolateData(
-        secureChannelLifeTime: secureChannelLifeTime,
-        requestedSessionTimeout: requestedSessionTimeout,
-        username: username,
-        password: password,
-        securityMode: securityMode,
-        certificate: certificate,
-        privateKey: privateKey,
-        logLevel: logLevel,
-        connectivityCheckInterval: connectivityCheckInterval,
-        sendPort: _receivePort.sendPort,
-      ),
-    );
+      _isolate = await Isolate.spawn(
+        _isolateEntryPoint,
+        _IsolateData(
+          secureChannelLifeTime: secureChannelLifeTime,
+          requestedSessionTimeout: requestedSessionTimeout,
+          username: username,
+          password: password,
+          securityMode: securityMode,
+          certificate: certificate,
+          privateKey: privateKey,
+          logLevel: logLevel,
+          connectivityCheckInterval: connectivityCheckInterval,
+          sendPort: _receivePort.sendPort,
+        ),
+      );
 
-    _receivePort.listen(_handleMessage);
+      _receivePort.listen(_handleMessage);
+    } catch (e) {
+      _initCompleter.completeError(e);
+    }
   }
 
   void _handleMessage(dynamic message) {
@@ -396,8 +401,9 @@ class ClientIsolate implements ClientApi {
 
     controller.onCancel = () {
       _streamControllers.remove(id);
-      // Send cancel message to isolate
-      _sendPort.send(MonitorCancelMessage(id));
+      if (!_isClosed) {
+        _sendPort.send(MonitorCancelMessage(id));
+      }
     };
 
     return controller.stream;
@@ -451,6 +457,9 @@ class ClientIsolate implements ClientApi {
 
     controller.onCancel = () {
       _streamControllers.remove(id);
+      if (!_isClosed) {
+        _sendPort.send(MonitorCancelMessage(id));
+      }
     };
 
     return controller.stream;
@@ -540,8 +549,17 @@ class ClientIsolate implements ClientApi {
   Future<void> runIterate({Duration duration = const Duration(milliseconds: 10)}) async {
     if (_isClosed) throw const ClientIsolateClosedException();
 
+    // Cancel previous iterate request if any
+    if (_currentIterateRequestId != null) {
+      final oldCompleter = _pendingRequests.remove(_currentIterateRequestId);
+      if (oldCompleter != null && !oldCompleter.isCompleted) {
+        oldCompleter.completeError(StateError('Replaced by new runIterate call'));
+      }
+    }
+
     final completer = Completer<void>();
     final id = _generateId();
+    _currentIterateRequestId = id;
     _pendingRequests[id] = completer;
 
     _sendPort.send(RunIterateMessage(id, duration));
@@ -550,6 +568,9 @@ class ClientIsolate implements ClientApi {
       await completer.future;
     } finally {
       _pendingRequests.remove(id);
+      if (_currentIterateRequestId == id) {
+        _currentIterateRequestId = null;
+      }
     }
   }
 
