@@ -66,15 +66,15 @@ void main() async {
         final items = [true, false, true, false];
         final comp = Completer<void>();
         int counter = 0;
-        final stream = client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10)).map<bool>((
-          event,
-        ) {
-          counter = counter + 1;
-          if (counter == items.length) {
-            comp.complete();
-          }
-          return event.value;
-        });
+        final stream = client!
+            .monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10))
+            .map<bool>((event) {
+              counter = counter + 1;
+              if (counter == items.length) {
+                comp.complete();
+              }
+              return event.value;
+            });
         expect(stream, emitsInOrder(items));
         for (var item in items) {
           await client!.write(boolNodeId, DynamicValue(value: item, typeId: NodeId.boolean));
@@ -109,15 +109,15 @@ void main() async {
               }
               return event.value;
             });
-        final intStream = client!.monitor(intNodeId, subscription, samplingInterval: Duration(milliseconds: 10)).map<int>((
-          event,
-        ) {
-          intCounter = intCounter + 1;
-          if (boolCounter == items.length && intCounter == intItems.length) {
-            comp.complete();
-          }
-          return event.value;
-        });
+        final intStream = client!
+            .monitor(intNodeId, subscription, samplingInterval: Duration(milliseconds: 10))
+            .map<int>((event) {
+              intCounter = intCounter + 1;
+              if (boolCounter == items.length && intCounter == intItems.length) {
+                comp.complete();
+              }
+              return event.value;
+            });
         expect(boolStream, emitsInOrder(items));
         expect(intStream, emitsInOrder(intItems));
         expect(items.length, intItems.length);
