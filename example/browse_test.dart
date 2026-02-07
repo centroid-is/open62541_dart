@@ -1,10 +1,18 @@
+import 'dart:io';
 import 'package:open62541/open62541.dart';
 
-void main() async {
+void main(List<String> args) async {
+  if (args.isEmpty) {
+    print("Usage: browse_test <endpoint>");
+    print("Example: browse_test opc.tcp://localhost:4840");
+    exit(1);
+  }
+  final endpoint = args[0];
+
   final client = Client();
 
-  print("Connecting to opc.tcp://10.50.10.10:4840 ...");
-  client.connect("opc.tcp://10.50.10.10:4840");
+  print("Connecting to $endpoint ...");
+  client.connect(endpoint);
 
   () async {
     while (client.runIterate(Duration(milliseconds: 10))) {
