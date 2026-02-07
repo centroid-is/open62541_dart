@@ -18,18 +18,7 @@ import 'ua_allocation.dart';
 
 typedef NodeClass = raw.UA_NodeClass;
 
-class BrowseResultMask {
-  static const int none = 0;
-  static const int referenceTypeId = 1;
-  static const int isForward = 2;
-  static const int nodeClass = 4;
-  static const int browseName = 8;
-  static const int displayName = 16;
-  static const int typeDefinition = 32;
-  static const int all = 63;
-  static const int referenceTypeInfo = 3;
-  static const int targetInfo = 60;
-}
+typedef BrowseResultMask = raw.UA_BrowseResultMask;
 
 class BrowseResultItem {
   final NodeId referenceTypeId;
@@ -549,7 +538,7 @@ class Client implements ClientApi {
     NodeId? referenceTypeId,
     bool includeSubtypes = true,
     int nodeClassMask = 0,
-    int resultMask = BrowseResultMask.all,
+    BrowseResultMask resultMask = BrowseResultMask.UA_BROWSERESULTMASK_ALL,
   }) async {
     final results = await _browseRequest(
       nodeId,
@@ -557,7 +546,7 @@ class Client implements ClientApi {
       referenceTypeId: referenceTypeId,
       includeSubtypes: includeSubtypes,
       nodeClassMask: nodeClassMask,
-      resultMask: resultMask,
+      resultMask: resultMask.value,
     );
     return results;
   }

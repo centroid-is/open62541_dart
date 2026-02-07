@@ -96,7 +96,7 @@ class BrowseMessage extends IsolateMessage {
   final NodeId? referenceTypeId;
   final bool includeSubtypes;
   final int nodeClassMask;
-  final int resultMask;
+  final BrowseResultMask resultMask;
 
   const BrowseMessage(
     super.requestId,
@@ -105,7 +105,7 @@ class BrowseMessage extends IsolateMessage {
     this.referenceTypeId,
     this.includeSubtypes = true,
     this.nodeClassMask = 0,
-    this.resultMask = BrowseResultMask.all,
+    this.resultMask = BrowseResultMask.UA_BROWSERESULTMASK_ALL,
   });
 }
 
@@ -455,7 +455,7 @@ class ClientIsolate implements ClientApi {
     NodeId? referenceTypeId,
     bool includeSubtypes = true,
     int nodeClassMask = 0,
-    int resultMask = BrowseResultMask.all,
+    BrowseResultMask resultMask = BrowseResultMask.UA_BROWSERESULTMASK_ALL,
   }) async {
     if (_isClosed) throw const ClientIsolateClosedException();
 

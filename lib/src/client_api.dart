@@ -60,14 +60,14 @@ abstract class ClientApi {
   /// - [nodeClassMask]: bitmask to filter by node class. 0 = all classes.
   ///   Combine with `|`, e.g. `NodeClass.UA_NODECLASS_OBJECT.value | NodeClass.UA_NODECLASS_VARIABLE.value`.
   /// - [resultMask]: bitmask controlling which fields are returned.
-  ///   Use [BrowseResultMask] constants. Defaults to [BrowseResultMask.all].
+  ///   Use [BrowseResultMask] enum. Defaults to [BrowseResultMask.UA_BROWSERESULTMASK_ALL].
   Future<List<BrowseResultItem>> browse(
     NodeId nodeId, {
     int direction = 0,
     NodeId? referenceTypeId,
     bool includeSubtypes = true,
     int nodeClassMask = 0,
-    int resultMask = BrowseResultMask.all,
+    BrowseResultMask resultMask = BrowseResultMask.UA_BROWSERESULTMASK_ALL,
   });
 
   /// Recursively walks the address space tree starting from [root].
