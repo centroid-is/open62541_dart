@@ -625,6 +625,10 @@ void _isolateEntryPoint(_IsolateData data) {
   // Track endpoint for error messages
   String? endpoint;
 
+  // Flag to prevent runIterate during deletion - Timer.cancel() doesn't
+  // wait for in-flight callbacks, so we need this to avoid use-after-free
+  bool isDeleting = false;
+
   // Send our receive port back to the main isolate
   sendPort.send(receivePort.sendPort);
 
@@ -713,13 +717,22 @@ void _isolateEntryPoint(_IsolateData data) {
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is DeleteMessage) {
         stderr.writeln("[${endpoint ?? 'unknown'}] Shutting down isolate (${activeStreams.length} active streams)");
+
+        // Set flag to prevent timer callback from calling runIterate
+        isDeleting = true;
+
+        // Cancel the iterate timer
+        iterateTimer?.cancel();
+
+        // Yield to allow any already-scheduled timer callback to run and see isDeleting flag
+        await Future.delayed(Duration.zero);
+
         // Cancel all active streams
         for (final subscription in activeStreams.values) {
           await subscription.cancel();
         }
         activeStreams.clear();
 
-        iterateTimer?.cancel();
         await client.delete();
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is AwaitConnectMessage) {
@@ -729,6 +742,9 @@ void _isolateEntryPoint(_IsolateData data) {
         iterateTimer?.cancel();
         // Start the iterate timer
         iterateTimer = Timer.periodic(message.timeout, (timer) {
+          // Skip if we're in the process of deleting to avoid use-after-free
+          if (isDeleting) return;
+
           if (!client.runIterate(message.timeout)) {
             stderr.writeln("[${endpoint ?? 'unknown'}] runIterate failed, stopping event loop");
             iterateTimer?.cancel();

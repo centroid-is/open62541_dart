@@ -400,8 +400,11 @@ void main() async {
       }, skip: true);
 
       tearDown(() async {
-        server!.shutdown();
+        // Delete client first to stop its event loop before server shutdown.
+        // Otherwise the client might be calling UA_Client_run_iterate while
+        // the server is shutting down, causing memory corruption.
         await client!.delete();
+        server!.shutdown();
         server!.delete();
       });
     });
