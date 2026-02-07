@@ -8,6 +8,9 @@ import 'package:open62541/src/common.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'common.dart';
 
+// Tracks whether the direct client event loop should keep running
+bool _directClientRunning = false;
+
 // Factory function to create different client types
 Future<ClientApi> createClient(String clientType, int port) async {
   switch (clientType) {
@@ -21,9 +24,10 @@ Future<ClientApi> createClient(String clientType, int port) async {
       return client;
     case 'direct':
       final client = Client();
+      _directClientRunning = true;
       // Start event loop BEFORE connect - needed for async operations
       unawaited(() async {
-        while (client.runIterate(Duration(milliseconds: 10))) {
+        while (_directClientRunning && client.runIterate(Duration(milliseconds: 10))) {
           await Future.delayed(Duration(milliseconds: 5));
         }
       }());
@@ -32,6 +36,11 @@ Future<ClientApi> createClient(String clientType, int port) async {
     default:
       throw ArgumentError('Unknown client type: $clientType');
   }
+}
+
+// Stop the direct client event loop
+void stopDirectClientLoop() {
+  _directClientRunning = false;
 }
 
 void main() async {
@@ -457,9 +466,11 @@ void main() async {
       });
 
       tearDown(() async {
-        // Delete client first to stop its event loop before server shutdown.
-        // Otherwise the client might be calling UA_Client_run_iterate while
-        // the server is shutting down, causing memory corruption.
+        // Stop the direct client event loop first
+        stopDirectClientLoop();
+        // Give the loop time to exit
+        await Future.delayed(Duration(milliseconds: 20));
+        // Delete client before server shutdown to avoid memory corruption
         await client!.delete();
         server!.shutdown();
         server!.delete();
