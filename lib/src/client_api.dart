@@ -4,18 +4,28 @@ import 'extensions.dart';
 import 'node_id.dart';
 
 abstract class ClientApi {
+  /// Waits until the client session is fully activated.
   Future<void> awaitConnect();
 
+  /// Connects to an OPC UA server at [url] and waits for session activation.
+  /// Do remember that runIterate is needed to be called after connect.
   Future<void> connect(String url);
 
+  /// Writes [value] to the node identified by [nodeId].
   Future<void> write(NodeId nodeId, DynamicValue value);
 
+  /// Stream of client state changes (channel state, session state, connect status).
   Stream<ClientState> get stateStream;
 
+  /// Reads the value, display name, description, and data type of [nodeId].
   Future<DynamicValue> read(NodeId nodeId);
 
+  /// Reads multiple attributes from multiple nodes in a single service call.
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes);
 
+  /// Creates a subscription on the server.
+  ///
+  /// Returns the subscription ID to be used with [monitor].
   Future<int> subscriptionCreate({
     Duration requestedPublishingInterval = const Duration(milliseconds: 100),
     int requestedLifetimeCount = 10000,
@@ -25,6 +35,10 @@ abstract class ClientApi {
     int priority = 0,
   });
 
+  /// Monitors a single node for data changes.
+  ///
+  /// Returns a stream that emits the latest value whenever it changes.
+  /// Requires a [subscriptionId] from [subscriptionCreate].
   Stream<DynamicValue> monitor(
     NodeId nodeId,
     int subscriptionId, {
@@ -34,7 +48,56 @@ abstract class ClientApi {
     int queueSize = 1,
   });
 
+  /// Browses the references of a node.
+  ///
+  /// Returns the list of references from [nodeId]. Handles continuation
+  /// points automatically (BrowseNext) for nodes with many references.
+  ///
+  /// - [direction]: 0 = forward, 1 = inverse, 2 = both.
+  /// - [referenceTypeId]: filter by reference type, e.g. [NodeId.hierarchicalReferences].
+  ///   Pass null for all reference types.
+  /// - [includeSubtypes]: include subtypes of [referenceTypeId].
+  /// - [nodeClassMask]: bitmask to filter by node class. 0 = all classes.
+  ///   Combine with `|`, e.g. `NodeClass.UA_NODECLASS_OBJECT.value | NodeClass.UA_NODECLASS_VARIABLE.value`.
+  /// - [resultMask]: bitmask controlling which fields are returned.
+  ///   Use [BrowseResultMask] enum. Defaults to [BrowseResultMask.UA_BROWSERESULTMASK_ALL].
+  Future<List<BrowseResultItem>> browse(
+    NodeId nodeId, {
+    int direction = 0,
+    NodeId? referenceTypeId,
+    bool includeSubtypes = true,
+    int nodeClassMask = 0,
+    BrowseResultMask resultMask = BrowseResultMask.UA_BROWSERESULTMASK_ALL,
+  });
+
+  /// Recursively walks the address space tree starting from [root].
+  ///
+  /// Returns a stream of [BrowseTreeItem] that includes the browse result,
+  /// the depth in the tree, and the parent node ID. Results are emitted
+  /// incrementally as the tree is walked (depth-first).
+  ///
+  /// - [maxDepth]: maximum recursion depth. Defaults to 100.
+  /// - [referenceTypeId]: filter by reference type, e.g. [NodeId.hierarchicalReferences].
+  /// - [includeSubtypes]: include subtypes of [referenceTypeId].
+  /// - [recurseInto]: set of node classes to recurse into.
+  ///   Defaults to objects and views. Nodes with other classes are emitted
+  ///   but not expanded.
+  ///
+  /// Cycle-safe: tracks visited nodes and will not revisit them.
+  Stream<BrowseTreeItem> browseTree(
+    NodeId root, {
+    int maxDepth = 100,
+    NodeId? referenceTypeId,
+    bool includeSubtypes = true,
+    Set<NodeClass> recurseInto = const {NodeClass.UA_NODECLASS_OBJECT, NodeClass.UA_NODECLASS_VIEW},
+  });
+
+  /// Calls a method on the server.
+  ///
+  /// [objectId] is the node hosting the method, [methodId] is the method node,
+  /// and [args] are the input arguments.
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args);
 
+  /// Disconnects and releases all resources.
   Future<void> delete();
 }

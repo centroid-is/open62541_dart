@@ -83,6 +83,27 @@ external ffi.Pointer<UA_DataTypeAttributes> UA_DataTypeAttributes_new();
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_DataTypeAttributes>)>()
 external void UA_DataTypeAttributes_delete(ffi.Pointer<UA_DataTypeAttributes> p);
 
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_BrowseDescription>)>()
+external void UA_BrowseDescription_init(ffi.Pointer<UA_BrowseDescription> p);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_BrowseRequest>)>()
+external void UA_BrowseRequest_init(ffi.Pointer<UA_BrowseRequest> p);
+
+@ffi.Native<ffi.Pointer<UA_BrowseRequest> Function()>()
+external ffi.Pointer<UA_BrowseRequest> UA_BrowseRequest_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_BrowseRequest>)>()
+external void UA_BrowseRequest_delete(ffi.Pointer<UA_BrowseRequest> p);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_BrowseNextRequest>)>()
+external void UA_BrowseNextRequest_init(ffi.Pointer<UA_BrowseNextRequest> p);
+
+@ffi.Native<ffi.Pointer<UA_BrowseNextRequest> Function()>()
+external ffi.Pointer<UA_BrowseNextRequest> UA_BrowseNextRequest_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_BrowseNextRequest>)>()
+external void UA_BrowseNextRequest_delete(ffi.Pointer<UA_BrowseNextRequest> p);
+
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_ReadRequest>)>()
 external void UA_ReadRequest_init(ffi.Pointer<UA_ReadRequest> p);
 
@@ -733,6 +754,22 @@ class _SymbolAddresses {
       ffi.Native.addressOf(self.UA_Variant_new);
 }
 
+enum idtype_t {
+  P_ALL(0),
+  P_PID(1),
+  P_PGID(2);
+
+  final int value;
+  const idtype_t(this.value);
+
+  static idtype_t fromValue(int value) => switch (value) {
+    0 => P_ALL,
+    1 => P_PID,
+    2 => P_PGID,
+    _ => throw ArgumentError('Unknown value for idtype_t: $value'),
+  };
+}
+
 /// .. _common:
 ///
 /// Common Definitions
@@ -1213,6 +1250,20 @@ final class UA_NodeId extends ffi.Struct {
   UA_NodeIdType get identifierType => UA_NodeIdType.fromValue(identifierTypeAsInt);
 
   external UnnamedUnion identifier;
+}
+
+/// .. _expandednodeid:
+///
+/// ExpandedNodeId
+/// ^^^^^^^^^^^^^^
+/// A NodeId that allows the namespace URI to be specified instead of an index.
+final class UA_ExpandedNodeId extends ffi.Struct {
+  external UA_NodeId nodeId;
+
+  external UA_String namespaceUri;
+
+  @UA_UInt32()
+  external int serverIndex;
 }
 
 /// .. _qualifiedname:
@@ -2506,6 +2557,36 @@ enum UA_BrowseDirection {
   };
 }
 
+final class UA_ViewDescription extends ffi.Struct {
+  external UA_NodeId viewId;
+
+  @ffi.Int64()
+  external int timestamp;
+
+  @UA_UInt32()
+  external int viewVersion;
+}
+
+final class UA_BrowseDescription extends ffi.Struct {
+  external UA_NodeId nodeId;
+
+  @ffi.UnsignedInt()
+  external int browseDirectionAsInt;
+
+  UA_BrowseDirection get browseDirection => UA_BrowseDirection.fromValue(browseDirectionAsInt);
+
+  external UA_NodeId referenceTypeId;
+
+  @ffi.Bool()
+  external bool includeSubtypes;
+
+  @UA_UInt32()
+  external int nodeClassMask;
+
+  @UA_UInt32()
+  external int resultMask;
+}
+
 enum UA_BrowseResultMask {
   UA_BROWSERESULTMASK_NONE(0),
   UA_BROWSERESULTMASK_REFERENCETYPEID(1),
@@ -2536,6 +2617,92 @@ enum UA_BrowseResultMask {
     2147483647 => __UA_BROWSERESULTMASK_FORCE32BIT,
     _ => throw ArgumentError('Unknown value for UA_BrowseResultMask: $value'),
   };
+}
+
+final class UA_ReferenceDescription extends ffi.Struct {
+  external UA_NodeId referenceTypeId;
+
+  @ffi.Bool()
+  external bool isForward;
+
+  external UA_ExpandedNodeId nodeId;
+
+  external UA_QualifiedName browseName;
+
+  external UA_LocalizedText displayName;
+
+  @ffi.UnsignedInt()
+  external int nodeClassAsInt;
+
+  UA_NodeClass get nodeClass => UA_NodeClass.fromValue(nodeClassAsInt);
+
+  external UA_ExpandedNodeId typeDefinition;
+}
+
+final class UA_BrowseResult extends ffi.Struct {
+  @UA_StatusCode()
+  external int statusCode;
+
+  external UA_ByteString continuationPoint;
+
+  @ffi.Size()
+  external int referencesSize;
+
+  external ffi.Pointer<UA_ReferenceDescription> references;
+}
+
+final class UA_BrowseRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  external UA_ViewDescription view;
+
+  @UA_UInt32()
+  external int requestedMaxReferencesPerNode;
+
+  @ffi.Size()
+  external int nodesToBrowseSize;
+
+  external ffi.Pointer<UA_BrowseDescription> nodesToBrowse;
+}
+
+final class UA_BrowseResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_BrowseResult> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
+
+final class UA_BrowseNextRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Bool()
+  external bool releaseContinuationPoints;
+
+  @ffi.Size()
+  external int continuationPointsSize;
+
+  external ffi.Pointer<UA_ByteString> continuationPoints;
+}
+
+final class UA_BrowseNextResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_BrowseResult> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
 }
 
 enum UA_FilterOperator {
@@ -3172,18 +3339,6 @@ enum UA_LogCategory {
   }
 }
 
-final class __va_list_tag extends ffi.Struct {
-  @ffi.UnsignedInt()
-  external int gp_offset;
-
-  @ffi.UnsignedInt()
-  external int fp_offset;
-
-  external ffi.Pointer<ffi.Void> overflow_arg_area;
-
-  external ffi.Pointer<ffi.Void> reg_save_area;
-}
-
 final class UA_Logger extends ffi.Struct {
   external ffi.Pointer<
     ffi.NativeFunction<
@@ -3192,7 +3347,7 @@ final class UA_Logger extends ffi.Struct {
         ffi.UnsignedInt level,
         ffi.UnsignedInt category,
         ffi.Pointer<ffi.Char> msg,
-        ffi.Pointer<__va_list_tag> args,
+        ffi.Pointer<ffi.Char> args,
       )
     >
   >

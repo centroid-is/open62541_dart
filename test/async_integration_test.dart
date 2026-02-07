@@ -399,6 +399,63 @@ void main() async {
         expect(value[2]["c"].value, value2[2]["c"].value);
       }, skip: true);
 
+      test('Browse Objects folder finds added variables', () async {
+        addBasicVariables(server!);
+
+        // Browse the Objects folder (standard OPC UA node ns=0;i=85)
+        final items = await client!.browse(NodeId.objectsFolder);
+
+        // Should find at least some standard server objects
+        expect(items, isNotEmpty);
+
+        // Check that we got BrowseResultItem objects with expected fields
+        for (final item in items) {
+          expect(item.nodeId, isNotNull);
+          expect(item.displayName, isNotEmpty);
+        }
+      });
+
+      test('Browse with referenceTypeId filter', () async {
+        addBasicVariables(server!);
+
+        // Browse with hierarchical references only
+        final items = await client!.browse(
+          NodeId.objectsFolder,
+          referenceTypeId: NodeId.hierarchicalReferences,
+          includeSubtypes: true,
+        );
+
+        expect(items, isNotEmpty);
+        // All returned items should be forward references (default direction is forward)
+        for (final item in items) {
+          expect(item.isForward, isTrue);
+        }
+      });
+
+      test('browseTree walks the address space', () async {
+        addBasicVariables(server!);
+
+        // Walk from root with limited depth
+        final treeItems = await client!
+            .browseTree(NodeId.rootFolder, maxDepth: 2, referenceTypeId: NodeId.hierarchicalReferences)
+            .toList();
+
+        expect(treeItems, isNotEmpty);
+
+        // Check tree items have depth and parent info
+        for (final item in treeItems) {
+          expect(item.depth, greaterThanOrEqualTo(0));
+          expect(item.depth, lessThanOrEqualTo(2));
+          expect(item.parentNodeId, isNotNull);
+          expect(item.item, isNotNull);
+        }
+
+        // Should find Objects folder at depth 0
+        final objectsFolder = treeItems.where((item) => item.nodeId == NodeId.objectsFolder).toList();
+        expect(objectsFolder, isNotEmpty);
+        expect(objectsFolder.first.depth, 0);
+      });
+
       tearDown(() async {
         // Delete client first to stop its event loop before server shutdown.
         // Otherwise the client might be calling UA_Client_run_iterate while
