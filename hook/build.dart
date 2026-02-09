@@ -8,8 +8,16 @@ import 'package:native_toolchain_cmake/native_toolchain_cmake.dart';
 import 'package:http/http.dart' as http;
 
 Future<Uri> _downloadMbedTLS(Uri baseDir) async {
-  final extractDir = Directory.fromUri(baseDir.resolve('mbedtls/download/'));
+  // Use short directory names to avoid Windows MAX_PATH (260 char) limit.
+  // CMake TryCompile creates deeply nested paths inside the build directory.
+  final extractDir = Directory.fromUri(baseDir.resolve('tls/'));
   final url = 'https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.5/mbedtls-3.6.5.tar.bz2';
+
+  // Return early if already downloaded and renamed
+  final srcDir = Directory.fromUri(extractDir.uri.resolve('src/'));
+  if (await srcDir.exists()) {
+    return srcDir.uri;
+  }
 
   final response = await http.get(Uri.parse(url));
   if (response.statusCode != 200) {
@@ -30,8 +38,10 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
       outputStream.closeSync();
     }
   }
-  final folder = extractDir.listSync().firstWhere((element) => element is Directory).uri;
-  return folder;
+  // Rename extracted folder (e.g. mbedtls-3.6.5) to 'src' for shorter paths
+  final folder = extractDir.listSync().firstWhere((element) => element is Directory);
+  await (folder as Directory).rename(srcDir.path);
+  return srcDir.uri;
 }
 
 String _targetKey(BuildInput input) {
@@ -42,8 +52,8 @@ String _targetKey(BuildInput input) {
 
 Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger logger) async {
   final targetKey = _targetKey(input);
-  final mbedtlsBase = input.outputDirectoryShared.resolve('mbedtls/');
-  final installPrefix = mbedtlsBase.resolve('install-$targetKey/');
+  final mbedtlsBase = input.outputDirectoryShared.resolve('tls/');
+  final installPrefix = mbedtlsBase.resolve('i-$targetKey/');
 
   // Skip if already built
   final includeCheck = File.fromUri(installPrefix.resolve('include/mbedtls/ssl.h'));
@@ -80,7 +90,14 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
 }
 
 Future<Uri> download(Uri outputDirectory, String version) async {
-  final extractDir = Directory.fromUri(outputDirectory.resolve('download/'));
+  // Use short directory names to avoid Windows MAX_PATH (260 char) limit.
+  final extractDir = Directory.fromUri(outputDirectory.resolve('dl/'));
+
+  // Return early if already downloaded and renamed
+  final srcDir = Directory.fromUri(extractDir.uri.resolve('src/'));
+  if (await srcDir.exists()) {
+    return srcDir.uri;
+  }
 
   //final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
 
@@ -104,11 +121,13 @@ Future<Uri> download(Uri outputDirectory, String version) async {
       outputStream.closeSync();
     }
   }
-  final folder = extractDir.listSync().firstWhere((element) => element is Directory).uri;
-  if (!await Directory.fromUri(folder).exists()) {
+  // Rename extracted folder (e.g. open62541-includes) to 'src' for shorter paths
+  final folder = extractDir.listSync().firstWhere((element) => element is Directory);
+  if (!await Directory.fromUri(folder.uri).exists()) {
     throw Exception('Error extracting open62541 version $version: extracted directory not found');
   }
-  return folder;
+  await (folder as Directory).rename(srcDir.path);
+  return srcDir.uri;
 }
 
 Future<void> main(List<String> args) async {
