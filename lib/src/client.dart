@@ -443,17 +443,25 @@ class Client implements ClientApi {
 
       final retVal = <NodeId, DynamicValue>{};
       for (var i = 0; i < pointers.length; i++) {
-        if (pointers[i].ref.status != raw.UA_STATUSCODE_GOOD) {
+        final status = pointers[i].ref.status;
+        final attributeId = indorderNodes[i].$2;
+
+        if (status != raw.UA_STATUSCODE_GOOD) {
+          // Allow description to be missing — some servers don't support it
+          if (status == raw.UA_STATUSCODE_BADATTRIBUTEIDINVALID &&
+              attributeId == AttributeId.UA_ATTRIBUTEID_DESCRIPTION) {
+            continue;
+          }
           completer.completeError(
-              'Failed to read attribute: ${statusCodeToString(pointers[i].ref.status, _lib)} NodeId: ${indorderNodes[i].$1} AttributeId: ${indorderNodes[i].$2}');
+              'Failed to read attribute: ${statusCodeToString(status, _lib)} NodeId: ${indorderNodes[i].$1} AttributeId: $attributeId');
           break; // Break here to cleanup pointers memory below
         }
-        final status = pointers[i].ref.status;
+
         final ok = status == raw.UA_STATUSCODE_GOOD;
         var reference = retVal[indorderNodes[i].$1] ?? DynamicValue();
         raw.UA_Variant? value = ok ? pointers[i].ref.value : null;
 
-        switch (indorderNodes[i].$2) {
+        switch (attributeId) {
           case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
             final description = value!.data.cast<raw.UA_LocalizedText>();
             reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
