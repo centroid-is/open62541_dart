@@ -1301,7 +1301,7 @@ class Client implements ClientApi {
             // once, so if the initial notification is lost, the seenMonIds gate
             // will never be satisfied and the stream will never emit.
             Future.delayed(const Duration(seconds: 1), () async {
-              if (controller.isClosed) return;
+              if (controller.isClosed || _client == ffi.nullptr) return;
               final expectedCount = nodeCount - descriptionFailureCount;
               if (seenMonIds.length >= expectedCount) return;
 
