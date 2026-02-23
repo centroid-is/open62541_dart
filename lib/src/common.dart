@@ -14,6 +14,20 @@ String statusCodeToString(int statusCode) {
   return raw.UA_StatusCode_name(statusCode).cast<Utf8>().toDartString();
 }
 
+/// Allocates and populates a UA_LocalizedText from a Dart [LocalizedText].
+/// Caller must free the returned pointer with UA_LocalizedText_delete.
+ffi.Pointer<raw.UA_LocalizedText> localizedTextToRaw(LocalizedText lt) {
+  final ptr = raw.UA_LocalizedText_new();
+  // Only set locale if non-empty. open62541's stringOrder treats
+  // {length=0, data=NULL} and {length=0, data=non-NULL} as NOT equal,
+  // so we must leave empty locales as {0, NULL} to match node defaults.
+  if (lt.locale.isNotEmpty) {
+    ptr.ref.locale.set(lt.locale);
+  }
+  ptr.ref.text.set(lt.value);
+  return ptr;
+}
+
 ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType) {
   int type = uaType.value;
   if (type < 0 || type > raw.UA_TYPES_COUNT) {
@@ -52,7 +66,12 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
   final dimensions = getDimensions(value);
   ffi.Pointer<raw.UA_Variant> variant = raw.UA_Variant_new();
   variant.ref.data = pointer.cast();
-  if (value.isObject || value.isArray && value.asArray.first.isObject) {
+  // Check if the leaf elements are objects (structs) — recurse through nested arrays
+  DynamicValue leaf = value;
+  while (leaf.isArray) {
+    leaf = leaf.asArray.first;
+  }
+  if (leaf.isObject) {
     variant.ref.type = getType(UaTypes.extensionObject);
   } else if (id != null) {
     variant.ref.type = getType(id.toUaTypes()); //TODO: This is not really the correct.

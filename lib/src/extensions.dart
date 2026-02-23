@@ -245,6 +245,8 @@ enum UaTypes {
   publishedDataSetCustomSourceDataType(raw.UA_TYPES_PUBLISHEDDATASETCUSTOMSOURCEDATATYPE),
   readRequest(raw.UA_TYPES_READREQUEST),
   readResponse(raw.UA_TYPES_READRESPONSE),
+  writeRequest(raw.UA_TYPES_WRITEREQUEST),
+  writeResponse(raw.UA_TYPES_WRITERESPONSE),
   browseRequest(raw.UA_TYPES_BROWSEREQUEST),
   browseResponse(raw.UA_TYPES_BROWSERESPONSE),
   browseNextRequest(raw.UA_TYPES_BROWSENEXTREQUEST),
@@ -263,13 +265,14 @@ enum UaTypes {
 }
 
 // ignore: camel_case_extensions
+// C layout: UA_Byte padding:6 (bits 0-5), isArray:1 (bit 6), isOptional:1 (bit 7)
 extension UA_DataTypeMemberExtension on raw.UA_DataTypeMember {
-  int get padding => (substitute >> 6) & 0x3F;
-  set padding(int value) => substitute = (substitute & 0x00FFFFFF) | (value << 6);
-  bool get isArray => (substitute >> 7) & 0x1 == 1;
-  set isArray(bool value) => substitute = (substitute & 0x00FFFFFF) | (value ? 1 : 0);
-  bool get isOptional => (substitute >> 8) & 0x1 == 1;
-  set isOptional(bool value) => substitute = (substitute & 0x00FFFFFF) | (value ? 1 : 0);
+  int get padding => substitute & 0x3F;
+  set padding(int value) => substitute = (substitute & 0xC0) | (value & 0x3F);
+  bool get isArray => (substitute >> 6) & 0x1 == 1;
+  set isArray(bool value) => substitute = value ? (substitute | 0x40) : (substitute & 0xBF);
+  bool get isOptional => (substitute >> 7) & 0x1 == 1;
+  set isOptional(bool value) => substitute = value ? (substitute | 0x80) : (substitute & 0x7F);
 }
 
 // ignore: camel_case_extensions

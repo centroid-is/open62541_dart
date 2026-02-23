@@ -32,6 +32,21 @@ external UA_NodeId UA_NODEID_STRING(int nsIndex, ffi.Pointer<ffi.Char> chars);
 @ffi.Native<UA_QualifiedName Function(UA_UInt16, ffi.Pointer<ffi.Char>)>()
 external UA_QualifiedName UA_QUALIFIEDNAME(int nsIndex, ffi.Pointer<ffi.Char> chars);
 
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_ByteString>,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_DataType>,
+    ffi.Pointer<UA_DecodeBinaryOptions>,
+  )
+>()
+external int UA_decodeBinary(
+  ffi.Pointer<UA_ByteString> inBuf,
+  ffi.Pointer<ffi.Void> p,
+  ffi.Pointer<UA_DataType> type,
+  ffi.Pointer<UA_DecodeBinaryOptions> options,
+);
+
 @ffi.Native<ffi.Pointer<UA_NodeId> Function()>()
 external ffi.Pointer<UA_NodeId> UA_NodeId_new();
 
@@ -112,6 +127,21 @@ external ffi.Pointer<UA_ReadRequest> UA_ReadRequest_new();
 
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_ReadRequest>)>()
 external void UA_ReadRequest_delete(ffi.Pointer<UA_ReadRequest> p);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_WriteValue>)>()
+external void UA_WriteValue_init(ffi.Pointer<UA_WriteValue> p);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_WriteValue>)>()
+external void UA_WriteValue_delete(ffi.Pointer<UA_WriteValue> p);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_WriteRequest>)>()
+external void UA_WriteRequest_init(ffi.Pointer<UA_WriteRequest> p);
+
+@ffi.Native<ffi.Pointer<UA_WriteRequest> Function()>()
+external ffi.Pointer<UA_WriteRequest> UA_WriteRequest_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_WriteRequest>)>()
+external void UA_WriteRequest_delete(ffi.Pointer<UA_WriteRequest> p);
 
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_CreateMonitoredItemsRequest>)>()
 external void UA_CreateMonitoredItemsRequest_init(ffi.Pointer<UA_CreateMonitoredItemsRequest> p);
@@ -547,10 +577,31 @@ external int UA_Server_run_shutdown(ffi.Pointer<UA_Server> server);
 external int UA_Server_readValue(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_Variant> out);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_LocalizedText)>()
+external int UA_Server_writeDisplayName(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_LocalizedText displayName);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_LocalizedText)>()
 external int UA_Server_writeDescription(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_LocalizedText description);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_Variant)>()
 external int UA_Server_writeValue(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_Variant value);
+
+/// View Service Set
+/// ----------------
+/// The View Service Set allows Clients to discover Nodes by browsing the
+/// information model.
+@ffi.Native<UA_BrowseResult Function(ffi.Pointer<UA_Server>, UA_UInt32, ffi.Pointer<UA_BrowseDescription>)>()
+external UA_BrowseResult UA_Server_browse(
+  ffi.Pointer<UA_Server> server,
+  int maxReferences,
+  ffi.Pointer<UA_BrowseDescription> bd,
+);
+
+@ffi.Native<UA_BrowseResult Function(ffi.Pointer<UA_Server>, ffi.Bool, ffi.Pointer<UA_ByteString>)>()
+external UA_BrowseResult UA_Server_browseNext(
+  ffi.Pointer<UA_Server> server,
+  bool releaseContinuationPoint,
+  ffi.Pointer<UA_ByteString> continuationPoint,
+);
 
 /// By default, when adding a VariableNode, the value from the
 /// ``UA_VariableAttributes`` is used. The methods following afterwards can be
@@ -699,6 +750,86 @@ DartUA_StatusCode UA_Server_addNode_begin(
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
 external int UA_Server_addNode_finish(ffi.Pointer<UA_Server> server, UA_NodeId nodeId);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Server>,
+    ffi.Pointer<UA_ReadValueId>,
+    ffi.UnsignedInt,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Void Function(
+          ffi.Pointer<UA_Server> server,
+          ffi.Pointer<ffi.Void> asyncOpContext,
+          ffi.Pointer<UA_DataValue> result,
+        )
+      >
+    >,
+    ffi.Pointer<ffi.Void>,
+    UA_UInt32,
+  )
+>(symbol: 'UA_Server_read_async')
+external int _UA_Server_read_async(
+  ffi.Pointer<UA_Server> server,
+  ffi.Pointer<UA_ReadValueId> operation,
+  int timestamps,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> asyncOpContext,
+        ffi.Pointer<UA_DataValue> result,
+      )
+    >
+  >
+  callback,
+  ffi.Pointer<ffi.Void> asyncOpContext,
+  int timeout,
+);
+
+DartUA_StatusCode UA_Server_read_async(
+  ffi.Pointer<UA_Server> server,
+  ffi.Pointer<UA_ReadValueId> operation,
+  UA_TimestampsToReturn timestamps,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<ffi.Void> asyncOpContext,
+        ffi.Pointer<UA_DataValue> result,
+      )
+    >
+  >
+  callback,
+  ffi.Pointer<ffi.Void> asyncOpContext,
+  DartUA_UInt32 timeout,
+) => _UA_Server_read_async(server, operation, timestamps.value, callback, asyncOpContext, timeout);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Server>,
+    ffi.Pointer<UA_WriteValue>,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Void Function(ffi.Pointer<UA_Server> server, ffi.Pointer<ffi.Void> asyncOpContext, UA_StatusCode result)
+      >
+    >,
+    ffi.Pointer<ffi.Void>,
+    UA_UInt32,
+  )
+>()
+external int UA_Server_write_async(
+  ffi.Pointer<UA_Server> server,
+  ffi.Pointer<UA_WriteValue> operation,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Void Function(ffi.Pointer<UA_Server> server, ffi.Pointer<ffi.Void> asyncOpContext, UA_StatusCode result)
+    >
+  >
+  callback,
+  ffi.Pointer<ffi.Void> asyncOpContext,
+  int timeout,
+);
 
 /// Utility Functions
 /// -----------------
@@ -1092,6 +1223,28 @@ enum UA_LifecycleState {
     _ => throw ArgumentError('Unknown value for UA_LifecycleState: $value'),
   };
 }
+
+/// Namespace Mapping
+/// -----------------
+///
+/// Every :ref:`nodeid` references a namespace index. Actually the namespace is
+/// identified by its URI. The namespace-array of the server maps the URI to the
+/// namespace index in the array. Namespace zero always has the URI
+/// ```http://opcfoundation.org/UA/```. Namespace one has the application URI of
+/// the server. All namespaces beyond get a custom assignment.
+///
+/// In order to have predictable NodeIds, a client might predefined its own
+/// namespace array that is different from the server's. When a NodeId is decoded
+/// from a network message (binary or JSON), a mapping-table can be used to
+/// automatically translate between the remote and local namespace index. The
+/// mapping is typically done by the client who can generate the mapping table
+/// after reading the namespace-array of the server. The reverse mapping is done
+/// in the encoding if the mapping table is set in the options.
+///
+/// The mapping table also contains the full URI names. It is also used to
+/// translate the ``NamespaceUri`` field of an ExpandedNodeId into the namespace
+/// index of the NodeId embedded in the ExpandedNodeId.
+final class UA_NamespaceMapping extends ffi.Opaque {}
 
 /// SByte
 /// ^^^^^
@@ -1612,6 +1765,21 @@ final class UA_DataTypeArray extends ffi.Struct {
 
   @ffi.Bool()
   external bool cleanup;
+}
+
+final class UA_DecodeBinaryOptions extends ffi.Struct {
+  external ffi.Pointer<UA_DataTypeArray> customTypes;
+
+  external ffi.Pointer<UA_NamespaceMapping> namespaceMapping;
+
+  external ffi.Pointer<ffi.Void> callocContext;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void> callocContext, ffi.Size nelem, ffi.Size elsize)
+    >
+  >
+  calloc;
 }
 
 enum UA_NamingRuleType {
@@ -2826,6 +2994,26 @@ final class UA_ReadAtTimeDetails extends ffi.Opaque {}
 final class UA_HistoryData extends ffi.Opaque {}
 
 final class UA_HistoryReadResponse extends ffi.Opaque {}
+
+final class UA_WriteValue extends ffi.Struct {
+  external UA_NodeId nodeId;
+
+  @UA_UInt32()
+  external int attributeId;
+
+  external UA_String indexRange;
+
+  external UA_DataValue value;
+}
+
+final class UA_WriteRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Size()
+  external int nodesToWriteSize;
+
+  external ffi.Pointer<UA_WriteValue> nodesToWrite;
+}
 
 final class UA_WriteResponse extends ffi.Struct {
   external UA_ResponseHeader responseHeader;

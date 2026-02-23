@@ -334,123 +334,43 @@ void main() {
     raw.UA_Variant_delete(variantEncoded);
   });
 
-  // BIG TODO generated test, verify its correctness
   test('2x3x4 array of string structs', () {
-    var data = [
-      // [0][0][0] - Position A
-      2, 0, 0, 0, 97, 65, 0, // aA
-      2, 0, 0, 0, 98, 65, 0, // bA
-      2, 0, 0, 0, 99, 65, 0, // cA
-      // [0][0][1] - Position B
-      2, 0, 0, 0, 97, 66, 0, // aB
-      2, 0, 0, 0, 98, 66, 0, // bB
-      2, 0, 0, 0, 99, 66, 0, // cB
-      // [0][0][2] - Position C
-      2, 0, 0, 0, 97, 67, 0, // aC
-      2, 0, 0, 0, 98, 67, 0, // bC
-      2, 0, 0, 0, 99, 67, 0, // cC
-      // [0][0][3] - Position D
-      2, 0, 0, 0, 97, 68, 0, // aD
-      2, 0, 0, 0, 98, 68, 0, // bD
-      2, 0, 0, 0, 99, 68, 0, // cD
-      // [0][1][0] - Position E
-      2, 0, 0, 0, 97, 69, 0, // aE
-      2, 0, 0, 0, 98, 69, 0, // bE
-      2, 0, 0, 0, 99, 69, 0, // cE
-      // [0][1][1] - Position F
-      2, 0, 0, 0, 97, 70, 0, // aF
-      2, 0, 0, 0, 98, 70, 0, // bF
-      2, 0, 0, 0, 99, 70, 0, // cF
-      // [0][1][2] - Position G
-      2, 0, 0, 0, 97, 71, 0, // aG
-      2, 0, 0, 0, 98, 71, 0, // bG
-      2, 0, 0, 0, 99, 71, 0, // cG
-      // [0][1][3] - Position H
-      2, 0, 0, 0, 97, 72, 0, // aH
-      2, 0, 0, 0, 98, 72, 0, // bH
-      2, 0, 0, 0, 99, 72, 0, // cH
-      // [0][2][0] - Position I
-      2, 0, 0, 0, 97, 73, 0, // aI
-      2, 0, 0, 0, 98, 73, 0, // bI
-      2, 0, 0, 0, 99, 73, 0, // cI
-      // [0][2][1] - Position J
-      2, 0, 0, 0, 97, 74, 0, // aJ
-      2, 0, 0, 0, 98, 74, 0, // bJ
-      2, 0, 0, 0, 99, 74, 0, // cJ
-      // [0][2][2] - Position K
-      2, 0, 0, 0, 97, 75, 0, // aK
-      2, 0, 0, 0, 98, 75, 0, // bK
-      2, 0, 0, 0, 99, 75, 0, // cK
-      // [0][2][3] - Position L
-      2, 0, 0, 0, 97, 76, 0, // aL
-      2, 0, 0, 0, 98, 76, 0, // bL
-      2, 0, 0, 0, 99, 76, 0, // cL
-      // [1][0][0] - Position M
-      2, 0, 0, 0, 97, 77, 0, // aM
-      2, 0, 0, 0, 98, 77, 0, // bM
-      2, 0, 0, 0, 99, 77, 0, // cM
-      // [1][0][1] - Position N
-      2, 0, 0, 0, 97, 78, 0, // aN
-      2, 0, 0, 0, 98, 78, 0, // bN
-      2, 0, 0, 0, 99, 78, 0, // cN
-      // [1][0][2] - Position O
-      2, 0, 0, 0, 97, 79, 0, // aO
-      2, 0, 0, 0, 98, 79, 0, // bO
-      2, 0, 0, 0, 99, 79, 0, // cO
-      // [1][0][3] - Position P
-      2, 0, 0, 0, 97, 80, 0, // aP
-      2, 0, 0, 0, 98, 80, 0, // bP
-      2, 0, 0, 0, 99, 80, 0, // cP
-      // [1][1][0] - Position Q
-      2, 0, 0, 0, 97, 81, 0, // aQ
-      2, 0, 0, 0, 98, 81, 0, // bQ
-      2, 0, 0, 0, 99, 81, 0, // cQ
-      // [1][1][1] - Position R
-      2, 0, 0, 0, 97, 82, 0, // aR
-      2, 0, 0, 0, 98, 82, 0, // bR
-      2, 0, 0, 0, 99, 82, 0, // cR
-      // [1][1][2] - Position S
-      2, 0, 0, 0, 97, 83, 0, // aS
-      2, 0, 0, 0, 98, 83, 0, // bS
-      2, 0, 0, 0, 99, 83, 0, // cS
-      // [1][1][3] - Position T
-      2, 0, 0, 0, 97, 84, 0, // aT
-      2, 0, 0, 0, 98, 84, 0, // bT
-      2, 0, 0, 0, 99, 84, 0, // cT
-      // [1][2][0] - Position U
-      2, 0, 0, 0, 97, 85, 0, // aU
-      2, 0, 0, 0, 98, 85, 0, // bU
-      2, 0, 0, 0, 99, 85, 0, // cU
-      // [1][2][1] - Position V
-      2, 0, 0, 0, 97, 86, 0, // aV
-      2, 0, 0, 0, 98, 86, 0, // bV
-      2, 0, 0, 0, 99, 86, 0, // cV
-      // [1][2][2] - Position W
-      2, 0, 0, 0, 97, 87, 0, // aW
-      2, 0, 0, 0, 98, 87, 0, // bW
-      2, 0, 0, 0, 99, 87, 0, // cW
-      // [1][2][3] - Position X
-      2, 0, 0, 0, 97, 88, 0, // aX
-      2, 0, 0, 0, 98, 88, 0, // bX
-      2, 0, 0, 0, 99, 88, 0, // cX
-    ];
+    final spNodeId = NodeId.fromString(4, "Omars string struct");
+    final letters = 'ABCDEFGHIJKLMNOPQRSTUVWX'.split('');
 
-    Pointer<raw.UA_Variant> variant = calloc();
-    variant.ref.data = calloc<Uint8>(data.length).cast();
-    variant.ref.data.cast<Uint8>().asTypedList(data.length).setRange(0, data.length, data);
+    // Build a 2x3x4 nested array of string structs
+    DynamicValue makeStruct(String letter) {
+      final s = DynamicValue(typeId: spNodeId);
+      s["s1"] = DynamicValue(value: "a$letter", typeId: NodeId.uastring);
+      s["s2"] = DynamicValue(value: "b$letter", typeId: NodeId.uastring);
+      s["s3"] = DynamicValue(value: "c$letter", typeId: NodeId.uastring);
+      return s;
+    }
 
-    variant.ref.arrayLength = 24;
-    variant.ref.arrayDimensionsSize = 3;
-    variant.ref.arrayDimensions = calloc(3);
-    variant.ref.arrayDimensions[0] = 2;
-    variant.ref.arrayDimensions[1] = 3;
-    variant.ref.arrayDimensions[2] = 4;
-    variant.ref.type = getType(UaTypes.int16);
+    var idx = 0;
+    final dim0 = <DynamicValue>[];
+    for (var i = 0; i < 2; i++) {
+      final dim1 = <DynamicValue>[];
+      for (var j = 0; j < 3; j++) {
+        final dim2 = <DynamicValue>[];
+        for (var k = 0; k < 4; k++) {
+          dim2.add(makeStruct(letters[idx++]));
+        }
+        dim1.add(DynamicValue.fromList(dim2, typeId: spNodeId));
+      }
+      dim0.add(DynamicValue.fromList(dim1, typeId: spNodeId));
+    }
+    final arrayValue = DynamicValue.fromList(dim0, typeId: spNodeId);
 
-    var spNodeId = NodeId.fromString(4, "Omars string struct");
+    final variant = valueToVariant(arrayValue);
 
-    final defs = {spNodeId: DynamicValue.fromDataTypeDefinition(spNodeId, variant.ref)};
-    final value = variantToValue(variant.ref, defs: defs);
+    DynamicValue sp = DynamicValue(typeId: spNodeId);
+    sp["s1"] = buildField(NodeId.uastring, "s1", [], "ff");
+    sp["s2"] = buildField(NodeId.uastring, "s2", [], "ff");
+    sp["s3"] = buildField(NodeId.uastring, "s3", [], "ff");
+    final defs = {spNodeId: sp};
+
+    final value = variantToValue(variant.ref, defs: defs, dataTypeId: spNodeId);
 
     expect(value.isArray, true);
     expect(value.asArray.length, 2);
@@ -473,7 +393,7 @@ void main() {
     expect(value[1][0][0]["s3"].asString, "cM");
 
     raw.UA_Variant_delete(variant);
-  }, skip: "Todo: make this test from real data");
+  });
 
   test('Array of nested struct', () {
     var data = <List<int>>[

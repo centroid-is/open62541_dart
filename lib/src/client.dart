@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:tuple/tuple.dart';
 
 import 'package:open62541/src/types/errors.dart';
+import 'browse_types.dart';
 import 'client_api.dart';
 import 'common.dart';
 import 'dynamic_value.dart';
@@ -16,52 +17,7 @@ import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
 import 'ua_allocation.dart';
 
-typedef NodeClass = raw.UA_NodeClass;
-
-typedef BrowseResultMask = raw.UA_BrowseResultMask;
-
-class BrowseResultItem {
-  final NodeId referenceTypeId;
-  final bool isForward;
-  final NodeId nodeId;
-  final String browseName;
-  final String displayName;
-  final NodeClass nodeClass;
-  final NodeId? typeDefinition;
-
-  const BrowseResultItem({
-    required this.referenceTypeId,
-    required this.isForward,
-    required this.nodeId,
-    required this.browseName,
-    required this.displayName,
-    required this.nodeClass,
-    this.typeDefinition,
-  });
-
-  @override
-  String toString() {
-    return 'BrowseResultItem(displayName: $displayName, nodeId: $nodeId, nodeClass: $nodeClass)';
-  }
-}
-
-class BrowseTreeItem {
-  final BrowseResultItem item;
-  final int depth;
-  final NodeId parentNodeId;
-
-  const BrowseTreeItem({required this.item, required this.depth, required this.parentNodeId});
-
-  NodeId get nodeId => item.nodeId;
-  String get displayName => item.displayName;
-  String get browseName => item.browseName;
-  NodeClass get nodeClass => item.nodeClass;
-
-  @override
-  String toString() {
-    return '${"  " * depth}${item.displayName} (${item.nodeId}) [${item.nodeClass}]';
-  }
-}
+export 'browse_types.dart';
 
 class ClientState {
   SecureChannelState channelState;
@@ -160,8 +116,6 @@ class ClientConfig {
   _subscriptionInactivityCallback;
   late ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>)> _inactivityCallback;
 }
-
-typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
 
 class Client implements ClientApi {
   Client({
@@ -273,62 +227,106 @@ class Client implements ClientApi {
   }
 
   @override
-  Future<void> write(NodeId nodeId, DynamicValue value) {
-    Completer<void> completer = Completer<void>();
+  Future<void> write(NodeId nodeId, DynamicValue value) =>
+      writeAttribute(nodeId, AttributeId.UA_ATTRIBUTEID_VALUE, value);
 
-    final variant = valueToVariant(value);
+  @override
+  Future<void> writeAttribute(NodeId nodeId, AttributeId attributeId, dynamic value) async {
+    final completer = Completer<void>();
+
+    // Build the UA_WriteValue
+    ffi.Pointer<raw.UA_WriteValue> writeValue = ua_calloc<raw.UA_WriteValue>();
+    raw.UA_WriteValue_init(writeValue);
+    writeValue.ref.nodeId = nodeId.toRaw();
+    writeValue.ref.attributeId = attributeId.value;
+
+    // Set the value based on attribute type
+    writeValue.ref.value.substitute = 1; // hasValue = true
+
+    switch (attributeId) {
+      case AttributeId.UA_ATTRIBUTEID_VALUE:
+        final dynVal = value as DynamicValue;
+        final variant = valueToVariant(dynVal);
+        writeValue.ref.value.value = variant.ref;
+        // Don't delete variant - its data is now owned by writeValue
+        ua_calloc.free(variant);
+      case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
+      case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
+        final ltRaw = localizedTextToRaw(value as LocalizedText);
+        writeValue.ref.value.value.data = ltRaw.cast();
+        writeValue.ref.value.value.type = getType(UaTypes.localizedText);
+      default:
+        ua_calloc.free(writeValue);
+        throw 'writeAttribute not implemented for $attributeId';
+    }
+
+    // Build the UA_WriteRequest
+    ffi.Pointer<raw.UA_WriteRequest> request = raw.UA_WriteRequest_new();
+    raw.UA_WriteRequest_init(request);
+    request.ref.nodesToWrite = writeValue;
+    request.ref.nodesToWriteSize = 1;
+
+    ffi.Pointer<ffi.Uint32> requestIdPtr = ua_calloc<ffi.Uint32>();
 
     late ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Client>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Uint32,
-        ffi.Pointer<raw.UA_WriteResponse>,
-      )
-    >
-    callback;
-    // Create callback for this specific write request
-    callback =
-        ffi.NativeCallable<
-          ffi.Void Function(
-            ffi.Pointer<raw.UA_Client>,
-            ffi.Pointer<ffi.Void>,
-            ffi.Uint32,
-            ffi.Pointer<raw.UA_WriteResponse>,
-          )
-        >.isolateLocal((
-          ffi.Pointer<raw.UA_Client> client,
-          ffi.Pointer<ffi.Void> userdata,
-          int reqId,
-          ffi.Pointer<raw.UA_WriteResponse> response,
-        ) {
-          if (completer.isCompleted) {
-            return; // Request timed out already
-          }
-          raw.UA_Variant_delete(variant);
-          if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-            completer.completeError(
-              'Failed to write value: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
-            );
-            return;
-          }
-          if (response.ref.results.value != raw.UA_STATUSCODE_GOOD) {
-            completer.completeError('Failed to write value: ${statusCodeToString(response.ref.results.value)}');
-            return;
-          }
-          completer.complete();
+      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+    > callback;
 
-          // Close our callback so it can be garbage collected
-          callback.close();
-        });
-    raw.UA_Client_writeValueAttribute_async(
+    callback = ffi.NativeCallable<
+      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+    >.isolateLocal((
+      ffi.Pointer<raw.UA_Client> client,
+      ffi.Pointer<ffi.Void> userdata,
+      int requestId,
+      ffi.Pointer<ffi.Void> voidPointer,
+    ) {
+      callback.close();
+      raw.UA_WriteRequest_delete(request);
+      ua_calloc.free(requestIdPtr);
+
+      if (voidPointer == ffi.nullptr) {
+        if (!completer.isCompleted) {
+          completer.completeError('writeAttribute callback received null pointer');
+        }
+        return;
+      }
+
+      ffi.Pointer<raw.UA_WriteResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
+      if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            'Failed to write attribute: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
+          );
+        }
+        return;
+      }
+      if (response.ref.resultsSize > 0 && response.ref.results[0] != raw.UA_STATUSCODE_GOOD) {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            'Failed to write attribute: ${statusCodeToString(response.ref.results[0])}',
+          );
+        }
+        return;
+      }
+      if (!completer.isCompleted) completer.complete();
+    });
+
+    int res = raw.UA_Client_AsyncService(
       _client,
-      nodeId.toRaw(),
-      variant,
+      request.cast(),
+      getType(UaTypes.writeRequest),
       callback.nativeFunction,
+      getType(UaTypes.writeResponse),
       ffi.nullptr,
-      ffi.nullptr,
+      requestIdPtr,
     );
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      callback.close();
+      raw.UA_WriteRequest_delete(request);
+      ua_calloc.free(requestIdPtr);
+      throw 'Failed to send writeAttribute request: ${statusCodeToString(res)}';
+    }
+
     return completer.future;
   }
 
@@ -672,7 +670,7 @@ class Client implements ClientApi {
             return;
           }
 
-          final items = _extractReferences(browseResult);
+          final items = extractReferences(browseResult);
 
           // Handle continuation point
           if (browseResult.continuationPoint.length > 0) {
@@ -781,7 +779,7 @@ class Client implements ClientApi {
             return;
           }
 
-          final items = _extractReferences(browseResult);
+          final items = extractReferences(browseResult);
 
           // Continue if there are more results
           if (browseResult.continuationPoint.length > 0) {
@@ -826,34 +824,6 @@ class Client implements ClientApi {
     return completer.future;
   }
 
-  static NodeId? _tryNodeId(raw.UA_NodeId rawNodeId) {
-    try {
-      return rawNodeId.toNodeId();
-    } catch (_) {
-      return null;
-    }
-  }
-
-  List<BrowseResultItem> _extractReferences(raw.UA_BrowseResult browseResult) {
-    final items = <BrowseResultItem>[];
-    for (var i = 0; i < browseResult.referencesSize; i++) {
-      final ref = browseResult.references[i];
-      final nodeId = _tryNodeId(ref.nodeId.nodeId);
-      if (nodeId == null) continue;
-      items.add(
-        BrowseResultItem(
-          referenceTypeId: _tryNodeId(ref.referenceTypeId) ?? NodeId.nullId,
-          isForward: ref.isForward,
-          nodeId: nodeId,
-          browseName: ref.browseName.name.value,
-          displayName: ref.displayName.text.value,
-          nodeClass: ref.nodeClass,
-          typeDefinition: _tryNodeId(ref.typeDefinition.nodeId),
-        ),
-      );
-    }
-    return items;
-  }
 
   @override
   Future<int> subscriptionCreate({

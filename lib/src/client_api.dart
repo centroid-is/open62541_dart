@@ -92,6 +92,12 @@ abstract class ClientApi {
     Set<NodeClass> recurseInto = const {NodeClass.UA_NODECLASS_OBJECT, NodeClass.UA_NODECLASS_VIEW},
   });
 
+  /// Writes a single attribute of a node.
+  ///
+  /// For VALUE, pass a [DynamicValue]. For DISPLAYNAME/DESCRIPTION, pass a
+  /// [LocalizedText]. The [value] type must match the attribute.
+  Future<void> writeAttribute(NodeId nodeId, AttributeId attributeId, dynamic value);
+
   /// Calls a method on the server.
   ///
   /// [objectId] is the node hosting the method, [methodId] is the method node,

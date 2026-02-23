@@ -4,6 +4,7 @@ import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 
 import 'package:open62541/open62541.dart';
+import 'browse_types.dart';
 import 'common.dart';
 import 'extensions.dart';
 import 'third_party/open62541.g.dart' as raw;
@@ -92,6 +93,7 @@ class Server {
     NodeId variableNodeId,
     DynamicValue value, {
     AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
+    int writeMask = 0,
     NodeId? parentNodeId,
     NodeId? parentReferenceNodeId,
     NodeId? baseDataVariableType,
@@ -103,27 +105,51 @@ class Server {
     final variant = valueToVariant(value);
     typeId ??= value.typeId;
 
-    // The returned variant is a encoded extension object. extract that and set the scalar value of the variant
+    // For custom types, decode the ExtensionObject body into proper in-memory format
+    // using UA_decodeBinary. This handles types with pointers (e.g., strings) correctly.
     if (variant.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
       final t = _findDataType(typeId!);
       if (t == ffi.nullptr) {
         throw 'Failed to find data type $typeId';
       }
-      variant.ref.type = t;
-      attr.ref.value.type = t;
-      attr.ref.value.arrayLength = 0;
-      final extObjView = variant.ref.data.cast<raw.UA_ExtensionObject>();
-      final length = extObjView.ref.content.encoded.body.length;
 
-      attr.ref.value.data = ua_calloc<raw.UA_Byte>(length).cast();
-      attr.ref.value.data
-          .cast<raw.UA_Byte>()
-          .asTypedList(length)
-          .setRange(0, length, extObjView.ref.content.encoded.body.data.asTypedList(length));
+      final count = variant.ref.arrayLength > 0 ? variant.ref.arrayLength : 1;
+      final isArray = variant.ref.arrayLength > 0;
+
+      // Allocate memSize bytes for all decoded structs
+      final decoded = ua_calloc<ffi.Uint8>(t.ref.memSize * count);
+      final bodyPtr = ua_calloc<raw.UA_ByteString>();
+
+      for (var i = 0; i < count; i++) {
+        final extObj = variant.ref.data.cast<raw.UA_ExtensionObject>() + i;
+        bodyPtr.ref = extObj.ref.content.encoded.body;
+        final offset = ffi.Pointer<ffi.Uint8>.fromAddress(decoded.address + (i * t.ref.memSize));
+        final status = raw.UA_decodeBinary(bodyPtr, offset.cast(), t, ffi.nullptr);
+        if (status != raw.UA_STATUSCODE_GOOD) {
+          ua_calloc.free(bodyPtr);
+          ua_calloc.free(decoded);
+          throw 'Failed to decode custom type element $i: ${statusCodeToString(status)}';
+        }
+      }
+      ua_calloc.free(bodyPtr);
+
+      attr.ref.value.type = t;
+      attr.ref.value.data = decoded.cast();
+      attr.ref.value.arrayLength = isArray ? count : 0;
+
+      // Copy array dimensions if multidimensional
+      if (variant.ref.arrayDimensionsSize > 0) {
+        attr.ref.value.arrayDimensionsSize = variant.ref.arrayDimensionsSize;
+        attr.ref.value.arrayDimensions = ua_calloc<ffi.Uint32>(variant.ref.arrayDimensionsSize);
+        for (var d = 0; d < variant.ref.arrayDimensionsSize; d++) {
+          attr.ref.value.arrayDimensions[d] = variant.ref.arrayDimensions[d];
+        }
+      }
     } else {
       attr.ref.value = variant.ref;
     }
     attr.ref.accessLevel = accessLevel.value;
+    attr.ref.writeMask = writeMask;
     attr.ref.dataType = typeId!.toRaw();
 
     if (value.name == null) {
@@ -347,26 +373,314 @@ class Server {
   /// server.writeDescription(nodeId, description);
   /// ```
   void writeDescription(NodeId variableNodeId, LocalizedText description) {
-    ffi.Pointer<raw.UA_LocalizedText> descriptionRaw = raw.UA_LocalizedText_new();
-    descriptionRaw.ref.locale.set(description.locale);
-    descriptionRaw.ref.text.set(description.value);
-    raw.UA_Server_writeDescription(_server, variableNodeId.toRaw(), descriptionRaw.ref);
-    raw.UA_LocalizedText_delete(descriptionRaw);
+    final ptr = localizedTextToRaw(description);
+    final res = raw.UA_Server_writeDescription(_server, variableNodeId.toRaw(), ptr.ref);
+    raw.UA_LocalizedText_delete(ptr);
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to write Description: ${statusCodeToString(res)}';
+    }
   }
 
-  DynamicValue read(NodeId variableNodeId, {Schema? schema}) {
-    final variant = raw.UA_Variant_new();
-    raw.UA_Server_readValue(_server, variableNodeId.toRaw(), variant);
-    final value = variantToValue(variant.ref, defs: schema);
-    raw.UA_Variant_delete(variant);
-    return value;
+  void writeDisplayName(NodeId variableNodeId, LocalizedText displayName) {
+    final ptr = localizedTextToRaw(displayName);
+    final res = raw.UA_Server_writeDisplayName(_server, variableNodeId.toRaw(), ptr.ref);
+    raw.UA_LocalizedText_delete(ptr);
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to write DisplayName: ${statusCodeToString(res)}';
+    }
   }
 
-  void write(NodeId variableNodeId, DynamicValue value) {
-    final variant = valueToVariant(value);
-    raw.UA_Server_writeValue(_server, variableNodeId.toRaw(), variant.ref);
-    raw.UA_Variant_delete(variant);
+  Future<DynamicValue> read(NodeId variableNodeId) async {
+    final dv = DynamicValue();
+    await _readSingleAttributeAsync(variableNodeId, AttributeId.UA_ATTRIBUTEID_DATATYPE, dv);
+    await _readSingleAttributeAsync(variableNodeId, AttributeId.UA_ATTRIBUTEID_VALUE, dv);
+    return dv;
   }
+
+  /// Reads multiple attributes from multiple nodes using the async C API.
+  ///
+  /// Uses [UA_Server_read_async] with NativeCallable callbacks. For normal
+  /// variable nodes, the callback fires synchronously (same thread) so reads
+  /// complete immediately. For DataSource nodes, the callback fires during the
+  /// next [runIterate].
+  Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
+    final results = <NodeId, DynamicValue>{};
+    final futures = <Future<void>>[];
+
+    for (final entry in nodes.entries) {
+      final nodeId = entry.key;
+      final attributes = entry.value;
+      final dv = DynamicValue();
+      results[nodeId] = dv;
+
+      // Sort so DATATYPE is read before VALUE (typeId hint for value parsing).
+      // Since callbacks fire in call order, DATATYPE completes first.
+      final sorted = List<AttributeId>.from(attributes);
+      sorted.sort((a, b) {
+        if (a == AttributeId.UA_ATTRIBUTEID_DATATYPE) return -1;
+        if (b == AttributeId.UA_ATTRIBUTEID_DATATYPE) return 1;
+        return 0;
+      });
+
+      for (final attr in sorted) {
+        futures.add(_readSingleAttributeAsync(nodeId, attr, dv));
+      }
+    }
+
+    await Future.wait(futures);
+    return results;
+  }
+
+  Future<void> _readSingleAttributeAsync(NodeId nodeId, AttributeId attr, DynamicValue dv) {
+    final completer = Completer<void>();
+
+    final readValueId = ua_calloc<raw.UA_ReadValueId>();
+    readValueId.ref.nodeId = nodeId.toRaw();
+    readValueId.ref.attributeId = attr.value;
+
+    late ffi.NativeCallable<
+      ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)
+    > callback;
+
+    callback = ffi.NativeCallable<
+      ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)
+    >.isolateLocal((
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<ffi.Void> ctx,
+      ffi.Pointer<raw.UA_DataValue> result,
+    ) {
+      // Callback fires synchronously (same thread) — data pointers are valid.
+      callback.close();
+
+      try {
+        if (result == ffi.nullptr || result.ref.status != raw.UA_STATUSCODE_GOOD) {
+          completer.complete(); // No data, but don't error — attribute may just be empty
+          return;
+        }
+
+        final value = result.ref.value;
+        if (value.data == ffi.nullptr) {
+          completer.complete();
+          return;
+        }
+
+        switch (attr) {
+          case AttributeId.UA_ATTRIBUTEID_VALUE:
+            final val = variantToValue(value, dataTypeId: dv.typeId);
+            dv.value = val.value;
+            dv.typeId ??= val.typeId;
+
+          case AttributeId.UA_ATTRIBUTEID_DATATYPE:
+            final dataType = value.data.cast<raw.UA_NodeId>();
+            dv.typeId = dataType.ref.toNodeId();
+
+          case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
+            final lt = value.data.cast<raw.UA_LocalizedText>();
+            dv.displayName = LocalizedText(lt.ref.text.value, lt.ref.locale.value);
+
+          case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
+            final lt = value.data.cast<raw.UA_LocalizedText>();
+            dv.description = LocalizedText(lt.ref.text.value, lt.ref.locale.value);
+
+          case AttributeId.UA_ATTRIBUTEID_BROWSENAME:
+            final qn = value.data.cast<raw.UA_QualifiedName>();
+            dv.name = qn.ref.name.value;
+
+          case AttributeId.UA_ATTRIBUTEID_NODECLASS:
+            final nc = value.data.cast<ffi.UnsignedInt>();
+            dv.value = nc.value;
+
+          case AttributeId.UA_ATTRIBUTEID_ACCESSLEVEL:
+            final al = value.data.cast<raw.UA_Byte>();
+            dv.value = al.value;
+
+          default:
+            throw 'readAttribute not implemented for $attr';
+        }
+
+        completer.complete();
+      } catch (e, st) {
+        if (!completer.isCompleted) completer.completeError(e, st);
+      } finally {
+        ua_calloc.free(readValueId);
+      }
+    });
+
+    final res = raw.UA_Server_read_async(
+      _server,
+      readValueId,
+      raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH,
+      callback.nativeFunction,
+      ffi.nullptr,
+      0,
+    );
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      callback.close();
+      ua_calloc.free(readValueId);
+      completer.completeError('UA_Server_read_async failed: ${statusCodeToString(res)}');
+    }
+
+    return completer.future;
+  }
+
+  /// Writes a value to a variable node using the async C API.
+  Future<void> write(NodeId variableNodeId, DynamicValue value) {
+    return writeAttribute(variableNodeId, AttributeId.UA_ATTRIBUTEID_VALUE, value);
+  }
+
+  /// Writes a specific attribute of a node using the async C API.
+  ///
+  /// For VALUE, pass a [DynamicValue]. For DISPLAYNAME/DESCRIPTION, pass a
+  /// [LocalizedText]. The [value] type must match the attribute.
+  Future<void> writeAttribute(NodeId nodeId, AttributeId attributeId, dynamic value) async {
+    final completer = Completer<void>();
+
+    final writeValue = ua_calloc<raw.UA_WriteValue>();
+    raw.UA_WriteValue_init(writeValue);
+    writeValue.ref.nodeId = nodeId.toRaw();
+    writeValue.ref.attributeId = attributeId.value;
+    writeValue.ref.value.substitute = 1; // hasValue = true
+
+    try {
+      switch (attributeId) {
+        case AttributeId.UA_ATTRIBUTEID_VALUE:
+          final dynVal = value as DynamicValue;
+          final variant = valueToVariant(dynVal);
+          writeValue.ref.value.value = variant.ref;
+          ua_calloc.free(variant); // Free the pointer, data is now owned by writeValue
+
+        case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
+        case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
+          final ltRaw = localizedTextToRaw(value as LocalizedText);
+          writeValue.ref.value.value.data = ltRaw.cast();
+          writeValue.ref.value.value.type = getType(UaTypes.localizedText);
+
+        default:
+          throw 'writeAttribute not implemented for $attributeId';
+      }
+    } catch (e) {
+      raw.UA_WriteValue_delete(writeValue);
+      rethrow;
+    }
+
+    late ffi.NativeCallable<
+      ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>, ffi.Uint32)
+    > callback;
+
+    callback = ffi.NativeCallable<
+      ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>, ffi.Uint32)
+    >.isolateLocal((
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<ffi.Void> ctx,
+      int statusCode,
+    ) {
+      callback.close();
+      raw.UA_WriteValue_delete(writeValue);
+
+      if (statusCode != raw.UA_STATUSCODE_GOOD) {
+        completer.completeError('Failed to write: ${statusCodeToString(statusCode)}');
+      } else {
+        completer.complete();
+      }
+    });
+
+    final res = raw.UA_Server_write_async(
+      _server,
+      writeValue,
+      callback.nativeFunction,
+      ffi.nullptr,
+      0,
+    );
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      callback.close();
+      raw.UA_WriteValue_delete(writeValue);
+      completer.completeError('UA_Server_write_async failed: ${statusCodeToString(res)}');
+    }
+
+    await completer.future;
+  }
+
+  /// Browses the references of a node.
+  ///
+  /// Returns the list of references from [nodeId].
+  List<BrowseResultItem> browse(
+    NodeId nodeId, {
+    int direction = 0,
+    NodeId? referenceTypeId,
+    bool includeSubtypes = true,
+    int nodeClassMask = 0,
+    BrowseResultMask resultMask = BrowseResultMask.UA_BROWSERESULTMASK_ALL,
+  }) {
+    final bd = ua_calloc<raw.UA_BrowseDescription>();
+    raw.UA_BrowseDescription_init(bd);
+    bd.ref.nodeId = nodeId.toRaw();
+    bd.ref.browseDirectionAsInt = direction;
+    bd.ref.includeSubtypes = includeSubtypes;
+    bd.ref.nodeClassMask = nodeClassMask;
+    bd.ref.resultMask = resultMask.value;
+    if (referenceTypeId != null) {
+      bd.ref.referenceTypeId = referenceTypeId.toRaw();
+    }
+
+    final result = raw.UA_Server_browse(_server, 0, bd);
+    if (result.statusCode != raw.UA_STATUSCODE_GOOD) {
+      ua_calloc.free(bd);
+      throw 'Failed to browse node $nodeId: ${statusCodeToString(result.statusCode)}';
+    }
+    final allItems = extractReferences(result);
+
+    // Handle continuation points
+    var cp = result.continuationPoint;
+    while (cp.length > 0) {
+      final cpPtr = ua_calloc<raw.UA_ByteString>();
+      cpPtr.ref = cp;
+      final nextResult = raw.UA_Server_browseNext(_server, false, cpPtr);
+      allItems.addAll(extractReferences(nextResult));
+      cp = nextResult.continuationPoint;
+      ua_calloc.free(cpPtr);
+    }
+
+    ua_calloc.free(bd);
+    return allItems;
+  }
+
+  /// Recursively walks the address space tree starting from [root].
+  ///
+  /// Returns a list of [BrowseTreeItem] with depth and parent info.
+  /// Cycle-safe: tracks visited nodes.
+  List<BrowseTreeItem> browseTree(
+    NodeId root, {
+    int maxDepth = 100,
+    NodeId? referenceTypeId,
+    bool includeSubtypes = true,
+    Set<NodeClass> recurseInto = const {NodeClass.UA_NODECLASS_OBJECT, NodeClass.UA_NODECLASS_VIEW},
+  }) {
+    final results = <BrowseTreeItem>[];
+    final visited = <NodeId>{};
+
+    void walk(NodeId nodeId, int depth) {
+      if (depth > maxDepth) return;
+      if (visited.contains(nodeId)) return;
+      visited.add(nodeId);
+
+      final children = browse(
+        nodeId,
+        referenceTypeId: referenceTypeId,
+        includeSubtypes: includeSubtypes,
+      );
+
+      for (final child in children) {
+        results.add(BrowseTreeItem(item: child, depth: depth, parentNodeId: nodeId));
+        if (recurseInto.contains(child.nodeClass)) {
+          walk(child.nodeId, depth + 1);
+        }
+      }
+    }
+
+    walk(root, 0);
+    return results;
+  }
+
 
   // populate structschema for out type
   void addCustomType(NodeId typeId, DynamicValue value) {
@@ -382,12 +696,13 @@ class Server {
       "BinaryEncoding_Default:${value.name}",
     ).toRaw();
 
-    array.ref.types[0].memSize = 9;
     array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
 
     final memberCount = value.asObject.length;
     array.ref.types[0].membersSize = memberCount;
     array.ref.types[0].members = ua_calloc<raw.UA_DataTypeMember>(memberCount);
+
+    var totalMemSize = 0;
     for (var i = 0; i < memberCount; i++) {
       final entry = value.asObject.entries.elementAt(i);
       final member = entry.value;
@@ -396,12 +711,22 @@ class Server {
         // If we contain a member add that first
         addCustomType(member.typeId!, member);
       }
+      final memberType = _findDataType(member.typeId!);
       array.ref.types[0].members[i].memberName = memberName.toNativeUtf8(allocator: ua_malloc).cast();
-      array.ref.types[0].members[i].memberType = _findDataType(member.typeId!);
+      array.ref.types[0].members[i].memberType = memberType;
       array.ref.types[0].members[i].isOptional = member.isOptional;
       array.ref.types[0].members[i].isArray = member.isArray;
-      array.ref.types[0].members[i].padding = 0;
+
+      // Calculate padding for proper alignment
+      final memberMemSize = memberType.ref.memSize;
+      final alignment = memberMemSize.clamp(1, 8);
+      final misalignment = totalMemSize % alignment;
+      final padding = misalignment == 0 ? 0 : alignment - misalignment;
+      array.ref.types[0].members[i].padding = padding;
+      totalMemSize += padding + memberMemSize;
+
     }
+    array.ref.types[0].memSize = totalMemSize;
 
     // Have open62541 clear the pointers we are allocating here on configuration clean-up
     array.ref.cleanup = true;

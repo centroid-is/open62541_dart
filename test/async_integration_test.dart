@@ -8,41 +8,6 @@ import 'package:open62541/src/common.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'common.dart';
 
-// Tracks whether the direct client event loop should keep running
-bool _directClientRunning = false;
-
-// Factory function to create different client types
-Future<ClientApi> createClient(String clientType, int port) async {
-  switch (clientType) {
-    case 'isolate':
-      final client = await ClientIsolate.create();
-      // Start event loop BEFORE connect - needed for async operations
-      // Catch errors since runIterate fails when connection is closed (expected in tearDown)
-      unawaited(client.runIterate().catchError((_) {}));
-      unawaited(client.connect("opc.tcp://localhost:$port"));
-      await client.awaitConnect();
-      return client;
-    case 'direct':
-      final client = Client();
-      _directClientRunning = true;
-      // Start event loop BEFORE connect - needed for async operations
-      unawaited(() async {
-        while (_directClientRunning && client.runIterate(Duration(milliseconds: 10))) {
-          await Future.delayed(Duration(milliseconds: 5));
-        }
-      }());
-      await client.connect("opc.tcp://localhost:$port");
-      return client;
-    default:
-      throw ArgumentError('Unknown client type: $clientType');
-  }
-}
-
-// Stop the direct client event loop
-void stopDirectClientLoop() {
-  _directClientRunning = false;
-}
-
 void main() async {
   for (final clientType in ['direct', 'isolate']) {
     group('Client type: $clientType', () {
@@ -143,7 +108,7 @@ void main() async {
         final subscription = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
         // ignore: unused_local_variable
         final controller = client!.monitor(boolNodeId, subscription, samplingInterval: Duration(milliseconds: 10));
-      }, skip: true);
+      });
 
       test('Create a monitored item and then cancel before it has been created', () async {
         addBasicVariables(server!);
@@ -172,10 +137,11 @@ void main() async {
           await Future.delayed(Duration(minutes: 10));
         },
         timeout: Timeout(Duration(minutes: 10)),
-        skip: true,
+        skip: true, // Manual testing helper - waits 10 minutes
       );
 
       test('Partial read failures should return partial data', () async {
+        addBasicVariables(server!);
         final doesNotExist = NodeId.fromString(1, "does.not.exist");
         final value = await client!.readAttribute({
           boolNodeId: [
@@ -199,16 +165,16 @@ void main() async {
         expect(value[doesNotExist], isNotNull);
         expect(value[doesNotExist]!.value, isNull);
         expect(value[doesNotExist]!.description, isNull);
-      }, skip: true);
+      }, skip: 'Requires partial error handling in readAttribute (not yet implemented)');
 
       test('Update data from the server', () async {
         addBasicVariables(server!);
-        server!.write(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
+        await server!.write(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
         expect((await client!.read(boolNodeId)).value, true);
-        expect(server!.read(boolNodeId).value, true);
-        server!.write(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
+        expect((await server!.read(boolNodeId)).value, true);
+        await server!.write(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean));
         expect((await client!.read(boolNodeId)).value, false);
-        expect(server!.read(boolNodeId).value, false);
+        expect((await server!.read(boolNodeId)).value, false);
       });
 
       test("Variant create and delete crash test windows", () async {
@@ -319,7 +285,7 @@ void main() async {
         expect(value["a"].value, value2["a"].value);
         expect(value["b"].value, value2["b"].value);
         expect(value["c"].value, value2["c"].value);
-      }, skip: true);
+      });
 
       test('Array of struct read and write', () async {
         final structureVariableNodeId = NodeId.fromString(1, "structureVariable");
@@ -406,7 +372,7 @@ void main() async {
         expect(value[2]["a"].value, value2[2]["a"].value);
         expect(value[2]["b"].value, value2[2]["b"].value);
         expect(value[2]["c"].value, value2[2]["c"].value);
-      }, skip: true);
+      });
 
       test('Browse Objects folder finds added variables', () async {
         addBasicVariables(server!);
@@ -465,9 +431,127 @@ void main() async {
         expect(objectsFolder.first.depth, 0);
       });
 
+      // ── Client writeAttribute ──────────────────────────────────────
+
+      group('Client writeAttribute', () {
+        // writeMask bits: DESCRIPTION=32, DISPLAYNAME=64
+        const writeMaskAll = 32 | 64;
+
+        test('writes DISPLAYNAME via client, reads back via server', () async {
+          server!.addVariableNode(
+            boolNodeId,
+            DynamicValue(value: true, typeId: NodeId.boolean, name: "the.bool"),
+            writeMask: writeMaskAll,
+          );
+          await client!.writeAttribute(
+            boolNodeId,
+            AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
+            LocalizedText("Client Set Name", ""),
+          );
+          final serverResult = await server!.readAttribute({
+            boolNodeId: [AttributeId.UA_ATTRIBUTEID_DISPLAYNAME],
+          });
+          expect(serverResult[boolNodeId]!.displayName!.value, "Client Set Name");
+        });
+
+        test('writes DESCRIPTION via client, reads back via server', () async {
+          server!.addVariableNode(
+            boolNodeId,
+            DynamicValue(value: true, typeId: NodeId.boolean, name: "the.bool"),
+            writeMask: writeMaskAll,
+          );
+          await client!.writeAttribute(
+            boolNodeId,
+            AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+            LocalizedText("Client Set Desc", "en-US"),
+          );
+          final serverResult = await server!.readAttribute({
+            boolNodeId: [AttributeId.UA_ATTRIBUTEID_DESCRIPTION],
+          });
+          expect(serverResult[boolNodeId]!.description!.value, "Client Set Desc");
+        });
+
+        test('writes VALUE via writeAttribute matches existing write()', () async {
+          addBasicVariables(server!);
+          await client!.writeAttribute(
+            boolNodeId,
+            AttributeId.UA_ATTRIBUTEID_VALUE,
+            DynamicValue(value: false, typeId: NodeId.boolean),
+          );
+          final result = await client!.read(boolNodeId);
+          expect(result.value, false);
+        });
+
+        test('writeAttribute DISPLAYNAME without writeMask fails', () async {
+          // Node without writeMask — server should deny the write
+          addBasicVariables(server!);
+          expect(
+            () => client!.writeAttribute(
+              boolNodeId,
+              AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
+              LocalizedText("Should Fail", ""),
+            ),
+            throwsA(contains('BadUserAccessDenied')),
+          );
+        });
+
+        test('writeAttribute for unsupported attribute throws', () async {
+          addBasicVariables(server!);
+          expect(
+            () => client!.writeAttribute(
+              boolNodeId,
+              AttributeId.UA_ATTRIBUTEID_WRITEMASK,
+              42,
+            ),
+            throwsA(contains('writeAttribute not implemented')),
+          );
+        });
+
+        test('writeAttribute unicode DISPLAYNAME round-trip', () async {
+          server!.addVariableNode(
+            boolNodeId,
+            DynamicValue(value: true, typeId: NodeId.boolean, name: "the.bool"),
+            writeMask: writeMaskAll,
+          );
+          final unicodeName = "Temperatur 温度 🌡️";
+          await client!.writeAttribute(
+            boolNodeId,
+            AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
+            LocalizedText(unicodeName, ""),
+          );
+          final serverResult = await server!.readAttribute({
+            boolNodeId: [AttributeId.UA_ATTRIBUTEID_DISPLAYNAME],
+          });
+          expect(serverResult[boolNodeId]!.displayName!.value, unicodeName);
+        });
+
+        test('writeAttribute overwrite DESCRIPTION twice', () async {
+          server!.addVariableNode(
+            boolNodeId,
+            DynamicValue(value: true, typeId: NodeId.boolean, name: "the.bool"),
+            writeMask: writeMaskAll,
+          );
+          await client!.writeAttribute(
+            boolNodeId,
+            AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+            LocalizedText("First", ""),
+          );
+          await client!.writeAttribute(
+            boolNodeId,
+            AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+            LocalizedText("Second", ""),
+          );
+          final serverResult = await server!.readAttribute({
+            boolNodeId: [AttributeId.UA_ATTRIBUTEID_DESCRIPTION],
+          });
+          expect(serverResult[boolNodeId]!.description!.value, "Second");
+        });
+      });
+
       tearDown(() async {
         // Stop the direct client event loop first
         stopDirectClientLoop();
+        stopServerLoop();
         // Give the loop time to exit
         await Future.delayed(Duration(milliseconds: 20));
         // Delete client before server shutdown to avoid memory corruption
@@ -477,4 +561,5 @@ void main() async {
       });
     });
   }
+
 }

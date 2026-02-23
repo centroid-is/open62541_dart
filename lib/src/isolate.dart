@@ -45,6 +45,13 @@ class ReadAttributeMessage extends IsolateMessage {
   const ReadAttributeMessage(super.requestId, this.nodes);
 }
 
+class WriteAttributeMessage extends IsolateMessage {
+  final NodeId nodeId;
+  final AttributeId attributeId;
+  final dynamic value;
+  const WriteAttributeMessage(super.requestId, this.nodeId, this.attributeId, this.value);
+}
+
 class SubscriptionCreateMessage extends IsolateMessage {
   final Duration requestedPublishingInterval;
   final int requestedLifetimeCount;
@@ -330,6 +337,23 @@ class ClientIsolate implements ClientApi {
     _pendingRequests[id] = completer;
 
     _sendPort.send(WriteMessage(id, nodeId, value));
+
+    try {
+      await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
+  @override
+  Future<void> writeAttribute(NodeId nodeId, AttributeId attributeId, dynamic value) async {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final completer = Completer<void>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(WriteAttributeMessage(id, nodeId, attributeId, value));
 
     try {
       await completer.future;
@@ -755,6 +779,9 @@ void _isolateEntryPoint(_IsolateData data) {
         sendPort.send(IsolateResponse.success(message.requestId, result));
       } else if (message is WriteMessage) {
         await client.write(message.nodeId, message.value);
+        sendPort.send(IsolateResponse.success(message.requestId, null));
+      } else if (message is WriteAttributeMessage) {
+        await client.writeAttribute(message.nodeId, message.attributeId, message.value);
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is ReadAttributeMessage) {
         final result = await client.readAttribute(message.nodes);

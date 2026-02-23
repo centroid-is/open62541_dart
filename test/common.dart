@@ -1,4 +1,41 @@
+import 'dart:async';
+
 import 'package:open62541/open62541.dart';
+
+// Tracks whether the direct client event loop should keep running
+bool _directClientRunning = false;
+
+// Factory function to create different client types
+Future<ClientApi> createClient(String clientType, int port) async {
+  switch (clientType) {
+    case 'isolate':
+      final client = await ClientIsolate.create();
+      // Start event loop BEFORE connect - needed for async operations
+      // Catch errors since runIterate fails when connection is closed (expected in tearDown)
+      unawaited(client.runIterate().catchError((_) {}));
+      unawaited(client.connect("opc.tcp://localhost:$port"));
+      await client.awaitConnect();
+      return client;
+    case 'direct':
+      final client = Client();
+      _directClientRunning = true;
+      // Start event loop BEFORE connect - needed for async operations
+      unawaited(() async {
+        while (_directClientRunning && client.runIterate(Duration(milliseconds: 10))) {
+          await Future.delayed(Duration(milliseconds: 5));
+        }
+      }());
+      await client.connect("opc.tcp://localhost:$port");
+      return client;
+    default:
+      throw ArgumentError('Unknown client type: $clientType');
+  }
+}
+
+// Stop the direct client event loop
+void stopDirectClientLoop() {
+  _directClientRunning = false;
+}
 
 final boolNodeId = NodeId.fromString(1, "the.bool");
 final intNodeId = NodeId.fromString(1, "the.int");
@@ -22,20 +59,30 @@ void addBasicVariables(Server server) {
   server.addVariableNode(stringNodeId, stringValue);
 }
 
+final _runningServers = <Server>{};
+
 Server setupServer(int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR}) {
   final server = Server(port: port, logLevel: logLevel);
   server.start();
+  _runningServers.add(server);
 
   // Run the server while we test
+  // Use waitInterval: false to avoid blocking the Dart event loop in select(),
+  // which is critical when multiple servers/clients share the same isolate.
   () async {
-    while (server.runIterate()) {
-      // The function returns how long it can wait before the next iteration
-      // That is a really high number and causes my tests to run slow.
-      // Lets just wait 50ms
-      await Future.delayed(Duration(milliseconds: 50));
+    while (_runningServers.contains(server) && server.runIterate(waitInterval: false)) {
+      await Future.delayed(Duration(milliseconds: 1));
     }
   }();
   return server;
+}
+
+void stopServerLoop([Server? server]) {
+  if (server != null) {
+    _runningServers.remove(server);
+  } else {
+    _runningServers.clear();
+  }
 }
 
 Future<Client> setupClient(int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_FATAL}) async {
