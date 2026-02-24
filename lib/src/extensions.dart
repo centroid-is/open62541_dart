@@ -264,8 +264,8 @@ enum UaTypes {
   }
 }
 
-// ignore: camel_case_extensions
 // C layout: UA_Byte padding:6 (bits 0-5), isArray:1 (bit 6), isOptional:1 (bit 7)
+// ignore: camel_case_extensions
 extension UA_DataTypeMemberExtension on raw.UA_DataTypeMember {
   int get padding => substitute & 0x3F;
   set padding(int value) => substitute = (substitute & 0xC0) | (value & 0x3F);
@@ -276,7 +276,7 @@ extension UA_DataTypeMemberExtension on raw.UA_DataTypeMember {
 }
 
 // ignore: camel_case_extensions
-extension UA_DataTypeExtension on raw.UA_DataType {
+extension UaDataTypeExtension on raw.UA_DataType {
   int get memSize => substitute & 0xFFFF; // First 16 bits
   set memSize(int value) => substitute = (substitute & 0xFFFF0000) | value; // First 16 bits
   raw.UA_DataTypeKind get typeKind => raw.UA_DataTypeKind.fromValue((substitute >> 16) & 0x3F); // Next 6 bits
