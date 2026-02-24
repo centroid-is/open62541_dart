@@ -1,12 +1,38 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:basic_utils/basic_utils.dart';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import 'common.dart';
+
+/// Generate a self-signed DER certificate and private key for TLS tests.
+/// Returns (certDer, keyDer) as Uint8List pairs.
+(Uint8List, Uint8List) _generateTestCertificates() {
+  final keyPair = CryptoUtils.generateRSAKeyPair(keySize: 2048);
+  final privateKey = keyPair.privateKey as RSAPrivateKey;
+  final publicKey = keyPair.publicKey as RSAPublicKey;
+
+  final csr = X509Utils.generateRsaCsrPem(
+    {'CN': 'OPC UA Test', 'O': 'Test', 'C': 'US'},
+    privateKey,
+    publicKey,
+  );
+
+  final certPem = X509Utils.generateSelfSignedCertificate(
+    privateKey,
+    csr,
+    365,
+    sans: ['localhost', '127.0.0.1'],
+  );
+
+  final certDer = Uint8List.fromList(CryptoUtils.getBytesFromPEMString(certPem));
+  final keyDer = CryptoUtils.encodeRSAPrivateKeyToDERBytes(privateKey);
+
+  return (certDer, keyDer);
+}
 
 void main() {
   for (final clientType in ['direct', 'isolate']) {
@@ -834,8 +860,9 @@ void main() {
     late Uint8List key;
 
     setUpAll(() {
-      cert = File('client_cert.der').readAsBytesSync();
-      key = File('client_key.der').readAsBytesSync();
+      final certs = _generateTestCertificates();
+      cert = certs.$1;
+      key = certs.$2;
     });
 
     tearDown(() async {
@@ -882,8 +909,9 @@ void main() {
     late Uint8List key;
 
     setUpAll(() {
-      cert = File('client_cert.der').readAsBytesSync();
-      key = File('client_key.der').readAsBytesSync();
+      final certs = _generateTestCertificates();
+      cert = certs.$1;
+      key = certs.$2;
     });
 
     tearDown(() async {
