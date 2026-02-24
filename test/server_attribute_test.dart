@@ -647,11 +647,7 @@ void main() {
             parentNodeId: NodeId.fromNumeric(0, 85), // ObjectsFolder
           );
 
-          final result = await client!.call(
-            NodeId.fromNumeric(0, 85),
-            methodNodeId,
-            [],
-          );
+          final result = await client!.call(NodeId.fromNumeric(0, 85), methodNodeId, []);
           expect(called, isTrue);
           expect(result, isEmpty);
         });
@@ -666,20 +662,14 @@ void main() {
               final inputVal = inputs.first.value as int;
               return [DynamicValue(value: inputVal * 2, typeId: NodeId.int32)];
             },
-            inputArguments: [
-              DynamicValue(name: 'value', typeId: NodeId.int32),
-            ],
-            outputArguments: [
-              DynamicValue(name: 'result', typeId: NodeId.int32),
-            ],
+            inputArguments: [DynamicValue(name: 'value', typeId: NodeId.int32)],
+            outputArguments: [DynamicValue(name: 'result', typeId: NodeId.int32)],
             parentNodeId: NodeId.fromNumeric(0, 85),
           );
 
-          final result = await client!.call(
-            NodeId.fromNumeric(0, 85),
-            methodNodeId,
-            [DynamicValue(value: 21, typeId: NodeId.int32)],
-          );
+          final result = await client!.call(NodeId.fromNumeric(0, 85), methodNodeId, [
+            DynamicValue(value: 21, typeId: NodeId.int32),
+          ]);
           expect(result.length, 1);
           expect(result.first.value, 42);
         });
@@ -709,14 +699,10 @@ void main() {
             parentNodeId: NodeId.fromNumeric(0, 85),
           );
 
-          final result = await client!.call(
-            NodeId.fromNumeric(0, 85),
-            methodNodeId,
-            [
-              DynamicValue(value: 3, typeId: NodeId.int32),
-              DynamicValue(value: 7, typeId: NodeId.int32),
-            ],
-          );
+          final result = await client!.call(NodeId.fromNumeric(0, 85), methodNodeId, [
+            DynamicValue(value: 3, typeId: NodeId.int32),
+            DynamicValue(value: 7, typeId: NodeId.int32),
+          ]);
           expect(result.length, 2);
           expect(result[0].value, 10); // 3 + 7
           expect(result[1].value, 21); // 3 * 7
@@ -734,21 +720,15 @@ void main() {
               final name = inputs.first.value as String;
               return [DynamicValue(value: 'Hello, $name!', typeId: NodeId.uastring)];
             },
-            inputArguments: [
-              DynamicValue(name: 'name', typeId: NodeId.uastring),
-            ],
-            outputArguments: [
-              DynamicValue(name: 'greeting', typeId: NodeId.uastring),
-            ],
+            inputArguments: [DynamicValue(name: 'name', typeId: NodeId.uastring)],
+            outputArguments: [DynamicValue(name: 'greeting', typeId: NodeId.uastring)],
             parentNodeId: objectNodeId,
             referenceTypeId: NodeId.fromNumeric(0, 47), // HasComponent
           );
 
-          final result = await client!.call(
-            objectNodeId,
-            methodNodeId,
-            [DynamicValue(value: 'World', typeId: NodeId.uastring)],
-          );
+          final result = await client!.call(objectNodeId, methodNodeId, [
+            DynamicValue(value: 'World', typeId: NodeId.uastring),
+          ]);
           expect(result.length, 1);
           expect(result.first.value, 'Hello, World!');
         });

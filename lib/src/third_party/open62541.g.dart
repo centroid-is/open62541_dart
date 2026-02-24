@@ -688,21 +688,23 @@ external int UA_Server_addVariableTypeNode(
     UA_NodeId,
     UA_QualifiedName,
     UA_MethodAttributes,
-    ffi.Pointer<ffi.NativeFunction<
-      UA_StatusCode Function(
-        ffi.Pointer<UA_Server>,
-        ffi.Pointer<UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Size,
-        ffi.Pointer<UA_Variant>,
-        ffi.Size,
-        ffi.Pointer<UA_Variant>,
-      )
-    >>,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        UA_StatusCode Function(
+          ffi.Pointer<UA_Server>,
+          ffi.Pointer<UA_NodeId>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Pointer<UA_NodeId>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Pointer<UA_NodeId>,
+          ffi.Pointer<ffi.Void>,
+          ffi.Size,
+          ffi.Pointer<UA_Variant>,
+          ffi.Size,
+          ffi.Pointer<UA_Variant>,
+        )
+      >
+    >,
     ffi.Size,
     ffi.Pointer<UA_Argument>,
     ffi.Size,
@@ -718,21 +720,24 @@ external int UA_Server_addMethodNode(
   UA_NodeId referenceTypeId,
   UA_QualifiedName browseName,
   UA_MethodAttributes attr,
-  ffi.Pointer<ffi.NativeFunction<
-    UA_StatusCode Function(
-      ffi.Pointer<UA_Server>,
-      ffi.Pointer<UA_NodeId>,
-      ffi.Pointer<ffi.Void>,
-      ffi.Pointer<UA_NodeId>,
-      ffi.Pointer<ffi.Void>,
-      ffi.Pointer<UA_NodeId>,
-      ffi.Pointer<ffi.Void>,
-      ffi.Size,
-      ffi.Pointer<UA_Variant>,
-      ffi.Size,
-      ffi.Pointer<UA_Variant>,
-    )
-  >> method,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      UA_StatusCode Function(
+        ffi.Pointer<UA_Server>,
+        ffi.Pointer<UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Size,
+        ffi.Pointer<UA_Variant>,
+        ffi.Size,
+        ffi.Pointer<UA_Variant>,
+      )
+    >
+  >
+  method,
   int inputArgumentsSize,
   ffi.Pointer<UA_Argument> inputArguments,
   int outputArgumentsSize,

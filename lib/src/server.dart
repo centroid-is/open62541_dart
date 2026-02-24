@@ -349,55 +349,56 @@ class Server {
     }
 
     // Create the native callback
-    final nativeCallback = ffi.NativeCallable<
-      raw.UA_StatusCode Function(
-        ffi.Pointer<raw.UA_Server>,
-        ffi.Pointer<raw.UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<raw.UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<raw.UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Size,
-        ffi.Pointer<raw.UA_Variant>,
-        ffi.Size,
-        ffi.Pointer<raw.UA_Variant>,
-      )
-    >.isolateLocal((
-      ffi.Pointer<raw.UA_Server> server,
-      ffi.Pointer<raw.UA_NodeId> sessionId,
-      ffi.Pointer<ffi.Void> sessionContext,
-      ffi.Pointer<raw.UA_NodeId> methodId,
-      ffi.Pointer<ffi.Void> methodContext,
-      ffi.Pointer<raw.UA_NodeId> objectId,
-      ffi.Pointer<ffi.Void> objectContext,
-      int inputSize,
-      ffi.Pointer<raw.UA_Variant> input,
-      int outputSize,
-      ffi.Pointer<raw.UA_Variant> output,
-    ) {
-      try {
-        // Marshal inputs
-        final inputs = <DynamicValue>[];
-        for (var i = 0; i < inputSize; i++) {
-          inputs.add(variantToValue(input[i]));
-        }
+    final nativeCallback =
+        ffi.NativeCallable<
+          raw.UA_StatusCode Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Size,
+            ffi.Pointer<raw.UA_Variant>,
+            ffi.Size,
+            ffi.Pointer<raw.UA_Variant>,
+          )
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Server> server,
+          ffi.Pointer<raw.UA_NodeId> sessionId,
+          ffi.Pointer<ffi.Void> sessionContext,
+          ffi.Pointer<raw.UA_NodeId> methodId,
+          ffi.Pointer<ffi.Void> methodContext,
+          ffi.Pointer<raw.UA_NodeId> objectId,
+          ffi.Pointer<ffi.Void> objectContext,
+          int inputSize,
+          ffi.Pointer<raw.UA_Variant> input,
+          int outputSize,
+          ffi.Pointer<raw.UA_Variant> output,
+        ) {
+          try {
+            // Marshal inputs
+            final inputs = <DynamicValue>[];
+            for (var i = 0; i < inputSize; i++) {
+              inputs.add(variantToValue(input[i]));
+            }
 
-        // Call Dart callback
-        final results = callback(inputs);
+            // Call Dart callback
+            final results = callback(inputs);
 
-        // Marshal outputs using UA_Variant_copy for proper deep copy
-        for (var i = 0; i < results.length && i < outputSize; i++) {
-          final variantPtr = valueToVariant(results[i]);
-          raw.UA_Variant_copy(variantPtr, output + i);
-          raw.UA_Variant_delete(variantPtr);
-        }
+            // Marshal outputs using UA_Variant_copy for proper deep copy
+            for (var i = 0; i < results.length && i < outputSize; i++) {
+              final variantPtr = valueToVariant(results[i]);
+              raw.UA_Variant_copy(variantPtr, output + i);
+              raw.UA_Variant_delete(variantPtr);
+            }
 
-        return raw.UA_STATUSCODE_GOOD;
-      } catch (_) {
-        return raw.UA_STATUSCODE_BADINTERNALERROR;
-      }
-    }, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
+            return raw.UA_STATUSCODE_GOOD;
+          } catch (_) {
+            return raw.UA_STATUSCODE_BADINTERNALERROR;
+          }
+        }, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
 
     // Store the callable so it doesn't get garbage collected
     _methodCallbacks.add(nativeCallback);
@@ -505,43 +506,41 @@ class Server {
       }
     }
 
-    final onReadCallable = ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Server>,
-        ffi.Pointer<raw.UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<raw.UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<raw.UA_NumericRange>,
-        ffi.Pointer<raw.UA_DataValue>,
-      )
-    >.isolateLocal(onRead);
+    final onReadCallable =
+        ffi.NativeCallable<
+          ffi.Void Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NumericRange>,
+            ffi.Pointer<raw.UA_DataValue>,
+          )
+        >.isolateLocal(onRead);
 
-    final onWriteCallable = ffi.NativeCallable<
-      ffi.Void Function(
-        ffi.Pointer<raw.UA_Server>,
-        ffi.Pointer<raw.UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<raw.UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<raw.UA_NumericRange>,
-        ffi.Pointer<raw.UA_DataValue>,
-      )
-    >.isolateLocal(onWrite);
+    final onWriteCallable =
+        ffi.NativeCallable<
+          ffi.Void Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NumericRange>,
+            ffi.Pointer<raw.UA_DataValue>,
+          )
+        >.isolateLocal(onWrite);
 
     final callback = ua_calloc<raw.UA_ValueSourceNotifications>();
     callback.ref.onRead = onReadCallable.nativeFunction;
     callback.ref.onWrite = onWriteCallable.nativeFunction;
 
-    raw.UA_Server_setVariableNode_internalValueSource(
-      _server, variableNodeId.toRaw(), ffi.nullptr, callback,
-    );
+    raw.UA_Server_setVariableNode_internalValueSource(_server, variableNodeId.toRaw(), ffi.nullptr, callback);
 
     controller.onCancel = () {
       // Clear callbacks on the node by passing nullptr for notifications
-      raw.UA_Server_setVariableNode_internalValueSource(
-        _server, variableNodeId.toRaw(), ffi.nullptr, ffi.nullptr,
-      );
+      raw.UA_Server_setVariableNode_internalValueSource(_server, variableNodeId.toRaw(), ffi.nullptr, ffi.nullptr);
 
       onReadCallable.close();
       onWriteCallable.close();
