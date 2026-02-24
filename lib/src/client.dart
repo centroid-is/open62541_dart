@@ -1297,7 +1297,54 @@ class Client implements ClientApi {
                 "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value)}").join(", ")}",
               );
               controller.close(); // Call onCancel above
+              return;
             }
+
+            // Backfill initial notifications that may have been dropped by a race
+            // condition in open62541: the server can send Publish responses with
+            // initial data change notifications before the CreateMonitoredItems
+            // response is processed, causing the C library to drop them because
+            // the monitored item isn't registered in the subscription tree yet.
+            // Static attributes (DATATYPE, DISPLAYNAME, DESCRIPTION) are only sent
+            // once, so if the initial notification is lost, the seenMonIds gate
+            // will never be satisfied and the stream will never emit.
+            Future.delayed(const Duration(seconds: 1), () async {
+              if (controller.isClosed || _client == ffi.nullptr) return;
+              final expectedCount = nodeCount - descriptionFailureCount;
+              if (seenMonIds.length >= expectedCount) return;
+
+              final missingAttrs = <NodeId, List<AttributeId>>{};
+              for (final entry in monIdToNodeAndAttribute.entries) {
+                if (!seenMonIds.contains(entry.key)) {
+                  missingAttrs.putIfAbsent(entry.value.item1, () => []).add(entry.value.item2);
+                }
+              }
+              if (missingAttrs.isEmpty) return;
+
+              try {
+                final results = await readAttribute(missingAttrs);
+                if (controller.isClosed) return;
+                if (seenMonIds.length >= expectedCount) return;
+                for (final entry in results.entries) {
+                  final existing = latestValues[entry.key] ?? DynamicValue();
+                  existing.description ??= entry.value.description;
+                  existing.displayName ??= entry.value.displayName;
+                  existing.typeId ??= entry.value.typeId;
+                  existing.value ??= entry.value.value;
+                  existing.enumFields ??= entry.value.enumFields;
+                  existing.extObjEncodingId ??= entry.value.extObjEncodingId;
+                  latestValues[entry.key] = existing;
+                }
+                for (final monId in monIdToNodeAndAttribute.keys) {
+                  seenMonIds.add(monId);
+                }
+                if (!controller.isClosed && seenMonIds.length >= expectedCount) {
+                  controller.add(latestValues);
+                }
+              } catch (e) {
+                stderr.writeln('Failed to backfill dropped initial notifications: $e');
+              }
+            });
           });
       localRequestId = ua_calloc<ffi.Uint32>();
       final statusCode = raw.UA_Client_MonitoredItems_createDataChanges_async(
