@@ -15,18 +15,9 @@ import 'common.dart';
   final privateKey = keyPair.privateKey as RSAPrivateKey;
   final publicKey = keyPair.publicKey as RSAPublicKey;
 
-  final csr = X509Utils.generateRsaCsrPem(
-    {'CN': 'OPC UA Test', 'O': 'Test', 'C': 'US'},
-    privateKey,
-    publicKey,
-  );
+  final csr = X509Utils.generateRsaCsrPem({'CN': 'OPC UA Test', 'O': 'Test', 'C': 'US'}, privateKey, publicKey);
 
-  final certPem = X509Utils.generateSelfSignedCertificate(
-    privateKey,
-    csr,
-    365,
-    sans: ['localhost', '127.0.0.1'],
-  );
+  final certPem = X509Utils.generateSelfSignedCertificate(privateKey, csr, 365, sans: ['localhost', '127.0.0.1']);
 
   final certDer = Uint8List.fromList(CryptoUtils.getBytesFromPEMString(certPem));
   final keyDer = CryptoUtils.encodeRSAPrivateKeyToDERBytes(privateKey);
