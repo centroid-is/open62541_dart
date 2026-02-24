@@ -2702,6 +2702,16 @@ enum UA_SecurityTokenRequestType {
   };
 }
 
+final class UA_UserNameIdentityToken extends ffi.Struct {
+  external UA_String policyId;
+
+  external UA_String userName;
+
+  external UA_ByteString password;
+
+  external UA_String encryptionAlgorithm;
+}
+
 enum UA_NodeAttributesMask {
   UA_NODEATTRIBUTESMASK_NONE(0),
   UA_NODEATTRIBUTESMASK_ACCESSLEVEL(1),

@@ -134,6 +134,11 @@ class Server {
   late ffi.Pointer<raw.UA_Server> _server;
   late ffi.Pointer<raw.UA_ServerConfig> _config;
   final _methodCallbacks = <ffi.NativeCallable>[];
+  final _methodAccessRules = <NodeId, Set<String>>{};
+  final _sessionUsernames = <String, String>{}; // sessionId string → username
+  ffi.NativeCallable? _accessControlCallable;
+  ffi.NativeCallable? _activateSessionCallable;
+  ffi.NativeCallable? _closeSessionCallable;
 
   /// Initializes and starts the OPC UA server.
   ///
@@ -530,6 +535,162 @@ class Server {
     if (retCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add method node: ${statusCodeToString(retCode)}';
     }
+  }
+
+  /// Restrict a method node so only [allowedUsers] may call it.
+  ///
+  /// Overrides `getUserExecutableOnObject` in the server's access control.
+  /// Methods without a rule are unrestricted (default allow).
+  /// Anonymous sessions are denied if a rule exists.
+  void setMethodAccess(NodeId methodNodeId, {required Set<String> allowedUsers}) {
+    _methodAccessRules[methodNodeId] = allowedUsers;
+    _installSessionTracking();
+    _installAccessControlCallback();
+  }
+
+  /// String key for any UA_NodeId type (including GUID session IDs).
+  static String _nodeIdKey(raw.UA_NodeId id) {
+    final ns = id.namespaceIndex;
+    switch (id.identifierType) {
+      case raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC:
+        return 'ns=$ns;i=${id.identifier.numeric}';
+      case raw.UA_NodeIdType.UA_NODEIDTYPE_STRING:
+        return 'ns=$ns;s=${id.identifier.string.value}';
+      case raw.UA_NodeIdType.UA_NODEIDTYPE_GUID:
+        final g = id.identifier.guid;
+        return 'ns=$ns;g=${g.data1}-${g.data2}-${g.data3}';
+      case raw.UA_NodeIdType.UA_NODEIDTYPE_BYTESTRING:
+        return 'ns=$ns;b=${id.identifier.byteString.length}';
+    }
+  }
+
+  /// Wraps activateSession/closeSession to track which username is associated
+  /// with each sessionId. open62541 v1.5's default activateSession does NOT
+  /// store the username in sessionContext, so we do it ourselves.
+  void _installSessionTracking() {
+    if (_activateSessionCallable != null) return; // already installed
+
+    // Save original functions before overwriting
+    final originalActivateFn = _config.ref.accessControl.activateSession.asFunction<
+      int Function(
+        ffi.Pointer<raw.UA_Server>,
+        ffi.Pointer<raw.UA_AccessControl>,
+        ffi.Pointer<raw.UA_EndpointDescription>,
+        ffi.Pointer<raw.UA_ByteString>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<raw.UA_ExtensionObject>,
+        ffi.Pointer<ffi.Pointer<ffi.Void>>,
+      )
+    >();
+    final originalCloseFn = _config.ref.accessControl.closeSession.asFunction<
+      void Function(
+        ffi.Pointer<raw.UA_Server>,
+        ffi.Pointer<raw.UA_AccessControl>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+      )
+    >();
+
+    // Wrap activateSession to extract username on successful login
+    final activateCallable = ffi.NativeCallable<
+      raw.UA_StatusCode Function(
+        ffi.Pointer<raw.UA_Server>,
+        ffi.Pointer<raw.UA_AccessControl>,
+        ffi.Pointer<raw.UA_EndpointDescription>,
+        ffi.Pointer<raw.UA_ByteString>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<raw.UA_ExtensionObject>,
+        ffi.Pointer<ffi.Pointer<ffi.Void>>,
+      )
+    >.isolateLocal((
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_AccessControl> ac,
+      ffi.Pointer<raw.UA_EndpointDescription> endpointDescription,
+      ffi.Pointer<raw.UA_ByteString> secureChannelRemoteCertificate,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<raw.UA_ExtensionObject> userIdentityToken,
+      ffi.Pointer<ffi.Pointer<ffi.Void>> sessionContext,
+    ) {
+      final result = originalActivateFn(
+        server, ac, endpointDescription, secureChannelRemoteCertificate,
+        sessionId, userIdentityToken, sessionContext,
+      );
+
+      if (result == raw.UA_STATUSCODE_GOOD &&
+          userIdentityToken.ref.encodingAsInt >=
+              raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_DECODED.value) {
+        final tokenTypeId = userIdentityToken.ref.content.decoded.type.ref.typeId.toNodeId();
+        if (tokenTypeId == NodeId.fromNumeric(0, raw.UA_NS0ID_USERNAMEIDENTITYTOKEN)) {
+          final userToken =
+              userIdentityToken.ref.content.decoded.data.cast<raw.UA_UserNameIdentityToken>();
+          _sessionUsernames[_nodeIdKey(sessionId.ref)] = userToken.ref.userName.value;
+        }
+      }
+
+      return result;
+    }, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
+
+    _activateSessionCallable = activateCallable;
+    _config.ref.accessControl.activateSession = activateCallable.nativeFunction;
+
+    // Wrap closeSession to clean up our map
+    final closeCallable = ffi.NativeCallable<
+      ffi.Void Function(
+        ffi.Pointer<raw.UA_Server>,
+        ffi.Pointer<raw.UA_AccessControl>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+      )
+    >.isolateLocal((
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_AccessControl> ac,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionContext,
+    ) {
+      _sessionUsernames.remove(_nodeIdKey(sessionId.ref));
+      originalCloseFn(server, ac, sessionId, sessionContext);
+    });
+
+    _closeSessionCallable = closeCallable;
+    _config.ref.accessControl.closeSession = closeCallable.nativeFunction;
+  }
+
+  void _installAccessControlCallback() {
+    if (_accessControlCallable != null) return; // already installed
+
+    final callable = ffi.NativeCallable<
+      ffi.Bool Function(
+        ffi.Pointer<raw.UA_Server>,
+        ffi.Pointer<raw.UA_AccessControl>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+      )
+    >.isolateLocal((
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_AccessControl> ac,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionContext,
+      ffi.Pointer<raw.UA_NodeId> methodId,
+      ffi.Pointer<ffi.Void> methodContext,
+      ffi.Pointer<raw.UA_NodeId> objectId,
+      ffi.Pointer<ffi.Void> objectContext,
+    ) {
+      final dartMethodId = methodId.ref.toNodeId();
+      final allowedUsers = _methodAccessRules[dartMethodId];
+      if (allowedUsers == null) return true; // no restriction
+
+      final sessionIdStr = _nodeIdKey(sessionId.ref);
+      final username = _sessionUsernames[sessionIdStr];
+      if (username == null) return false; // anonymous or unknown
+      return allowedUsers.contains(username);
+    }, exceptionalReturn: false);
+
+    _accessControlCallable = callable;
+    _config.ref.accessControl.getUserExecutableOnObject = callable.nativeFunction;
   }
 
   void _addNode(

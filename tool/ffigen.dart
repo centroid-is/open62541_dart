@@ -224,6 +224,7 @@ Future<void> main() async {
       'UA_BrowseResult',
       'UA_ReferenceDescription',
       'UA_UsernamePasswordLogin',
+      'UA_UserNameIdentityToken',
     }),
     typedefs: Typedefs.includeSet({
       'UA_Byte',

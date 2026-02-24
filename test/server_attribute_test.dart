@@ -937,4 +937,120 @@ void main() {
       await client.delete();
     });
   });
+
+  // ── Per-method access control ──
+  group('Server method access control', () {
+    int port = Random().nextInt(10000) + 4840;
+    Server? server;
+
+    tearDown(() async {
+      stopServerLoop();
+      await Future.delayed(Duration(milliseconds: 20));
+      server?.shutdown();
+      server?.delete();
+      server = null;
+    });
+
+    test('restricted method rejects unauthorized user', () async {
+      server = setupServer(
+        port,
+        users: {'admin': 'admin123', 'user': 'user123'},
+        allowAnonymous: false,
+        allowNonePolicyPassword: true,
+      );
+
+      final methodId = NodeId.fromString(1, 'test.admin.only');
+      server!.addMethodNode(
+        methodId,
+        'AdminOnly',
+        callback: (inputs) => [DynamicValue(value: 42, typeId: NodeId.int32)],
+        outputArguments: [DynamicValue(name: 'result', typeId: NodeId.int32)],
+      );
+      server!.setMethodAccess(methodId, allowedUsers: {'admin'});
+
+      final client = await setupClientWithAuth(port, username: 'user', password: 'user123');
+      await expectLater(
+        client.call(NodeId.objectsFolder, methodId, []),
+        throwsA(contains('BadNotExecutable')),
+      );
+      client.disconnect();
+      await client.delete();
+    });
+
+    test('restricted method allows authorized user', () async {
+      server = setupServer(
+        port,
+        users: {'admin': 'admin123', 'user': 'user123'},
+        allowAnonymous: false,
+        allowNonePolicyPassword: true,
+      );
+
+      final methodId = NodeId.fromString(1, 'test.admin.only2');
+      server!.addMethodNode(
+        methodId,
+        'AdminOnly2',
+        callback: (inputs) => [DynamicValue(value: 42, typeId: NodeId.int32)],
+        outputArguments: [DynamicValue(name: 'result', typeId: NodeId.int32)],
+      );
+      server!.setMethodAccess(methodId, allowedUsers: {'admin'});
+
+      final client = await setupClientWithAuth(port, username: 'admin', password: 'admin123');
+      final result = await client.call(NodeId.objectsFolder, methodId, []);
+      expect(result.first.value, 42);
+      client.disconnect();
+      await client.delete();
+    });
+
+    test('unrestricted method allows all users', () async {
+      server = setupServer(
+        port,
+        users: {'admin': 'admin123', 'user': 'user123'},
+        allowAnonymous: false,
+        allowNonePolicyPassword: true,
+      );
+
+      final methodId = NodeId.fromString(1, 'test.unrestricted');
+      server!.addMethodNode(
+        methodId,
+        'Unrestricted',
+        callback: (inputs) => [DynamicValue(value: 99, typeId: NodeId.int32)],
+        outputArguments: [DynamicValue(name: 'result', typeId: NodeId.int32)],
+      );
+      // No setMethodAccess — all users can call
+
+      final client = await setupClientWithAuth(port, username: 'user', password: 'user123');
+      final result = await client.call(NodeId.objectsFolder, methodId, []);
+      expect(result.first.value, 99);
+      client.disconnect();
+      await client.delete();
+    });
+
+    test('restricted method rejects anonymous user', () async {
+      server = setupServer(
+        port,
+        users: {'admin': 'admin123'},
+        allowAnonymous: true,
+        allowNonePolicyPassword: true,
+      );
+
+      final methodId = NodeId.fromString(1, 'test.admin.noanon');
+      server!.addMethodNode(
+        methodId,
+        'AdminNoAnon',
+        callback: (inputs) => [DynamicValue(value: 42, typeId: NodeId.int32)],
+        outputArguments: [DynamicValue(name: 'result', typeId: NodeId.int32)],
+      );
+      server!.setMethodAccess(methodId, allowedUsers: {'admin'});
+
+      // Anonymous client should be denied
+      final client = await setupClient(port);
+      await expectLater(
+        client.call(NodeId.objectsFolder, methodId, []),
+        throwsA(contains('BadNotExecutable')),
+      );
+      client.disconnect();
+      await client.delete();
+    });
+  });
+
 }
