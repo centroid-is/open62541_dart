@@ -61,8 +61,13 @@ void addBasicVariables(Server server) {
 
 final _runningServers = <Server>{};
 
-Server setupServer(int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR}) {
-  final server = Server(port: port, logLevel: logLevel);
+Server setupServer(
+  int port, {
+  LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR,
+  int? maxSecureChannels,
+  int? maxSessions,
+}) {
+  final server = Server(port: port, logLevel: logLevel, maxSecureChannels: maxSecureChannels, maxSessions: maxSessions);
   server.start();
   _runningServers.add(server);
 

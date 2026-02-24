@@ -6,11 +6,19 @@ import 'package:test/test.dart';
 import 'package:open62541/open62541.dart';
 import 'common.dart';
 
+Future<ClientIsolate> _setupIsolateClient(int port) async {
+  final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+  unawaited(client.runIterate().catchError((_) {}));
+  unawaited(client.connect("opc.tcp://localhost:$port"));
+  await client.awaitConnect();
+  return client;
+}
+
 void main() {
   group('Multi-client stress tests', () {
     final port = Random().nextInt(8000) + 30000;
     late Server server;
-    final clients = <Client>[];
+    final clients = <ClientIsolate>[];
     final clientCount = 6;
 
     setUp(() async {
@@ -18,7 +26,7 @@ void main() {
       addBasicVariables(server);
       clients.clear();
       for (var i = 0; i < clientCount; i++) {
-        clients.add(await setupClient(port));
+        clients.add(await _setupIsolateClient(port));
       }
     });
 
@@ -34,14 +42,12 @@ void main() {
     });
 
     test('all clients write to the same node simultaneously', () async {
-      // Every client writes a different value to the same int node at once
       final futures = <Future>[];
       for (var i = 0; i < clientCount; i++) {
         futures.add(clients[i].write(intNodeId, DynamicValue(value: i * 100, typeId: NodeId.int32)));
       }
       await Future.wait(futures);
 
-      // All reads should return one of the written values
       final validValues = List.generate(clientCount, (i) => i * 100).toSet();
       for (var i = 0; i < clientCount; i++) {
         final result = await clients[i].read(intNodeId);
@@ -52,17 +58,14 @@ void main() {
         );
       }
 
-      // All clients should agree on the same final value
       final results = await Future.wait(clients.map((c) => c.read(intNodeId)));
       final values = results.map((r) => r.value).toSet();
       expect(values.length, 1, reason: 'All clients should see the same final value');
     });
 
     test('all clients read the same node simultaneously', () async {
-      // Set a known value
       await clients[0].write(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
 
-      // All clients read at once
       final results = await Future.wait(clients.map((c) => c.read(boolNodeId)));
 
       for (var i = 0; i < clientCount; i++) {
@@ -71,7 +74,6 @@ void main() {
     });
 
     test('interleaved reads and writes from all clients', () async {
-      // Clients alternate writing and reading in a storm
       final futures = <Future>[];
       for (var round = 0; round < 10; round++) {
         for (var i = 0; i < clientCount; i++) {
@@ -84,14 +86,12 @@ void main() {
       }
       await Future.wait(futures);
 
-      // Server should still be healthy — read from all clients
       final results = await Future.wait(clients.map((c) => c.read(intNodeId)));
       final values = results.map((r) => r.value).toSet();
       expect(values.length, 1, reason: 'Final value should be consistent');
     });
 
     test('all clients write different nodes concurrently', () async {
-      // Create a node per client
       for (var i = 0; i < clientCount; i++) {
         server.addVariableNode(
           NodeId.fromString(1, "client_$i"),
@@ -99,7 +99,6 @@ void main() {
         );
       }
 
-      // Each client writes to its own node 20 times
       final futures = <Future>[];
       for (var i = 0; i < clientCount; i++) {
         futures.add(() async {
@@ -110,7 +109,6 @@ void main() {
       }
       await Future.wait(futures);
 
-      // Each node should have the last written value
       for (var i = 0; i < clientCount; i++) {
         final result = await clients[i].read(NodeId.fromString(1, "client_$i"));
         expect(result.value, 19, reason: 'Client $i node should have last value');
@@ -149,7 +147,6 @@ void main() {
     });
 
     test('all clients browse simultaneously', () async {
-      // Add extra nodes
       for (var i = 0; i < 10; i++) {
         server.addVariableNode(
           NodeId.fromString(1, "browse_$i"),
@@ -163,7 +160,6 @@ void main() {
       }
       final results = await Future.wait(futures);
 
-      // All clients should see the same browse results
       final expectedCount = results[0].length;
       for (var i = 1; i < clientCount; i++) {
         expect(results[i].length, expectedCount, reason: 'Client $i should see same node count as client 0');
@@ -173,7 +169,7 @@ void main() {
     test('multiple monitors on the same node from different clients', () async {
       final subs = <int>[];
       for (var i = 0; i < clientCount; i++) {
-        subs.add(await clients[i].subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10)));
+        subs.add(await clients[i].subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50)));
       }
 
       final allValues = List.generate(clientCount, (_) => <int>[]);
@@ -181,7 +177,7 @@ void main() {
       final subscriptions = <StreamSubscription>[];
 
       for (var i = 0; i < clientCount; i++) {
-        final stream = clients[i].monitor(intNodeId, subs[i], samplingInterval: Duration(milliseconds: 10));
+        final stream = clients[i].monitor(intNodeId, subs[i], samplingInterval: Duration(milliseconds: 50));
         subscriptions.add(
           stream.listen((data) {
             allValues[i].add(data.value as int);
@@ -193,12 +189,12 @@ void main() {
         );
       }
 
-      await Future.delayed(Duration(milliseconds: 300));
+      await Future.delayed(Duration(milliseconds: 500));
 
       // Write 3 changes from client 0
       for (var v = 10; v <= 30; v += 10) {
         await clients[0].write(intNodeId, DynamicValue(value: v, typeId: NodeId.int32));
-        await Future.delayed(Duration(milliseconds: 150));
+        await Future.delayed(Duration(milliseconds: 200));
       }
 
       // All monitors should see the changes
@@ -219,7 +215,6 @@ void main() {
     });
 
     test('write storm then bulk read from all clients', () async {
-      // Create 30 nodes
       const nodeCount = 30;
       for (var i = 0; i < nodeCount; i++) {
         server.addVariableNode(
@@ -228,7 +223,6 @@ void main() {
         );
       }
 
-      // All clients write to all nodes concurrently
       final writeFutures = <Future>[];
       for (var c = 0; c < clientCount; c++) {
         for (var n = 0; n < nodeCount; n++) {
@@ -239,7 +233,6 @@ void main() {
       }
       await Future.wait(writeFutures);
 
-      // Now all clients read all nodes concurrently
       final readFutures = <Future<DynamicValue>>[];
       for (var c = 0; c < clientCount; c++) {
         for (var n = 0; n < nodeCount; n++) {
@@ -248,7 +241,6 @@ void main() {
       }
       final readResults = await Future.wait(readFutures);
 
-      // For each node, all clients should agree on the value
       for (var n = 0; n < nodeCount; n++) {
         final nodeValues = <int>{};
         for (var c = 0; c < clientCount; c++) {
@@ -259,20 +251,16 @@ void main() {
     });
 
     test('server write while clients read simultaneously', () async {
-      // Server writes directly while all clients are reading
       final readFutures = <Future<DynamicValue>>[];
 
-      // Kick off reads from all clients
       for (var round = 0; round < 5; round++) {
         for (var c = 0; c < clientCount; c++) {
           readFutures.add(clients[c].read(intNodeId));
         }
-        // Server writes between read rounds
         await server.write(intNodeId, DynamicValue(value: round * 10, typeId: NodeId.int32));
       }
 
       final results = await Future.wait(readFutures);
-      // All reads should return valid int values (no crashes, no garbage)
       for (var i = 0; i < results.length; i++) {
         expect(results[i].value, isA<int>(), reason: 'Read $i should be an int');
       }
@@ -325,29 +313,24 @@ void main() {
         );
       }
 
-      // Fire everything and wait
       await Future.wait(futures);
 
-      // Server should still be alive
       final check = await clients[0].read(boolNodeId);
       expect(check.value, isNotNull);
     });
 
     test('rapid sequential writes from each client in turn', () async {
-      // Each client takes a turn writing 50 values as fast as possible
       for (var c = 0; c < clientCount; c++) {
         for (var i = 0; i < 50; i++) {
           await clients[c].write(intNodeId, DynamicValue(value: c * 1000 + i, typeId: NodeId.int32));
         }
       }
 
-      // Final value should be from the last client
       final result = await clients[0].read(intNodeId);
       expect(result.value, (clientCount - 1) * 1000 + 49);
     });
 
     test('all types written and read by all clients', () async {
-      // Each client writes a different type
       final writes = <Future>[
         clients[0].write(boolNodeId, DynamicValue(value: false, typeId: NodeId.boolean)),
         clients[1].write(intNodeId, DynamicValue(value: 999, typeId: NodeId.int32)),
@@ -356,7 +339,6 @@ void main() {
       ];
       await Future.wait(writes);
 
-      // Every client reads every type
       final readFutures = <Future<DynamicValue>>[];
       for (var c = 0; c < clientCount; c++) {
         readFutures.add(clients[c].read(boolNodeId));

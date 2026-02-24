@@ -11,7 +11,7 @@ import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
 class Server {
-  Server({LogLevel? logLevel, int? port}) {
+  Server({LogLevel? logLevel, int? port, int? maxSecureChannels, int? maxSessions}) {
     final config = ua_calloc<raw.UA_ServerConfig>();
 
     if (logLevel != null) {
@@ -22,6 +22,9 @@ class Server {
     if (res != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to set default server config ${statusCodeToString(res)}';
     }
+
+    if (maxSecureChannels != null) config.ref.maxSecureChannels = maxSecureChannels;
+    if (maxSessions != null) config.ref.maxSessions = maxSessions;
 
     _server = raw.UA_Server_newWithConfig(config);
     _config = raw.UA_Server_getConfig(_server);

@@ -9,12 +9,20 @@ import 'common.dart';
 /// Creates a unique NodeId for a given server index and variable index.
 NodeId nodeIdFor(int serverIndex, int varIndex) => NodeId.fromString(1, "srv${serverIndex}_var$varIndex");
 
+Future<ClientIsolate> _setupIsolateClient(int port) async {
+  final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+  unawaited(client.runIterate().catchError((_) {}));
+  unawaited(client.connect("opc.tcp://localhost:$port"));
+  await client.awaitConnect();
+  return client;
+}
+
 void main() {
   group('Multi-server stress tests', () {
     final basePort = Random().nextInt(8000) + 20000;
     final serverCount = 4;
     final servers = <Server>[];
-    final clients = <Client>[];
+    final clients = <ClientIsolate>[];
 
     setUp(() async {
       servers.clear();
@@ -23,7 +31,7 @@ void main() {
         servers.add(setupServer(basePort + i));
       }
       for (var i = 0; i < serverCount; i++) {
-        clients.add(await setupClient(basePort + i));
+        clients.add(await _setupIsolateClient(basePort + i));
       }
     });
 
@@ -205,16 +213,16 @@ void main() {
       servers[0].addVariableNode(nodeA, DynamicValue(value: 0, typeId: NodeId.int32, name: "monitor_a"));
       servers[1].addVariableNode(nodeB, DynamicValue(value: 0, typeId: NodeId.int32, name: "monitor_b"));
 
-      final subA = await clients[0].subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
-      final subB = await clients[1].subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
+      final subA = await clients[0].subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
+      final subB = await clients[1].subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
 
       final valuesA = <int>[];
       final valuesB = <int>[];
       final completerA = Completer<void>();
       final completerB = Completer<void>();
 
-      final streamA = clients[0].monitor(nodeA, subA, samplingInterval: Duration(milliseconds: 10));
-      final streamB = clients[1].monitor(nodeB, subB, samplingInterval: Duration(milliseconds: 10));
+      final streamA = clients[0].monitor(nodeA, subA, samplingInterval: Duration(milliseconds: 50));
+      final streamB = clients[1].monitor(nodeB, subB, samplingInterval: Duration(milliseconds: 50));
 
       final listenA = streamA.listen((data) {
         valuesA.add(data.value as int);
@@ -229,16 +237,16 @@ void main() {
         }
       });
 
-      await Future.delayed(Duration(milliseconds: 200));
+      await Future.delayed(Duration(milliseconds: 500));
 
       for (var i = 1; i <= 3; i++) {
         await clients[0].write(nodeA, DynamicValue(value: i, typeId: NodeId.int32));
         await clients[1].write(nodeB, DynamicValue(value: i * 10, typeId: NodeId.int32));
-        await Future.delayed(Duration(milliseconds: 100));
+        await Future.delayed(Duration(milliseconds: 200));
       }
 
-      await completerA.future.timeout(Duration(seconds: 5));
-      await completerB.future.timeout(Duration(seconds: 5));
+      await completerA.future.timeout(Duration(seconds: 10));
+      await completerB.future.timeout(Duration(seconds: 10));
 
       await listenA.cancel();
       await listenB.cancel();

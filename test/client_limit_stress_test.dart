@@ -32,7 +32,7 @@ void main() {
     late Server server;
 
     setUp(() {
-      server = setupServer(port);
+      server = setupServer(port, maxSecureChannels: 150, maxSessions: 150);
       addBasicVariables(server);
     });
 
@@ -58,7 +58,6 @@ void main() {
 
     test('25 isolate clients read simultaneously', () async {
       final clients = await setupIsolateClients(port, 25);
-      print('Connected 25 isolate clients');
 
       final results = await Future.wait(clients.map((c) => c.read(intNodeId)));
       for (var i = 0; i < results.length; i++) {
@@ -72,7 +71,6 @@ void main() {
 
     test('50 isolate clients read simultaneously', () async {
       final clients = await setupIsolateClients(port, 50);
-      print('Connected 50 isolate clients');
 
       final results = await Future.wait(clients.map((c) => c.read(intNodeId)));
       for (var i = 0; i < results.length; i++) {
@@ -86,7 +84,6 @@ void main() {
 
     test('100 isolate clients connect and read', () async {
       final clients = await setupIsolateClients(port, 100);
-      print('Connected ${clients.length} out of 100 isolate clients');
 
       // Read in batches of 25
       for (var batch = 0; batch < clients.length; batch += 25) {
