@@ -296,8 +296,7 @@ void main() {
 
       final result = await client.read(NodeId.fromString(1, 'large_1'));
       for (var i = 0; i < 8; i++) {
-        expect(result.asObject['d$i']?.value, closeTo(i * 1.1, 0.01),
-            reason: 'Field d$i should be ${i * 1.1}');
+        expect(result.asObject['d$i']?.value, closeTo(i * 1.1, 0.01), reason: 'Field d$i should be ${i * 1.1}');
       }
 
       await client.delete();
@@ -324,8 +323,7 @@ void main() {
 
       final result = await client.read(NodeId.fromString(1, 'large_2'));
       for (var i = 0; i < 16; i++) {
-        expect(result.asObject['i$i']?.value, i * 100,
-            reason: 'Field i$i should be ${i * 100}');
+        expect(result.asObject['i$i']?.value, i * 100, reason: 'Field i$i should be ${i * 100}');
       }
 
       await client.delete();
@@ -433,13 +431,10 @@ void main() {
         clients.add(c);
       }
 
-      final results = await Future.wait(
-        clients.map((c) => c.read(NodeId.fromString(1, 'conc_1'))),
-      );
+      final results = await Future.wait(clients.map((c) => c.read(NodeId.fromString(1, 'conc_1'))));
       for (var i = 0; i < results.length; i++) {
         expect(results[i].asObject['id']?.value, 123, reason: 'Client $i id');
-        expect(results[i].asObject['name']?.value, 'concurrent-test',
-            reason: 'Client $i name');
+        expect(results[i].asObject['name']?.value, 'concurrent-test', reason: 'Client $i name');
       }
 
       for (final c in clients) {

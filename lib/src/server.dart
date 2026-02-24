@@ -440,71 +440,73 @@ class Server {
 
     late ffi.NativeCallable<
       ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)
-    > callback;
+    >
+    callback;
 
-    callback = ffi.NativeCallable<
-      ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)
-    >.isolateLocal((
-      ffi.Pointer<raw.UA_Server> server,
-      ffi.Pointer<ffi.Void> ctx,
-      ffi.Pointer<raw.UA_DataValue> result,
-    ) {
-      // Callback fires synchronously (same thread) — data pointers are valid.
-      callback.close();
+    callback =
+        ffi.NativeCallable<
+          ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>, ffi.Pointer<raw.UA_DataValue>)
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Server> server,
+          ffi.Pointer<ffi.Void> ctx,
+          ffi.Pointer<raw.UA_DataValue> result,
+        ) {
+          // Callback fires synchronously (same thread) — data pointers are valid.
+          callback.close();
 
-      try {
-        if (result == ffi.nullptr || result.ref.status != raw.UA_STATUSCODE_GOOD) {
-          completer.complete(); // No data, but don't error — attribute may just be empty
-          return;
-        }
+          try {
+            if (result == ffi.nullptr || result.ref.status != raw.UA_STATUSCODE_GOOD) {
+              completer.complete(); // No data, but don't error — attribute may just be empty
+              return;
+            }
 
-        final value = result.ref.value;
-        if (value.data == ffi.nullptr) {
-          completer.complete();
-          return;
-        }
+            final value = result.ref.value;
+            if (value.data == ffi.nullptr) {
+              completer.complete();
+              return;
+            }
 
-        switch (attr) {
-          case AttributeId.UA_ATTRIBUTEID_VALUE:
-            final val = variantToValue(value, dataTypeId: dv.typeId);
-            dv.value = val.value;
-            dv.typeId ??= val.typeId;
+            switch (attr) {
+              case AttributeId.UA_ATTRIBUTEID_VALUE:
+                final val = variantToValue(value, dataTypeId: dv.typeId);
+                dv.value = val.value;
+                dv.typeId ??= val.typeId;
 
-          case AttributeId.UA_ATTRIBUTEID_DATATYPE:
-            final dataType = value.data.cast<raw.UA_NodeId>();
-            dv.typeId = dataType.ref.toNodeId();
+              case AttributeId.UA_ATTRIBUTEID_DATATYPE:
+                final dataType = value.data.cast<raw.UA_NodeId>();
+                dv.typeId = dataType.ref.toNodeId();
 
-          case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
-            final lt = value.data.cast<raw.UA_LocalizedText>();
-            dv.displayName = LocalizedText(lt.ref.text.value, lt.ref.locale.value);
+              case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
+                final lt = value.data.cast<raw.UA_LocalizedText>();
+                dv.displayName = LocalizedText(lt.ref.text.value, lt.ref.locale.value);
 
-          case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
-            final lt = value.data.cast<raw.UA_LocalizedText>();
-            dv.description = LocalizedText(lt.ref.text.value, lt.ref.locale.value);
+              case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
+                final lt = value.data.cast<raw.UA_LocalizedText>();
+                dv.description = LocalizedText(lt.ref.text.value, lt.ref.locale.value);
 
-          case AttributeId.UA_ATTRIBUTEID_BROWSENAME:
-            final qn = value.data.cast<raw.UA_QualifiedName>();
-            dv.name = qn.ref.name.value;
+              case AttributeId.UA_ATTRIBUTEID_BROWSENAME:
+                final qn = value.data.cast<raw.UA_QualifiedName>();
+                dv.name = qn.ref.name.value;
 
-          case AttributeId.UA_ATTRIBUTEID_NODECLASS:
-            final nc = value.data.cast<ffi.UnsignedInt>();
-            dv.value = nc.value;
+              case AttributeId.UA_ATTRIBUTEID_NODECLASS:
+                final nc = value.data.cast<ffi.UnsignedInt>();
+                dv.value = nc.value;
 
-          case AttributeId.UA_ATTRIBUTEID_ACCESSLEVEL:
-            final al = value.data.cast<raw.UA_Byte>();
-            dv.value = al.value;
+              case AttributeId.UA_ATTRIBUTEID_ACCESSLEVEL:
+                final al = value.data.cast<raw.UA_Byte>();
+                dv.value = al.value;
 
-          default:
-            throw 'readAttribute not implemented for $attr';
-        }
+              default:
+                throw 'readAttribute not implemented for $attr';
+            }
 
-        completer.complete();
-      } catch (e, st) {
-        if (!completer.isCompleted) completer.completeError(e, st);
-      } finally {
-        ua_calloc.free(readValueId);
-      }
-    });
+            completer.complete();
+          } catch (e, st) {
+            if (!completer.isCompleted) completer.completeError(e, st);
+          } finally {
+            ua_calloc.free(readValueId);
+          }
+        });
 
     final res = raw.UA_Server_read_async(
       _server,
@@ -563,34 +565,23 @@ class Server {
       rethrow;
     }
 
-    late ffi.NativeCallable<
-      ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>, ffi.Uint32)
-    > callback;
+    late ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>, ffi.Uint32)> callback;
 
-    callback = ffi.NativeCallable<
-      ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>, ffi.Uint32)
-    >.isolateLocal((
-      ffi.Pointer<raw.UA_Server> server,
-      ffi.Pointer<ffi.Void> ctx,
-      int statusCode,
-    ) {
-      callback.close();
-      raw.UA_WriteValue_delete(writeValue);
+    callback =
+        ffi.NativeCallable<
+          ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>, ffi.Uint32)
+        >.isolateLocal((ffi.Pointer<raw.UA_Server> server, ffi.Pointer<ffi.Void> ctx, int statusCode) {
+          callback.close();
+          raw.UA_WriteValue_delete(writeValue);
 
-      if (statusCode != raw.UA_STATUSCODE_GOOD) {
-        completer.completeError('Failed to write: ${statusCodeToString(statusCode)}');
-      } else {
-        completer.complete();
-      }
-    });
+          if (statusCode != raw.UA_STATUSCODE_GOOD) {
+            completer.completeError('Failed to write: ${statusCodeToString(statusCode)}');
+          } else {
+            completer.complete();
+          }
+        });
 
-    final res = raw.UA_Server_write_async(
-      _server,
-      writeValue,
-      callback.nativeFunction,
-      ffi.nullptr,
-      0,
-    );
+    final res = raw.UA_Server_write_async(_server, writeValue, callback.nativeFunction, ffi.nullptr, 0);
     if (res != raw.UA_STATUSCODE_GOOD) {
       callback.close();
       raw.UA_WriteValue_delete(writeValue);
@@ -663,11 +654,7 @@ class Server {
       if (visited.contains(nodeId)) return;
       visited.add(nodeId);
 
-      final children = browse(
-        nodeId,
-        referenceTypeId: referenceTypeId,
-        includeSubtypes: includeSubtypes,
-      );
+      final children = browse(nodeId, referenceTypeId: referenceTypeId, includeSubtypes: includeSubtypes);
 
       for (final child in children) {
         results.add(BrowseTreeItem(item: child, depth: depth, parentNodeId: nodeId));
@@ -680,7 +667,6 @@ class Server {
     walk(root, 0);
     return results;
   }
-
 
   // populate structschema for out type
   void addCustomType(NodeId typeId, DynamicValue value) {
@@ -724,7 +710,6 @@ class Server {
       final padding = misalignment == 0 ? 0 : alignment - misalignment;
       array.ref.types[0].members[i].padding = padding;
       totalMemSize += padding + memberMemSize;
-
     }
     array.ref.types[0].memSize = totalMemSize;
 

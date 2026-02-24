@@ -19,9 +19,7 @@ Future<List<ClientIsolate>> setupIsolateClients(int port, int count, {int batchS
   final clients = <ClientIsolate>[];
   for (var start = 0; start < count; start += batchSize) {
     final end = (start + batchSize).clamp(0, count);
-    final batch = await Future.wait([
-      for (var i = start; i < end; i++) setupIsolateClient(port),
-    ]);
+    final batch = await Future.wait([for (var i = start; i < end; i++) setupIsolateClient(port)]);
     clients.addAll(batch);
   }
   return clients;
@@ -92,9 +90,7 @@ void main() {
       // Read in batches of 25
       for (var batch = 0; batch < clients.length; batch += 25) {
         final end = (batch + 25).clamp(0, clients.length);
-        final results = await Future.wait(
-          clients.sublist(batch, end).map((c) => c.read(intNodeId)),
-        );
+        final results = await Future.wait(clients.sublist(batch, end).map((c) => c.read(intNodeId)));
         for (var i = 0; i < results.length; i++) {
           expect(results[i].value, 1, reason: 'Client ${batch + i} read failed');
         }
@@ -136,10 +132,7 @@ void main() {
         for (var i = 0; i < 50; i++)
           () async {
             for (var round = 0; round < 5; round++) {
-              await clients[i].write(
-                NodeId.fromNumeric(1, 8000 + i),
-                DynamicValue(value: round, typeId: NodeId.int32),
-              );
+              await clients[i].write(NodeId.fromNumeric(1, 8000 + i), DynamicValue(value: round, typeId: NodeId.int32));
             }
           }(),
       ]);
@@ -164,14 +157,11 @@ void main() {
 
       final clients = await setupIsolateClients(port, 25);
 
-      final results = await Future.wait(
-        clients.map((c) => c.browse(NodeId.objectsFolder)),
-      );
+      final results = await Future.wait(clients.map((c) => c.browse(NodeId.objectsFolder)));
 
       final expectedCount = results[0].length;
       for (var i = 1; i < results.length; i++) {
-        expect(results[i].length, expectedCount,
-            reason: 'Client $i should see same node count');
+        expect(results[i].length, expectedCount, reason: 'Client $i should see same node count');
       }
 
       for (final c in clients) {
@@ -194,9 +184,7 @@ void main() {
       // 20 writers
       for (var c = 0; c < 20; c++) {
         for (var round = 0; round < 3; round++) {
-          futures.add(
-            clients[c].write(intNodeId, DynamicValue(value: round, typeId: NodeId.int32)),
-          );
+          futures.add(clients[c].write(intNodeId, DynamicValue(value: round, typeId: NodeId.int32)));
         }
       }
 

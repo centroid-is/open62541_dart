@@ -148,7 +148,11 @@ void main() {
 
       group('Server writeAttribute', () {
         test('writes VALUE attribute', () async {
-          await server!.writeAttribute(boolNodeId, AttributeId.UA_ATTRIBUTEID_VALUE, DynamicValue(value: false, typeId: NodeId.boolean));
+          await server!.writeAttribute(
+            boolNodeId,
+            AttributeId.UA_ATTRIBUTEID_VALUE,
+            DynamicValue(value: false, typeId: NodeId.boolean),
+          );
           final result = await server!.read(boolNodeId);
           expect(result.value, false);
         });
@@ -172,7 +176,11 @@ void main() {
         });
 
         test('client sees server writeAttribute changes', () async {
-          await server!.writeAttribute(boolNodeId, AttributeId.UA_ATTRIBUTEID_DESCRIPTION, LocalizedText("Client visible", "en-US"));
+          await server!.writeAttribute(
+            boolNodeId,
+            AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+            LocalizedText("Client visible", "en-US"),
+          );
           final clientResult = await client!.read(boolNodeId);
           expect(clientResult.description!.value, "Client visible");
         });
@@ -206,33 +214,21 @@ void main() {
       group('Server writeAttribute error handling', () {
         test('throws on unsupported attribute', () async {
           await expectLater(
-            server!.writeAttribute(
-              boolNodeId,
-              AttributeId.UA_ATTRIBUTEID_WRITEMASK,
-              42,
-            ),
+            server!.writeAttribute(boolNodeId, AttributeId.UA_ATTRIBUTEID_WRITEMASK, 42),
             throwsA(contains('writeAttribute not implemented')),
           );
         });
 
         test('throws on wrong type for DISPLAYNAME', () async {
           await expectLater(
-            server!.writeAttribute(
-              boolNodeId,
-              AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
-              "not a LocalizedText",
-            ),
+            server!.writeAttribute(boolNodeId, AttributeId.UA_ATTRIBUTEID_DISPLAYNAME, "not a LocalizedText"),
             throwsA(isA<TypeError>()),
           );
         });
 
         test('throws on wrong type for VALUE', () async {
           await expectLater(
-            server!.writeAttribute(
-              boolNodeId,
-              AttributeId.UA_ATTRIBUTEID_VALUE,
-              "not a DynamicValue",
-            ),
+            server!.writeAttribute(boolNodeId, AttributeId.UA_ATTRIBUTEID_VALUE, "not a DynamicValue"),
             throwsA(isA<TypeError>()),
           );
         });
@@ -324,15 +320,30 @@ void main() {
         test('write VALUE for all basic types', () async {
           // Int
           await server!.write(intNodeId, DynamicValue(value: 999, typeId: NodeId.int32));
-          expect((await server!.readAttribute({intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE]}))[intNodeId]!.value, 999);
+          expect(
+            (await server!.readAttribute({
+              intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+            }))[intNodeId]!.value,
+            999,
+          );
 
           // Double
           await server!.write(doubleNodeId, DynamicValue(value: 2.718, typeId: NodeId.double));
-          expect((await server!.readAttribute({doubleNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE]}))[doubleNodeId]!.value, closeTo(2.718, 0.001));
+          expect(
+            (await server!.readAttribute({
+              doubleNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+            }))[doubleNodeId]!.value,
+            closeTo(2.718, 0.001),
+          );
 
           // String
           await server!.write(stringNodeId, DynamicValue(value: "Updated!", typeId: NodeId.uastring));
-          expect((await server!.readAttribute({stringNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE]}))[stringNodeId]!.value, "Updated!");
+          expect(
+            (await server!.readAttribute({
+              stringNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+            }))[stringNodeId]!.value,
+            "Updated!",
+          );
         });
       });
 
@@ -418,10 +429,7 @@ void main() {
         test('browse leaf node returns empty list', () {
           // Variable nodes have references to their type, but no child nodes
           // with hierarchical references filter, should be empty
-          final forwardHierarchical = server!.browse(
-            boolNodeId,
-            referenceTypeId: NodeId.hierarchicalReferences,
-          );
+          final forwardHierarchical = server!.browse(boolNodeId, referenceTypeId: NodeId.hierarchicalReferences);
           expect(forwardHierarchical, isEmpty);
         });
 
@@ -480,10 +488,7 @@ void main() {
         });
 
         test('browseTree on leaf node returns empty', () {
-          final treeItems = server!.browseTree(
-            boolNodeId,
-            referenceTypeId: NodeId.hierarchicalReferences,
-          );
+          final treeItems = server!.browseTree(boolNodeId, referenceTypeId: NodeId.hierarchicalReferences);
           // Variable nodes have no hierarchical children to recurse into
           expect(treeItems, isEmpty);
         });

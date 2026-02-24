@@ -36,9 +36,7 @@ void main() {
       // Every client writes a different value to the same int node at once
       final futures = <Future>[];
       for (var i = 0; i < clientCount; i++) {
-        futures.add(
-          clients[i].write(intNodeId, DynamicValue(value: i * 100, typeId: NodeId.int32)),
-        );
+        futures.add(clients[i].write(intNodeId, DynamicValue(value: i * 100, typeId: NodeId.int32)));
       }
       await Future.wait(futures);
 
@@ -46,14 +44,15 @@ void main() {
       final validValues = List.generate(clientCount, (i) => i * 100).toSet();
       for (var i = 0; i < clientCount; i++) {
         final result = await clients[i].read(intNodeId);
-        expect(validValues.contains(result.value), isTrue,
-            reason: 'Client $i read ${result.value}, not in $validValues');
+        expect(
+          validValues.contains(result.value),
+          isTrue,
+          reason: 'Client $i read ${result.value}, not in $validValues',
+        );
       }
 
       // All clients should agree on the same final value
-      final results = await Future.wait(
-        clients.map((c) => c.read(intNodeId)),
-      );
+      final results = await Future.wait(clients.map((c) => c.read(intNodeId)));
       final values = results.map((r) => r.value).toSet();
       expect(values.length, 1, reason: 'All clients should see the same final value');
     });
@@ -63,9 +62,7 @@ void main() {
       await clients[0].write(boolNodeId, DynamicValue(value: true, typeId: NodeId.boolean));
 
       // All clients read at once
-      final results = await Future.wait(
-        clients.map((c) => c.read(boolNodeId)),
-      );
+      final results = await Future.wait(clients.map((c) => c.read(boolNodeId)));
 
       for (var i = 0; i < clientCount; i++) {
         expect(results[i].value, true, reason: 'Client $i should read true');
@@ -78,12 +75,7 @@ void main() {
       for (var round = 0; round < 10; round++) {
         for (var i = 0; i < clientCount; i++) {
           if ((round + i) % 2 == 0) {
-            futures.add(
-              clients[i].write(
-                intNodeId,
-                DynamicValue(value: round * 1000 + i, typeId: NodeId.int32),
-              ),
-            );
+            futures.add(clients[i].write(intNodeId, DynamicValue(value: round * 1000 + i, typeId: NodeId.int32)));
           } else {
             futures.add(clients[i].read(intNodeId));
           }
@@ -92,9 +84,7 @@ void main() {
       await Future.wait(futures);
 
       // Server should still be healthy — read from all clients
-      final results = await Future.wait(
-        clients.map((c) => c.read(intNodeId)),
-      );
+      final results = await Future.wait(clients.map((c) => c.read(intNodeId)));
       final values = results.map((r) => r.value).toSet();
       expect(values.length, 1, reason: 'Final value should be consistent');
     });
@@ -113,10 +103,7 @@ void main() {
       for (var i = 0; i < clientCount; i++) {
         futures.add(() async {
           for (var round = 0; round < 20; round++) {
-            await clients[i].write(
-              NodeId.fromString(1, "client_$i"),
-              DynamicValue(value: round, typeId: NodeId.int32),
-            );
+            await clients[i].write(NodeId.fromString(1, "client_$i"), DynamicValue(value: round, typeId: NodeId.int32));
           }
         }());
       }
@@ -130,34 +117,23 @@ void main() {
     });
 
     test('readAttribute bulk from all clients simultaneously', () async {
-      await server.writeAttribute(
-        boolNodeId,
-        AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
-        LocalizedText("A boolean", ""),
-      );
+      await server.writeAttribute(boolNodeId, AttributeId.UA_ATTRIBUTEID_DESCRIPTION, LocalizedText("A boolean", ""));
 
       final futures = <Future<Map<NodeId, DynamicValue>>>[];
       for (var i = 0; i < clientCount; i++) {
-        futures.add(clients[i].readAttribute({
-          boolNodeId: [
-            AttributeId.UA_ATTRIBUTEID_VALUE,
-            AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
-            AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
-            AttributeId.UA_ATTRIBUTEID_DATATYPE,
-          ],
-          intNodeId: [
-            AttributeId.UA_ATTRIBUTEID_VALUE,
-            AttributeId.UA_ATTRIBUTEID_DATATYPE,
-          ],
-          doubleNodeId: [
-            AttributeId.UA_ATTRIBUTEID_VALUE,
-            AttributeId.UA_ATTRIBUTEID_DATATYPE,
-          ],
-          stringNodeId: [
-            AttributeId.UA_ATTRIBUTEID_VALUE,
-            AttributeId.UA_ATTRIBUTEID_DATATYPE,
-          ],
-        }));
+        futures.add(
+          clients[i].readAttribute({
+            boolNodeId: [
+              AttributeId.UA_ATTRIBUTEID_VALUE,
+              AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
+              AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+              AttributeId.UA_ATTRIBUTEID_DATATYPE,
+            ],
+            intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE, AttributeId.UA_ATTRIBUTEID_DATATYPE],
+            doubleNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE, AttributeId.UA_ATTRIBUTEID_DATATYPE],
+            stringNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE, AttributeId.UA_ATTRIBUTEID_DATATYPE],
+          }),
+        );
       }
       final results = await Future.wait(futures);
 
@@ -189,17 +165,14 @@ void main() {
       // All clients should see the same browse results
       final expectedCount = results[0].length;
       for (var i = 1; i < clientCount; i++) {
-        expect(results[i].length, expectedCount,
-            reason: 'Client $i should see same node count as client 0');
+        expect(results[i].length, expectedCount, reason: 'Client $i should see same node count as client 0');
       }
     });
 
     test('multiple monitors on the same node from different clients', () async {
       final subs = <int>[];
       for (var i = 0; i < clientCount; i++) {
-        subs.add(await clients[i].subscriptionCreate(
-          requestedPublishingInterval: Duration(milliseconds: 10),
-        ));
+        subs.add(await clients[i].subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10)));
       }
 
       final allValues = List.generate(clientCount, (_) => <int>[]);
@@ -207,18 +180,16 @@ void main() {
       final subscriptions = <StreamSubscription>[];
 
       for (var i = 0; i < clientCount; i++) {
-        final stream = clients[i].monitor(
-          intNodeId,
-          subs[i],
-          samplingInterval: Duration(milliseconds: 10),
+        final stream = clients[i].monitor(intNodeId, subs[i], samplingInterval: Duration(milliseconds: 10));
+        subscriptions.add(
+          stream.listen((data) {
+            allValues[i].add(data.value as int);
+            // initial value + 3 writes = 4 values
+            if (allValues[i].length >= 4 && !completers[i].isCompleted) {
+              completers[i].complete();
+            }
+          }),
         );
-        subscriptions.add(stream.listen((data) {
-          allValues[i].add(data.value as int);
-          // initial value + 3 writes = 4 values
-          if (allValues[i].length >= 4 && !completers[i].isCompleted) {
-            completers[i].complete();
-          }
-        }));
       }
 
       await Future.delayed(Duration(milliseconds: 300));
@@ -230,19 +201,19 @@ void main() {
       }
 
       // All monitors should see the changes
-      await Future.wait(
-        completers.map((c) => c.future.timeout(Duration(seconds: 10))),
-      );
+      await Future.wait(completers.map((c) => c.future.timeout(Duration(seconds: 10))));
 
       for (final sub in subscriptions) {
         await sub.cancel();
       }
 
       for (var i = 0; i < clientCount; i++) {
-        expect(allValues[i].length, greaterThanOrEqualTo(4),
-            reason: 'Client $i should have received at least 4 values');
-        expect(allValues[i].last, 30,
-            reason: 'Client $i should end with final value 30');
+        expect(
+          allValues[i].length,
+          greaterThanOrEqualTo(4),
+          reason: 'Client $i should have received at least 4 values',
+        );
+        expect(allValues[i].last, 30, reason: 'Client $i should end with final value 30');
       }
     });
 
@@ -261,10 +232,7 @@ void main() {
       for (var c = 0; c < clientCount; c++) {
         for (var n = 0; n < nodeCount; n++) {
           writeFutures.add(
-            clients[c].write(
-              NodeId.fromNumeric(1, 5000 + n),
-              DynamicValue(value: c * 1000 + n, typeId: NodeId.int32),
-            ),
+            clients[c].write(NodeId.fromNumeric(1, 5000 + n), DynamicValue(value: c * 1000 + n, typeId: NodeId.int32)),
           );
         }
       }
@@ -285,8 +253,7 @@ void main() {
         for (var c = 0; c < clientCount; c++) {
           nodeValues.add(readResults[c * nodeCount + n].value as int);
         }
-        expect(nodeValues.length, 1,
-            reason: 'All clients should agree on node $n, got $nodeValues');
+        expect(nodeValues.length, 1, reason: 'All clients should agree on node $n, got $nodeValues');
       }
     });
 
@@ -327,9 +294,7 @@ void main() {
       // Writers
       for (var c = 0; c < 2; c++) {
         for (var round = 0; round < 10; round++) {
-          futures.add(
-            clients[c].write(intNodeId, DynamicValue(value: round, typeId: NodeId.int32)),
-          );
+          futures.add(clients[c].write(intNodeId, DynamicValue(value: round, typeId: NodeId.int32)));
         }
       }
 
@@ -347,17 +312,16 @@ void main() {
 
       // Attribute reader
       for (var round = 0; round < 5; round++) {
-        futures.add(clients[5].readAttribute({
-          boolNodeId: [
-            AttributeId.UA_ATTRIBUTEID_VALUE,
-            AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
-            AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
-          ],
-          intNodeId: [
-            AttributeId.UA_ATTRIBUTEID_VALUE,
-            AttributeId.UA_ATTRIBUTEID_DATATYPE,
-          ],
-        }));
+        futures.add(
+          clients[5].readAttribute({
+            boolNodeId: [
+              AttributeId.UA_ATTRIBUTEID_VALUE,
+              AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
+              AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+            ],
+            intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE, AttributeId.UA_ATTRIBUTEID_DATATYPE],
+          }),
+        );
       }
 
       // Fire everything and wait
@@ -372,10 +336,7 @@ void main() {
       // Each client takes a turn writing 50 values as fast as possible
       for (var c = 0; c < clientCount; c++) {
         for (var i = 0; i < 50; i++) {
-          await clients[c].write(
-            intNodeId,
-            DynamicValue(value: c * 1000 + i, typeId: NodeId.int32),
-          );
+          await clients[c].write(intNodeId, DynamicValue(value: c * 1000 + i, typeId: NodeId.int32));
         }
       }
 
@@ -408,8 +369,7 @@ void main() {
         final base = c * 4;
         expect(results[base].value, false, reason: 'Client $c bool');
         expect(results[base + 1].value, 999, reason: 'Client $c int');
-        expect((results[base + 2].value as double), closeTo(2.718, 0.001),
-            reason: 'Client $c double');
+        expect((results[base + 2].value as double), closeTo(2.718, 0.001), reason: 'Client $c double');
         expect(results[base + 3].value, "stress_test", reason: 'Client $c string');
       }
     });

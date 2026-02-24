@@ -270,46 +270,46 @@ class Client implements ClientApi {
 
     late ffi.NativeCallable<
       ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
-    > callback;
+    >
+    callback;
 
-    callback = ffi.NativeCallable<
-      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
-    >.isolateLocal((
-      ffi.Pointer<raw.UA_Client> client,
-      ffi.Pointer<ffi.Void> userdata,
-      int requestId,
-      ffi.Pointer<ffi.Void> voidPointer,
-    ) {
-      callback.close();
-      raw.UA_WriteRequest_delete(request);
-      ua_calloc.free(requestIdPtr);
+    callback =
+        ffi.NativeCallable<
+          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          int requestId,
+          ffi.Pointer<ffi.Void> voidPointer,
+        ) {
+          callback.close();
+          raw.UA_WriteRequest_delete(request);
+          ua_calloc.free(requestIdPtr);
 
-      if (voidPointer == ffi.nullptr) {
-        if (!completer.isCompleted) {
-          completer.completeError('writeAttribute callback received null pointer');
-        }
-        return;
-      }
+          if (voidPointer == ffi.nullptr) {
+            if (!completer.isCompleted) {
+              completer.completeError('writeAttribute callback received null pointer');
+            }
+            return;
+          }
 
-      ffi.Pointer<raw.UA_WriteResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
-      if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-        if (!completer.isCompleted) {
-          completer.completeError(
-            'Failed to write attribute: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
-          );
-        }
-        return;
-      }
-      if (response.ref.resultsSize > 0 && response.ref.results[0] != raw.UA_STATUSCODE_GOOD) {
-        if (!completer.isCompleted) {
-          completer.completeError(
-            'Failed to write attribute: ${statusCodeToString(response.ref.results[0])}',
-          );
-        }
-        return;
-      }
-      if (!completer.isCompleted) completer.complete();
-    });
+          ffi.Pointer<raw.UA_WriteResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
+          if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+            if (!completer.isCompleted) {
+              completer.completeError(
+                'Failed to write attribute: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
+              );
+            }
+            return;
+          }
+          if (response.ref.resultsSize > 0 && response.ref.results[0] != raw.UA_STATUSCODE_GOOD) {
+            if (!completer.isCompleted) {
+              completer.completeError('Failed to write attribute: ${statusCodeToString(response.ref.results[0])}');
+            }
+            return;
+          }
+          if (!completer.isCompleted) completer.complete();
+        });
 
     int res = raw.UA_Client_AsyncService(
       _client,
@@ -823,7 +823,6 @@ class Client implements ClientApi {
 
     return completer.future;
   }
-
 
   @override
   Future<int> subscriptionCreate({

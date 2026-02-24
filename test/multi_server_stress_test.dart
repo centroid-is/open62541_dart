@@ -6,8 +6,7 @@ import 'package:open62541/open62541.dart';
 import 'common.dart';
 
 /// Creates a unique NodeId for a given server index and variable index.
-NodeId nodeIdFor(int serverIndex, int varIndex) =>
-    NodeId.fromString(1, "srv${serverIndex}_var$varIndex");
+NodeId nodeIdFor(int serverIndex, int varIndex) => NodeId.fromString(1, "srv${serverIndex}_var$varIndex");
 
 void main() {
   group('Multi-server stress tests', () {
@@ -56,12 +55,7 @@ void main() {
       final futures = <Future>[];
       for (var s = 0; s < serverCount; s++) {
         for (var v = 0; v < varsPerServer; v++) {
-          futures.add(
-            clients[s].write(
-              nodeIdFor(s, v),
-              DynamicValue(value: (s + 1) * 100 + v, typeId: NodeId.int32),
-            ),
-          );
+          futures.add(clients[s].write(nodeIdFor(s, v), DynamicValue(value: (s + 1) * 100 + v, typeId: NodeId.int32)));
         }
       }
       await Future.wait(futures);
@@ -70,8 +64,7 @@ void main() {
       for (var s = 0; s < serverCount; s++) {
         for (var v = 0; v < varsPerServer; v++) {
           final result = await clients[s].read(nodeIdFor(s, v));
-          expect(result.value, (s + 1) * 100 + v,
-              reason: 'Server $s, var $v mismatch');
+          expect(result.value, (s + 1) * 100 + v, reason: 'Server $s, var $v mismatch');
         }
       }
     });
@@ -98,11 +91,7 @@ void main() {
         for (var v = 0; v < varCount; v++) {
           servers[s].addVariableNode(
             nodeIdFor(0, v),
-            DynamicValue(
-              value: sourceValues[v].value,
-              typeId: sourceValues[v].typeId,
-              name: "src_var$v",
-            ),
+            DynamicValue(value: sourceValues[v].value, typeId: sourceValues[v].typeId, name: "src_var$v"),
           );
         }
       }
@@ -111,8 +100,7 @@ void main() {
       for (var s = 1; s < serverCount; s++) {
         for (var v = 0; v < varCount; v++) {
           final result = await clients[s].read(nodeIdFor(0, v));
-          expect(result.value, v * 10,
-              reason: 'Replica server $s, var $v mismatch');
+          expect(result.value, v * 10, reason: 'Replica server $s, var $v mismatch');
         }
       }
     });
@@ -121,8 +109,7 @@ void main() {
       for (var s = 0; s < serverCount; s++) {
         servers[s].addVariableNode(
           NodeId.fromString(1, "bool_$s"),
-          DynamicValue(
-              value: s.isEven, typeId: NodeId.boolean, name: "bool_$s"),
+          DynamicValue(value: s.isEven, typeId: NodeId.boolean, name: "bool_$s"),
         );
         servers[s].addVariableNode(
           NodeId.fromString(1, "int_$s"),
@@ -134,8 +121,7 @@ void main() {
         );
         servers[s].addVariableNode(
           NodeId.fromString(1, "str_$s"),
-          DynamicValue(
-              value: "server_$s", typeId: NodeId.uastring, name: "str_$s"),
+          DynamicValue(value: "server_$s", typeId: NodeId.uastring, name: "str_$s"),
         );
       }
 
@@ -153,10 +139,8 @@ void main() {
         final base = s * 4;
         expect(results[base].value, s.isEven, reason: 'bool server $s');
         expect(results[base + 1].value, s * 100, reason: 'int server $s');
-        expect((results[base + 2].value as double), closeTo(s * 1.5, 0.001),
-            reason: 'double server $s');
-        expect(results[base + 3].value, "server_$s",
-            reason: 'string server $s');
+        expect((results[base + 2].value as double), closeTo(s * 1.5, 0.001), reason: 'double server $s');
+        expect(results[base + 3].value, "server_$s", reason: 'string server $s');
       }
     });
 
@@ -165,10 +149,7 @@ void main() {
       const iterations = 20;
 
       for (var s = 0; s < serverCount; s++) {
-        servers[s].addVariableNode(
-          nodeId,
-          DynamicValue(value: 0, typeId: NodeId.int32, name: "storm"),
-        );
+        servers[s].addVariableNode(nodeId, DynamicValue(value: 0, typeId: NodeId.int32, name: "storm"));
       }
 
       // Rapid writes per server, all servers in parallel
@@ -176,10 +157,7 @@ void main() {
       for (var s = 0; s < serverCount; s++) {
         writeFutures.add(() async {
           for (var i = 0; i < iterations; i++) {
-            await clients[s].write(
-              nodeId,
-              DynamicValue(value: i, typeId: NodeId.int32),
-            );
+            await clients[s].write(nodeId, DynamicValue(value: i, typeId: NodeId.int32));
           }
         }());
       }
@@ -188,8 +166,7 @@ void main() {
       // All should have the last written value
       for (var s = 0; s < serverCount; s++) {
         final result = await clients[s].read(nodeId);
-        expect(result.value, iterations - 1,
-            reason: 'Server $s should have last written value');
+        expect(result.value, iterations - 1, reason: 'Server $s should have last written value');
       }
     });
 
@@ -211,11 +188,12 @@ void main() {
       final browseResults = await Future.wait(browseFutures);
 
       for (var s = 0; s < serverCount; s++) {
-        final vars = browseResults[s]
-            .where((r) => r.nodeClass == NodeClass.UA_NODECLASS_VARIABLE)
-            .toList();
-        expect(vars.length, greaterThanOrEqualTo((s + 1) * 3),
-            reason: 'Server $s should have at least ${(s + 1) * 3} variables');
+        final vars = browseResults[s].where((r) => r.nodeClass == NodeClass.UA_NODECLASS_VARIABLE).toList();
+        expect(
+          vars.length,
+          greaterThanOrEqualTo((s + 1) * 3),
+          reason: 'Server $s should have at least ${(s + 1) * 3} variables',
+        );
       }
     });
 
@@ -223,37 +201,19 @@ void main() {
       final nodeA = NodeId.fromString(1, "monitor_a");
       final nodeB = NodeId.fromString(1, "monitor_b");
 
-      servers[0].addVariableNode(
-        nodeA,
-        DynamicValue(value: 0, typeId: NodeId.int32, name: "monitor_a"),
-      );
-      servers[1].addVariableNode(
-        nodeB,
-        DynamicValue(value: 0, typeId: NodeId.int32, name: "monitor_b"),
-      );
+      servers[0].addVariableNode(nodeA, DynamicValue(value: 0, typeId: NodeId.int32, name: "monitor_a"));
+      servers[1].addVariableNode(nodeB, DynamicValue(value: 0, typeId: NodeId.int32, name: "monitor_b"));
 
-      final subA = await clients[0].subscriptionCreate(
-        requestedPublishingInterval: Duration(milliseconds: 10),
-      );
-      final subB = await clients[1].subscriptionCreate(
-        requestedPublishingInterval: Duration(milliseconds: 10),
-      );
+      final subA = await clients[0].subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
+      final subB = await clients[1].subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
 
       final valuesA = <int>[];
       final valuesB = <int>[];
       final completerA = Completer<void>();
       final completerB = Completer<void>();
 
-      final streamA = clients[0].monitor(
-        nodeA,
-        subA,
-        samplingInterval: Duration(milliseconds: 10),
-      );
-      final streamB = clients[1].monitor(
-        nodeB,
-        subB,
-        samplingInterval: Duration(milliseconds: 10),
-      );
+      final streamA = clients[0].monitor(nodeA, subA, samplingInterval: Duration(milliseconds: 10));
+      final streamB = clients[1].monitor(nodeB, subB, samplingInterval: Duration(milliseconds: 10));
 
       final listenA = streamA.listen((data) {
         valuesA.add(data.value as int);
@@ -271,10 +231,8 @@ void main() {
       await Future.delayed(Duration(milliseconds: 200));
 
       for (var i = 1; i <= 3; i++) {
-        await clients[0]
-            .write(nodeA, DynamicValue(value: i, typeId: NodeId.int32));
-        await clients[1]
-            .write(nodeB, DynamicValue(value: i * 10, typeId: NodeId.int32));
+        await clients[0].write(nodeA, DynamicValue(value: i, typeId: NodeId.int32));
+        await clients[1].write(nodeB, DynamicValue(value: i * 10, typeId: NodeId.int32));
         await Future.delayed(Duration(milliseconds: 100));
       }
 
@@ -294,8 +252,7 @@ void main() {
       for (var s = 0; s < serverCount; s++) {
         servers[s].addVariableNode(
           NodeId.fromString(1, "attr_$s"),
-          DynamicValue(
-              value: s * 42, typeId: NodeId.int32, name: "attr_var_$s"),
+          DynamicValue(value: s * 42, typeId: NodeId.int32, name: "attr_var_$s"),
         );
         await servers[s].writeAttribute(
           NodeId.fromString(1, "attr_$s"),
@@ -306,35 +263,33 @@ void main() {
 
       final attrFutures = <Future<Map<NodeId, DynamicValue>>>[];
       for (var s = 0; s < serverCount; s++) {
-        attrFutures.add(clients[s].readAttribute({
-          NodeId.fromString(1, "attr_$s"): [
-            AttributeId.UA_ATTRIBUTEID_VALUE,
-            AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
-            AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
-            AttributeId.UA_ATTRIBUTEID_DATATYPE,
-          ],
-        }));
+        attrFutures.add(
+          clients[s].readAttribute({
+            NodeId.fromString(1, "attr_$s"): [
+              AttributeId.UA_ATTRIBUTEID_VALUE,
+              AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
+              AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+              AttributeId.UA_ATTRIBUTEID_DATATYPE,
+            ],
+          }),
+        );
       }
       final attrResults = await Future.wait(attrFutures);
 
       for (var s = 0; s < serverCount; s++) {
         final data = attrResults[s][NodeId.fromString(1, "attr_$s")]!;
         expect(data.value, s * 42, reason: 'Value server $s');
-        expect(data.description!.value, "Desc for server $s",
-            reason: 'Description server $s');
-        expect(data.displayName!.value, "attr_var_$s",
-            reason: 'DisplayName server $s');
+        expect(data.description!.value, "Desc for server $s", reason: 'Description server $s');
+        expect(data.displayName!.value, "attr_var_$s", reason: 'DisplayName server $s');
       }
     });
 
-    test('fan-out: one source server, 3 clients replicate to their servers',
-        () async {
+    test('fan-out: one source server, 3 clients replicate to their servers', () async {
       const varCount = 8;
       for (var v = 0; v < varCount; v++) {
         servers[0].addVariableNode(
           NodeId.fromString(1, "fanout_$v"),
-          DynamicValue(
-              value: v * 7, typeId: NodeId.int32, name: "fanout_$v"),
+          DynamicValue(value: v * 7, typeId: NodeId.int32, name: "fanout_$v"),
         );
       }
 
@@ -352,20 +307,13 @@ void main() {
         for (var v = 0; v < varCount; v++) {
           final nid = NodeId.fromString(1, "fanout_$v");
           final dv = sourceData[nid]!;
-          servers[s].addVariableNode(
-            nid,
-            DynamicValue(
-                value: dv.value, typeId: dv.typeId, name: "fanout_$v"),
-          );
+          servers[s].addVariableNode(nid, DynamicValue(value: dv.value, typeId: dv.typeId, name: "fanout_$v"));
         }
       }
 
       // Update source values
       for (var v = 0; v < varCount; v++) {
-        await servers[0].write(
-          NodeId.fromString(1, "fanout_$v"),
-          DynamicValue(value: v * 100, typeId: NodeId.int32),
-        );
+        await servers[0].write(NodeId.fromString(1, "fanout_$v"), DynamicValue(value: v * 100, typeId: NodeId.int32));
       }
 
       // Propagate updates to replicas
@@ -374,8 +322,7 @@ void main() {
         for (var v = 0; v < varCount; v++) {
           final nid = NodeId.fromString(1, "fanout_$v");
           final dv = updatedData[nid]!;
-          await servers[s].write(
-              nid, DynamicValue(value: dv.value, typeId: dv.typeId));
+          await servers[s].write(nid, DynamicValue(value: dv.value, typeId: dv.typeId));
         }
       }
 
@@ -385,8 +332,7 @@ void main() {
         for (var v = 0; v < varCount; v++) {
           verifyFutures.add(
             clients[s].read(NodeId.fromString(1, "fanout_$v")).then((result) {
-              expect(result.value, v * 100,
-                  reason: 'Replica server $s, var $v after update');
+              expect(result.value, v * 100, reason: 'Replica server $s, var $v after update');
             }),
           );
         }
@@ -394,44 +340,44 @@ void main() {
       await Future.wait(verifyFutures);
     });
 
-    test('mixed types stress: bool, int, double, string across all servers',
-        () async {
+    test('mixed types stress: bool, int, double, string across all servers', () async {
       for (var s = 0; s < serverCount; s++) {
         servers[s].addVariableNode(
           NodeId.fromString(1, "mt_bool_$s"),
-          DynamicValue(
-              value: s.isOdd, typeId: NodeId.boolean, name: "mt_bool_$s"),
+          DynamicValue(value: s.isOdd, typeId: NodeId.boolean, name: "mt_bool_$s"),
         );
         servers[s].addVariableNode(
           NodeId.fromString(1, "mt_int_$s"),
-          DynamicValue(
-              value: s * 111, typeId: NodeId.int32, name: "mt_int_$s"),
+          DynamicValue(value: s * 111, typeId: NodeId.int32, name: "mt_int_$s"),
         );
         servers[s].addVariableNode(
           NodeId.fromString(1, "mt_dbl_$s"),
-          DynamicValue(
-              value: s * 2.718, typeId: NodeId.double, name: "mt_dbl_$s"),
+          DynamicValue(value: s * 2.718, typeId: NodeId.double, name: "mt_dbl_$s"),
         );
         servers[s].addVariableNode(
           NodeId.fromString(1, "mt_str_$s"),
-          DynamicValue(
-              value: "payload_$s" * 10,
-              typeId: NodeId.uastring,
-              name: "mt_str_$s"),
+          DynamicValue(value: "payload_$s" * 10, typeId: NodeId.uastring, name: "mt_str_$s"),
         );
       }
 
       // Rapid fire writes
       final writeFutures = <Future>[];
       for (var s = 0; s < serverCount; s++) {
-        writeFutures.add(clients[s].write(NodeId.fromString(1, "mt_bool_$s"),
-            DynamicValue(value: s.isEven, typeId: NodeId.boolean)));
-        writeFutures.add(clients[s].write(NodeId.fromString(1, "mt_int_$s"),
-            DynamicValue(value: s * 999, typeId: NodeId.int32)));
-        writeFutures.add(clients[s].write(NodeId.fromString(1, "mt_dbl_$s"),
-            DynamicValue(value: s * 3.14159, typeId: NodeId.double)));
-        writeFutures.add(clients[s].write(NodeId.fromString(1, "mt_str_$s"),
-            DynamicValue(value: "updated_$s" * 5, typeId: NodeId.uastring)));
+        writeFutures.add(
+          clients[s].write(NodeId.fromString(1, "mt_bool_$s"), DynamicValue(value: s.isEven, typeId: NodeId.boolean)),
+        );
+        writeFutures.add(
+          clients[s].write(NodeId.fromString(1, "mt_int_$s"), DynamicValue(value: s * 999, typeId: NodeId.int32)),
+        );
+        writeFutures.add(
+          clients[s].write(NodeId.fromString(1, "mt_dbl_$s"), DynamicValue(value: s * 3.14159, typeId: NodeId.double)),
+        );
+        writeFutures.add(
+          clients[s].write(
+            NodeId.fromString(1, "mt_str_$s"),
+            DynamicValue(value: "updated_$s" * 5, typeId: NodeId.uastring),
+          ),
+        );
       }
       await Future.wait(writeFutures);
 
@@ -448,13 +394,9 @@ void main() {
       for (var s = 0; s < serverCount; s++) {
         final base = s * 4;
         expect(results[base].value, s.isEven, reason: 'bool after write s=$s');
-        expect(results[base + 1].value, s * 999,
-            reason: 'int after write s=$s');
-        expect((results[base + 2].value as double),
-            closeTo(s * 3.14159, 0.001),
-            reason: 'double after write s=$s');
-        expect(results[base + 3].value, "updated_$s" * 5,
-            reason: 'string after write s=$s');
+        expect(results[base + 1].value, s * 999, reason: 'int after write s=$s');
+        expect((results[base + 2].value as double), closeTo(s * 3.14159, 0.001), reason: 'double after write s=$s');
+        expect(results[base + 3].value, "updated_$s" * 5, reason: 'string after write s=$s');
       }
     });
   }, timeout: Timeout(Duration(seconds: 60)));

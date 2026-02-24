@@ -140,32 +140,36 @@ void main() async {
         skip: true, // Manual testing helper - waits 10 minutes
       );
 
-      test('Partial read failures should return partial data', () async {
-        addBasicVariables(server!);
-        final doesNotExist = NodeId.fromString(1, "does.not.exist");
-        final value = await client!.readAttribute({
-          boolNodeId: [
-            // Should this entire nodeid be a failure?
-            AttributeId.UA_ATTRIBUTEID_VALUE, // This succeeds
-            AttributeId.UA_ATTRIBUTEID_DESCRIPTION, // This succeeds
-            AttributeId.UA_ATTRIBUTEID_ROLEPERMISSIONS, // This fails
-          ],
-          doesNotExist: [
-            AttributeId.UA_ATTRIBUTEID_VALUE, // This fails
-            AttributeId.UA_ATTRIBUTEID_DESCRIPTION, // This fails
-            AttributeId.UA_ATTRIBUTEID_ROLEPERMISSIONS, // This fails
-          ],
-        });
+      test(
+        'Partial read failures should return partial data',
+        () async {
+          addBasicVariables(server!);
+          final doesNotExist = NodeId.fromString(1, "does.not.exist");
+          final value = await client!.readAttribute({
+            boolNodeId: [
+              // Should this entire nodeid be a failure?
+              AttributeId.UA_ATTRIBUTEID_VALUE, // This succeeds
+              AttributeId.UA_ATTRIBUTEID_DESCRIPTION, // This succeeds
+              AttributeId.UA_ATTRIBUTEID_ROLEPERMISSIONS, // This fails
+            ],
+            doesNotExist: [
+              AttributeId.UA_ATTRIBUTEID_VALUE, // This fails
+              AttributeId.UA_ATTRIBUTEID_DESCRIPTION, // This fails
+              AttributeId.UA_ATTRIBUTEID_ROLEPERMISSIONS, // This fails
+            ],
+          });
 
-        expect(value.length, 2);
-        expect(value[boolNodeId], isNotNull);
-        expect(value[boolNodeId]!.value, isNotNull);
-        expect(value[boolNodeId]!.description, isNotNull);
+          expect(value.length, 2);
+          expect(value[boolNodeId], isNotNull);
+          expect(value[boolNodeId]!.value, isNotNull);
+          expect(value[boolNodeId]!.description, isNotNull);
 
-        expect(value[doesNotExist], isNotNull);
-        expect(value[doesNotExist]!.value, isNull);
-        expect(value[doesNotExist]!.description, isNull);
-      }, skip: 'Requires partial error handling in readAttribute (not yet implemented)');
+          expect(value[doesNotExist], isNotNull);
+          expect(value[doesNotExist]!.value, isNull);
+          expect(value[doesNotExist]!.description, isNull);
+        },
+        skip: 'Requires partial error handling in readAttribute (not yet implemented)',
+      );
 
       test('Update data from the server', () async {
         addBasicVariables(server!);
@@ -498,11 +502,7 @@ void main() async {
         test('writeAttribute for unsupported attribute throws', () async {
           addBasicVariables(server!);
           expect(
-            () => client!.writeAttribute(
-              boolNodeId,
-              AttributeId.UA_ATTRIBUTEID_WRITEMASK,
-              42,
-            ),
+            () => client!.writeAttribute(boolNodeId, AttributeId.UA_ATTRIBUTEID_WRITEMASK, 42),
             throwsA(contains('writeAttribute not implemented')),
           );
         });
@@ -531,16 +531,8 @@ void main() async {
             DynamicValue(value: true, typeId: NodeId.boolean, name: "the.bool"),
             writeMask: writeMaskAll,
           );
-          await client!.writeAttribute(
-            boolNodeId,
-            AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
-            LocalizedText("First", ""),
-          );
-          await client!.writeAttribute(
-            boolNodeId,
-            AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
-            LocalizedText("Second", ""),
-          );
+          await client!.writeAttribute(boolNodeId, AttributeId.UA_ATTRIBUTEID_DESCRIPTION, LocalizedText("First", ""));
+          await client!.writeAttribute(boolNodeId, AttributeId.UA_ATTRIBUTEID_DESCRIPTION, LocalizedText("Second", ""));
           final serverResult = await server!.readAttribute({
             boolNodeId: [AttributeId.UA_ATTRIBUTEID_DESCRIPTION],
           });
@@ -561,5 +553,4 @@ void main() async {
       });
     });
   }
-
 }

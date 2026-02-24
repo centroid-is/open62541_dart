@@ -1,7 +1,8 @@
 library;
 
 export 'src/access_level.dart' show AccessLevelMask;
-export 'src/client.dart' show Client, ClientState, BrowseResultItem, BrowseTreeItem, NodeClass, BrowseResultMask, ReadAttributeParam;
+export 'src/client.dart'
+    show Client, ClientState, BrowseResultItem, BrowseTreeItem, NodeClass, BrowseResultMask, ReadAttributeParam;
 export 'src/dynamic_value.dart' show DynamicValue, LocalizedText, EnumField, Schema;
 export 'src/extensions.dart'
     show

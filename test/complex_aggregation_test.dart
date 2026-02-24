@@ -24,8 +24,13 @@ DynamicValue buildDeviceStatusSchema(NodeId typeId) {
 }
 
 /// Helper: create a SensorReading instance with given values
-DynamicValue makeSensorReading(NodeId typeId, String name,
-    {required double temperature, required int pressure, required bool valid}) {
+DynamicValue makeSensorReading(
+  NodeId typeId,
+  String name, {
+  required double temperature,
+  required int pressure,
+  required bool valid,
+}) {
   final v = DynamicValue(name: name, typeId: typeId);
   v["temperature"] = DynamicValue(value: temperature, typeId: NodeId.double);
   v["pressure"] = DynamicValue(value: pressure, typeId: NodeId.int32);
@@ -34,8 +39,13 @@ DynamicValue makeSensorReading(NodeId typeId, String name,
 }
 
 /// Helper: create a DeviceStatus instance with given values
-DynamicValue makeDeviceStatus(NodeId typeId, String name,
-    {required int deviceId, required bool online, required int errorCode}) {
+DynamicValue makeDeviceStatus(
+  NodeId typeId,
+  String name, {
+  required int deviceId,
+  required bool online,
+  required int errorCode,
+}) {
   final v = DynamicValue(name: name, typeId: typeId);
   v["deviceId"] = DynamicValue(value: deviceId, typeId: NodeId.int32);
   v["online"] = DynamicValue(value: online, typeId: NodeId.boolean);
@@ -77,14 +87,20 @@ void main() {
 
     void registerSensorType(Server server) {
       server.addCustomType(sensorTypeId, buildSensorReadingSchema(sensorTypeId));
-      server.addDataTypeNode(sensorTypeId, "SensorReadingType",
-          displayName: LocalizedText("Sensor Reading Type", "en-US"));
+      server.addDataTypeNode(
+        sensorTypeId,
+        "SensorReadingType",
+        displayName: LocalizedText("Sensor Reading Type", "en-US"),
+      );
     }
 
     void registerDeviceType(Server server) {
       server.addCustomType(deviceTypeId, buildDeviceStatusSchema(deviceTypeId));
-      server.addDataTypeNode(deviceTypeId, "DeviceStatusType",
-          displayName: LocalizedText("Device Status Type", "en-US"));
+      server.addDataTypeNode(
+        deviceTypeId,
+        "DeviceStatusType",
+        displayName: LocalizedText("Device Status Type", "en-US"),
+      );
     }
 
     test('simple struct: Server A -> Client A -> Server B -> Client B', () async {
@@ -92,8 +108,7 @@ void main() {
       registerSensorType(serverA!);
       serverA!.addVariableNode(
         sensorNodeId,
-        makeSensorReading(sensorTypeId, "sensor.reading.1",
-            temperature: 23.5, pressure: 1013, valid: true),
+        makeSensorReading(sensorTypeId, "sensor.reading.1", temperature: 23.5, pressure: 1013, valid: true),
         typeId: sensorTypeId,
       );
 
@@ -128,14 +143,12 @@ void main() {
 
       serverA!.addVariableNode(
         sensorNodeId,
-        makeSensorReading(sensorTypeId, "sensor.reading.1",
-            temperature: -40.0, pressure: 500, valid: false),
+        makeSensorReading(sensorTypeId, "sensor.reading.1", temperature: -40.0, pressure: 500, valid: false),
         typeId: sensorTypeId,
       );
       serverA!.addVariableNode(
         deviceNodeId,
-        makeDeviceStatus(deviceTypeId, "device.status.1",
-            deviceId: 42, online: true, errorCode: 0),
+        makeDeviceStatus(deviceTypeId, "device.status.1", deviceId: 42, online: true, errorCode: 0),
         typeId: deviceTypeId,
       );
 
@@ -179,14 +192,18 @@ void main() {
       registerSensorType(serverA!);
       serverA!.addVariableNode(
         sensorNodeId,
-        makeSensorReading(sensorTypeId, "sensor.reading.1",
-            temperature: 20.0, pressure: 1000, valid: true),
+        makeSensorReading(sensorTypeId, "sensor.reading.1", temperature: 20.0, pressure: 1000, valid: true),
         typeId: sensorTypeId,
       );
 
       // 2. Client A writes updated values
-      final updated = makeSensorReading(sensorTypeId, "sensor.reading.1",
-          temperature: 99.9, pressure: 2000, valid: false);
+      final updated = makeSensorReading(
+        sensorTypeId,
+        "sensor.reading.1",
+        temperature: 99.9,
+        pressure: 2000,
+        valid: false,
+      );
       await clientA!.write(sensorNodeId, updated);
 
       // 3. Read back the updated values
@@ -215,8 +232,7 @@ void main() {
       registerSensorType(serverA!);
       serverA!.addVariableNode(
         sensorNodeId,
-        makeSensorReading(sensorTypeId, "sensor.reading.1",
-            temperature: 36.6, pressure: 760, valid: true),
+        makeSensorReading(sensorTypeId, "sensor.reading.1", temperature: 36.6, pressure: 760, valid: true),
         typeId: sensorTypeId,
       );
 
@@ -273,29 +289,21 @@ void main() {
 
       serverA!.addVariableNode(
         sensorNodeId,
-        makeSensorReading(sensorTypeId, "sensor.reading.1",
-            temperature: 10.0, pressure: 900, valid: true),
+        makeSensorReading(sensorTypeId, "sensor.reading.1", temperature: 10.0, pressure: 900, valid: true),
         typeId: sensorTypeId,
       );
       serverB!.addVariableNode(
         sensorNodeId,
-        makeSensorReading(sensorTypeId, "sensor.reading.1",
-            temperature: 10.0, pressure: 900, valid: true),
+        makeSensorReading(sensorTypeId, "sensor.reading.1", temperature: 10.0, pressure: 900, valid: true),
         typeId: sensorTypeId,
       );
 
       // 2. Client A monitors Server A for changes
-      final sub = await clientA!.subscriptionCreate(
-        requestedPublishingInterval: Duration(milliseconds: 10),
-      );
+      final sub = await clientA!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 10));
 
       final receivedValues = <DynamicValue>[];
       final completer = Completer<void>();
-      final stream = clientA!.monitor(
-        sensorNodeId,
-        sub,
-        samplingInterval: Duration(milliseconds: 10),
-      );
+      final stream = clientA!.monitor(sensorNodeId, sub, samplingInterval: Duration(milliseconds: 10));
 
       final subscription = stream.listen((data) {
         receivedValues.add(data);
@@ -312,14 +320,16 @@ void main() {
       await Future.delayed(Duration(milliseconds: 300));
 
       // 3. Write changes to Server A via Client A
-      await clientA!.write(sensorNodeId,
-          makeSensorReading(sensorTypeId, "sensor.reading.1",
-              temperature: 50.0, pressure: 1100, valid: true));
+      await clientA!.write(
+        sensorNodeId,
+        makeSensorReading(sensorTypeId, "sensor.reading.1", temperature: 50.0, pressure: 1100, valid: true),
+      );
       await Future.delayed(Duration(milliseconds: 300));
 
-      await clientA!.write(sensorNodeId,
-          makeSensorReading(sensorTypeId, "sensor.reading.1",
-              temperature: -10.0, pressure: 800, valid: false));
+      await clientA!.write(
+        sensorNodeId,
+        makeSensorReading(sensorTypeId, "sensor.reading.1", temperature: -10.0, pressure: 800, valid: false),
+      );
 
       // 4. Wait for changes to propagate
       await completer.future.timeout(Duration(seconds: 10));
@@ -339,8 +349,7 @@ void main() {
       registerSensorType(serverA!);
       serverA!.addVariableNode(
         sensorNodeId,
-        makeSensorReading(sensorTypeId, "sensor.reading.1",
-            temperature: 25.0, pressure: 1013, valid: true),
+        makeSensorReading(sensorTypeId, "sensor.reading.1", temperature: 25.0, pressure: 1013, valid: true),
         typeId: sensorTypeId,
       );
 
@@ -362,11 +371,7 @@ void main() {
             try {
               serverB!.addVariableNode(
                 item.nodeId,
-                DynamicValue(
-                  value: data.value,
-                  typeId: data.typeId,
-                  name: item.displayName,
-                ),
+                DynamicValue(value: data.value, typeId: data.typeId, name: item.displayName),
                 typeId: data.isObject ? data.typeId : null,
               );
             } catch (_) {
@@ -379,8 +384,7 @@ void main() {
       // 4. Client B browses Server B and finds the replicated nodes
       final browseB = await clientB!.browse(NodeId.objectsFolder);
       final nodeIdsB = browseB.map((i) => i.nodeId).toSet();
-      expect(nodeIdsB.contains(sensorNodeId), isTrue,
-          reason: 'Server B should have the sensor node');
+      expect(nodeIdsB.contains(sensorNodeId), isTrue, reason: 'Server B should have the sensor node');
     });
   }, timeout: Timeout(Duration(seconds: 120)));
 }
