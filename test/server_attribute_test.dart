@@ -969,10 +969,7 @@ void main() {
       server!.setMethodAccess(methodId, allowedUsers: {'admin'});
 
       final client = await setupClientWithAuth(port, username: 'user', password: 'user123');
-      await expectLater(
-        client.call(NodeId.objectsFolder, methodId, []),
-        throwsA(contains('BadNotExecutable')),
-      );
+      await expectLater(client.call(NodeId.objectsFolder, methodId, []), throwsA(contains('BadNotExecutable')));
       client.disconnect();
       await client.delete();
     });
@@ -1026,12 +1023,7 @@ void main() {
     });
 
     test('restricted method rejects anonymous user', () async {
-      server = setupServer(
-        port,
-        users: {'admin': 'admin123'},
-        allowAnonymous: true,
-        allowNonePolicyPassword: true,
-      );
+      server = setupServer(port, users: {'admin': 'admin123'}, allowAnonymous: true, allowNonePolicyPassword: true);
 
       final methodId = NodeId.fromString(1, 'test.admin.noanon');
       server!.addMethodNode(
@@ -1044,13 +1036,9 @@ void main() {
 
       // Anonymous client should be denied
       final client = await setupClient(port);
-      await expectLater(
-        client.call(NodeId.objectsFolder, methodId, []),
-        throwsA(contains('BadNotExecutable')),
-      );
+      await expectLater(client.call(NodeId.objectsFolder, methodId, []), throwsA(contains('BadNotExecutable')));
       client.disconnect();
       await client.delete();
     });
   });
-
 }
