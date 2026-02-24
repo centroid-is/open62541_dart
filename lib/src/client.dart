@@ -1439,13 +1439,17 @@ class Client implements ClientApi {
                 StackTrace.current,
               );
             }
+            print('DEBUG CLIENT: outputArgumentsSize=${results.outputArgumentsSize} inputArgResultsSize=${results.inputArgumentResultsSize}');
             if (results.outputArgumentsSize == 0) {
               completer.complete([]);
             } else {
               final result = <DynamicValue>[];
               for (var i = 0; i < results.outputArgumentsSize; i++) {
+                print('DEBUG CLIENT: reading output[$i] type=${results.outputArguments[i].type} data=${results.outputArguments[i].data}');
                 result.add(await _variantToValueAutoSchema(results.outputArguments[i]));
+                print('DEBUG CLIENT: output[$i] value=${result.last.value}');
               }
+              print('DEBUG CLIENT: completing with ${result.length} results');
               completer.complete(result);
             }
           } catch (e) {

@@ -680,6 +680,67 @@ external int UA_Server_addVariableTypeNode(
   ffi.Pointer<UA_NodeId> outNewNodeId,
 );
 
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Server>,
+    UA_NodeId,
+    UA_NodeId,
+    UA_NodeId,
+    UA_QualifiedName,
+    UA_MethodAttributes,
+    ffi.Pointer<ffi.NativeFunction<
+      UA_StatusCode Function(
+        ffi.Pointer<UA_Server>,
+        ffi.Pointer<UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Size,
+        ffi.Pointer<UA_Variant>,
+        ffi.Size,
+        ffi.Pointer<UA_Variant>,
+      )
+    >>,
+    ffi.Size,
+    ffi.Pointer<UA_Argument>,
+    ffi.Size,
+    ffi.Pointer<UA_Argument>,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_NodeId>,
+  )
+>()
+external int UA_Server_addMethodNode(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId requestedNewNodeId,
+  UA_NodeId parentNodeId,
+  UA_NodeId referenceTypeId,
+  UA_QualifiedName browseName,
+  UA_MethodAttributes attr,
+  ffi.Pointer<ffi.NativeFunction<
+    UA_StatusCode Function(
+      ffi.Pointer<UA_Server>,
+      ffi.Pointer<UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Size,
+      ffi.Pointer<UA_Variant>,
+      ffi.Size,
+      ffi.Pointer<UA_Variant>,
+    )
+  >> method,
+  int inputArgumentsSize,
+  ffi.Pointer<UA_Argument> inputArguments,
+  int outputArgumentsSize,
+  ffi.Pointer<UA_Argument> outputArguments,
+  ffi.Pointer<ffi.Void> nodeContext,
+  ffi.Pointer<UA_NodeId> outNewNodeId,
+);
+
 /// Detailed Node Construction
 /// ~~~~~~~~~~~~~~~~~~~~~~~~~~
 /// The method pair UA_Server_addNode_begin and _finish splits the AddNodes
@@ -2710,6 +2771,43 @@ final class UA_DataTypeAttributes extends ffi.Struct {
 
   @ffi.Bool()
   external bool isAbstract;
+}
+
+final class UA_MethodAttributes extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedAttributes;
+
+  external UA_LocalizedText displayName;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt32()
+  external int writeMask;
+
+  @UA_UInt32()
+  external int userWriteMask;
+
+  @ffi.Bool()
+  external bool executable;
+
+  @ffi.Bool()
+  external bool userExecutable;
+}
+
+final class UA_Argument extends ffi.Struct {
+  external UA_String name;
+
+  external UA_NodeId dataType;
+
+  @UA_Int32()
+  external int valueRank;
+
+  @ffi.Size()
+  external int arrayDimensionsSize;
+
+  external ffi.Pointer<UA_UInt32> arrayDimensions;
+
+  external UA_LocalizedText description;
 }
 
 final class UA_AddNodesItem extends ffi.Opaque {}

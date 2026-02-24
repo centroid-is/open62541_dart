@@ -32,6 +32,7 @@ class Server {
 
   late ffi.Pointer<raw.UA_Server> _server;
   late ffi.Pointer<raw.UA_ServerConfig> _config;
+  final _methodCallbacks = <ffi.NativeCallable>[];
 
   /// Initializes and starts the OPC UA server.
   ///
@@ -296,6 +297,145 @@ class Server {
     );
 
     ua_calloc.free(attrMem);
+  }
+
+  /// Add a method node to the server address space.
+  ///
+  /// [methodNodeId] is the NodeId for the new method.
+  /// [browseName] is the display/browse name.
+  /// [callback] is the Dart function invoked when a client calls this method.
+  /// [inputArguments] and [outputArguments] describe the method's signature.
+  void addMethodNode(
+    NodeId methodNodeId,
+    String browseName, {
+    required List<DynamicValue> Function(List<DynamicValue> inputs) callback,
+    List<DynamicValue> inputArguments = const [],
+    List<DynamicValue> outputArguments = const [],
+    NodeId? parentNodeId,
+    NodeId? referenceTypeId,
+  }) {
+    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
+
+    // Build method attributes
+    final attrType = getType(UaTypes.methodAttributes);
+    final attrMem = ua_calloc<ffi.Uint8>(attrType.ref.memSize);
+    final attr = attrMem.cast<raw.UA_MethodAttributes>();
+    final ltPtr = localizedTextToRaw(LocalizedText(browseName, ''));
+    attr.ref.displayName = ltPtr.ref;
+    attr.ref.executable = true;
+    attr.ref.userExecutable = true;
+
+    // Debug: check struct size match
+    final argType = getType(UaTypes.argument);
+    print('DEBUG: Dart sizeOf<UA_Argument>=${ffi.sizeOf<raw.UA_Argument>()} C memSize=${argType.ref.memSize} match=${ffi.sizeOf<raw.UA_Argument>() == argType.ref.memSize}');
+
+    // Build input arguments
+    final inputArgsPtr = inputArguments.isEmpty
+        ? ffi.nullptr.cast<raw.UA_Argument>()
+        : ua_calloc<raw.UA_Argument>(inputArguments.length);
+    for (var i = 0; i < inputArguments.length; i++) {
+      final arg = inputArguments[i];
+      if (arg.name != null) (inputArgsPtr + i).ref.name.set(arg.name!);
+      if (arg.typeId != null) (inputArgsPtr + i).ref.dataType = arg.typeId!.toRaw();
+      (inputArgsPtr + i).ref.valueRank = -1; // scalar
+    }
+
+    // Build output arguments
+    final outputArgsPtr = outputArguments.isEmpty
+        ? ffi.nullptr.cast<raw.UA_Argument>()
+        : ua_calloc<raw.UA_Argument>(outputArguments.length);
+    for (var i = 0; i < outputArguments.length; i++) {
+      final arg = outputArguments[i];
+      if (arg.name != null) (outputArgsPtr + i).ref.name.set(arg.name!);
+      if (arg.typeId != null) (outputArgsPtr + i).ref.dataType = arg.typeId!.toRaw();
+      (outputArgsPtr + i).ref.valueRank = -1; // scalar
+    }
+
+    // Create the native callback
+    final nativeCallback = ffi.NativeCallable<
+      raw.UA_StatusCode Function(
+        ffi.Pointer<raw.UA_Server>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Size,
+        ffi.Pointer<raw.UA_Variant>,
+        ffi.Size,
+        ffi.Pointer<raw.UA_Variant>,
+      )
+    >.isolateLocal((
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionContext,
+      ffi.Pointer<raw.UA_NodeId> methodId,
+      ffi.Pointer<ffi.Void> methodContext,
+      ffi.Pointer<raw.UA_NodeId> objectId,
+      ffi.Pointer<ffi.Void> objectContext,
+      int inputSize,
+      ffi.Pointer<raw.UA_Variant> input,
+      int outputSize,
+      ffi.Pointer<raw.UA_Variant> output,
+    ) {
+      try {
+        print('DEBUG CALLBACK: inputSize=$inputSize outputSize=$outputSize sizeOf<Variant>=${ffi.sizeOf<raw.UA_Variant>()}');
+        print('DEBUG CALLBACK: output[0] addr=${output.address} output[1] addr=${(output + 1).address} diff=${(output + 1).address - output.address}');
+        // Marshal inputs
+        final inputs = <DynamicValue>[];
+        for (var i = 0; i < inputSize; i++) {
+          inputs.add(variantToValue(input[i]));
+        }
+
+        // Call Dart callback
+        final results = callback(inputs);
+        print('DEBUG CALLBACK: results.length=${results.length}');
+
+        // Marshal outputs using UA_Variant_copy for proper deep copy
+        for (var i = 0; i < results.length && i < outputSize; i++) {
+          final variantPtr = valueToVariant(results[i]);
+          final copyStatus = raw.UA_Variant_copy(variantPtr, output + i);
+          print('DEBUG CALLBACK: copy[$i] status=$copyStatus type=${variantPtr.ref.type}');
+          raw.UA_Variant_delete(variantPtr);
+        }
+
+        return raw.UA_STATUSCODE_GOOD;
+      } catch (_) {
+        return raw.UA_STATUSCODE_BADINTERNALERROR;
+      }
+    }, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
+
+    // Store the callable so it doesn't get garbage collected
+    _methodCallbacks.add(nativeCallback);
+
+    final browse = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
+
+    final retCode = raw.UA_Server_addMethodNode(
+      _server,
+      methodNodeId.toRaw(),
+      parentNodeId.toRaw(),
+      referenceTypeId.toRaw(),
+      browse,
+      attr.ref,
+      nativeCallback.nativeFunction,
+      inputArguments.length,
+      inputArgsPtr,
+      outputArguments.length,
+      outputArgsPtr,
+      ffi.nullptr,
+      ffi.nullptr,
+    );
+
+    // Cleanup allocations
+    if (inputArguments.isNotEmpty) ua_calloc.free(inputArgsPtr);
+    if (outputArguments.isNotEmpty) ua_calloc.free(outputArgsPtr);
+    ua_calloc.free(attrMem);
+
+    if (retCode != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add method node: ${statusCodeToString(retCode)}';
+    }
   }
 
   void _addNode(
