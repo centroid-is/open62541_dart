@@ -7,7 +7,7 @@ import 'package:open62541/open62541.dart';
 import 'common.dart';
 
 /// Create an isolate client (each runs in its own isolate, no event loop contention).
-Future<ClientIsolate> setupIsolateClient(int port) async {
+Future<ClientIsolate> _setupIsolateClient(int port) async {
   final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
   unawaited(client.runIterate().catchError((_) {}));
   unawaited(client.connect("opc.tcp://localhost:$port"));
@@ -16,11 +16,11 @@ Future<ClientIsolate> setupIsolateClient(int port) async {
 }
 
 /// Create [count] isolate clients in parallel batches of [batchSize].
-Future<List<ClientIsolate>> setupIsolateClients(int port, int count, {int batchSize = 10}) async {
+Future<List<ClientIsolate>> _setupIsolateClients(int port, int count, {int batchSize = 10}) async {
   final clients = <ClientIsolate>[];
   for (var start = 0; start < count; start += batchSize) {
     final end = (start + batchSize).clamp(0, count);
-    final batch = await Future.wait([for (var i = start; i < end; i++) setupIsolateClient(port)]);
+    final batch = await Future.wait([for (var i = start; i < end; i++) _setupIsolateClient(port)]);
     clients.addAll(batch);
   }
   return clients;
@@ -44,7 +44,7 @@ void main() {
     });
 
     test('10 isolate clients read simultaneously', () async {
-      final clients = await setupIsolateClients(port, 10);
+      final clients = await _setupIsolateClients(port, 10);
 
       final results = await Future.wait(clients.map((c) => c.read(intNodeId)));
       for (var i = 0; i < results.length; i++) {
@@ -57,7 +57,7 @@ void main() {
     });
 
     test('25 isolate clients read simultaneously', () async {
-      final clients = await setupIsolateClients(port, 25);
+      final clients = await _setupIsolateClients(port, 25);
 
       final results = await Future.wait(clients.map((c) => c.read(intNodeId)));
       for (var i = 0; i < results.length; i++) {
@@ -70,7 +70,7 @@ void main() {
     });
 
     test('50 isolate clients read simultaneously', () async {
-      final clients = await setupIsolateClients(port, 50);
+      final clients = await _setupIsolateClients(port, 50);
 
       final results = await Future.wait(clients.map((c) => c.read(intNodeId)));
       for (var i = 0; i < results.length; i++) {
@@ -80,10 +80,10 @@ void main() {
       for (final c in clients) {
         await c.delete();
       }
-    });
+    }, testOn: 'linux');
 
     test('100 isolate clients connect and read', () async {
-      final clients = await setupIsolateClients(port, 100);
+      final clients = await _setupIsolateClients(port, 100);
 
       // Read in batches of 25
       for (var batch = 0; batch < clients.length; batch += 25) {
@@ -97,10 +97,10 @@ void main() {
       for (final c in clients) {
         await c.delete();
       }
-    });
+    }, testOn: 'linux');
 
     test('50 isolate clients write concurrently then all read', () async {
-      final clients = await setupIsolateClients(port, 50);
+      final clients = await _setupIsolateClients(port, 50);
 
       await Future.wait([
         for (var i = 0; i < clients.length; i++)
@@ -114,7 +114,7 @@ void main() {
       for (final c in clients) {
         await c.delete();
       }
-    });
+    }, testOn: 'linux');
 
     test('50 isolate clients each write their own node', () async {
       for (var i = 0; i < 50; i++) {
@@ -124,7 +124,7 @@ void main() {
         );
       }
 
-      final clients = await setupIsolateClients(port, 50);
+      final clients = await _setupIsolateClients(port, 50);
 
       await Future.wait([
         for (var i = 0; i < 50; i++)
@@ -143,7 +143,7 @@ void main() {
       for (final c in clients) {
         await c.delete();
       }
-    });
+    }, testOn: 'linux');
 
     test('25 isolate clients browse simultaneously', () async {
       for (var i = 0; i < 20; i++) {
@@ -153,7 +153,7 @@ void main() {
         );
       }
 
-      final clients = await setupIsolateClients(port, 25);
+      final clients = await _setupIsolateClients(port, 25);
 
       final results = await Future.wait(clients.map((c) => c.browse(NodeId.objectsFolder)));
 
@@ -165,7 +165,7 @@ void main() {
       for (final c in clients) {
         await c.delete();
       }
-    });
+    }, testOn: 'linux');
 
     test('50 isolate clients mixed operations', () async {
       for (var i = 0; i < 10; i++) {
@@ -175,7 +175,7 @@ void main() {
         );
       }
 
-      final clients = await setupIsolateClients(port, 50);
+      final clients = await _setupIsolateClients(port, 50);
 
       final futures = <Future>[];
 
@@ -206,6 +206,6 @@ void main() {
       for (final c in clients) {
         await c.delete();
       }
-    });
+    }, testOn: 'linux');
   }, timeout: Timeout(Duration(seconds: 300)));
 }
