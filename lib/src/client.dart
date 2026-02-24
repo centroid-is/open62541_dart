@@ -88,6 +88,14 @@ class ClientConfig {
 
   int get outstandingPublishRequests => _clientConfig.ref.outStandingPublishRequests;
 
+  /// Detach native callbacks from the C config so UA_Client_delete won't
+  /// call back into Dart (which can crash if the isolate is shutting down).
+  void detachCallbacks() {
+    _clientConfig.ref.stateCallback = ffi.nullptr;
+    _clientConfig.ref.subscriptionInactivityCallback = ffi.nullptr;
+    _clientConfig.ref.inactivityCallback = ffi.nullptr;
+  }
+
   Future<void> close() async {
     await _stateStream.close();
     await _subscriptionInactivity.close();
@@ -1540,10 +1548,10 @@ class Client implements ClientApi {
     ffi.Pointer<raw.UA_Client> client = _client;
     _client = ffi.nullptr;
     await Future.delayed(Duration(milliseconds: 10));
+    // Detach C-side callback pointers before deletion to prevent
+    // UA_Client_delete from calling back into Dart during cleanup.
+    _clientConfig.detachCallbacks();
     raw.UA_Client_delete(client);
-    // Client_delete calls client config state callbacks
-    // Need to close the config after deleting the client
-    // s.t. the native callbacks are not closed when called
     await _clientConfig.close();
   }
 

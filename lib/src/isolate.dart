@@ -871,6 +871,8 @@ void _isolateEntryPoint(_IsolateData data) {
 
         await client.delete();
         sendPort.send(IsolateResponse.success(message.requestId, null));
+        // Close receive port so isolate exits naturally (no need for kill)
+        receivePort.close();
       } else if (message is AwaitConnectMessage) {
         await client.awaitConnect();
         sendPort.send(IsolateResponse.success(message.requestId, null));
