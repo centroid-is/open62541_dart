@@ -262,6 +262,42 @@ class Server {
     raw.UA_DataTypeAttributes_delete(attr);
   }
 
+  /// Add an object node (folder/container) to the server address space.
+  void addObjectNode(
+    NodeId objectNodeId,
+    String browseName, {
+    NodeId? parentNodeId,
+    NodeId? referenceTypeId,
+    NodeId? typeDefinition,
+  }) {
+    final attrType = getType(UaTypes.objectAttributes);
+
+    // Allocate and zero-initialize the full UA_ObjectAttributes struct
+    final attrMem = ua_calloc<ffi.Uint8>(attrType.ref.memSize);
+
+    // Set displayName through the UA_NodeAttributes view (common leading fields)
+    final attr = attrMem.cast<raw.UA_NodeAttributes>();
+    final ltPtr = localizedTextToRaw(LocalizedText(browseName, ''));
+    attr.ref.displayName = ltPtr.ref;
+
+    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
+    typeDefinition ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEOBJECTTYPE);
+
+    _addNode(
+      raw.UA_NodeClass.UA_NODECLASS_OBJECT,
+      objectNodeId,
+      parentNodeId,
+      referenceTypeId,
+      browseName,
+      typeDefinition,
+      attr,
+      attrType,
+    );
+
+    ua_calloc.free(attrMem);
+  }
+
   void _addNode(
     raw.UA_NodeClass nodeClass,
     NodeId requestedNewNodeId,
@@ -300,56 +336,83 @@ class Server {
     }
   }
 
-  // Register callbacks onto the `variableNodeId` to get notifications
-  // when the value is read and written to.
-  Stream<String> monitorVariable(NodeId variableNodeId) {
-    // UA_NodeId currentNodeId = UA_NODEID_STRING(1, "current-time-value-callback");
-    // UA_ValueCallback callback ;
-    // callback.onRead = beforeReadTime;
-    // callback.onWrite = afterWriteTime;
-    // UA_Server_setVariableNode_valueCallback(server, currentNodeId, callback);
+  /// Register callbacks on [variableNodeId] to get notifications
+  /// when the value is read or written by external clients.
+  ///
+  /// Returns a stream of `(String event, DynamicValue? value)` records
+  /// where event is "read" (value is null) or "write" (value is the written data).
+  Stream<(String, DynamicValue?)> monitorVariable(NodeId variableNodeId) {
+    final controller = StreamController<(String, DynamicValue?)>();
 
-    StreamController<String> controller = StreamController<String>();
+    void onRead(
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionCtx,
+      ffi.Pointer<raw.UA_NodeId> nodeId,
+      ffi.Pointer<ffi.Void> nodeCtx,
+      ffi.Pointer<raw.UA_NumericRange> range,
+      ffi.Pointer<raw.UA_DataValue> value,
+    ) {
+      if (!controller.isClosed) {
+        controller.add(('read', null));
+      }
+    }
 
-    ffi.Pointer<raw.UA_CallbackValueSource> callback = ua_calloc<raw.UA_CallbackValueSource>();
+    void onWrite(
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionCtx,
+      ffi.Pointer<raw.UA_NodeId> nodeId,
+      ffi.Pointer<ffi.Void> nodeCtx,
+      ffi.Pointer<raw.UA_NumericRange> range,
+      ffi.Pointer<raw.UA_DataValue> data,
+    ) {
+      if (!controller.isClosed) {
+        final dynValue = variantToValue(data.ref.value);
+        controller.add(('write', dynValue));
+      }
+    }
 
-    //TODO : FIX
-    // raw.UA_UInt32 onRead(
-    //   ffi.Pointer<raw.UA_Server> server,
-    //   ffi.Pointer<raw.UA_NodeId> sessionId,
-    //   ffi.Pointer<ffi.Void> sessionContext,
-    //   ffi.Pointer<raw.UA_NodeId> nodeId,
-    //   ffi.Pointer<ffi.Void> nodeContext,
-    //   ffi.Bool includeSourceTimeStamp,
-    //   ffi.Pointer<raw.UA_NumericRange> range,
-    //   ffi.Pointer<raw.UA_DataValue> value,
-    // ) {
-    //   // TODO: Implement the read callback logic
-    //   controller.add("Read callback triggered");
-    //   return raw.UA_STATUSCODE_GOOD as raw.UA_StatusCode;
-    // }
+    final onReadCallable = ffi.NativeCallable<
+      ffi.Void Function(
+        ffi.Pointer<raw.UA_Server>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<raw.UA_NumericRange>,
+        ffi.Pointer<raw.UA_DataValue>,
+      )
+    >.isolateLocal(onRead);
 
-    //TODO: FIX
-    // final onReadCallback = ffi.NativeCallable<
-    //     raw.UA_UInt32 Function(
-    //         ffi.Pointer<raw.UA_Server>,
-    //         ffi.Pointer<raw.UA_NodeId>,
-    //         ffi.Pointer<ffi.Void>,
-    //         ffi.Pointer<raw.UA_NodeId>,
-    //         ffi.Pointer<ffi.Void>,
-    //         ffi.Bool,
-    //         ffi.Pointer<raw.UA_NumericRange>,
-    //         ffi.Pointer<raw.UA_DataValue>
-    //         )>.isolateLocal(onRead);
+    final onWriteCallable = ffi.NativeCallable<
+      ffi.Void Function(
+        ffi.Pointer<raw.UA_Server>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<raw.UA_NodeId>,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<raw.UA_NumericRange>,
+        ffi.Pointer<raw.UA_DataValue>,
+      )
+    >.isolateLocal(onWrite);
 
-    //callback.ref.read = onReadCallback.nativeFunction;
-    raw.UA_Server_setVariableNode_callbackValueSource(_server, variableNodeId.toRaw(), callback.ref);
+    final callback = ua_calloc<raw.UA_ValueSourceNotifications>();
+    callback.ref.onRead = onReadCallable.nativeFunction;
+    callback.ref.onWrite = onWriteCallable.nativeFunction;
+
+    raw.UA_Server_setVariableNode_internalValueSource(
+      _server, variableNodeId.toRaw(), ffi.nullptr, callback,
+    );
 
     controller.onCancel = () {
-      // _lib.UA_Server_setVariableNode_valueCallback(_server, variableNodeId.toRaw(_lib), ffi.nullptr); TODO: This cannot call us anymore
+      // Clear callbacks on the node by passing nullptr for notifications
+      raw.UA_Server_setVariableNode_internalValueSource(
+        _server, variableNodeId.toRaw(), ffi.nullptr, ffi.nullptr,
+      );
 
-      //TODO: FIX
-      //onReadCallback.close();
+      onReadCallable.close();
+      onWriteCallable.close();
       ua_calloc.free(callback);
     };
 

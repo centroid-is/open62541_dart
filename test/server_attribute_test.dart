@@ -493,6 +493,142 @@ void main() {
           expect(treeItems, isEmpty);
         });
       });
+
+      // ── addObjectNode ──────────────────────────────────────────
+
+      group('Server addObjectNode', () {
+        test('creates browseable object node', () {
+          final objId = NodeId.fromString(1, 'test.folder');
+          server!.addObjectNode(objId, 'TestFolder');
+
+          final items = server!.browse(NodeId.objectsFolder);
+          final folderItem = items.where((i) => i.nodeId == objId);
+          expect(folderItem, isNotEmpty, reason: 'Object node should appear in Objects folder');
+          expect(folderItem.first.nodeClass, NodeClass.UA_NODECLASS_OBJECT);
+          expect(folderItem.first.displayName, 'TestFolder');
+        });
+
+        test('adds child variable under object node', () {
+          final objId = NodeId.fromString(1, 'test.parent');
+          server!.addObjectNode(objId, 'ParentFolder');
+
+          final childId = NodeId.fromString(1, 'test.child');
+          server!.addVariableNode(
+            childId,
+            DynamicValue(value: 42, typeId: NodeId.int32, name: 'child_var'),
+            parentNodeId: objId,
+          );
+
+          final children = server!.browse(objId);
+          final childItem = children.where((i) => i.nodeId == childId);
+          expect(childItem, isNotEmpty, reason: 'Variable should be child of object node');
+          expect(childItem.first.nodeClass, NodeClass.UA_NODECLASS_VARIABLE);
+        });
+
+        test('client can browse server-created object node', () async {
+          final objId = NodeId.fromString(1, 'test.browseable');
+          server!.addObjectNode(objId, 'BrowseableFolder');
+
+          server!.addVariableNode(
+            NodeId.fromString(1, 'test.browseable.var'),
+            DynamicValue(value: 'hello', typeId: NodeId.uastring, name: 'browse_var'),
+            parentNodeId: objId,
+          );
+
+          final items = await client!.browse(objId);
+          expect(items, isNotEmpty);
+          final varItem = items.where((i) => i.nodeId == NodeId.fromString(1, 'test.browseable.var'));
+          expect(varItem, isNotEmpty);
+        });
+
+        test('nested object nodes', () {
+          final parentId = NodeId.fromString(1, 'test.level1');
+          final childId = NodeId.fromString(1, 'test.level2');
+
+          server!.addObjectNode(parentId, 'Level1');
+          server!.addObjectNode(childId, 'Level2', parentNodeId: parentId);
+
+          final children = server!.browse(parentId);
+          final childItem = children.where((i) => i.nodeId == childId);
+          expect(childItem, isNotEmpty);
+          expect(childItem.first.nodeClass, NodeClass.UA_NODECLASS_OBJECT);
+        });
+      });
+
+      // ── monitorVariable ────────────────────────────────────────
+
+      group('Server monitorVariable', () {
+        test('emits write event when client writes', () async {
+          final events = <(String, DynamicValue?)>[];
+          final completer = Completer<void>();
+
+          final sub = server!.monitorVariable(intNodeId);
+          final listener = sub.listen((event) {
+            if (event.$1 == 'write') {
+              events.add(event);
+              if (!completer.isCompleted) completer.complete();
+            }
+          });
+
+          // Write from client
+          await client!.write(intNodeId, DynamicValue(value: 999, typeId: NodeId.int32));
+
+          await completer.future.timeout(Duration(seconds: 5));
+          await listener.cancel();
+
+          expect(events, isNotEmpty);
+          expect(events.first.$1, 'write');
+          expect(events.first.$2, isNotNull);
+          expect(events.first.$2!.value, 999);
+        });
+
+        test('emits read event when client reads', () async {
+          final events = <(String, DynamicValue?)>[];
+          final completer = Completer<void>();
+
+          final sub = server!.monitorVariable(boolNodeId);
+          final listener = sub.listen((event) {
+            if (event.$1 == 'read') {
+              events.add(event);
+              if (!completer.isCompleted) completer.complete();
+            }
+          });
+
+          // Read from client
+          await client!.read(boolNodeId);
+
+          await completer.future.timeout(Duration(seconds: 5));
+          await listener.cancel();
+
+          expect(events, isNotEmpty);
+          expect(events.first.$1, 'read');
+          expect(events.first.$2, isNull);
+        });
+
+        test('cancel stops notifications', () async {
+          final events = <(String, DynamicValue?)>[];
+
+          final sub = server!.monitorVariable(intNodeId);
+          final listener = sub.listen((event) {
+            events.add(event);
+          });
+
+          await client!.write(intNodeId, DynamicValue(value: 10, typeId: NodeId.int32));
+          await Future.delayed(Duration(milliseconds: 100));
+
+          final countAfterFirst = events.length;
+          expect(countAfterFirst, greaterThan(0));
+
+          // Cancel the monitor
+          await listener.cancel();
+
+          // Write again — should not increase event count
+          await client!.write(intNodeId, DynamicValue(value: 20, typeId: NodeId.int32));
+          await Future.delayed(Duration(milliseconds: 100));
+
+          expect(events.length, countAfterFirst, reason: 'No events after cancel');
+        });
+      });
     });
   }
 }

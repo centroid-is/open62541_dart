@@ -638,6 +638,21 @@ external int UA_Server_setVariableNode_callbackValueSource(
   UA_CallbackValueSource evs,
 );
 
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Server>,
+    UA_NodeId,
+    ffi.Pointer<UA_DataValue>,
+    ffi.Pointer<UA_ValueSourceNotifications>,
+  )
+>()
+external int UA_Server_setVariableNode_internalValueSource(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId nodeId,
+  ffi.Pointer<UA_DataValue> value,
+  ffi.Pointer<UA_ValueSourceNotifications> notifications,
+);
+
 /// VariableTypeNode
 /// ~~~~~~~~~~~~~~~~
 @ffi.Native<

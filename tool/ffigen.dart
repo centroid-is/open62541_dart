@@ -68,6 +68,8 @@ Future<void> main() async {
       'UA_Server_addNode_begin',
       'UA_Server_addNode_finish',
       'UA_Server_setVariableNode_callbackValueSource',
+      'UA_Server_setVariableNode_internalValueSource',
+      'UA_Server_addObjectNode',
       'UA_Server_addVariableNode',
       'UA_Server_addVariableTypeNode',
       'UA_Server_addNode',
@@ -101,6 +103,8 @@ Future<void> main() async {
       'UA_VariableTypeAttributes_delete',
       'UA_VariableAttributes_new',
       'UA_VariableAttributes_delete',
+      'UA_ObjectAttributes_new',
+      'UA_ObjectAttributes_delete',
 
       'UA_LocalizedText_new',
       'UA_LocalizedText_delete',
@@ -133,6 +137,7 @@ Future<void> main() async {
     include: Declarations.includeSet({
       // 'UA_TYPES', The code generated from this variable causes the dart runtime to crash. See : https://github.com/dart-lang/sdk/issues/62087
       'UA_VariableAttributes_default',
+      'UA_ObjectAttributes_default',
     }),
   );
 
@@ -204,6 +209,7 @@ Future<void> main() async {
       'UA_BrowseResponse',
       'UA_BrowseNextRequest',
       'UA_BrowseNextResponse',
+      'UA_ObjectAttributes',
       'UA_BrowseDescription',
       'UA_BrowseResult',
       'UA_ReferenceDescription',
