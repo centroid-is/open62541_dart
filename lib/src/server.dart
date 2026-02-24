@@ -326,10 +326,6 @@ class Server {
     attr.ref.executable = true;
     attr.ref.userExecutable = true;
 
-    // Debug: check struct size match
-    final argType = getType(UaTypes.argument);
-    print('DEBUG: Dart sizeOf<UA_Argument>=${ffi.sizeOf<raw.UA_Argument>()} C memSize=${argType.ref.memSize} match=${ffi.sizeOf<raw.UA_Argument>() == argType.ref.memSize}');
-
     // Build input arguments
     final inputArgsPtr = inputArguments.isEmpty
         ? ffi.nullptr.cast<raw.UA_Argument>()
@@ -381,8 +377,6 @@ class Server {
       ffi.Pointer<raw.UA_Variant> output,
     ) {
       try {
-        print('DEBUG CALLBACK: inputSize=$inputSize outputSize=$outputSize sizeOf<Variant>=${ffi.sizeOf<raw.UA_Variant>()}');
-        print('DEBUG CALLBACK: output[0] addr=${output.address} output[1] addr=${(output + 1).address} diff=${(output + 1).address - output.address}');
         // Marshal inputs
         final inputs = <DynamicValue>[];
         for (var i = 0; i < inputSize; i++) {
@@ -391,13 +385,11 @@ class Server {
 
         // Call Dart callback
         final results = callback(inputs);
-        print('DEBUG CALLBACK: results.length=${results.length}');
 
         // Marshal outputs using UA_Variant_copy for proper deep copy
         for (var i = 0; i < results.length && i < outputSize; i++) {
           final variantPtr = valueToVariant(results[i]);
-          final copyStatus = raw.UA_Variant_copy(variantPtr, output + i);
-          print('DEBUG CALLBACK: copy[$i] status=$copyStatus type=${variantPtr.ref.type}');
+          raw.UA_Variant_copy(variantPtr, output + i);
           raw.UA_Variant_delete(variantPtr);
         }
 

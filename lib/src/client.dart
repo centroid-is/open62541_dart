@@ -1439,17 +1439,26 @@ class Client implements ClientApi {
                 StackTrace.current,
               );
             }
-            print('DEBUG CLIENT: outputArgumentsSize=${results.outputArgumentsSize} inputArgResultsSize=${results.inputArgumentResultsSize}');
             if (results.outputArgumentsSize == 0) {
               completer.complete([]);
             } else {
-              final result = <DynamicValue>[];
-              for (var i = 0; i < results.outputArgumentsSize; i++) {
-                print('DEBUG CLIENT: reading output[$i] type=${results.outputArguments[i].type} data=${results.outputArguments[i].data}');
-                result.add(await _variantToValueAutoSchema(results.outputArguments[i]));
-                print('DEBUG CLIENT: output[$i] value=${result.last.value}');
+              // Copy all output variants into Dart-owned memory before any
+              // async work. The C response memory may be freed when we yield
+              // to the event loop during await.
+              final count = results.outputArgumentsSize;
+              final copies = <ffi.Pointer<raw.UA_Variant>>[];
+              for (var i = 0; i < count; i++) {
+                final copy = raw.UA_Variant_new();
+                raw.UA_Variant_copy(results.outputArguments + i, copy);
+                copies.add(copy);
               }
-              print('DEBUG CLIENT: completing with ${result.length} results');
+              final result = <DynamicValue>[];
+              for (var i = 0; i < count; i++) {
+                result.add(await _variantToValueAutoSchema(copies[i].ref));
+              }
+              for (final copy in copies) {
+                raw.UA_Variant_delete(copy);
+              }
               completer.complete(result);
             }
           } catch (e) {
