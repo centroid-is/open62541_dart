@@ -752,12 +752,7 @@ void main() {
     });
 
     test('rejects anonymous when allowAnonymous=false', () async {
-      server = setupServer(
-        port,
-        users: {'testuser': 'testpass'},
-        allowAnonymous: false,
-        allowNonePolicyPassword: true,
-      );
+      server = setupServer(port, users: {'testuser': 'testpass'}, allowAnonymous: false, allowNonePolicyPassword: true);
       addBasicVariables(server!);
 
       // Client.connect waits for session activation which never happens
@@ -769,7 +764,8 @@ void main() {
           await Future.delayed(Duration(milliseconds: 5));
         }
       }());
-      final connected = client.connect("opc.tcp://localhost:$port")
+      final connected = client
+          .connect("opc.tcp://localhost:$port")
           .timeout(Duration(seconds: 5))
           .then((_) => true)
           .catchError((_) => false);
@@ -779,19 +775,10 @@ void main() {
     });
 
     test('accepts correct credentials', () async {
-      server = setupServer(
-        port,
-        users: {'testuser': 'testpass'},
-        allowAnonymous: false,
-        allowNonePolicyPassword: true,
-      );
+      server = setupServer(port, users: {'testuser': 'testpass'}, allowAnonymous: false, allowNonePolicyPassword: true);
       addBasicVariables(server!);
 
-      final client = await setupClientWithAuth(
-        port,
-        username: 'testuser',
-        password: 'testpass',
-      );
+      final client = await setupClientWithAuth(port, username: 'testuser', password: 'testpass');
       final result = await client.read(boolNodeId);
       expect(result.value, true);
       client.disconnect();
@@ -799,26 +786,18 @@ void main() {
     });
 
     test('rejects wrong password', () async {
-      server = setupServer(
-        port,
-        users: {'testuser': 'testpass'},
-        allowAnonymous: false,
-        allowNonePolicyPassword: true,
-      );
+      server = setupServer(port, users: {'testuser': 'testpass'}, allowAnonymous: false, allowNonePolicyPassword: true);
       addBasicVariables(server!);
 
-      final client = Client(
-        logLevel: LogLevel.UA_LOGLEVEL_FATAL,
-        username: 'testuser',
-        password: 'wrongpass',
-      );
+      final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL, username: 'testuser', password: 'wrongpass');
       bool running = true;
       unawaited(() async {
         while (running && client.runIterate(Duration(milliseconds: 10))) {
           await Future.delayed(Duration(milliseconds: 5));
         }
       }());
-      final connected = client.connect("opc.tcp://localhost:$port")
+      final connected = client
+          .connect("opc.tcp://localhost:$port")
           .timeout(Duration(seconds: 5))
           .then((_) => true)
           .catchError((_) => false);
@@ -828,12 +807,7 @@ void main() {
     });
 
     test('allows anonymous when allowAnonymous=true', () async {
-      server = setupServer(
-        port,
-        users: {'admin': 'admin123'},
-        allowAnonymous: true,
-        allowNonePolicyPassword: true,
-      );
+      server = setupServer(port, users: {'admin': 'admin123'}, allowAnonymous: true, allowNonePolicyPassword: true);
       addBasicVariables(server!);
 
       // Anonymous client works
@@ -844,11 +818,7 @@ void main() {
       await anonClient.delete();
 
       // Authenticated client also works
-      final authClient = await setupClientWithAuth(
-        port,
-        username: 'admin',
-        password: 'admin123',
-      );
+      final authClient = await setupClientWithAuth(port, username: 'admin', password: 'admin123');
       final result2 = await authClient.read(boolNodeId);
       expect(result2.value, true);
       authClient.disconnect();
