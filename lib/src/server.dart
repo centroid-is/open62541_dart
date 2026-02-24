@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -11,16 +12,101 @@ import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
 class Server {
-  Server({LogLevel? logLevel, int? port, int? maxSecureChannels, int? maxSessions}) {
+  Server({
+    LogLevel? logLevel,
+    int? port,
+    int? maxSecureChannels,
+    int? maxSessions,
+    Uint8List? certificate,
+    Uint8List? privateKey,
+    Map<String, String>? users,
+    bool allowAnonymous = true,
+    bool allowNonePolicyPassword = false,
+  }) {
     final config = ua_calloc<raw.UA_ServerConfig>();
 
     if (logLevel != null) {
       config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
     }
-    // setMinimal sets the logging level if not set.
-    int res = raw.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
-    if (res != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to set default server config ${statusCodeToString(res)}';
+
+    int res;
+    if (certificate != null && privateKey != null) {
+      // TLS path: configure with security policies
+      final rawCert = _uint8ListToByteString(certificate);
+      final rawKey = _uint8ListToByteString(privateKey);
+
+      res = raw.UA_ServerConfig_setDefaultWithSecurityPolicies(
+        config,
+        port ?? 4840,
+        rawCert,
+        rawKey,
+        ffi.nullptr, // trustList
+        0,
+        ffi.nullptr, // issuerList
+        0,
+        ffi.nullptr, // revocationList
+        0,
+      );
+
+      _freeByteString(rawCert);
+      _freeByteString(rawKey);
+
+      if (res != raw.UA_STATUSCODE_GOOD) {
+        throw 'Failed to set server config with security policies: ${statusCodeToString(res)}';
+      }
+
+      // Accept all client certificates (same pattern as Client)
+      final secureChannelPKI = ua_calloc<raw.UA_CertificateGroup>();
+      secureChannelPKI.ref = config.ref.secureChannelPKI;
+      raw.UA_CertificateGroup_AcceptAll(secureChannelPKI);
+      config.ref.secureChannelPKI = secureChannelPKI.ref;
+      ua_calloc.free(secureChannelPKI);
+
+      final sessionPKI = ua_calloc<raw.UA_CertificateGroup>();
+      sessionPKI.ref = config.ref.sessionPKI;
+      raw.UA_CertificateGroup_AcceptAll(sessionPKI);
+      config.ref.sessionPKI = sessionPKI.ref;
+      ua_calloc.free(sessionPKI);
+    } else {
+      // No TLS: minimal config
+      res = raw.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
+      if (res != raw.UA_STATUSCODE_GOOD) {
+        throw 'Failed to set default server config ${statusCodeToString(res)}';
+      }
+    }
+
+    // Authentication
+    if (users != null && users.isNotEmpty) {
+      final logins = ua_calloc<raw.UA_UsernamePasswordLogin>(users.length);
+      var i = 0;
+      for (final entry in users.entries) {
+        logins[i].username.set(entry.key);
+        logins[i].password.set(entry.value);
+        i++;
+      }
+
+      final authRes = raw.UA_AccessControl_default(
+        config,
+        allowAnonymous,
+        ffi.nullptr, // auto-detect from configured security policies
+        users.length,
+        logins,
+      );
+
+      // C function copies the data, so free our temporaries
+      for (var j = 0; j < users.length; j++) {
+        logins[j].username.free();
+        logins[j].password.free();
+      }
+      ua_calloc.free(logins);
+
+      if (authRes != raw.UA_STATUSCODE_GOOD) {
+        throw 'Failed to set access control: ${statusCodeToString(authRes)}';
+      }
+    }
+
+    if (allowNonePolicyPassword) {
+      config.ref.allowNonePolicyPassword = true;
     }
 
     if (maxSecureChannels != null) config.ref.maxSecureChannels = maxSecureChannels;
@@ -28,6 +114,21 @@ class Server {
 
     _server = raw.UA_Server_newWithConfig(config);
     _config = raw.UA_Server_getConfig(_server);
+  }
+
+  static ffi.Pointer<raw.UA_ByteString> _uint8ListToByteString(Uint8List bytes) {
+    final bs = ua_calloc<raw.UA_ByteString>();
+    bs.ref.data = ua_calloc<ffi.Uint8>(bytes.length);
+    bs.ref.length = bytes.length;
+    bs.ref.data.asTypedList(bytes.length).setRange(0, bytes.length, bytes);
+    return bs;
+  }
+
+  static void _freeByteString(ffi.Pointer<raw.UA_ByteString> bs) {
+    if (bs.ref.data != ffi.nullptr) {
+      ua_calloc.free(bs.ref.data);
+    }
+    ua_calloc.free(bs);
   }
 
   late ffi.Pointer<raw.UA_Server> _server;

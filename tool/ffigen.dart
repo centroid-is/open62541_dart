@@ -86,6 +86,10 @@ Future<void> main() async {
       'UA_Server_run_shutdown',
       'UA_Server_delete',
 
+      // Server security/auth functions
+      'UA_ServerConfig_setDefaultWithSecurityPolicies',
+      'UA_AccessControl_default',
+
       // Async server functions
       'UA_Server_read_async',
       'UA_Server_write_async',
@@ -219,6 +223,7 @@ Future<void> main() async {
       'UA_BrowseDescription',
       'UA_BrowseResult',
       'UA_ReferenceDescription',
+      'UA_UsernamePasswordLogin',
     }),
     typedefs: Typedefs.includeSet({
       'UA_Byte',

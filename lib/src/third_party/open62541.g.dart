@@ -80,11 +80,23 @@ external int UA_Variant_copy(ffi.Pointer<UA_Variant> src, ffi.Pointer<UA_Variant
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_Variant>)>()
 external void UA_Variant_delete(ffi.Pointer<UA_Variant> p);
 
+@ffi.Native<ffi.Pointer<UA_ObjectAttributes> Function()>()
+external ffi.Pointer<UA_ObjectAttributes> UA_ObjectAttributes_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_ObjectAttributes>)>()
+external void UA_ObjectAttributes_delete(ffi.Pointer<UA_ObjectAttributes> p);
+
 @ffi.Native<ffi.Pointer<UA_VariableAttributes> Function()>()
 external ffi.Pointer<UA_VariableAttributes> UA_VariableAttributes_new();
 
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_VariableAttributes>)>()
 external void UA_VariableAttributes_delete(ffi.Pointer<UA_VariableAttributes> p);
+
+@ffi.Native<ffi.Pointer<UA_MethodAttributes> Function()>()
+external ffi.Pointer<UA_MethodAttributes> UA_MethodAttributes_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_MethodAttributes>)>()
+external void UA_MethodAttributes_delete(ffi.Pointer<UA_MethodAttributes> p);
 
 @ffi.Native<ffi.Pointer<UA_VariableTypeAttributes> Function()>()
 external ffi.Pointer<UA_VariableTypeAttributes> UA_VariableTypeAttributes_new();
@@ -179,6 +191,12 @@ external void UA_CreateSubscriptionRequest_delete(ffi.Pointer<UA_CreateSubscript
 /// setting and leads to errors that are hard to track down.
 @ffi.Native<UA_VariableAttributes>()
 external final UA_VariableAttributes UA_VariableAttributes_default;
+
+@ffi.Native<UA_MethodAttributes>()
+external final UA_MethodAttributes UA_MethodAttributes_default;
+
+@ffi.Native<UA_ObjectAttributes>()
+external final UA_ObjectAttributes UA_ObjectAttributes_default;
 
 @ffi.Native<ffi.Pointer<UA_Client> Function(ffi.Pointer<UA_ClientConfig>)>()
 external ffi.Pointer<UA_Client> UA_Client_newWithConfig(ffi.Pointer<UA_ClientConfig> config);
@@ -631,13 +649,6 @@ external int UA_Server_addVariableNode(
   ffi.Pointer<UA_NodeId> outNewNodeId,
 );
 
-@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_CallbackValueSource)>()
-external int UA_Server_setVariableNode_callbackValueSource(
-  ffi.Pointer<UA_Server> server,
-  UA_NodeId nodeId,
-  UA_CallbackValueSource evs,
-);
-
 @ffi.Native<
   UA_StatusCode Function(
     ffi.Pointer<UA_Server>,
@@ -651,6 +662,13 @@ external int UA_Server_setVariableNode_internalValueSource(
   UA_NodeId nodeId,
   ffi.Pointer<UA_DataValue> value,
   ffi.Pointer<UA_ValueSourceNotifications> notifications,
+);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_CallbackValueSource)>()
+external int UA_Server_setVariableNode_callbackValueSource(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId nodeId,
+  UA_CallbackValueSource evs,
 );
 
 /// VariableTypeNode
@@ -691,17 +709,17 @@ external int UA_Server_addVariableTypeNode(
     ffi.Pointer<
       ffi.NativeFunction<
         UA_StatusCode Function(
-          ffi.Pointer<UA_Server>,
-          ffi.Pointer<UA_NodeId>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Pointer<UA_NodeId>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Pointer<UA_NodeId>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Size,
-          ffi.Pointer<UA_Variant>,
-          ffi.Size,
-          ffi.Pointer<UA_Variant>,
+          ffi.Pointer<UA_Server> server,
+          ffi.Pointer<UA_NodeId> sessionId,
+          ffi.Pointer<ffi.Void> sessionContext,
+          ffi.Pointer<UA_NodeId> methodId,
+          ffi.Pointer<ffi.Void> methodContext,
+          ffi.Pointer<UA_NodeId> objectId,
+          ffi.Pointer<ffi.Void> objectContext,
+          ffi.Size inputSize,
+          ffi.Pointer<UA_Variant> input,
+          ffi.Size outputSize,
+          ffi.Pointer<UA_Variant> output,
         )
       >
     >,
@@ -723,17 +741,17 @@ external int UA_Server_addMethodNode(
   ffi.Pointer<
     ffi.NativeFunction<
       UA_StatusCode Function(
-        ffi.Pointer<UA_Server>,
-        ffi.Pointer<UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Pointer<UA_NodeId>,
-        ffi.Pointer<ffi.Void>,
-        ffi.Size,
-        ffi.Pointer<UA_Variant>,
-        ffi.Size,
-        ffi.Pointer<UA_Variant>,
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_NodeId> methodId,
+        ffi.Pointer<ffi.Void> methodContext,
+        ffi.Pointer<UA_NodeId> objectId,
+        ffi.Pointer<ffi.Void> objectContext,
+        ffi.Size inputSize,
+        ffi.Pointer<UA_Variant> input,
+        ffi.Size outputSize,
+        ffi.Pointer<UA_Variant> output,
       )
     >
   >
@@ -742,6 +760,33 @@ external int UA_Server_addMethodNode(
   ffi.Pointer<UA_Argument> inputArguments,
   int outputArgumentsSize,
   ffi.Pointer<UA_Argument> outputArguments,
+  ffi.Pointer<ffi.Void> nodeContext,
+  ffi.Pointer<UA_NodeId> outNewNodeId,
+);
+
+/// ObjectNode
+/// ~~~~~~~~~~
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Server>,
+    UA_NodeId,
+    UA_NodeId,
+    UA_NodeId,
+    UA_QualifiedName,
+    UA_NodeId,
+    UA_ObjectAttributes,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_NodeId>,
+  )
+>()
+external int UA_Server_addObjectNode(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId requestedNewNodeId,
+  UA_NodeId parentNodeId,
+  UA_NodeId referenceTypeId,
+  UA_QualifiedName browseName,
+  UA_NodeId typeDefinition,
+  UA_ObjectAttributes attr,
   ffi.Pointer<ffi.Void> nodeContext,
   ffi.Pointer<UA_NodeId> outNewNodeId,
 );
@@ -917,6 +962,23 @@ external int UA_Server_write_async(
 @ffi.Native<ffi.Pointer<UA_DataType> Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_NodeId>)>()
 external ffi.Pointer<UA_DataType> UA_Server_findDataType(ffi.Pointer<UA_Server> server, ffi.Pointer<UA_NodeId> typeId);
 
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_ServerConfig>,
+    ffi.Bool,
+    ffi.Pointer<UA_String>,
+    ffi.Size,
+    ffi.Pointer<UA_UsernamePasswordLogin>,
+  )
+>()
+external int UA_AccessControl_default(
+  ffi.Pointer<UA_ServerConfig> config,
+  bool allowAnonymous,
+  ffi.Pointer<UA_String> userTokenPolicyUri,
+  int usernamePasswordLoginSize,
+  ffi.Pointer<UA_UsernamePasswordLogin> usernamePasswordLogin,
+);
+
 /// amalgamated original file "/src/plugins/include/open62541/plugin/certificategroup_default.h"
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_CertificateGroup>)>()
 external void UA_CertificateGroup_AcceptAll(ffi.Pointer<UA_CertificateGroup> certGroup);
@@ -931,6 +993,33 @@ external int UA_ServerConfig_setMinimal(
   ffi.Pointer<UA_ServerConfig> config,
   int portNumber,
   ffi.Pointer<UA_ByteString> certificate,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_ServerConfig>,
+    UA_UInt16,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Size,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Size,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Size,
+  )
+>()
+external int UA_ServerConfig_setDefaultWithSecurityPolicies(
+  ffi.Pointer<UA_ServerConfig> conf,
+  int portNumber,
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<UA_ByteString> privateKey,
+  ffi.Pointer<UA_ByteString> trustList,
+  int trustListSize,
+  ffi.Pointer<UA_ByteString> issuerList,
+  int issuerListSize,
+  ffi.Pointer<UA_ByteString> revocationList,
+  int revocationListSize,
 );
 
 /// amalgamated original file "/src/plugins/include/open62541/client_config_default.h"
@@ -1861,6 +1950,9 @@ final class UA_DecodeBinaryOptions extends ffi.Struct {
     >
   >
   calloc;
+
+  @ffi.Size()
+  external int decodedLength;
 }
 
 enum UA_NamingRuleType {
@@ -2405,6 +2497,22 @@ final class UA_StructureDefinition extends ffi.Struct {
   external ffi.Pointer<UA_StructureField> fields;
 }
 
+final class UA_Argument extends ffi.Struct {
+  external UA_String name;
+
+  external UA_NodeId dataType;
+
+  @UA_Int32()
+  external int valueRank;
+
+  @ffi.Size()
+  external int arrayDimensionsSize;
+
+  external ffi.Pointer<UA_UInt32> arrayDimensions;
+
+  external UA_LocalizedText description;
+}
+
 final class UA_EnumField extends ffi.Struct {
   @UA_Int64()
   external int value;
@@ -2691,6 +2799,24 @@ final class UA_NodeAttributes extends ffi.Struct {
   external int userWriteMask;
 }
 
+final class UA_ObjectAttributes extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedAttributes;
+
+  external UA_LocalizedText displayName;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt32()
+  external int writeMask;
+
+  @UA_UInt32()
+  external int userWriteMask;
+
+  @UA_Byte()
+  external int eventNotifier;
+}
+
 final class UA_VariableAttributes extends ffi.Struct {
   @UA_UInt32()
   external int specifiedAttributes;
@@ -2728,6 +2854,27 @@ final class UA_VariableAttributes extends ffi.Struct {
 
   @ffi.Bool()
   external bool historizing;
+}
+
+final class UA_MethodAttributes extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedAttributes;
+
+  external UA_LocalizedText displayName;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt32()
+  external int writeMask;
+
+  @UA_UInt32()
+  external int userWriteMask;
+
+  @ffi.Bool()
+  external bool executable;
+
+  @ffi.Bool()
+  external bool userExecutable;
 }
 
 final class UA_VariableTypeAttributes extends ffi.Struct {
@@ -2776,43 +2923,6 @@ final class UA_DataTypeAttributes extends ffi.Struct {
 
   @ffi.Bool()
   external bool isAbstract;
-}
-
-final class UA_MethodAttributes extends ffi.Struct {
-  @UA_UInt32()
-  external int specifiedAttributes;
-
-  external UA_LocalizedText displayName;
-
-  external UA_LocalizedText description;
-
-  @UA_UInt32()
-  external int writeMask;
-
-  @UA_UInt32()
-  external int userWriteMask;
-
-  @ffi.Bool()
-  external bool executable;
-
-  @ffi.Bool()
-  external bool userExecutable;
-}
-
-final class UA_Argument extends ffi.Struct {
-  external UA_String name;
-
-  external UA_NodeId dataType;
-
-  @UA_Int32()
-  external int valueRank;
-
-  @ffi.Size()
-  external int arrayDimensionsSize;
-
-  external ffi.Pointer<UA_UInt32> arrayDimensions;
-
-  external UA_LocalizedText description;
 }
 
 final class UA_AddNodesItem extends ffi.Opaque {}
@@ -5311,6 +5421,13 @@ enum UA_NetworkMessageType {
     2 => UA_NETWORKMESSAGE_DISCOVERY_RESPONSE,
     _ => throw ArgumentError('Unknown value for UA_NetworkMessageType: $value'),
   };
+}
+
+/// amalgamated original file "/src/plugins/include/open62541/plugin/accesscontrol_default.h"
+final class UA_UsernamePasswordLogin extends ffi.Struct {
+  external UA_String username;
+
+  external UA_ByteString password;
 }
 
 enum UA_CertificateFormat {

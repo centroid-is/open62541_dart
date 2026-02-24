@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:open62541/open62541.dart';
 
@@ -66,8 +67,23 @@ Server setupServer(
   LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR,
   int? maxSecureChannels,
   int? maxSessions,
+  Uint8List? certificate,
+  Uint8List? privateKey,
+  Map<String, String>? users,
+  bool allowAnonymous = true,
+  bool allowNonePolicyPassword = false,
 }) {
-  final server = Server(port: port, logLevel: logLevel, maxSecureChannels: maxSecureChannels, maxSessions: maxSessions);
+  final server = Server(
+    port: port,
+    logLevel: logLevel,
+    maxSecureChannels: maxSecureChannels,
+    maxSessions: maxSessions,
+    certificate: certificate,
+    privateKey: privateKey,
+    users: users,
+    allowAnonymous: allowAnonymous,
+    allowNonePolicyPassword: allowNonePolicyPassword,
+  );
   server.start();
   _runningServers.add(server);
 
@@ -102,5 +118,33 @@ Future<Client> setupClient(int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_F
     throw Exception("Failed to connect to the server: $error");
   });
 
+  return client;
+}
+
+Future<Client> setupClientWithAuth(
+  int port, {
+  String? username,
+  String? password,
+  Uint8List? certificate,
+  Uint8List? privateKey,
+  MessageSecurityMode? securityMode,
+  LogLevel logLevel = LogLevel.UA_LOGLEVEL_FATAL,
+}) async {
+  final client = Client(
+    logLevel: logLevel,
+    username: username,
+    password: password,
+    certificate: certificate,
+    privateKey: privateKey,
+    securityMode: securityMode,
+  );
+  () async {
+    while (client.runIterate(Duration(milliseconds: 10))) {
+      await Future.delayed(Duration(milliseconds: 5));
+    }
+  }();
+  await client.connect("opc.tcp://localhost:$port").onError((error, stackTrace) {
+    throw Exception("Failed to connect to the server: $error");
+  });
   return client;
 }

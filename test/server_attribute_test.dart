@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:test/test.dart';
 
@@ -735,4 +737,215 @@ void main() {
       });
     });
   }
+
+  // ── Username/password authentication (no TLS) ──
+  group('Server auth (no TLS)', () {
+    int port = Random().nextInt(10000) + 4840;
+    Server? server;
+
+    tearDown(() async {
+      stopServerLoop();
+      await Future.delayed(Duration(milliseconds: 20));
+      server?.shutdown();
+      server?.delete();
+      server = null;
+    });
+
+    test('rejects anonymous when allowAnonymous=false', () async {
+      server = setupServer(
+        port,
+        users: {'testuser': 'testpass'},
+        allowAnonymous: false,
+        allowNonePolicyPassword: true,
+      );
+      addBasicVariables(server!);
+
+      // Client.connect waits for session activation which never happens
+      // when auth is rejected, so use a short timeout to detect the rejection.
+      final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+      bool running = true;
+      unawaited(() async {
+        while (running && client.runIterate(Duration(milliseconds: 10))) {
+          await Future.delayed(Duration(milliseconds: 5));
+        }
+      }());
+      final connected = client.connect("opc.tcp://localhost:$port")
+          .timeout(Duration(seconds: 5))
+          .then((_) => true)
+          .catchError((_) => false);
+      expect(await connected, false);
+      running = false;
+      await client.delete();
+    });
+
+    test('accepts correct credentials', () async {
+      server = setupServer(
+        port,
+        users: {'testuser': 'testpass'},
+        allowAnonymous: false,
+        allowNonePolicyPassword: true,
+      );
+      addBasicVariables(server!);
+
+      final client = await setupClientWithAuth(
+        port,
+        username: 'testuser',
+        password: 'testpass',
+      );
+      final result = await client.read(boolNodeId);
+      expect(result.value, true);
+      client.disconnect();
+      await client.delete();
+    });
+
+    test('rejects wrong password', () async {
+      server = setupServer(
+        port,
+        users: {'testuser': 'testpass'},
+        allowAnonymous: false,
+        allowNonePolicyPassword: true,
+      );
+      addBasicVariables(server!);
+
+      final client = Client(
+        logLevel: LogLevel.UA_LOGLEVEL_FATAL,
+        username: 'testuser',
+        password: 'wrongpass',
+      );
+      bool running = true;
+      unawaited(() async {
+        while (running && client.runIterate(Duration(milliseconds: 10))) {
+          await Future.delayed(Duration(milliseconds: 5));
+        }
+      }());
+      final connected = client.connect("opc.tcp://localhost:$port")
+          .timeout(Duration(seconds: 5))
+          .then((_) => true)
+          .catchError((_) => false);
+      expect(await connected, false);
+      running = false;
+      await client.delete();
+    });
+
+    test('allows anonymous when allowAnonymous=true', () async {
+      server = setupServer(
+        port,
+        users: {'admin': 'admin123'},
+        allowAnonymous: true,
+        allowNonePolicyPassword: true,
+      );
+      addBasicVariables(server!);
+
+      // Anonymous client works
+      final anonClient = await setupClient(port);
+      final result = await anonClient.read(boolNodeId);
+      expect(result.value, true);
+      anonClient.disconnect();
+      await anonClient.delete();
+
+      // Authenticated client also works
+      final authClient = await setupClientWithAuth(
+        port,
+        username: 'admin',
+        password: 'admin123',
+      );
+      final result2 = await authClient.read(boolNodeId);
+      expect(result2.value, true);
+      authClient.disconnect();
+      await authClient.delete();
+    });
+  });
+
+  // ── TLS with certificates ──
+  group('Server TLS', () {
+    int port = Random().nextInt(10000) + 4840;
+    Server? server;
+    late Uint8List cert;
+    late Uint8List key;
+
+    setUpAll(() {
+      cert = File('client_cert.der').readAsBytesSync();
+      key = File('client_key.der').readAsBytesSync();
+    });
+
+    tearDown(() async {
+      stopServerLoop();
+      await Future.delayed(Duration(milliseconds: 20));
+      server?.shutdown();
+      server?.delete();
+      server = null;
+    });
+
+    test('accepts encrypted connection (SignAndEncrypt)', () async {
+      server = setupServer(port, certificate: cert, privateKey: key);
+      addBasicVariables(server!);
+
+      final client = await setupClientWithAuth(
+        port,
+        certificate: cert,
+        privateKey: key,
+        securityMode: MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
+      );
+      final result = await client.read(boolNodeId);
+      expect(result.value, true);
+      client.disconnect();
+      await client.delete();
+    });
+
+    test('still allows None policy (unencrypted)', () async {
+      server = setupServer(port, certificate: cert, privateKey: key);
+      addBasicVariables(server!);
+
+      final client = await setupClient(port);
+      final result = await client.read(boolNodeId);
+      expect(result.value, true);
+      client.disconnect();
+      await client.delete();
+    });
+  });
+
+  // ── TLS + auth combined ──
+  group('Server TLS + auth', () {
+    int port = Random().nextInt(10000) + 4840;
+    Server? server;
+    late Uint8List cert;
+    late Uint8List key;
+
+    setUpAll(() {
+      cert = File('client_cert.der').readAsBytesSync();
+      key = File('client_key.der').readAsBytesSync();
+    });
+
+    tearDown(() async {
+      stopServerLoop();
+      await Future.delayed(Duration(milliseconds: 20));
+      server?.shutdown();
+      server?.delete();
+      server = null;
+    });
+
+    test('TLS + auth with correct credentials succeeds', () async {
+      server = setupServer(
+        port,
+        certificate: cert,
+        privateKey: key,
+        users: {'secureuser': 'securepass'},
+        allowAnonymous: false,
+      );
+      addBasicVariables(server!);
+
+      final client = await setupClientWithAuth(
+        port,
+        certificate: cert,
+        privateKey: key,
+        securityMode: MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
+        username: 'secureuser',
+        password: 'securepass',
+      );
+      final result = await client.read(boolNodeId);
+      expect(result.value, true);
+      client.disconnect();
+      await client.delete();
+    });
+  });
 }
