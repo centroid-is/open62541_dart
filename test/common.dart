@@ -72,6 +72,9 @@ Server setupServer(
   Map<String, String>? users,
   bool allowAnonymous = true,
   bool allowNonePolicyPassword = false,
+  bool securityPolicyNoneDiscoveryOnly = false,
+  double? maxSessionTimeout,
+  int? maxSecurityTokenLifetime,
 }) {
   final server = Server(
     port: port,
@@ -83,6 +86,9 @@ Server setupServer(
     users: users,
     allowAnonymous: allowAnonymous,
     allowNonePolicyPassword: allowNonePolicyPassword,
+    securityPolicyNoneDiscoveryOnly: securityPolicyNoneDiscoveryOnly,
+    maxSessionTimeout: maxSessionTimeout,
+    maxSecurityTokenLifetime: maxSecurityTokenLifetime,
   );
   server.start();
   _runningServers.add(server);

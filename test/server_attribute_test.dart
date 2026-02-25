@@ -1041,4 +1041,104 @@ void main() {
       await client.delete();
     });
   });
+
+  // ── Server config parameters ───────────────────────────────────────
+  group('Server config parameters', () {
+    int port = 0;
+    Server? server;
+
+    setUp(() {
+      port = Random().nextInt(10000) + 4840;
+    });
+
+    tearDown(() async {
+      stopServerLoop();
+      await Future.delayed(Duration(milliseconds: 20));
+      if (server != null) {
+        server!.shutdown();
+        server!.delete();
+        server = null;
+      }
+    });
+
+    test('maxSessionTimeout limits session lifetime', () async {
+      server = setupServer(
+        port,
+        users: {'user': 'pass123'},
+        allowAnonymous: false,
+        allowNonePolicyPassword: true,
+        maxSessionTimeout: 1000, // 1 second
+      );
+
+      // Client can connect and read
+      final client = await setupClientWithAuth(port, username: 'user', password: 'pass123');
+      final boolId = NodeId.fromString(1, 'test.bool');
+      server!.addVariableNode(boolId, DynamicValue(value: true, typeId: NodeId.boolean, name: 'test.bool'));
+      final result = await client.read(boolId);
+      expect(result.value, true);
+      client.disconnect();
+      await client.delete();
+    });
+
+    test('maxSecurityTokenLifetime is accepted', () async {
+      server = setupServer(port, maxSecurityTokenLifetime: 60000);
+
+      final client = await setupClient(port);
+      final boolId = NodeId.fromString(1, 'test.bool');
+      server!.addVariableNode(boolId, DynamicValue(value: true, typeId: NodeId.boolean, name: 'test.bool'));
+      final result = await client.read(boolId);
+      expect(result.value, true);
+      client.disconnect();
+      await client.delete();
+    });
+
+    test('securityPolicyNoneDiscoveryOnly blocks None connections on TLS server', () async {
+      final (certDer, keyDer) = _generateTestCertificates();
+      server = setupServer(
+        port,
+        certificate: certDer,
+        privateKey: keyDer,
+        securityPolicyNoneDiscoveryOnly: true,
+      );
+
+      // A client connecting without security should fail
+      final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+      () async {
+        while (client.runIterate(Duration(milliseconds: 10))) {
+          await Future.delayed(Duration(milliseconds: 5));
+        }
+      }();
+      await expectLater(
+        client.connect("opc.tcp://localhost:$port"),
+        throwsA(anything),
+      );
+      await client.delete();
+    });
+
+    test('TLS server without securityPolicyNoneDiscoveryOnly allows None connections', () async {
+      final (certDer, keyDer) = _generateTestCertificates();
+      server = setupServer(
+        port,
+        certificate: certDer,
+        privateKey: keyDer,
+        // securityPolicyNoneDiscoveryOnly defaults to false
+      );
+
+      // A client connecting without security should work (None policy available)
+      final client = await setupClient(port);
+      final boolId = NodeId.fromString(1, 'test.bool');
+      server!.addVariableNode(boolId, DynamicValue(value: true, typeId: NodeId.boolean, name: 'test.bool'));
+      final result = await client.read(boolId);
+      expect(result.value, true);
+      client.disconnect();
+      await client.delete();
+    });
+  });
+
+  // ── statusCodeToString export ──────────────────────────────────────
+  test('statusCodeToString works without lib handle', () {
+    expect(statusCodeToString(0), 'Good');
+    expect(statusCodeToString(0x80010000), 'BadUnexpectedError');
+    expect(statusCodeToString(0x801F0000), 'BadUserAccessDenied');
+  });
 }

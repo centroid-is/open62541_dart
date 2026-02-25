@@ -22,6 +22,9 @@ class Server {
     Map<String, String>? users,
     bool allowAnonymous = true,
     bool allowNonePolicyPassword = false,
+    bool securityPolicyNoneDiscoveryOnly = false,
+    double? maxSessionTimeout,
+    int? maxSecurityTokenLifetime,
   }) {
     final config = ua_calloc<raw.UA_ServerConfig>();
 
@@ -111,6 +114,9 @@ class Server {
 
     if (maxSecureChannels != null) config.ref.maxSecureChannels = maxSecureChannels;
     if (maxSessions != null) config.ref.maxSessions = maxSessions;
+    if (maxSessionTimeout != null) config.ref.maxSessionTimeout = maxSessionTimeout;
+    if (maxSecurityTokenLifetime != null) config.ref.maxSecurityTokenLifetime = maxSecurityTokenLifetime;
+    if (securityPolicyNoneDiscoveryOnly) config.ref.securityPolicyNoneDiscoveryOnly = true;
 
     _server = raw.UA_Server_newWithConfig(config);
     _config = raw.UA_Server_getConfig(_server);
