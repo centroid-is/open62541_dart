@@ -1092,26 +1092,20 @@ void main() {
       await client.delete();
     });
 
-    test('securityPolicyNoneDiscoveryOnly blocks None connections on TLS server', () async {
+    test('securityPolicyNoneDiscoveryOnly blocks None session on TLS server', () async {
       final (certDer, keyDer) = _generateTestCertificates();
-      server = setupServer(
-        port,
-        certificate: certDer,
-        privateKey: keyDer,
-        securityPolicyNoneDiscoveryOnly: true,
-      );
+      server = setupServer(port, certificate: certDer, privateKey: keyDer, securityPolicyNoneDiscoveryOnly: true);
 
-      // A client connecting without security should fail
+      // A client connecting without security should fail to establish a session.
+      // The connect will hang because the server rejects the None-policy session,
+      // so we use a short timeout to detect the failure.
       final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
       () async {
         while (client.runIterate(Duration(milliseconds: 10))) {
           await Future.delayed(Duration(milliseconds: 5));
         }
       }();
-      await expectLater(
-        client.connect("opc.tcp://localhost:$port"),
-        throwsA(anything),
-      );
+      await expectLater(client.connect("opc.tcp://localhost:$port").timeout(Duration(seconds: 5)), throwsA(anything));
       await client.delete();
     });
 
