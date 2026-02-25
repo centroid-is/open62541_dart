@@ -877,6 +877,9 @@ DartUA_StatusCode UA_Server_addNode_begin(
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
 external int UA_Server_addNode_finish(ffi.Pointer<UA_Server> server, UA_NodeId nodeId);
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Bool)>()
+external int UA_Server_deleteNode(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, bool deleteReferences);
+
 @ffi.Native<
   UA_StatusCode Function(
     ffi.Pointer<UA_Server>,

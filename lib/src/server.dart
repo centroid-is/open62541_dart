@@ -542,6 +542,16 @@ class Server {
     }
   }
 
+  /// Deletes a node from the server's address space.
+  ///
+  /// By default, all references to and from the node are also deleted.
+  void deleteNode(NodeId nodeId, {bool deleteReferences = true}) {
+    final res = raw.UA_Server_deleteNode(_server, nodeId.toRaw(), deleteReferences);
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to delete node: ${statusCodeToString(res)}';
+    }
+  }
+
   /// Restrict a method node so only [allowedUsers] may call it.
   ///
   /// Overrides `getUserExecutableOnObject` in the server's access control.

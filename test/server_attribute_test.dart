@@ -1135,4 +1135,68 @@ void main() {
     expect(statusCodeToString(0x80010000), 'BadUnexpectedError');
     expect(statusCodeToString(0x801F0000), 'BadUserAccessDenied');
   });
+
+  // ── deleteNode ─────────────────────────────────────────────────────
+  group('Server deleteNode', () {
+    int port = 0;
+    Server? server;
+
+    setUp(() {
+      port = Random().nextInt(10000) + 4840;
+    });
+
+    tearDown(() async {
+      stopServerLoop();
+      await Future.delayed(Duration(milliseconds: 20));
+      if (server != null) {
+        server!.shutdown();
+        server!.delete();
+        server = null;
+      }
+    });
+
+    test('deleteNode removes a variable node', () async {
+      server = setupServer(port);
+      final nodeId = NodeId.fromString(1, 'to.delete');
+      server!.addVariableNode(nodeId, DynamicValue(value: 42, typeId: NodeId.int32, name: 'to.delete'));
+
+      // Can read before delete
+      final result = await server!.read(nodeId);
+      expect(result.value, 42);
+
+      // Delete the node
+      server!.deleteNode(nodeId);
+
+      // Server-side read after delete returns empty value (node gone)
+      final afterDelete = await server!.read(nodeId);
+      expect(afterDelete.value, isNull);
+    });
+
+    test('deleteNode on nonexistent node throws', () {
+      server = setupServer(port);
+      final nodeId = NodeId.fromString(1, 'does.not.exist');
+      expect(() => server!.deleteNode(nodeId), throwsA(contains('BadNodeIdUnknown')));
+    });
+
+    test('deleted node is not visible to client', () async {
+      server = setupServer(port);
+      final nodeId = NodeId.fromString(1, 'client.visible');
+      server!.addVariableNode(nodeId, DynamicValue(value: 7, typeId: NodeId.int32, name: 'client.visible'));
+
+      final client = await setupClient(port);
+
+      // Client can read before delete
+      final before = await client.read(nodeId);
+      expect(before.value, 7);
+
+      // Delete the node server-side
+      server!.deleteNode(nodeId);
+
+      // Client read should fail
+      await expectLater(client.read(nodeId), throwsA(anything));
+
+      client.disconnect();
+      await client.delete();
+    });
+  });
 }
