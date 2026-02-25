@@ -151,20 +151,21 @@ jobs:
           if [ -z "$DEVICE_ID" ]; then
             DEVICE_ID=$(xcrun simctl list devices available | grep "iPhone" | head -1 | grep -oE '[A-F0-9-]{36}')
           fi
-          echo "Booting simulator: $DEVICE_ID"
-          xcrun simctl boot "$DEVICE_ID" || true
-          # Wait for simulator to be fully booted
-          xcrun simctl bootstatus "$DEVICE_ID" -b
-          echo "DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
+          for attempt in 1 2 3; do
+            echo "Boot attempt $attempt of 3 for simulator: $DEVICE_ID"
+            xcrun simctl shutdown "$DEVICE_ID" 2>/dev/null || true
+            xcrun simctl boot "$DEVICE_ID" || true
+            if timeout 120 xcrun simctl bootstatus "$DEVICE_ID" -b; then
+              echo "Simulator booted successfully"
+              echo "DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
+              exit 0
+            fi
+            echo "Boot timed out, retrying..."
+          done
+          echo "Failed to boot simulator after 3 attempts"
+          exit 1
 
       - name: Run integration tests
         working-directory: flutter_example
-        run: |
-          # Check simulator status
-          xcrun simctl list devices booted
-          # Run with verbose to see where it gets stuck
-          flutter test integration_test/library_test.dart -d $DEVICE_ID --verbose 2>&1 | tee test_output.txt || true
-          # Show last 100 lines if it fails
-          tail -100 test_output.txt
-          # Check for crash logs
-          find ~/Library/Logs/DiagnosticReports -name "*.crash" -mmin -10 2>/dev/null | head -5 || true
+        timeout-minutes: 20
+        run: flutter test integration_test/library_test.dart -d $DEVICE_ID
