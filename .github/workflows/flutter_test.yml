@@ -144,6 +144,9 @@ jobs:
         working-directory: flutter_example
         run: flutter pub get
 
+      - name: Install coreutils
+        run: brew install coreutils
+
       - name: Boot iOS Simulator
         run: |
           xcrun simctl list devices available
@@ -155,7 +158,7 @@ jobs:
             echo "Boot attempt $attempt of 3 for simulator: $DEVICE_ID"
             xcrun simctl shutdown "$DEVICE_ID" 2>/dev/null || true
             xcrun simctl boot "$DEVICE_ID" || true
-            if timeout 120 xcrun simctl bootstatus "$DEVICE_ID" -b; then
+            if gtimeout 120 xcrun simctl bootstatus "$DEVICE_ID" -b; then
               echo "Simulator booted successfully"
               echo "DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
               exit 0
