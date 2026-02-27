@@ -1,6 +1,6 @@
 name: open62541
 description: OPC UA stack, bindings to the open62541 library.
-version: 1.5.0-dev.1
+version: 1.5.2-0
 repository: https://github.com/centroid-is/open62541_dart
 
 environment:
