@@ -99,11 +99,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
     return srcDir.uri;
   }
 
-  //final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
-
-  // Use fork for now for windows, See: https://github.com/open62541/open62541/pull/7564
-  final url = Uri.parse('https://github.com/centroid-is/open62541/archive/refs/heads/includes.zip');
-  // final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
+  final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
   final response = await http.get(url);
   if (response.statusCode != 200) {
     throw Exception('Error downloading open62541 version $version: ${response.statusCode}');
@@ -131,7 +127,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
 }
 
 Future<void> main(List<String> args) async {
-  final version = "v1.5.0-rc1";
+  final version = "v1.5.2";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
 
