@@ -145,6 +145,20 @@ class Server {
   bool _sessionTrackingInstalled = false;
   bool _accessControlInstalled = false;
 
+  /// Whether the server is running and has not been deleted.
+  bool get isRunning {
+    if (_server == ffi.nullptr) return false;
+    final state = raw.UA_Server_getLifecycleState(_server);
+    return state == raw.UA_LifecycleState.UA_LIFECYCLESTATE_STARTED;
+  }
+
+  /// Throws [StateError] if the server has been deleted or is not fully started.
+  void _ensureRunning() {
+    if (!isRunning) {
+      throw StateError('Server is not running');
+    }
+  }
+
   /// Initializes and starts the OPC UA server.
   ///
   /// This method performs the initial startup sequence for the server, including:
@@ -168,6 +182,9 @@ class Server {
   /// }
   /// ```
   void start() {
+    if (_server == ffi.nullptr) {
+      throw StateError('Server has been deleted');
+    }
     int retCode = raw.UA_Server_run_startup(_server);
     if (retCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to start server ${statusCodeToString(retCode)}';
@@ -214,6 +231,7 @@ class Server {
     NodeId? baseDataVariableType,
     NodeId? typeId,
   }) {
+    _ensureRunning();
     ffi.Pointer<raw.UA_VariableAttributes> attr = raw.UA_VariableAttributes_new();
     attr.ref = raw.UA_VariableAttributes_default;
 
@@ -306,6 +324,7 @@ class Server {
     NodeId? parentNodeId,
     NodeId? referenceTypeId,
   }) {
+    _ensureRunning();
     var dattr = raw.UA_VariableTypeAttributes_new();
     if (displayName != null) {
       dattr.ref.displayName.locale.set(displayName.locale);
@@ -350,6 +369,7 @@ class Server {
     NodeId? parentNodeId,
     NodeId? referenceTypeId,
   }) {
+    _ensureRunning();
     var attr = raw.UA_DataTypeAttributes_new();
 
     if (displayName != null) {
@@ -382,6 +402,7 @@ class Server {
     NodeId? referenceTypeId,
     NodeId? typeDefinition,
   }) {
+    _ensureRunning();
     final attrType = getType(UaTypes.objectAttributes);
 
     // Allocate and zero-initialize the full UA_ObjectAttributes struct
@@ -425,6 +446,7 @@ class Server {
     NodeId? parentNodeId,
     NodeId? referenceTypeId,
   }) {
+    _ensureRunning();
     parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
 
@@ -546,6 +568,7 @@ class Server {
   ///
   /// By default, all references to and from the node are also deleted.
   void deleteNode(NodeId nodeId, {bool deleteReferences = true}) {
+    _ensureRunning();
     final res = raw.UA_Server_deleteNode(_server, nodeId.toRaw(), deleteReferences);
     if (res != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to delete node: ${statusCodeToString(res)}';
@@ -558,6 +581,7 @@ class Server {
   /// Methods without a rule are unrestricted (default allow).
   /// Anonymous sessions are denied if a rule exists.
   void setMethodAccess(NodeId methodNodeId, {required Set<String> allowedUsers}) {
+    _ensureRunning();
     _methodAccessRules[methodNodeId] = allowedUsers;
     _installSessionTracking();
     _installAccessControlCallback();
@@ -761,7 +785,23 @@ class Server {
   ///
   /// Returns a stream of `(String event, DynamicValue? value)` records
   /// where event is "read" (value is null) or "write" (value is the written data).
+  /*
+TODO
+
+({Stream<void> onRead, Stream<DynamicValue> onWrite}) monitorVariable(NodeId nodeId)
+Benefits:
+
+No nullability — onWrite always has a value, onRead never needs one
+Caller subscribes only to what they care about
+No type discrimination at the call site
+
+final monitor = server.monitorVariable(nodeId);
+monitor.onRead.listen((_) => print('read'));
+monitor.onWrite.listen((value) => print('written: $value'));
+The implementation would use two StreamControllers sharing the same native callbacks, with onCancel cleanup when both are cancelled. Worth noting for when you revisit it.
+  */
   Stream<(String, DynamicValue?)> monitorVariable(NodeId variableNodeId) {
+    _ensureRunning();
     final controller = StreamController<(String, DynamicValue?)>();
 
     void onRead(
@@ -857,6 +897,7 @@ class Server {
   /// server.writeDescription(nodeId, description);
   /// ```
   void writeDescription(NodeId variableNodeId, LocalizedText description) {
+    _ensureRunning();
     final ptr = localizedTextToRaw(description);
     final res = raw.UA_Server_writeDescription(_server, variableNodeId.toRaw(), ptr.ref);
     raw.UA_LocalizedText_delete(ptr);
@@ -866,6 +907,7 @@ class Server {
   }
 
   void writeDisplayName(NodeId variableNodeId, LocalizedText displayName) {
+    _ensureRunning();
     final ptr = localizedTextToRaw(displayName);
     final res = raw.UA_Server_writeDisplayName(_server, variableNodeId.toRaw(), ptr.ref);
     raw.UA_LocalizedText_delete(ptr);
@@ -875,6 +917,7 @@ class Server {
   }
 
   Future<DynamicValue> read(NodeId variableNodeId) async {
+    _ensureRunning();
     final dv = DynamicValue();
     await _readSingleAttributeAsync(variableNodeId, AttributeId.UA_ATTRIBUTEID_DATATYPE, dv);
     await _readSingleAttributeAsync(variableNodeId, AttributeId.UA_ATTRIBUTEID_VALUE, dv);
@@ -888,6 +931,7 @@ class Server {
   /// complete immediately. For DataSource nodes, the callback fires during the
   /// next [runIterate].
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
+    _ensureRunning();
     final results = <NodeId, DynamicValue>{};
     final futures = <Future<void>>[];
 
@@ -916,6 +960,7 @@ class Server {
   }
 
   Future<void> _readSingleAttributeAsync(NodeId nodeId, AttributeId attr, DynamicValue dv) {
+    _ensureRunning();
     final completer = Completer<void>();
 
     final readValueId = ua_calloc<raw.UA_ReadValueId>();
@@ -1019,6 +1064,7 @@ class Server {
   /// For VALUE, pass a [DynamicValue]. For DISPLAYNAME/DESCRIPTION, pass a
   /// [LocalizedText]. The [value] type must match the attribute.
   Future<void> writeAttribute(NodeId nodeId, AttributeId attributeId, dynamic value) async {
+    _ensureRunning();
     final completer = Completer<void>();
 
     final writeValue = ua_calloc<raw.UA_WriteValue>();
@@ -1086,6 +1132,7 @@ class Server {
     int nodeClassMask = 0,
     BrowseResultMask resultMask = BrowseResultMask.UA_BROWSERESULTMASK_ALL,
   }) {
+    _ensureRunning();
     final bd = ua_calloc<raw.UA_BrowseDescription>();
     raw.UA_BrowseDescription_init(bd);
     bd.ref.nodeId = nodeId.toRaw();
@@ -1154,6 +1201,7 @@ class Server {
 
   // populate structschema for out type
   void addCustomType(NodeId typeId, DynamicValue value) {
+    _ensureRunning();
     final array = ua_calloc<raw.UA_DataTypeArray>();
     if (!value.isObject) {
       throw 'Value must be a object';
@@ -1182,6 +1230,10 @@ class Server {
         addCustomType(member.typeId!, member);
       }
       final memberType = _findDataType(member.typeId!);
+      if (memberType == ffi.nullptr) {
+        throw StateError(
+            'Failed to find data type for member "$memberName" with typeId ${member.typeId}');
+      }
       array.ref.types[0].members[i].memberName = memberName.toNativeUtf8(allocator: ua_malloc).cast();
       array.ref.types[0].members[i].memberType = memberType;
       array.ref.types[0].members[i].isOptional = member.isOptional;
@@ -1242,6 +1294,9 @@ class Server {
       }
       // This function returns the time in ms it can wait before the next iteration
       // This number is kind of high and I am unsure of the purpose. For now I will just ignore it.
+      /* Return the time until the next scheduled callback */
+      // UA_DateTime now = el->dateTime_nowMonotonic(el);
+      // UA_DateTime nextTimeout = (el->nextTimer(el) - now) / UA_DATETIME_MSEC;
       raw.UA_Server_run_iterate(_server, waitInterval);
       return true;
     }
@@ -1266,6 +1321,9 @@ class Server {
   /// }
   /// ```
   void shutdown() {
+    if (_server == ffi.nullptr) {
+      throw StateError('Server has been deleted');
+    }
     int ret = raw.UA_Server_run_shutdown(_server);
     if (ret != 0) {
       throw "Failed to shutdown server ${statusCodeToString(ret)}";
@@ -1291,7 +1349,11 @@ class Server {
   /// }
   /// ```
   void delete() {
+    if (_server == ffi.nullptr) {
+      throw StateError('Server has been deleted');
+    }
     int ret = raw.UA_Server_delete(_server);
+    _server = ffi.nullptr;
     if (ret != 0) {
       throw "Failed to delete server ${statusCodeToString(ret)}";
     }
