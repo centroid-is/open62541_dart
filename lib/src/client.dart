@@ -1490,9 +1490,19 @@ class Client implements ClientApi {
 
   Future<Schema> buildSchema(NodeId nodeIdType) async {
     var map = Schema();
-    map[nodeIdType] = (await readAttribute({
-      nodeIdType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION],
-    })).values.first;
+    try {
+      map[nodeIdType] = (await readAttribute({
+        nodeIdType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION],
+      })).values.first;
+    } catch (_) {
+      // DataTypeDefinition not available — try enum fallback via EnumStrings property
+      final enumDef = await _tryReadEnumDefinition(nodeIdType);
+      if (enumDef != null) {
+        map[nodeIdType] = enumDef;
+        return map;
+      }
+      rethrow;
+    }
     final val = map[nodeIdType]!;
     if (val.typeId == NodeId.structureDefinition) {
       val.typeId =
@@ -1515,6 +1525,124 @@ class Client implements ClientApi {
       }
     }
     return map;
+  }
+
+  /// Try to read enum definition from EnumStrings property of a DataType node.
+  /// Returns a DynamicValue with typeId=int32 and enumFields set, or null if
+  /// the node doesn't have an EnumStrings property.
+  Future<DynamicValue?> _tryReadEnumDefinition(NodeId dataTypeNodeId) async {
+    // Browse for HasProperty children
+    final properties = await browse(
+      dataTypeNodeId,
+      referenceTypeId: NodeId.fromNumeric(0, raw.UA_NS0ID_HASPROPERTY),
+    );
+
+    // Find EnumStrings property
+    final enumStringsItem = properties.where((p) => p.browseName == 'EnumStrings').firstOrNull;
+    if (enumStringsItem == null) return null;
+
+    // Read the EnumStrings value (array of LocalizedText)
+    final enumStrings = await _readLocalizedTextArray(enumStringsItem.nodeId);
+    if (enumStrings == null || enumStrings.isEmpty) return null;
+
+    // Build enum fields from EnumStrings (index = enum value)
+    final enumFields = <int, EnumField>{};
+    for (int i = 0; i < enumStrings.length; i++) {
+      final lt = enumStrings[i];
+      if (lt.value.isNotEmpty) {
+        enumFields[i] = EnumField(i, lt.value, lt, LocalizedText('', ''));
+      }
+    }
+
+    final result = DynamicValue(typeId: NodeId.int32);
+    result.enumFields = enumFields;
+    return result;
+  }
+
+  /// Read a LocalizedText array value from a node using a raw async read.
+  /// Returns null on failure.
+  Future<List<LocalizedText>?> _readLocalizedTextArray(NodeId nodeId) async {
+    final completer = Completer<List<LocalizedText>?>();
+
+    final readValueId = ua_calloc<raw.UA_ReadValueId>();
+    readValueId.ref.nodeId = nodeId.toRaw();
+    readValueId.ref.attributeId = AttributeId.UA_ATTRIBUTEID_VALUE.value;
+
+    final request = raw.UA_ReadRequest_new();
+    raw.UA_ReadRequest_init(request);
+    request.ref.nodesToReadSize = 1;
+    request.ref.nodesToRead = readValueId;
+
+    final requestIdPtr = ua_calloc<ffi.Uint32>();
+
+    late ffi.NativeCallable<
+      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+    >
+    callback;
+
+    callback =
+        ffi.NativeCallable<
+          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          int requestId,
+          ffi.Pointer<ffi.Void> voidPointer,
+        ) {
+          callback.close();
+          raw.UA_ReadRequest_delete(request);
+          ua_calloc.free(requestIdPtr);
+
+          if (voidPointer == ffi.nullptr) {
+            completer.complete(null);
+            return;
+          }
+
+          try {
+            final response = ffi.Pointer<raw.UA_ReadResponse>.fromAddress(voidPointer.address);
+            if (response.ref.resultsSize < 1) {
+              completer.complete(null);
+              return;
+            }
+            final dv = response.ref.results[0];
+            if (dv.status != raw.UA_STATUSCODE_GOOD) {
+              completer.complete(null);
+              return;
+            }
+            final variant = dv.value;
+            if (variant.arrayLength <= 0) {
+              completer.complete(null);
+              return;
+            }
+            final ltArray = variant.data.cast<raw.UA_LocalizedText>();
+            final result = <LocalizedText>[];
+            for (int i = 0; i < variant.arrayLength; i++) {
+              result.add(LocalizedText(ltArray[i].text.value, ltArray[i].locale.value));
+            }
+            completer.complete(result);
+          } catch (_) {
+            completer.complete(null);
+          }
+        });
+
+    int res = raw.UA_Client_AsyncService(
+      _client,
+      request.cast(),
+      getType(UaTypes.readRequest),
+      callback.nativeFunction,
+      getType(UaTypes.readResponse),
+      ffi.nullptr,
+      requestIdPtr,
+    );
+
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      callback.close();
+      raw.UA_ReadRequest_delete(request);
+      ua_calloc.free(requestIdPtr);
+      return null;
+    }
+
+    return completer.future;
   }
 
   Schema defs = {};

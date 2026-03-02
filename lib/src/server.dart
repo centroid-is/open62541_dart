@@ -1239,9 +1239,13 @@ The implementation would use two StreamControllers sharing the same native callb
       array.ref.types[0].members[i].isOptional = member.isOptional;
       array.ref.types[0].members[i].isArray = member.isArray;
 
-      // Calculate padding for proper alignment
-      final memberMemSize = memberType.ref.memSize;
-      final alignment = memberMemSize.clamp(1, 8);
+      // Calculate padding for proper alignment.
+      // Array members use size_t + void* in-memory (not the element's memSize).
+      final isArrayMember = member.isArray;
+      final memberMemSize = isArrayMember
+          ? ffi.sizeOf<ffi.Size>() + ffi.sizeOf<ffi.Pointer<ffi.Void>>()
+          : memberType.ref.memSize;
+      final alignment = (isArrayMember ? ffi.sizeOf<ffi.Pointer<ffi.Void>>() : memberMemSize).clamp(1, 8);
       final misalignment = totalMemSize % alignment;
       final padding = misalignment == 0 ? 0 : alignment - misalignment;
       array.ref.types[0].members[i].padding = padding;
@@ -1253,6 +1257,99 @@ The implementation would use two StreamControllers sharing the same native callb
     array.ref.cleanup = true;
     array.ref.next = _config.ref.customDataTypes;
     _config.ref.customDataTypes = array;
+  }
+
+  /// Register an enum data type on the server.
+  ///
+  /// Creates a DataType node as a subtype of Enumeration (i=29) and registers
+  /// the type in the server's customDataTypes with typeKind=ENUM, memSize=4.
+  /// Also creates an EnumStrings property so clients can discover the enum
+  /// field names by browsing the DataType node.
+  ///
+  /// [typeId] is the NodeId for the enum DataType.
+  /// [name] is the browse name for the DataType node.
+  /// [enumFields] maps integer values to their field definitions.
+  /// Values must be contiguous starting from 0.
+  void addEnumType(NodeId typeId, String name, Map<int, EnumField> enumFields) {
+    _ensureRunning();
+
+    // 1. Create DataType node under Enumeration (i=29)
+    addDataTypeNode(
+      typeId,
+      name,
+      parentNodeId: NodeId.fromNumeric(0, raw.UA_NS0ID_ENUMERATION),
+    );
+
+    // 2. Register in customDataTypes with typeKind=ENUM, memSize=4
+    final array = ua_calloc<raw.UA_DataTypeArray>();
+    array.ref.typesSize = 1;
+    array.ref.types = ua_calloc<raw.UA_DataType>(1);
+    array.ref.types[0].typeId = typeId.toRaw();
+    array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_ENUM;
+    array.ref.types[0].memSize = 4; // int32 on wire
+    array.ref.types[0].membersSize = 0;
+    array.ref.cleanup = true;
+    array.ref.next = _config.ref.customDataTypes;
+    _config.ref.customDataTypes = array;
+
+    // 3. Create EnumStrings property (array of LocalizedText indexed by enum value)
+    final maxValue = enumFields.keys.reduce((a, b) => a > b ? a : b);
+    final arraySize = maxValue + 1;
+
+    // Create the node first without a value, then write the value separately
+    final attr = raw.UA_VariableAttributes_new();
+    attr.ref = raw.UA_VariableAttributes_default;
+    attr.ref.displayName.text.set('EnumStrings');
+    attr.ref.dataType = NodeId.fromNumeric(0, raw.UA_NS0ID_LOCALIZEDTEXT).toRaw();
+    attr.ref.valueRank = 1; // one-dimensional array
+    attr.ref.arrayDimensionsSize = 1;
+    attr.ref.arrayDimensions = ua_calloc<ffi.Uint32>(1);
+    attr.ref.arrayDimensions[0] = 0; // variable-length
+
+    // Use a generated nodeId for the EnumStrings property
+    final enumStringsNodeId = NodeId.fromString(typeId.namespace, '${name}_EnumStrings');
+
+    final res = raw.UA_Server_addVariableNode(
+      _server,
+      enumStringsNodeId.toRaw(),
+      typeId.toRaw(), // parent: the DataType node
+      NodeId.fromNumeric(0, raw.UA_NS0ID_HASPROPERTY).toRaw(),
+      raw.UA_QUALIFIEDNAME(0, 'EnumStrings'.toNativeUtf8(allocator: ua_malloc).cast()),
+      NodeId.fromNumeric(0, raw.UA_NS0ID_PROPERTYTYPE).toRaw(),
+      attr.ref,
+      ffi.nullptr,
+      ffi.nullptr,
+    );
+
+    raw.UA_VariableAttributes_delete(attr);
+
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add EnumStrings property: ${statusCodeToString(res)}';
+    }
+
+    // Now write the LocalizedText array value
+    final ltArray = ua_calloc<raw.UA_LocalizedText>(arraySize);
+    for (int i = 0; i <= maxValue; i++) {
+      if (enumFields.containsKey(i)) {
+        ltArray[i].text.set(enumFields[i]!.displayName.value);
+        if (enumFields[i]!.displayName.locale.isNotEmpty) {
+          ltArray[i].locale.set(enumFields[i]!.displayName.locale);
+        }
+      }
+    }
+
+    final variant = raw.UA_Variant_new();
+    variant.ref.type = getType(UaTypes.localizedText);
+    variant.ref.data = ltArray.cast();
+    variant.ref.arrayLength = arraySize;
+
+    final writeRes = raw.UA_Server_writeValue(_server, enumStringsNodeId.toRaw(), variant.ref);
+    // UA_Server_writeValue copies the data, so we can free our copy
+    raw.UA_Variant_delete(variant);
+
+    if (writeRes != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to write EnumStrings value: ${statusCodeToString(writeRes)}';
+    }
   }
 
   ffi.Pointer<raw.UA_DataType> _findDataType(NodeId typeId) {

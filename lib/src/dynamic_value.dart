@@ -315,16 +315,22 @@ class DynamicValue extends PayloadType<DynamicValue> {
         final fieldName = field.fieldName;
         final fieldDataType = field.dataType.toNodeId();
 
-        if (field.dimensions.isEmpty) {
-          tree[fieldName] = DynamicValue(typeId: fieldDataType);
-        } else {
-          // Don't support multi dimensional fields for now
-          assert(field.dimensions.length == 1);
-          var collection = [];
-          for (int i = 0; i < field.dimensions[0]; i++) {
-            collection.add(DynamicValue(typeId: fieldDataType));
+        if (field.valueRank >= 0) {
+          // Array field — dimensions=[0] or empty means variable-length
+          final fixedSize = field.dimensions.isNotEmpty ? field.dimensions[0] : 0;
+          if (fixedSize > 0) {
+            assert(field.dimensions.length == 1);
+            var collection = <DynamicValue>[];
+            for (int i = 0; i < fixedSize; i++) {
+              collection.add(DynamicValue(typeId: fieldDataType));
+            }
+            tree[fieldName] = DynamicValue.fromList(collection, typeId: fieldDataType);
+          } else {
+            // Variable-length array — create empty, will be resized during get()
+            tree[fieldName] = DynamicValue(typeId: fieldDataType, value: <DynamicValue>[]);
           }
-          tree[fieldName] = DynamicValue.fromList(collection, typeId: fieldDataType);
+        } else {
+          tree[fieldName] = DynamicValue(typeId: fieldDataType);
         }
         tree[fieldName].isOptional = field.isOptional;
         tree[fieldName].description = field.description.localizedText;
@@ -338,7 +344,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
   }
 
   @override
-  DynamicValue get(ByteReader reader, [Endian? endian, insideStruct = false, root = false]) {
+  DynamicValue get(ByteReader reader, [Endian? endian, insideStruct = false, root = false, Schema? defs]) {
     // Assume we are in a structure of DynamicValue where typeId is set but alll values are null
     // {
     // { }
@@ -378,7 +384,7 @@ class DynamicValue extends PayloadType<DynamicValue> {
         bodyReader = ByteReader(bodyBytes, endian: endian ?? Endian.little);
       }
       for (final key in value.keys) {
-        value[key] = value[key].get(bodyReader, endian, true);
+        value[key] = value[key].get(bodyReader, endian, true, false, defs);
       }
     }
 
@@ -388,14 +394,24 @@ class DynamicValue extends PayloadType<DynamicValue> {
       // read pointer but only if we are not the root
       if (!root) {
         final arrayLength = reader.int32(endian);
-        if (arrayLength != asArray.length) {
-          throw 'Structure definition and array length from buffer dont match';
+        // Resize array to match binary data length (variable-length arrays)
+        while (asArray.length < arrayLength) {
+          DynamicValue newElement;
+          if (defs != null && typeId != null && defs.containsKey(typeId)) {
+            newElement = DynamicValue.from(defs[typeId]!);
+          } else {
+            newElement = DynamicValue(typeId: typeId);
+          }
+          (value as List<DynamicValue>).add(newElement);
+        }
+        if (arrayLength < asArray.length) {
+          (value as List<DynamicValue>).length = arrayLength;
         }
       }
       for (int i = 0; i < asArray.length; i++) {
         // if array is root and subsequent type is array we should treat that also as root
         // as in not read the subsequent array length
-        value[i] = value[i].get(reader, endian, insideStruct, root);
+        value[i] = value[i].get(reader, endian, insideStruct, root, defs);
       }
     }
     return this;

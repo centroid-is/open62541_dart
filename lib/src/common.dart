@@ -140,7 +140,7 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
 
   retValue = createNestedArray(typeId, dimensions.toList());
   final reader = binarize.ByteReader(data.data.cast<ffi.Uint8>().asTypedList(bufferLength));
-  retValue.get(reader, Endian.little, false, true);
+  retValue.get(reader, Endian.little, false, true, defs);
   retValue.extObjEncodingId = extObjEncodingId;
 
   return retValue;

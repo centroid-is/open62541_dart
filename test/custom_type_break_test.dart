@@ -443,4 +443,232 @@ void main() {
       }
     });
   });
+
+  group('Complex nested custom type with nested object and enum', () {
+    final port = Random().nextInt(8000) + 30000;
+    late Server server;
+
+    setUp(() {
+      server = setupServer(port);
+    });
+
+    tearDown(() async {
+      stopServerLoop();
+      await Future.delayed(Duration(milliseconds: 50));
+      server.shutdown();
+      server.delete();
+    });
+
+    test('complex struct with scalars, enum, nested object, and arrays round-trip', () async {
+      // Inner type for "foo" array elements: { bar: int32, string: uastring }
+      final fooItemTypeId = NodeId.fromString(1, 'FooItemType');
+      final fooItemSchema = DynamicValue(name: 'FooItem', typeId: fooItemTypeId);
+      fooItemSchema['bar'] = DynamicValue(typeId: NodeId.int32);
+      fooItemSchema['string'] = DynamicValue(typeId: NodeId.uastring);
+      registerType(server, fooItemTypeId, fooItemSchema);
+
+      // Inner type for "object" field: { again: int32 }
+      final innerObjTypeId = NodeId.fromString(1, 'InnerObjType');
+      final innerObjSchema = DynamicValue(name: 'InnerObj', typeId: innerObjTypeId);
+      innerObjSchema['again'] = DynamicValue(typeId: NodeId.int32);
+      registerType(server, innerObjTypeId, innerObjSchema);
+
+      // Enum type: register on server so client can discover fields via EnumStrings
+      final statusEnumTypeId = NodeId.fromString(1, 'StatusEnumType');
+      final statusEnumFields = <int, EnumField>{
+        0: EnumField(0, 'Idle', LocalizedText('Idle', ''), LocalizedText('', '')),
+        1: EnumField(1, 'Running', LocalizedText('Running', ''), LocalizedText('', '')),
+        2: EnumField(2, 'Error', LocalizedText('Error', ''), LocalizedText('', '')),
+        3: EnumField(3, 'Stopped', LocalizedText('Stopped', ''), LocalizedText('', '')),
+      };
+      server.addEnumType(statusEnumTypeId, 'StatusEnum', statusEnumFields);
+
+      // Outer type:
+      // {
+      //   "foo": [{ "bar": 42, "string": "hello" }],
+      //   "numbers": [1, 2, 3],
+      //   "strings": ["123", "456", "ünicode"],
+      //   "status": 1 (enum: Idle=0, Running=1, Error=2, Stopped=3),
+      //   "temperature": 23.5,
+      //   "label": "sensor-7",
+      //   "active": true,
+      //   "count": 99,
+      //   "object": { "again": 1 }
+      // }
+      final outerTypeId = NodeId.fromString(1, 'ComplexType');
+      final outerSchema = DynamicValue(name: 'Complex', typeId: outerTypeId);
+      outerSchema['foo'] = DynamicValue(typeId: fooItemTypeId, value: <DynamicValue>[]);
+      outerSchema['numbers'] = DynamicValue(typeId: NodeId.int32, value: <DynamicValue>[]);
+      outerSchema['strings'] = DynamicValue(typeId: NodeId.uastring, value: <DynamicValue>[]);
+      outerSchema['status'] = DynamicValue(typeId: statusEnumTypeId);
+      outerSchema['temperature'] = DynamicValue(typeId: NodeId.double);
+      outerSchema['label'] = DynamicValue(typeId: NodeId.uastring);
+      outerSchema['active'] = DynamicValue(typeId: NodeId.boolean);
+      outerSchema['count'] = DynamicValue(typeId: NodeId.int32);
+      outerSchema['object'] = DynamicValue(
+        typeId: innerObjTypeId,
+        name: 'InnerObj',
+        value: {'again': DynamicValue(typeId: NodeId.int32)},
+      );
+      registerType(server, outerTypeId, outerSchema);
+
+      // Create the actual value
+      final value = DynamicValue(name: 'Complex', typeId: outerTypeId);
+      value['foo'] = DynamicValue(
+        typeId: fooItemTypeId,
+        value: <DynamicValue>[
+          DynamicValue(
+            typeId: fooItemTypeId,
+            value: {
+              'bar': DynamicValue(value: 42, typeId: NodeId.int32),
+              'string': DynamicValue(value: 'hello', typeId: NodeId.uastring),
+            },
+          ),
+        ],
+      );
+      value['numbers'] = DynamicValue(
+        typeId: NodeId.int32,
+        value: <DynamicValue>[
+          DynamicValue(value: 1, typeId: NodeId.int32),
+          DynamicValue(value: 2, typeId: NodeId.int32),
+          DynamicValue(value: 3, typeId: NodeId.int32),
+        ],
+      );
+      value['strings'] = DynamicValue(
+        typeId: NodeId.uastring,
+        value: <DynamicValue>[
+          DynamicValue(value: '123', typeId: NodeId.uastring),
+          DynamicValue(value: '456', typeId: NodeId.uastring),
+          DynamicValue(value: 'ünicode', typeId: NodeId.uastring),
+        ],
+      );
+      final statusValue = DynamicValue(value: 1, typeId: NodeId.int32);
+      statusValue.enumFields = statusEnumFields;
+      value['status'] = statusValue;
+      value['temperature'] = DynamicValue(value: 23.5, typeId: NodeId.double);
+      value['label'] = DynamicValue(value: 'sensor-7', typeId: NodeId.uastring);
+      value['active'] = DynamicValue(value: true, typeId: NodeId.boolean);
+      value['count'] = DynamicValue(value: 99, typeId: NodeId.int32);
+      value['object'] = DynamicValue(
+        typeId: innerObjTypeId,
+        value: {'again': DynamicValue(value: 1, typeId: NodeId.int32)},
+      );
+      server.addVariableNode(NodeId.fromString(1, 'complex_1'), value);
+
+      // Verify enum toString before round-trip
+      expect(statusValue.toString(), 'Running(1)');
+
+      // Read back via client and verify
+      final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+      unawaited(client.runIterate().catchError((_) {}));
+      unawaited(client.connect("opc.tcp://localhost:$port"));
+      await client.awaitConnect();
+
+      final result = await client.read(NodeId.fromString(1, 'complex_1'));
+
+      // Verify foo array
+      final foo = result.asObject['foo']!.asArray;
+      expect(foo.length, 1);
+      expect(foo[0].asObject['bar']?.value, 42);
+      expect(foo[0].asObject['string']?.value, 'hello');
+
+      // Verify numbers array
+      final numbers = result.asObject['numbers']!.asArray;
+      expect(numbers.length, 3);
+      expect(numbers[0].value, 1);
+      expect(numbers[1].value, 2);
+      expect(numbers[2].value, 3);
+
+      // Verify strings array
+      final strings = result.asObject['strings']!.asArray;
+      expect(strings.length, 3);
+      expect(strings[0].value, '123');
+      expect(strings[1].value, '456');
+      expect(strings[2].value, 'ünicode');
+
+      // Verify enum field (wire value is int32, enum fields auto-discovered)
+      expect(result.asObject['status']?.value, 1);
+      expect(result.asObject['status']!.enumFields, isNotNull);
+      expect(result.asObject['status']!.toString(), 'Running(1)');
+
+      // Verify scalar fields
+      expect(result.asObject['temperature']?.value, closeTo(23.5, 0.01));
+      expect(result.asObject['label']?.value, 'sensor-7');
+      expect(result.asObject['active']?.value, true);
+      expect(result.asObject['count']?.value, 99);
+
+      // Verify nested object
+      expect(result.asObject['object']!.asObject['again']?.value, 1);
+
+      // Verify all enum values map correctly
+      for (final entry in statusEnumFields.entries) {
+        final dv = DynamicValue(value: entry.key, typeId: NodeId.int32);
+        dv.enumFields = statusEnumFields;
+        expect(dv.toString(), '${entry.value.name}(${entry.key})');
+      }
+
+      await client.delete();
+    });
+  });
+
+  group('Enum type round-trip via EnumStrings', () {
+    final port = Random().nextInt(8000) + 30000;
+    late Server server;
+
+    setUp(() {
+      server = setupServer(port);
+    });
+
+    tearDown(() async {
+      stopServerLoop();
+      await Future.delayed(Duration(milliseconds: 50));
+      server.shutdown();
+      server.delete();
+    });
+
+    test('standalone enum variable is discovered by client via EnumStrings', () async {
+      final statusEnumTypeId = NodeId.fromString(1, 'StatusEnumType');
+      final statusEnumFields = <int, EnumField>{
+        0: EnumField(0, 'Idle', LocalizedText('Idle', ''), LocalizedText('', '')),
+        1: EnumField(1, 'Running', LocalizedText('Running', ''), LocalizedText('', '')),
+        2: EnumField(2, 'Error', LocalizedText('Error', ''), LocalizedText('', '')),
+        3: EnumField(3, 'Stopped', LocalizedText('Stopped', ''), LocalizedText('', '')),
+      };
+
+      // Register enum type on server (creates DataType node + EnumStrings property)
+      server.addEnumType(statusEnumTypeId, 'StatusEnum', statusEnumFields);
+
+      // Create a variable with the enum type as its DataType
+      final value = DynamicValue(name: 'status', value: 1, typeId: NodeId.int32);
+      server.addVariableNode(
+        NodeId.fromString(1, 'enum_var_1'),
+        value,
+        typeId: statusEnumTypeId,
+      );
+
+      // Client reads the variable — should auto-discover enum fields
+      final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+      unawaited(client.runIterate().catchError((_) {}));
+      unawaited(client.connect("opc.tcp://localhost:$port"));
+      await client.awaitConnect();
+
+      final result = await client.read(NodeId.fromString(1, 'enum_var_1'));
+
+      // Wire value is correct
+      expect(result.value, 1);
+
+      // Enum fields were discovered from the server's EnumStrings property
+      expect(result.enumFields, isNotNull);
+      expect(result.enumFields!.length, 4);
+      expect(result.enumFields![0]?.name, 'Idle');
+      expect(result.enumFields![1]?.name, 'Running');
+      expect(result.enumFields![2]?.name, 'Error');
+      expect(result.enumFields![3]?.name, 'Stopped');
+
+      // toString resolves enum name
+      expect(result.toString(), 'Running(1)');
+
+      await client.delete();
+    });
+  });
 }
