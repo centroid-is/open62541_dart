@@ -152,12 +152,6 @@ class Server {
     return state == raw.UA_LifecycleState.UA_LIFECYCLESTATE_STARTED;
   }
 
-  /// Throws [StateError] if the server has been deleted or is not fully started.
-  void _ensureRunning() {
-    if (!isRunning) {
-      throw StateError('Server is not running');
-    }
-  }
 
   /// Initializes and starts the OPC UA server.
   ///
@@ -182,9 +176,7 @@ class Server {
   /// }
   /// ```
   void start() {
-    if (_server == ffi.nullptr) {
-      throw StateError('Server has been deleted');
-    }
+
     int retCode = raw.UA_Server_run_startup(_server);
     if (retCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to start server ${statusCodeToString(retCode)}';
@@ -231,7 +223,7 @@ class Server {
     NodeId? baseDataVariableType,
     NodeId? typeId,
   }) {
-    _ensureRunning();
+
     ffi.Pointer<raw.UA_VariableAttributes> attr = raw.UA_VariableAttributes_new();
     attr.ref = raw.UA_VariableAttributes_default;
 
@@ -324,7 +316,7 @@ class Server {
     NodeId? parentNodeId,
     NodeId? referenceTypeId,
   }) {
-    _ensureRunning();
+
     var dattr = raw.UA_VariableTypeAttributes_new();
     if (displayName != null) {
       dattr.ref.displayName.locale.set(displayName.locale);
@@ -369,7 +361,7 @@ class Server {
     NodeId? parentNodeId,
     NodeId? referenceTypeId,
   }) {
-    _ensureRunning();
+
     var attr = raw.UA_DataTypeAttributes_new();
 
     if (displayName != null) {
@@ -402,7 +394,7 @@ class Server {
     NodeId? referenceTypeId,
     NodeId? typeDefinition,
   }) {
-    _ensureRunning();
+
     final attrType = getType(UaTypes.objectAttributes);
 
     // Allocate and zero-initialize the full UA_ObjectAttributes struct
@@ -446,7 +438,7 @@ class Server {
     NodeId? parentNodeId,
     NodeId? referenceTypeId,
   }) {
-    _ensureRunning();
+
     parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
 
@@ -568,7 +560,7 @@ class Server {
   ///
   /// By default, all references to and from the node are also deleted.
   void deleteNode(NodeId nodeId, {bool deleteReferences = true}) {
-    _ensureRunning();
+
     final res = raw.UA_Server_deleteNode(_server, nodeId.toRaw(), deleteReferences);
     if (res != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to delete node: ${statusCodeToString(res)}';
@@ -581,7 +573,7 @@ class Server {
   /// Methods without a rule are unrestricted (default allow).
   /// Anonymous sessions are denied if a rule exists.
   void setMethodAccess(NodeId methodNodeId, {required Set<String> allowedUsers}) {
-    _ensureRunning();
+
     _methodAccessRules[methodNodeId] = allowedUsers;
     _installSessionTracking();
     _installAccessControlCallback();
@@ -801,7 +793,7 @@ monitor.onWrite.listen((value) => print('written: $value'));
 The implementation would use two StreamControllers sharing the same native callbacks, with onCancel cleanup when both are cancelled. Worth noting for when you revisit it.
   */
   Stream<(String, DynamicValue?)> monitorVariable(NodeId variableNodeId) {
-    _ensureRunning();
+
     final controller = StreamController<(String, DynamicValue?)>();
 
     void onRead(
@@ -897,7 +889,7 @@ The implementation would use two StreamControllers sharing the same native callb
   /// server.writeDescription(nodeId, description);
   /// ```
   void writeDescription(NodeId variableNodeId, LocalizedText description) {
-    _ensureRunning();
+
     final ptr = localizedTextToRaw(description);
     final res = raw.UA_Server_writeDescription(_server, variableNodeId.toRaw(), ptr.ref);
     raw.UA_LocalizedText_delete(ptr);
@@ -907,7 +899,7 @@ The implementation would use two StreamControllers sharing the same native callb
   }
 
   void writeDisplayName(NodeId variableNodeId, LocalizedText displayName) {
-    _ensureRunning();
+
     final ptr = localizedTextToRaw(displayName);
     final res = raw.UA_Server_writeDisplayName(_server, variableNodeId.toRaw(), ptr.ref);
     raw.UA_LocalizedText_delete(ptr);
@@ -917,7 +909,7 @@ The implementation would use two StreamControllers sharing the same native callb
   }
 
   Future<DynamicValue> read(NodeId variableNodeId) async {
-    _ensureRunning();
+
     final dv = DynamicValue();
     await _readSingleAttributeAsync(variableNodeId, AttributeId.UA_ATTRIBUTEID_DATATYPE, dv);
     await _readSingleAttributeAsync(variableNodeId, AttributeId.UA_ATTRIBUTEID_VALUE, dv);
@@ -931,7 +923,7 @@ The implementation would use two StreamControllers sharing the same native callb
   /// complete immediately. For DataSource nodes, the callback fires during the
   /// next [runIterate].
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
-    _ensureRunning();
+
     final results = <NodeId, DynamicValue>{};
     final futures = <Future<void>>[];
 
@@ -960,7 +952,7 @@ The implementation would use two StreamControllers sharing the same native callb
   }
 
   Future<void> _readSingleAttributeAsync(NodeId nodeId, AttributeId attr, DynamicValue dv) {
-    _ensureRunning();
+
     final completer = Completer<void>();
 
     final readValueId = ua_calloc<raw.UA_ReadValueId>();
@@ -1064,7 +1056,7 @@ The implementation would use two StreamControllers sharing the same native callb
   /// For VALUE, pass a [DynamicValue]. For DISPLAYNAME/DESCRIPTION, pass a
   /// [LocalizedText]. The [value] type must match the attribute.
   Future<void> writeAttribute(NodeId nodeId, AttributeId attributeId, dynamic value) async {
-    _ensureRunning();
+
     final completer = Completer<void>();
 
     final writeValue = ua_calloc<raw.UA_WriteValue>();
@@ -1132,7 +1124,7 @@ The implementation would use two StreamControllers sharing the same native callb
     int nodeClassMask = 0,
     BrowseResultMask resultMask = BrowseResultMask.UA_BROWSERESULTMASK_ALL,
   }) {
-    _ensureRunning();
+
     final bd = ua_calloc<raw.UA_BrowseDescription>();
     raw.UA_BrowseDescription_init(bd);
     bd.ref.nodeId = nodeId.toRaw();
@@ -1201,7 +1193,7 @@ The implementation would use two StreamControllers sharing the same native callb
 
   // populate structschema for out type
   void addCustomType(NodeId typeId, DynamicValue value) {
-    _ensureRunning();
+
     final array = ua_calloc<raw.UA_DataTypeArray>();
     if (!value.isObject) {
       throw 'Value must be a object';
@@ -1271,7 +1263,7 @@ The implementation would use two StreamControllers sharing the same native callb
   /// [enumFields] maps integer values to their field definitions.
   /// Values must be contiguous starting from 0.
   void addEnumType(NodeId typeId, String name, Map<int, EnumField> enumFields) {
-    _ensureRunning();
+
 
     // 1. Create DataType node under Enumeration (i=29)
     addDataTypeNode(
