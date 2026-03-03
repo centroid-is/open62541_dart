@@ -126,10 +126,34 @@ Future<Uri> download(Uri outputDirectory, String version) async {
   return srcDir.uri;
 }
 
+Future<void> _applyPatches(Uri sourceDir, Uri packageRoot) async {
+  final targetFile = File.fromUri(
+    sourceDir.resolve('src/client/ua_client_subscriptions.c'),
+  );
+  if (!await targetFile.exists()) return;
+
+  // Already patched?
+  final content = await targetFile.readAsString();
+  if (content.contains('Clean up all client-side subscriptions')) return;
+
+  final patchFile = File.fromUri(
+    packageRoot.resolve('hook/ua_client_subscriptions.patch'),
+  );
+  final result = await Process.run(
+    'patch',
+    ['-p1', '--forward', '--input=${patchFile.path}'],
+    workingDirectory: sourceDir.toFilePath(),
+  );
+  if (result.exitCode != 0) {
+    throw Exception('Failed to apply patch: ${result.stderr}');
+  }
+}
+
 Future<void> main(List<String> args) async {
   final version = "v1.5.2";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
+    await _applyPatches(extractedFiles, input.packageRoot);
 
     final name = 'open62541';
     final logger = Logger('')

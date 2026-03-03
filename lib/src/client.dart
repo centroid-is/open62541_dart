@@ -118,6 +118,7 @@ class ClientConfig {
 
   Stream<ClientState> get stateStream => _stateStream.stream;
   Stream<int> get subscriptionInactivityStream => _subscriptionInactivity.stream;
+  Stream<int> get subscriptionDeletedStream => _subscriptionDeleted.stream;
   Stream<void> get inactivityStream => _inactivity.stream;
 
   raw.UA_MessageSecurityMode get securityMode => _clientConfig.ref.securityMode;
@@ -135,6 +136,7 @@ class ClientConfig {
   Future<void> close() async {
     await _stateStream.close();
     await _subscriptionInactivity.close();
+    await _subscriptionDeleted.close();
     await _inactivity.close();
 
     _state.close();
@@ -146,6 +148,7 @@ class ClientConfig {
   final ffi.Pointer<raw.UA_ClientConfig> _clientConfig;
   final StreamController<ClientState> _stateStream = StreamController<ClientState>.broadcast();
   final StreamController<int> _subscriptionInactivity = StreamController<int>.broadcast();
+  final StreamController<int> _subscriptionDeleted = StreamController<int>.broadcast();
   final StreamController<void> _inactivity = StreamController<void>.broadcast();
   late ffi.NativeCallable<
     ffi.Void Function(
@@ -873,15 +876,17 @@ class Client implements ClientApi {
     request.ref.publishingEnabled = publishingEnabled;
     request.ref.priority = priority;
 
-    // late ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)>
-    //     deleteCallback;
+    late ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)>
+        deleteCallback;
 
-    // deleteCallback = ffi
-    //     .NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)>.isolateLocal(
-    //     (ffi.Pointer<raw.UA_Client> client, int subid, ffi.Pointer<ffi.Void> somedata) {
-    //   stderr.write("Subscription deleted $subid");
-    //   deleteCallback.close();
-    // });
+    deleteCallback = ffi
+        .NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)>.isolateLocal(
+        (ffi.Pointer<raw.UA_Client> client, int subId, ffi.Pointer<ffi.Void> subContext) {
+      config._subscriptionDeleted.add(subId);
+      _subscriptionDeleteCallbacks.remove(deleteCallback);
+      deleteCallback.close();
+    });
+    _subscriptionDeleteCallbacks.add(deleteCallback);
 
     final completer = Completer<int>();
     late ffi.NativeCallable<
@@ -924,8 +929,7 @@ class Client implements ClientApi {
       request.ref,
       ffi.nullptr,
       ffi.nullptr,
-      //deleteCallback.nativeFunction,
-      ffi.nullptr,
+      deleteCallback.nativeFunction,
       callback.nativeFunction,
       ffi.nullptr,
       ffi.nullptr,
@@ -986,7 +990,13 @@ class Client implements ClientApi {
     ffi.Pointer<ffi.Uint32> localRequestId = ffi.nullptr;
     Map<int, Tuple2<NodeId, AttributeId>> monIdToNodeAndAttribute = {};
 
+    // Track config stream subscriptions so we can cancel them on close
+    StreamSubscription? inactivitySub, deletedSub, stateSub;
+
     controller.onCancel = () {
+      inactivitySub?.cancel();
+      deletedSub?.cancel();
+      stateSub?.cancel();
       final completer = Completer<void>();
       if (monIds.isEmpty) {
         if (localRequestId == ffi.nullptr) {
@@ -1229,20 +1239,27 @@ class Client implements ClientApi {
             createCallback.close();
             ua_calloc.free(localRequestId);
 
-            late StreamSubscription inactivitySubscription;
-            inactivitySubscription = config.subscriptionInactivityStream.listen((inactiveSubscriptionId) {
+            inactivitySub = config.subscriptionInactivityStream.listen((inactiveSubscriptionId) {
               if (controller.isClosed) {
-                inactivitySubscription.cancel();
+                inactivitySub?.cancel();
                 return;
               }
               if (inactiveSubscriptionId == subscriptionId) {
                 controller.addError(Inactivity());
               }
             });
-            late StreamSubscription stateSubscription;
-            stateSubscription = config.stateStream.listen((state) {
+            deletedSub = config.subscriptionDeletedStream.listen((deletedSubscriptionId) {
               if (controller.isClosed) {
-                stateSubscription.cancel();
+                deletedSub?.cancel();
+                return;
+              }
+              if (deletedSubscriptionId == subscriptionId) {
+                controller.addError(SubscriptionDeleted(deletedSubscriptionId));
+              }
+            });
+            stateSub = config.stateStream.listen((state) {
+              if (controller.isClosed) {
+                stateSub?.cancel();
                 return;
               }
               if (state.channelState == SecureChannelState.UA_SECURECHANNELSTATE_CLOSED) {
@@ -1251,6 +1268,9 @@ class Client implements ClientApi {
             });
             cleanup() {
               controller.onCancel = () {}; // Don't invoke the real close callback
+              inactivitySub?.cancel();
+              deletedSub?.cancel();
+              stateSub?.cancel();
               monitorCallback.close();
               ua_calloc.free(callbacks);
               controller.close();
@@ -1580,4 +1600,5 @@ class Client implements ClientApi {
 
   late ffi.Pointer<raw.UA_Client> _client;
   late final ClientConfig _clientConfig;
+  final List<ffi.NativeCallable> _subscriptionDeleteCallbacks = [];
 }
