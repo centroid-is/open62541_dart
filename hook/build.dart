@@ -126,10 +126,46 @@ Future<Uri> download(Uri outputDirectory, String version) async {
   return srcDir.uri;
 }
 
+Future<void> _applyPatches(Uri sourceDir) async {
+  final targetFile = File.fromUri(sourceDir.resolve('src/client/ua_client_subscriptions.c'));
+  if (!await targetFile.exists()) return;
+
+  var content = await targetFile.readAsString();
+
+  // Already patched?
+  if (content.contains('Clean up all client-side subscriptions')) return;
+
+  // OPC UA Part 4, 5.13.5, Table 95: when BadNoSubscription arrives with
+  // subscriptionId == 0, clean ALL client-side subscriptions so that
+  // deleteCallback fires for each.
+  const original = '''        if(sub != NULL)
+            __Client_Subscription_deleteInternal(client, sub);
+        return;''';
+
+  const patched = '''        if(sub != NULL) {
+            __Client_Subscription_deleteInternal(client, sub);
+        } else if(response->subscriptionId == 0) {
+            /* OPC UA Part 4, 5.13.5, Table 95: subscriptionId 0 means
+             * "no Subscriptions defined for which a response could be sent."
+             * Clean up all client-side subscriptions. */
+            UA_Client_Subscription *s, *s_tmp;
+            LIST_FOREACH_SAFE(s, &client->subscriptions, listEntry, s_tmp)
+                __Client_Subscription_deleteInternal(client, s);
+        }
+        return;''';
+
+  if (!content.contains(original)) {
+    throw Exception('Cannot apply subscription patch: expected code not found');
+  }
+  content = content.replaceFirst(original, patched);
+  await targetFile.writeAsString(content);
+}
+
 Future<void> main(List<String> args) async {
   final version = "v1.5.2";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
+    await _applyPatches(extractedFiles);
 
     final name = 'open62541';
     final logger = Logger('')

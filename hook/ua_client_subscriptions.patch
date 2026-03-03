@@ -1,0 +1,20 @@
+--- a/src/client/ua_client_subscriptions.c
++++ b/src/client/ua_client_subscriptions.c
+@@ -1367,8 +1367,16 @@
+         UA_LOG_WARNING(client->config.logging, UA_LOGCATEGORY_CLIENT,
+                        "Received BadNoSubscription, delete internal information about subscription");
+         UA_Client_Subscription *sub = findSubscriptionById(client, response->subscriptionId);
+-        if(sub != NULL)
++        if(sub != NULL) {
+             __Client_Subscription_deleteInternal(client, sub);
++        } else if(response->subscriptionId == 0) {
++            /* OPC UA Part 4, 5.13.5, Table 95: subscriptionId 0 means
++             * "no Subscriptions defined for which a response could be sent."
++             * Clean up all client-side subscriptions. */
++            UA_Client_Subscription *s, *s_tmp;
++            LIST_FOREACH_SAFE(s, &client->subscriptions, listEntry, s_tmp)
++                __Client_Subscription_deleteInternal(client, s);
++        }
+         return;
+     }
+
