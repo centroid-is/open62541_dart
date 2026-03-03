@@ -64,17 +64,17 @@ class SubscriptionCreateMessage extends IsolateMessage {
   });
 }
 
-class MonitorMessage extends IsolateMessage {
-  final NodeId nodeId;
+class MonitoredItemsMessage extends IsolateMessage {
+  final ReadAttributeParam nodes;
   final int subscriptionId;
   final MonitoringMode monitoringMode;
   final Duration samplingInterval;
   final bool discardOldest;
   final int queueSize;
 
-  const MonitorMessage(
+  const MonitoredItemsMessage(
     super.requestId,
-    this.nodeId,
+    this.nodes,
     this.subscriptionId, {
     this.monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
     this.samplingInterval = const Duration(milliseconds: 100),
@@ -401,16 +401,53 @@ class ClientIsolate implements ClientApi {
     bool discardOldest = true,
     int queueSize = 1,
   }) {
+    final controller = StreamController<DynamicValue>();
+    final stream = monitoredItems(
+      {
+        nodeId: [
+          AttributeId.UA_ATTRIBUTEID_DATATYPE,
+          AttributeId.UA_ATTRIBUTEID_VALUE,
+          AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+          AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
+        ],
+      },
+      subscriptionId,
+      monitoringMode: monitoringMode,
+      samplingInterval: samplingInterval,
+      discardOldest: discardOldest,
+      queueSize: queueSize,
+    );
+    final subscription = stream.listen((event) => controller.add(event.values.first));
+    subscription.onError((error) => controller.addError(error));
+    controller.onCancel = () {
+      subscription.cancel();
+    };
+    subscription.onDone(() {
+      controller.close();
+    });
+    return controller.stream;
+  }
+
+  /// Monitor multiple nodes and attributes
+  @override
+  Stream<Map<NodeId, DynamicValue>> monitoredItems(
+    ReadAttributeParam nodes,
+    int subscriptionId, {
+    MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    Duration samplingInterval = const Duration(milliseconds: 100),
+    bool discardOldest = true,
+    int queueSize = 1,
+  }) {
     if (_isClosed) throw const ClientIsolateClosedException();
 
-    final controller = StreamController<DynamicValue>();
+    final controller = StreamController<Map<NodeId, DynamicValue>>();
     final id = _generateId();
     _streamControllers[id] = controller;
 
     _sendPort.send(
-      MonitorMessage(
+      MonitoredItemsMessage(
         id,
-        nodeId,
+        nodes,
         subscriptionId,
         monitoringMode: monitoringMode,
         samplingInterval: samplingInterval,
@@ -769,9 +806,9 @@ void _isolateEntryPoint(_IsolateData data) {
           priority: message.priority,
         );
         sendPort.send(IsolateResponse.success(message.requestId, result));
-      } else if (message is MonitorMessage) {
-        final stream = client.monitor(
-          message.nodeId,
+      } else if (message is MonitoredItemsMessage) {
+        final stream = client.monitoredItems(
+          message.nodes,
           message.subscriptionId,
           monitoringMode: message.monitoringMode,
           samplingInterval: message.samplingInterval,
@@ -779,13 +816,12 @@ void _isolateEntryPoint(_IsolateData data) {
           queueSize: message.queueSize,
         );
 
-        // Subscribe to the stream and forward data to main isolate
         final subscription = stream.listen(
           (value) {
             sendPort.send(StreamDataMessage.success(message.requestId, value));
           },
           onError: (error) {
-            stderr.writeln("[${endpoint ?? 'unknown'}] Stream error: $error");
+            stderr.writeln("[${endpoint ?? 'unknown'}] MonitoredItems stream error: $error");
             sendPort.send(StreamDataMessage.error(message.requestId, error.toString()));
           },
           onDone: () {
@@ -795,7 +831,6 @@ void _isolateEntryPoint(_IsolateData data) {
 
         activeStreams[message.requestId] = subscription;
 
-        // Send success response to indicate stream is ready
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is MonitorCancelMessage) {
         // Cancel the stream

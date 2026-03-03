@@ -48,6 +48,20 @@ abstract class ClientApi {
     int queueSize = 1,
   });
 
+  /// Monitors multiple nodes and attributes for data changes.
+  ///
+  /// Returns a stream that emits a map of node values whenever any
+  /// monitored value changes. Requires a [subscriptionId] from
+  /// [subscriptionCreate].
+  Stream<Map<NodeId, DynamicValue>> monitoredItems(
+    ReadAttributeParam nodes,
+    int subscriptionId, {
+    MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    Duration samplingInterval = const Duration(milliseconds: 100),
+    bool discardOldest = true,
+    int queueSize = 1,
+  });
+
   /// Browses the references of a node.
   ///
   /// Returns the list of references from [nodeId]. Handles continuation
