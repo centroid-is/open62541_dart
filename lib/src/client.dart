@@ -937,6 +937,7 @@ class Client implements ClientApi {
   ///
   /// If [prefetchTypeId] is true, the data type of the node will be read and cached.
   /// This is useful if you are reading a value that is a structure or an enum.
+  @override
   Stream<Map<NodeId, DynamicValue>> monitoredItems(
     ReadAttributeParam nodes,
     int subscriptionId, {
