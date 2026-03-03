@@ -877,15 +877,16 @@ class Client implements ClientApi {
     request.ref.priority = priority;
 
     late ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)>
-        deleteCallback;
+    deleteCallback;
 
-    deleteCallback = ffi
-        .NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)>.isolateLocal(
-        (ffi.Pointer<raw.UA_Client> client, int subId, ffi.Pointer<ffi.Void> subContext) {
-      config._subscriptionDeleted.add(subId);
-      _subscriptionDeleteCallbacks.remove(deleteCallback);
-      deleteCallback.close();
-    });
+    deleteCallback =
+        ffi.NativeCallable<
+          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Uint32, ffi.Pointer<ffi.Void>)
+        >.isolateLocal((ffi.Pointer<raw.UA_Client> client, int subId, ffi.Pointer<ffi.Void> subContext) {
+          config._subscriptionDeleted.add(subId);
+          _subscriptionDeleteCallbacks.remove(deleteCallback);
+          deleteCallback.close();
+        });
     _subscriptionDeleteCallbacks.add(deleteCallback);
 
     final completer = Completer<int>();

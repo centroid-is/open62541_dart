@@ -27,8 +27,7 @@ void main() {
     server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_WARNING);
     server.start();
 
-    DynamicValue intValue =
-        DynamicValue(value: 0, typeId: NodeId.int32, name: "the.int");
+    DynamicValue intValue = DynamicValue(value: 0, typeId: NodeId.int32, name: "the.int");
     server.addVariableNode(intNodeId, intValue);
 
     serverTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
@@ -52,9 +51,7 @@ void main() {
     server.delete();
   });
 
-  test(
-      'SubscriptionDeleted error fires when server-side subscription expires',
-      () async {
+  test('SubscriptionDeleted error fires when server-side subscription expires', () async {
     // Very short-lived subscription:
     //   publishingInterval = 10ms
     //   maxKeepAliveCount  = 1  → keepAlive every 10ms
@@ -69,11 +66,7 @@ void main() {
       requestedMaxKeepAliveCount: 1,
     );
 
-    final stream = client.monitor(
-      intNodeId,
-      subscriptionId,
-      samplingInterval: Duration(milliseconds: 10),
-    );
+    final stream = client.monitor(intNodeId, subscriptionId, samplingInterval: Duration(milliseconds: 10));
 
     final values = <int>[];
     final errors = <Object>[];
@@ -116,20 +109,20 @@ void main() {
 
     await deletedCompleter.future.timeout(
       Duration(seconds: 10),
-      onTimeout: () =>
-          fail('SubscriptionDeleted error never fired on monitor stream'),
+      onTimeout: () => fail('SubscriptionDeleted error never fired on monitor stream'),
     );
     print('SubscriptionDeleted detected!');
 
-    expect(errors.whereType<SubscriptionDeleted>(), isNotEmpty,
-        reason: 'Should have received SubscriptionDeleted error');
+    expect(
+      errors.whereType<SubscriptionDeleted>(),
+      isNotEmpty,
+      reason: 'Should have received SubscriptionDeleted error',
+    );
 
     await sub.cancel();
   }, timeout: Timeout(Duration(seconds: 30)));
 
-  test(
-      'SubscriptionDeleted fires for each subscription when multiple exist',
-      () async {
+  test('SubscriptionDeleted fires for each subscription when multiple exist', () async {
     // Create two independent subscriptions with short lifetimes
     final subId1 = await client.subscriptionCreate(
       requestedPublishingInterval: Duration(milliseconds: 10),
@@ -142,19 +135,10 @@ void main() {
       requestedMaxKeepAliveCount: 1,
     );
 
-    expect(subId1, isNot(equals(subId2)),
-        reason: 'Should get distinct subscription IDs');
+    expect(subId1, isNot(equals(subId2)), reason: 'Should get distinct subscription IDs');
 
-    final stream1 = client.monitor(
-      intNodeId,
-      subId1,
-      samplingInterval: Duration(milliseconds: 10),
-    );
-    final stream2 = client.monitor(
-      intNodeId,
-      subId2,
-      samplingInterval: Duration(milliseconds: 10),
-    );
+    final stream1 = client.monitor(intNodeId, subId1, samplingInterval: Duration(milliseconds: 10));
+    final stream2 = client.monitor(intNodeId, subId2, samplingInterval: Duration(milliseconds: 10));
 
     final deleted1 = Completer<int>();
     final deleted2 = Completer<int>();
@@ -197,10 +181,8 @@ void main() {
       onTimeout: () => fail('SubscriptionDeleted never fired for sub 2'),
     );
 
-    expect(result1, equals(subId1),
-        reason: 'Sub 1 should get its own subscription ID');
-    expect(result2, equals(subId2),
-        reason: 'Sub 2 should get its own subscription ID');
+    expect(result1, equals(subId1), reason: 'Sub 1 should get its own subscription ID');
+    expect(result2, equals(subId2), reason: 'Sub 2 should get its own subscription ID');
 
     await sub1.cancel();
     await sub2.cancel();
