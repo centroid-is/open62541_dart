@@ -25,7 +25,7 @@ ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType) {
 
 ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
   binarize.ByteWriter wr = binarize.ByteWriter();
-  value.set(wr, value, Endian.little, false, true);
+  OpcUaDynamicValueSerializer.serialize(value, wr, value, Endian.little, false, true);
   final pointer = ua_calloc<ffi.Uint8>(wr.length);
   pointer.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
 
@@ -121,7 +121,7 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
 
   retValue = createNestedArray(typeId, dimensions.toList());
   final reader = binarize.ByteReader(data.data.cast<ffi.Uint8>().asTypedList(bufferLength));
-  retValue.get(reader, Endian.little, false, true);
+  OpcUaDynamicValueSerializer.deserialize(retValue, reader, Endian.little, false, true);
   retValue.extObjEncodingId = extObjEncodingId;
 
   return retValue;
