@@ -8,6 +8,7 @@ import 'package:open62541/src/dynamic_value.dart';
 import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/node_id.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
+import 'package:open62541/src/types/opcua_serializer.dart';
 import 'schema_util.dart';
 
 void main() {
@@ -449,7 +450,7 @@ void main() {
 
     var spNodeId = NodeId.fromString(4, "Omars string struct");
 
-    final defs = {spNodeId: DynamicValue.fromDataTypeDefinition(spNodeId, variant.ref)};
+    final defs = {spNodeId: OpcUaDynamicValueSerializer.fromDataTypeDefinition(spNodeId, variant.ref)};
     final value = variantToValue(variant.ref, defs: defs);
 
     expect(value.isArray, true);

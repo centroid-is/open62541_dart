@@ -9,6 +9,7 @@ import 'package:open62541/src/dynamic_value.dart';
 import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/node_id.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
+import 'package:open62541/src/types/opcua_serializer.dart';
 import 'schema_util.dart';
 
 void main() {
@@ -141,10 +142,10 @@ void main() {
     myVal["field8"]["subfield3"][1].typeId = NodeId.boolean;
 
     ByteWriter writer = ByteWriter();
-    myVal.set(writer, myVal, Endian.little);
+    OpcUaDynamicValueSerializer.serialize(myVal, writer, myVal, Endian.little);
     final bytes = writer.toBytes();
     ByteReader reader = ByteReader(bytes, endian: Endian.little);
-    final decoded = myVal.get(reader, Endian.little);
+    final decoded = OpcUaDynamicValueSerializer.deserialize(myVal, reader, Endian.little);
     expect(decoded['field1'].asBool, true);
     expect(decoded['field2'].asBool, false);
     expect(decoded['field3'].asBool, true);
@@ -197,7 +198,7 @@ void main() {
     empty["field8"] = field8;
 
     final reader = ByteReader(Uint8List.fromList(data), endian: Endian.little);
-    final result = empty.get(reader, Endian.little);
+    final result = OpcUaDynamicValueSerializer.deserialize(empty, reader, Endian.little);
     assert(result['field1'].asBool == true);
     assert(result['field2'].asBool == false);
     assert(result['field3'].asBool == true);
@@ -212,7 +213,7 @@ void main() {
     assert(result['field8']['subfield3'][1].asBool == true);
 
     final writer = ByteWriter(endian: Endian.little);
-    empty.set(writer, result);
+    OpcUaDynamicValueSerializer.serialize(empty, writer, result);
     assert(writer.length == data.length);
     var bytes = writer.toBytes();
     for (var i = 0; i < data.length; i++) {
@@ -245,7 +246,7 @@ void main() {
     var fp = buildDef(fpNodeId, fpFields);
 
     var defs = {spNodeId: sp, fpNodeId: fp};
-    // var schema = DynamicValue.fromDataTypeDefinition(NodeId.fromString(4, "sp"), defs);
+    // var schema = OpcUaDynamicValueSerializer.fromDataTypeDefinition(NodeId.fromString(4, "sp"), defs);
     expect(defs, isNotEmpty); // Stop analyzer from complaining
     var schema = DynamicValue();
 
@@ -370,7 +371,7 @@ void main() {
 
     final bytes = Uint8List.fromList(data);
     ByteReader reader = ByteReader(bytes, endian: Endian.little);
-    test.get(reader, Endian.little);
+    OpcUaDynamicValueSerializer.deserialize(test, reader, Endian.little);
     expect(test["field1"].asString, "Centroid");
     expect(test["field2"].asString, "Omar");
     expect(test["field3"].asString, "JBB");
@@ -381,7 +382,7 @@ void main() {
     expect(test["bigfield4"].asString, "☘");
 
     ByteWriter writer = ByteWriter(endian: Endian.little);
-    test.set(writer, test, Endian.little);
+    OpcUaDynamicValueSerializer.serialize(test, writer, test, Endian.little);
     final b = writer.toBytes();
     expect(bytes.length, b.length);
     for (int i = 0; i < bytes.length; i++) {
@@ -505,7 +506,7 @@ void main() {
     final bytes = obj.cast<Uint8>().asTypedList(sizeOf<raw.UA_ExtensionObject>() * 4);
 
     ByteReader reader = ByteReader(bytes, endian: Endian.little);
-    parent.get(reader, Endian.little, false, true);
+    OpcUaDynamicValueSerializer.deserialize(parent, reader, Endian.little, false, true);
     expect(parent[0]["field1"].asString, "a");
     expect(parent[0]["field2"].asString, "b");
     expect(parent[0]["field3"].asString, "c");
@@ -543,7 +544,7 @@ void main() {
     expect(parent[3]["bigfield4"].asString, "l");
 
     ByteWriter writer = ByteWriter(endian: Endian.little);
-    parent.set(writer, parent, Endian.little, false, true);
+    OpcUaDynamicValueSerializer.serialize(parent, writer, parent, Endian.little, false, true);
     final b = writer.toBytes();
     expect(bytes.length, b.length);
     for (int i = 0; i < 4; i++) {
@@ -570,7 +571,7 @@ void main() {
       DynamicValue(typeId: NodeId.uastring, value: "c"),
     ], typeId: NodeId.uastring);
     ByteWriter writer = ByteWriter(endian: Endian.little);
-    test.set(writer, test, Endian.little);
+    OpcUaDynamicValueSerializer.serialize(test, writer, test, Endian.little);
     ByteReader reader = ByteReader(writer.toBytes(), endian: Endian.little);
     final dynExpected = DynamicValue(typeId: NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
     dynExpected["a"] = DynamicValue.fromList([
@@ -578,7 +579,7 @@ void main() {
       DynamicValue(typeId: NodeId.uastring),
       DynamicValue(typeId: NodeId.uastring),
     ], typeId: NodeId.uastring);
-    dynExpected.get(reader, Endian.little);
+    OpcUaDynamicValueSerializer.deserialize(dynExpected, reader, Endian.little);
     expect(dynExpected["a"][0].asString, "a");
     expect(dynExpected["a"][1].asString, "b");
     expect(dynExpected["a"][2].asString, "c");
