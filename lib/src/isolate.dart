@@ -751,7 +751,6 @@ class _IsolateData {
 /// Entry point for the isolate
 void _isolateEntryPoint(_IsolateData data) {
   late Client client;
-  Timer? iterateTimer;
   final receivePort = ReceivePort();
   final sendPort = data.sendPort;
 
@@ -761,9 +760,10 @@ void _isolateEntryPoint(_IsolateData data) {
   // Track endpoint for error messages
   String? endpoint;
 
-  // Flag to prevent runIterate during deletion - Timer.cancel() doesn't
-  // wait for in-flight callbacks, so we need this to avoid use-after-free
-  bool isDeleting = false;
+  // Iterate loop control — uses an async loop instead of Timer.periodic
+  // so deletion can await full termination (no race condition).
+  bool iterateRunning = false;
+  Completer<void>? iterateStopped;
 
   // Send our receive port back to the main isolate
   sendPort.send(receivePort.sendPort);
@@ -862,14 +862,11 @@ void _isolateEntryPoint(_IsolateData data) {
       } else if (message is DeleteMessage) {
         stderr.writeln("[${endpoint ?? 'unknown'}] Shutting down isolate (${activeStreams.length} active streams)");
 
-        // Set flag to prevent timer callback from calling runIterate
-        isDeleting = true;
-
-        // Cancel the iterate timer
-        iterateTimer?.cancel();
-
-        // Yield to allow any already-scheduled timer callback to run and see isDeleting flag
-        await Future.delayed(Duration.zero);
+        // Stop the iterate loop and wait for it to fully drain
+        iterateRunning = false;
+        if (iterateStopped != null) {
+          await iterateStopped!.future;
+        }
 
         // Cancel all active streams
         for (final subscription in activeStreams.values) {
@@ -883,18 +880,30 @@ void _isolateEntryPoint(_IsolateData data) {
         await client.awaitConnect();
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is RunIterateMessage) {
-        iterateTimer?.cancel();
-        // Start the iterate timer
-        iterateTimer = Timer.periodic(message.timeout, (timer) {
-          // Skip if we're in the process of deleting to avoid use-after-free
-          if (isDeleting) return;
+        // Stop any previous iterate loop
+        iterateRunning = false;
+        if (iterateStopped != null) {
+          await iterateStopped!.future;
+        }
 
-          if (!client.runIterate(message.timeout)) {
-            stderr.writeln("[${endpoint ?? 'unknown'}] runIterate failed, stopping event loop");
-            iterateTimer?.cancel();
-            sendPort.send(IsolateResponse.error(message.requestId, "Iteration failed"));
+        // Start a new async iterate loop — the `iterateRunning` flag and
+        // `iterateStopped` completer let the delete handler await full
+        // termination, eliminating the Timer.periodic race condition.
+        iterateRunning = true;
+        final stopped = Completer<void>();
+        iterateStopped = stopped;
+
+        () async {
+          while (iterateRunning) {
+            if (!client.runIterate(message.timeout)) {
+              stderr.writeln("[${endpoint ?? 'unknown'}] runIterate failed, stopping event loop");
+              sendPort.send(IsolateResponse.error(message.requestId, "Iteration failed"));
+              break;
+            }
+            await Future.delayed(message.timeout);
           }
-        });
+          stopped.complete();
+        }();
       } else if (message is StateStreamMessage) {
         final stream = client.config.stateStream;
 
