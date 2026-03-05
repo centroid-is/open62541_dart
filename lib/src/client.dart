@@ -1064,7 +1064,9 @@ class Client implements ClientApi {
               raw.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
               // Defer closing monitorCallback: a Publish response processed
               // later in the same runIterate batch may still invoke it.
-              _deferClose(monitorCallback);
+              // scheduleMicrotask runs after runIterate returns to the event
+              // loop, so all native callbacks in the current batch complete first.
+              scheduleMicrotask(() => monitorCallback.close());
               ua_calloc.free(callbacks);
               deleteCallback.close();
               monIds.clear();
@@ -1599,33 +1601,9 @@ class Client implements ClientApi {
     // Need to close the config after deleting the client
     // s.t. the native callbacks are not closed when called
     await _clientConfig.close();
-
-    // Close any monitor callbacks that were deferred during onCancel.
-    for (final cb in _deferredCallbackCleanup) {
-      cb.close();
-    }
-    _deferredCallbackCleanup.clear();
   }
 
   late ffi.Pointer<raw.UA_Client> _client;
   late final ClientConfig _clientConfig;
   final List<ffi.NativeCallable> _subscriptionDeleteCallbacks = [];
-
-  /// Callbacks whose close must be deferred until after the current
-  /// runIterate batch completes, preventing use-after-free when a
-  /// Publish response is processed after a DeleteMonitoredItems response
-  /// in the same native event-loop tick.
-  final List<ffi.NativeCallable> _deferredCallbackCleanup = [];
-
-  /// Schedule a NativeCallable for deferred close.  The close runs on
-  /// the next microtask so it cannot race with other callbacks firing
-  /// synchronously inside the current [runIterate] call.
-  void _deferClose(ffi.NativeCallable cb) {
-    _deferredCallbackCleanup.add(cb);
-    scheduleMicrotask(() {
-      if (_deferredCallbackCleanup.remove(cb)) {
-        cb.close();
-      }
-    });
-  }
 }
