@@ -182,6 +182,8 @@ Future<void> main(List<String> args) async {
     final libPrefix = isWindows ? '' : 'lib';
     final libSuffix = isWindows ? '.lib' : '.a';
 
+    final sanitizer = Platform.environment['ENABLE_SANITIZER'] == '1';
+
     final builder = CMakeBuilder.create(
       name: name,
       sourceDir: extractedFiles,
@@ -202,6 +204,8 @@ Future<void> main(List<String> args) async {
         'MBEDTLS_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedtls$libSuffix').toFilePath(),
         'MBEDX509_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedx509$libSuffix').toFilePath(),
         'MBEDCRYPTO_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedcrypto$libSuffix').toFilePath(),
+        if (sanitizer) 'CMAKE_C_FLAGS': '-fsanitize=address,undefined -fno-omit-frame-pointer',
+        if (sanitizer) 'CMAKE_SHARED_LINKER_FLAGS': '-fsanitize=address,undefined',
       },
       targets: ['install'],
       buildLocal: true,

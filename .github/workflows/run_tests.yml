@@ -42,5 +42,36 @@ jobs:
         if: matrix.os == 'ubuntu-latest' # Only run on Linux, dont need all the runners to run this
         run: dart analyze --fatal-infos --fatal-warnings .
 
+      - name: Check outdated dependencies
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: dart pub outdated
+
       - name: Run tests
         run: dart test
+
+  test-sanitizer:
+    name: test-asan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Run tests with AddressSanitizer
+        env:
+          ENABLE_SANITIZER: '1'
+        run: |
+          # Find the ASAN shared library for LD_PRELOAD
+          ASAN_LIB=$(gcc -print-file-name=libasan.so)
+          echo "Using ASAN library: $ASAN_LIB"
+          LD_PRELOAD="$ASAN_LIB" \
+          ASAN_OPTIONS="detect_leaks=0,halt_on_error=1,print_stats_on_exit=1" \
+          dart test
