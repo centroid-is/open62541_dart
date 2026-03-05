@@ -31,8 +31,7 @@ void main() {
     server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_WARNING);
     server.start();
 
-    DynamicValue intValue =
-        DynamicValue(value: 42, typeId: NodeId.int32, name: "the.int");
+    DynamicValue intValue = DynamicValue(value: 42, typeId: NodeId.int32, name: "the.int");
     server.addVariableNode(intNodeId, intValue);
 
     serverTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
@@ -73,53 +72,49 @@ void main() {
   //   f) Before the fix, this could crash. After the fix, it must not.
   // ---------------------------------------------------------------
   test(
-      'cancel-then-publish: monitorCallback must survive until runIterate batch completes',
-      () async {
-    final subscriptionId = await client.subscriptionCreate(
-      requestedPublishingInterval: Duration(milliseconds: 50),
-    );
+    'cancel-then-publish: monitorCallback must survive until runIterate batch completes',
+    () async {
+      final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
 
-    final stream = client.monitor(
-      intNodeId,
-      subscriptionId,
-      samplingInterval: Duration(milliseconds: 50),
-    );
+      final stream = client.monitor(intNodeId, subscriptionId, samplingInterval: Duration(milliseconds: 50));
 
-    final values = <DynamicValue>[];
-    final sub = stream.listen((v) => values.add(v));
+      final values = <DynamicValue>[];
+      final sub = stream.listen((v) => values.add(v));
 
-    // Wait for data to flow
-    await Future.delayed(Duration(milliseconds: 500));
-    expect(values, isNotEmpty, reason: 'Should have received initial data');
+      // Wait for data to flow
+      await Future.delayed(Duration(milliseconds: 500));
+      expect(values, isNotEmpty, reason: 'Should have received initial data');
 
-    // === Pause client so requests/responses queue up ===
-    clientTimer?.cancel();
-    clientTimer = null;
+      // === Pause client so requests/responses queue up ===
+      clientTimer?.cancel();
+      clientTimer = null;
 
-    // Cancel the stream while the client is paused.
-    // This queues UA_Client_MonitoredItems_delete_async internally
-    // but the delete request won't be sent until runIterate runs.
-    unawaited(sub.cancel());
+      // Cancel the stream while the client is paused.
+      // This queues UA_Client_MonitoredItems_delete_async internally
+      // but the delete request won't be sent until runIterate runs.
+      unawaited(sub.cancel());
 
-    // Let the server keep publishing for a bit — these Publish responses
-    // will stack up on the TCP socket alongside the delete response.
-    await Future.delayed(Duration(milliseconds: 300));
+      // Let the server keep publishing for a bit — these Publish responses
+      // will stack up on the TCP socket alongside the delete response.
+      await Future.delayed(Duration(milliseconds: 300));
 
-    // === Resume client: process all queued responses in one burst ===
-    // Before the fix, this could crash the Dart VM with:
-    //   "Callback invoked after it has been deleted"
-    clientTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
-      client.runIterate(Duration(milliseconds: 10));
-    });
+      // === Resume client: process all queued responses in one burst ===
+      // Before the fix, this could crash the Dart VM with:
+      //   "Callback invoked after it has been deleted"
+      clientTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
+        client.runIterate(Duration(milliseconds: 10));
+      });
 
-    // Give the client time to process everything.
-    // If we get here without a crash, the fix works.
-    await Future.delayed(Duration(milliseconds: 500));
+      // Give the client time to process everything.
+      // If we get here without a crash, the fix works.
+      await Future.delayed(Duration(milliseconds: 500));
 
-    // Verify we can still use the client (it didn't crash or corrupt state).
-    final readValue = await client.read(intNodeId);
-    expect(readValue.value, equals(42));
-  }, timeout: Timeout(Duration(seconds: 15)));
+      // Verify we can still use the client (it didn't crash or corrupt state).
+      final readValue = await client.read(intNodeId);
+      expect(readValue.value, equals(42));
+    },
+    timeout: Timeout(Duration(seconds: 15)),
+  );
 
   // ---------------------------------------------------------------
   // Test 2: Rapid cancel-and-resubscribe cycle
@@ -132,26 +127,18 @@ void main() {
   // Each iteration creates a fresh subscription to avoid server-side
   // subscription expiry from accumulated cancel/resubscribe churn.
   // ---------------------------------------------------------------
-  test('rapid cancel-resubscribe: old callback survives until native cleanup',
-      () async {
+  test('rapid cancel-resubscribe: old callback survives until native cleanup', () async {
     for (var i = 0; i < 5; i++) {
-      final subscriptionId = await client.subscriptionCreate(
-        requestedPublishingInterval: Duration(milliseconds: 50),
-      );
+      final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
 
-      final stream = client.monitor(
-        intNodeId,
-        subscriptionId,
-        samplingInterval: Duration(milliseconds: 50),
-      );
+      final stream = client.monitor(intNodeId, subscriptionId, samplingInterval: Duration(milliseconds: 50));
 
       final values = <DynamicValue>[];
       final sub = stream.listen((v) => values.add(v));
 
       // Wait for data to flow
       await Future.delayed(Duration(milliseconds: 500));
-      expect(values, isNotEmpty,
-          reason: 'Iteration $i: should receive data');
+      expect(values, isNotEmpty, reason: 'Iteration $i: should receive data');
 
       // Cancel fire-and-forget (like StateMan does)
       unawaited(sub.cancel());
