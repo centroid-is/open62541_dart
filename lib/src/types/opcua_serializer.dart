@@ -21,8 +21,13 @@ class OpcUaDynamicValueSerializer {
   ///
   /// Replaces the former DynamicValue.get() method.
   /// Mutates [schema] in-place and returns it.
-  static DynamicValue deserialize(DynamicValue schema, ByteReader reader,
-      [Endian? endian, bool insideStruct = false, bool root = false]) {
+  static DynamicValue deserialize(
+    DynamicValue schema,
+    ByteReader reader, [
+    Endian? endian,
+    bool insideStruct = false,
+    bool root = false,
+  ]) {
     // Assume we are in a structure of DynamicValue where typeId is set but all values are null
     // {
     // { }
@@ -49,23 +54,19 @@ class OpcUaDynamicValueSerializer {
     if (schema.isObject) {
       ByteReader bodyReader = reader;
       if (root) {
-        final objBytes =
-            reader.read(ffi.sizeOf<raw.UA_ExtensionObject>());
+        final objBytes = reader.read(ffi.sizeOf<raw.UA_ExtensionObject>());
         ffi.Pointer<raw.UA_ExtensionObject> obj = ua_calloc();
         obj
             .cast<ffi.Uint8>()
             .asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>())
             .setRange(0, ffi.sizeOf<raw.UA_ExtensionObject>(), objBytes);
         // Todo only support encoded byte string for now
-        assert(obj.ref.encoding ==
-            raw.UA_ExtensionObjectEncoding
-                .UA_EXTENSIONOBJECT_ENCODED_BYTESTRING);
+        assert(obj.ref.encoding == raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING);
         final bodyBytes = obj.ref.content.encoded.body.asTypedList();
         bodyReader = ByteReader(bodyBytes, endian: endian ?? Endian.little);
       }
       for (final key in schema.value.keys) {
-        schema.value[key] =
-            OpcUaDynamicValueSerializer.deserialize(schema.value[key], bodyReader, endian, true);
+        schema.value[key] = OpcUaDynamicValueSerializer.deserialize(schema.value[key], bodyReader, endian, true);
       }
     }
 
@@ -82,8 +83,7 @@ class OpcUaDynamicValueSerializer {
       for (int i = 0; i < schema.asArray.length; i++) {
         // if array is root and subsequent type is array we should treat that also as root
         // as in not read the subsequent array length
-        schema.value[i] =
-            OpcUaDynamicValueSerializer.deserialize(schema.value[i], reader, endian, insideStruct, root);
+        schema.value[i] = OpcUaDynamicValueSerializer.deserialize(schema.value[i], reader, endian, insideStruct, root);
       }
     }
     return schema;
@@ -92,9 +92,14 @@ class OpcUaDynamicValueSerializer {
   /// Serialize a DynamicValue tree into binary data.
   ///
   /// Replaces the former DynamicValue.set() method.
-  static void serialize(DynamicValue schema, ByteWriter writer,
-      DynamicValue value,
-      [Endian? endian, bool insideStruct = false, bool root = false]) {
+  static void serialize(
+    DynamicValue schema,
+    ByteWriter writer,
+    DynamicValue value, [
+    Endian? endian,
+    bool insideStruct = false,
+    bool root = false,
+  ]) {
     if (value.isArray) {
       // Don't encode the array length if we are the root
       if (!root) {
@@ -103,45 +108,33 @@ class OpcUaDynamicValueSerializer {
       for (var i = 0; i < value.value.length; i++) {
         // if array is root and subsequent type is array we should treat that also as root
         // as in not read the subsequent array length
-        OpcUaDynamicValueSerializer.serialize(
-            value.value[i], writer, value.value[i], endian, insideStruct, root);
+        OpcUaDynamicValueSerializer.serialize(value.value[i], writer, value.value[i], endian, insideStruct, root);
       }
     } else if (value.isObject && root) {
-      ffi.Pointer<raw.UA_ExtensionObject> obj =
-          ua_calloc<raw.UA_ExtensionObject>();
-      obj.ref.content.encoded.typeId
-          .fromNodeId(value.extObjEncodingId ?? value.typeId!);
+      ffi.Pointer<raw.UA_ExtensionObject> obj = ua_calloc<raw.UA_ExtensionObject>();
+      obj.ref.content.encoded.typeId.fromNodeId(value.extObjEncodingId ?? value.typeId!);
       ByteWriter bodyWriter = ByteWriter();
-      value.value.forEach((key, val) => OpcUaDynamicValueSerializer.serialize(
-          val, bodyWriter, val, endian, true));
+      value.value.forEach((key, val) => OpcUaDynamicValueSerializer.serialize(val, bodyWriter, val, endian, true));
       obj.ref.content.encoded.body.fromBytes(bodyWriter.toBytes());
       // todo support other encodings
-      obj.ref.encodingAsInt = raw
-          .UA_ExtensionObjectEncoding
-          .UA_EXTENSIONOBJECT_ENCODED_BYTESTRING
-          .value;
+      obj.ref.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
       // write the extension object to the writer
-      final extObjView = obj
-          .cast<ffi.Uint8>()
-          .asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>());
+      final extObjView = obj.cast<ffi.Uint8>().asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>());
       // here we have made a view into the ext object on the C heap
       // I would like to believe that this is freed when the variant is freed
       writer.write(extObjView);
     } else if (value.isObject) {
-      value.value.forEach((key, val) => OpcUaDynamicValueSerializer.serialize(
-          val, writer, val, endian, true));
+      value.value.forEach((key, val) => OpcUaDynamicValueSerializer.serialize(val, writer, val, endian, true));
     } else {
       if (value.isNull) {
-        throw StateError(
-            'Element type is not set for where value is\n $value');
+        throw StateError('Element type is not set for where value is\n $value');
       }
       //Special case for strings, they are different the UA_Strings when
       // encoded inside of a struct
       if (schema.typeId == NodeId.uastring && insideStruct) {
         ContiguousStringPayload().set(writer, value.value, endian);
       } else {
-        nodeIdToPayloadType(value.typeId ?? _autoDeduceType(value.value))!
-            .set(writer, value.value, endian);
+        nodeIdToPayloadType(value.typeId ?? _autoDeduceType(value.value))!.set(writer, value.value, endian);
       }
     }
   }
@@ -149,8 +142,7 @@ class OpcUaDynamicValueSerializer {
   /// Build DynamicValue schema from OPC UA data type definition.
   ///
   /// Replaces the former DynamicValue.fromDataTypeDefinition() factory.
-  static DynamicValue fromDataTypeDefinition(
-      NodeId typeId, raw.UA_Variant def) {
+  static DynamicValue fromDataTypeDefinition(NodeId typeId, raw.UA_Variant def) {
     DynamicValue tree = DynamicValue(typeId: typeId);
 
     // If we know how to deal with this type
@@ -192,8 +184,7 @@ class OpcUaDynamicValueSerializer {
           for (int i = 0; i < field.dimensions[0]; i++) {
             collection.add(DynamicValue(typeId: fieldDataType));
           }
-          tree[fieldName] =
-              DynamicValue.fromList(collection, typeId: fieldDataType);
+          tree[fieldName] = DynamicValue.fromList(collection, typeId: fieldDataType);
         }
         tree[fieldName].isOptional = field.isOptional;
         tree[fieldName].description = field.description.localizedText;

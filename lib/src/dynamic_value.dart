@@ -262,5 +262,4 @@ class DynamicValue {
     }
     return (value as LinkedHashMap<String, DynamicValue>).entries;
   }
-
 }
