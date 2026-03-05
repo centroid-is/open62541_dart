@@ -99,7 +99,8 @@ Future<Uri> download(Uri outputDirectory, String version) async {
     return srcDir.uri;
   }
 
-  final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
+  // final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
+  final url = Uri.parse('https://github.com/open62541/open62541/archive/$version.zip');
   final response = await http.get(url);
   if (response.statusCode != 200) {
     throw Exception('Error downloading open62541 version $version: ${response.statusCode}');
@@ -162,7 +163,8 @@ Future<void> _applyPatches(Uri sourceDir) async {
 }
 
 Future<void> main(List<String> args) async {
-  final version = "v1.5.2";
+  // final version = "v1.5.2";
+  final version = "97a4ee6c1c687ba1909ca59369e2b73b1c938d07";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
     await _applyPatches(extractedFiles);
