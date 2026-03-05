@@ -14,6 +14,7 @@ import 'extensions.dart';
 import 'node_id.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
+import 'types/opcua_serializer.dart';
 import 'ua_allocation.dart';
 
 typedef NodeClass = raw.UA_NodeClass;
@@ -489,7 +490,7 @@ class Client implements ClientApi {
                   reference.enumFields = reference.enumFields ?? temporary.enumFields;
                   reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
                 case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
-                  final temporary = DynamicValue.fromDataTypeDefinition(
+                  final temporary = OpcUaDynamicValueSerializer.fromDataTypeDefinition(
                     reference.typeId ?? value!.type.ref.typeId.toNodeId(),
                     value!,
                   );
@@ -1177,7 +1178,7 @@ class Client implements ClientApi {
                   reference.enumFields = data.enumFields;
                   raw.UA_Variant_delete(variant);
                 case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
-                  final temporary = DynamicValue.fromDataTypeDefinition(
+                  final temporary = OpcUaDynamicValueSerializer.fromDataTypeDefinition(
                     reference.typeId ?? ref.type.ref.typeId.toNodeId(),
                     ref,
                   );
