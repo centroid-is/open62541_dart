@@ -26,8 +26,10 @@ void main() {
   late Client client;
   late Timer serverTimer;
   Timer? clientTimer;
+  var serverShutdown = false;
 
   setUp(() async {
+    serverShutdown = false;
     server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_WARNING);
     server.start();
 
@@ -50,9 +52,9 @@ void main() {
   tearDown(() async {
     clientTimer?.cancel();
     serverTimer.cancel();
-    server.shutdown();
+    if (!serverShutdown) server.shutdown();
     await client.delete();
-    server.delete();
+    if (!serverShutdown) server.delete();
   });
 
   // ---------------------------------------------------------------
@@ -117,7 +119,62 @@ void main() {
   );
 
   // ---------------------------------------------------------------
-  // Test 2: Rapid cancel-and-resubscribe cycle
+  // Test 2: Sync error path — monitor after disconnect
+  //
+  // When the client is disconnected, UA_Client_MonitoredItems_create_async
+  // returns a non-Good status code synchronously. The error path must
+  // clean up monitorCallback, createCallback, and callbacks exactly once.
+  // Before the fix, these were freed twice (double-close / double-free).
+  // ---------------------------------------------------------------
+  test('sync error path: monitor after disconnect must not double-free', () async {
+    final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
+
+    // Shut down the server so the client's channel goes dead
+    clientTimer?.cancel();
+    clientTimer = null;
+    serverTimer.cancel();
+    server.shutdown();
+    server.delete();
+    serverShutdown = true;
+
+    // Let the client discover the disconnect
+    clientTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
+      client.runIterate(Duration(milliseconds: 10));
+    });
+    await Future.delayed(Duration(milliseconds: 500));
+
+    // Now try to monitor on the dead connection.
+    // This should hit the sync error path in monitoredItems().
+    final stream = client.monitor(intNodeId, subscriptionId, samplingInterval: Duration(milliseconds: 50));
+
+    final errors = <Object>[];
+    final errorCompleter = Completer<void>();
+    final sub = stream.listen(
+      (_) {},
+      onError: (e) {
+        errors.add(e);
+        if (!errorCompleter.isCompleted) errorCompleter.complete();
+      },
+    );
+
+    // Wait for the error or timeout
+    await errorCompleter.future.timeout(
+      Duration(seconds: 5),
+      onTimeout: () {}, // stream may just close without error
+    );
+
+    expect(errors, isNotEmpty, reason: 'Should get an error from monitor on dead connection');
+
+    await sub.cancel();
+
+    // If we get here without a crash/ASAN report, the double-free is fixed.
+    // Verify client is still usable (no heap corruption).
+    // We can't read from the server since it's shut down, but we can
+    // confirm the client object didn't crash.
+  }, timeout: Timeout(Duration(seconds: 15)));
+
+  // ---------------------------------------------------------------
+  // Test 3: Rapid cancel-and-resubscribe cycle
   //
   // Reproduces the production scenario: StateMan's _monitor retry loop
   // cancels the old raw subscription and immediately creates a new one.
