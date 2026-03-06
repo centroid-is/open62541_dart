@@ -1062,7 +1062,11 @@ class Client implements ClientApi {
                 }
               }
               raw.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
-              monitorCallback.close();
+              // Defer closing monitorCallback: a Publish response processed
+              // later in the same runIterate batch may still invoke it.
+              // scheduleMicrotask runs after runIterate returns to the event
+              // loop, so all native callbacks in the current batch complete first.
+              scheduleMicrotask(() => monitorCallback.close());
               ua_calloc.free(callbacks);
               deleteCallback.close();
               monIds.clear();
@@ -1386,11 +1390,8 @@ class Client implements ClientApi {
         monitorCallback.close();
         createCallback.close();
         controller.addError('Unable to create monitored item: $statusCode ${statusCodeToString(statusCode)}');
-
-        // Cleanup resources that the close callback was suppose to do
-        controller.onCancel = () {}; // Don't invoke the real close callback
-        monitorCallback.close();
-        ua_calloc.free(callbacks);
+        // Don't invoke the real onCancel — resources are already freed above.
+        controller.onCancel = () {};
       }
     };
 
