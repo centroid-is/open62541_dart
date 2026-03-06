@@ -1389,11 +1389,9 @@ class Client implements ClientApi {
         ua_calloc.free(callbacks);
         monitorCallback.close();
         createCallback.close();
-        // Disable onCancel before addError — the resources it would clean up
-        // are already freed above, and a synchronous cancel from an error
-        // listener must not double-free them.
-        controller.onCancel = () {};
         controller.addError('Unable to create monitored item: $statusCode ${statusCodeToString(statusCode)}');
+        // Don't invoke the real onCancel — resources are already freed above.
+        controller.onCancel = () {};
       }
     };
 
