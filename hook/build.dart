@@ -134,7 +134,8 @@ Future<void> _applyPatches(Uri sourceDir) async {
   var content = await targetFile.readAsString();
 
   // Already patched?
-  if (content.contains('Clean up all client-side subscriptions')) return;
+  if (content.contains('Clean up all client-side subscriptions') &&
+      content.contains('Immediately null out the notification callbacks')) return;
 
   // OPC UA Part 4, 5.13.5, Table 95: when BadNoSubscription arrives with
   // subscriptionId == 0, clean ALL client-side subscriptions so that
@@ -159,6 +160,49 @@ Future<void> _applyPatches(Uri sourceDir) async {
     throw Exception('Cannot apply subscription patch: expected code not found');
   }
   content = content.replaceFirst(original, patched);
+
+  // Null out monitored item callbacks immediately when a delete request is
+  // sent.  This prevents use-after-free crashes when a Publish response
+  // arrives before the DeleteMonitoredItems response is processed.
+  // processDataChangeNotification() already guards with a NULL check.
+  const deleteOriginal =
+      '''    /* Send the request */
+    CustomCallback *cc = (CustomCallback *)UA_calloc(1, sizeof(CustomCallback));
+    if(!cc)
+        return UA_STATUSCODE_BADOUTOFMEMORY;''';
+
+  const deletePatched =
+      '''    /* Immediately null out the notification callbacks for the monitored items
+     * being deleted. This prevents use-after-free when a Publish response
+     * arrives before the DeleteMonitoredItems response is processed.
+     * processDataChangeNotification() already checks for NULL. */
+    {
+        UA_Client_Subscription *sub =
+            findSubscriptionById(client, request.subscriptionId);
+        if(sub) {
+            for(size_t i = 0; i < request.monitoredItemIdsSize; i++) {
+                UA_Client_MonitoredItem *mon;
+                UA_Client_MonitoredItem dummy;
+                dummy.monitoredItemId = request.monitoredItemIds[i];
+                mon = ZIP_FIND(MonitorItemsTree, &sub->monitoredItems, &dummy);
+                if(mon) {
+                    mon->handler.dataChangeCallback = NULL;
+                    mon->handler.eventCallback = NULL;
+                }
+            }
+        }
+    }
+
+    /* Send the request */
+    CustomCallback *cc = (CustomCallback *)UA_calloc(1, sizeof(CustomCallback));
+    if(!cc)
+        return UA_STATUSCODE_BADOUTOFMEMORY;''';
+
+  if (!content.contains(deleteOriginal)) {
+    throw Exception('Cannot apply delete-nullify patch: expected code not found');
+  }
+  content = content.replaceFirst(deleteOriginal, deletePatched);
+
   await targetFile.writeAsString(content);
 }
 
