@@ -318,7 +318,7 @@ extension UA_NodeIdExtension on raw.UA_NodeId {
   }
 
   NodeId toNodeId() {
-    return NodeId.fromRaw(this);
+    return NodeIdFfi.fromRaw(this);
   }
 
   void fromNodeId(NodeId nodeId) {

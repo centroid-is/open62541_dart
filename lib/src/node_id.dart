@@ -3,165 +3,37 @@ import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 
 import 'extensions.dart';
+import 'node_id_core.dart' as core;
 import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
-class NodeId {
-  NodeId._internal(this._namespaceIndex, {dynamic id})
-    : _stringId = id is String ? id : null,
-      _numericId = id is int ? id : null {
-    if (_stringId == null && _numericId == null) {
-      throw 'NodeId is not initialized or unimplemented';
-    }
-  }
+export 'node_id_core.dart';
 
-  factory NodeId.from(NodeId other) {
-    if (other.isString()) {
-      return NodeId.fromString(other.namespace, other.string);
-    } else if (other.isNumeric()) {
-      return NodeId.fromNumeric(other.namespace, other.numeric);
-    } else {
-      throw 'NodeId is not initialized or unimplemented';
-    }
-  }
-
-  factory NodeId.fromRaw(raw.UA_NodeId nodeId) {
+/// Extension on NodeId adding FFI methods for native OPC UA interop.
+extension NodeIdFfi on core.NodeId {
+  /// Create a NodeId from a raw UA_NodeId FFI struct.
+  static core.NodeId fromRaw(raw.UA_NodeId nodeId) {
     if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
-      // Drop the __DefaultBinary if attached to string, don't know why it is there
       var str = nodeId.identifier.string.value;
       if (str.endsWith('__DefaultBinary')) {
         str = str.substring(0, str.length - 15);
       }
-      return NodeId._internal(nodeId.namespaceIndex, id: str);
-    } else if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
-      return NodeId._internal(nodeId.namespaceIndex, id: nodeId.identifier.numeric);
+      return core.NodeId.fromString(nodeId.namespaceIndex, str);
+    } else if (nodeId.identifierType ==
+        raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
+      return core.NodeId.fromNumeric(
+          nodeId.namespaceIndex, nodeId.identifier.numeric);
     } else {
       throw 'NodeId todo implement';
     }
   }
 
-  factory NodeId.fromNumeric(int nsIndex, int identifier) {
-    return NodeId._internal(nsIndex, id: identifier);
-  }
-
-  factory NodeId.fromString(int nsIndex, String chars) {
-    return NodeId._internal(nsIndex, id: chars);
-  }
-
-  // Handy methods for namespace 0 types
-  static NodeId get nullId {
-    return NodeId.fromNumeric(0, 0);
-  }
-
-  static NodeId get boolean {
-    return NodeId.fromNumeric(0, Namespace0Id.boolean.value);
-  }
-
-  static NodeId get uint16 {
-    return NodeId.fromNumeric(0, Namespace0Id.uint16.value);
-  }
-
-  static NodeId get int16 {
-    return NodeId.fromNumeric(0, Namespace0Id.int16.value);
-  }
-
-  static NodeId get uint32 {
-    return NodeId.fromNumeric(0, Namespace0Id.uint32.value);
-  }
-
-  static NodeId get int32 {
-    return NodeId.fromNumeric(0, Namespace0Id.int32.value);
-  }
-
-  static NodeId get uint64 {
-    return NodeId.fromNumeric(0, Namespace0Id.uint64.value);
-  }
-
-  static NodeId get int64 {
-    return NodeId.fromNumeric(0, Namespace0Id.int64.value);
-  }
-
-  static NodeId get uastring {
-    return NodeId.fromNumeric(0, Namespace0Id.string.value);
-  }
-
-  static NodeId get double {
-    return NodeId.fromNumeric(0, Namespace0Id.double.value);
-  }
-
-  static NodeId get float {
-    return NodeId.fromNumeric(0, Namespace0Id.float.value);
-  }
-
-  static NodeId get datetime {
-    return NodeId.fromNumeric(0, Namespace0Id.datetime.value);
-  }
-
-  static NodeId get byte {
-    return NodeId.fromNumeric(0, Namespace0Id.byte.value);
-  }
-
-  static NodeId get sbyte {
-    return NodeId.fromNumeric(0, Namespace0Id.sbyte.value);
-  }
-
-  static NodeId get structure {
-    return NodeId.fromNumeric(0, Namespace0Id.structure.value);
-  }
-
-  static NodeId get structureDefinition {
-    return NodeId.fromNumeric(0, Namespace0Id.structureDefinition.value);
-  }
-
-  static NodeId get structureDefinitionDefaultBinary {
-    return NodeId.fromNumeric(0, Namespace0Id.structureDefinitionDefaultBinary.value);
-  }
-
-  static NodeId get enumDefinitionDefaultBinary {
-    return NodeId.fromNumeric(0, Namespace0Id.enumDefinitionDefaultBinary.value);
-  }
-
-  static NodeId get nodeId {
-    return NodeId.fromNumeric(0, Namespace0Id.nodeId.value);
-  }
-
-  static NodeId get localizedText {
-    return NodeId.fromNumeric(0, Namespace0Id.localizedText.value);
-  }
-
-  static NodeId get serverStatusCurrentTime {
-    return NodeId.fromNumeric(0, 2258);
-  }
-
-  static NodeId get rootFolder {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_ROOTFOLDER);
-  }
-
-  static NodeId get objectsFolder {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
-  }
-
-  static NodeId get typesFolder {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_TYPESFOLDER);
-  }
-
-  static NodeId get viewsFolder {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_VIEWSFOLDER);
-  }
-
-  static NodeId get hierarchicalReferences {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_HIERARCHICALREFERENCES);
-  }
-
-  static NodeId get hasSubtype {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
-  }
-
   raw.UA_NodeId toRaw() {
-    if (_stringId != null) {
-      return raw.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: ua_malloc).cast());
-    } else if (_numericId != null) {
-      return raw.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
+    if (isString()) {
+      return raw.UA_NODEID_STRING(
+          namespace, string.toNativeUtf8(allocator: ua_malloc).cast());
+    } else if (isNumeric()) {
+      return raw.UA_NODEID_NUMERIC(namespace, numeric);
     } else {
       throw 'NodeId is not initialized or unimplemented';
     }
@@ -172,53 +44,4 @@ class NodeId {
     nodeId.ref = toRaw();
     return nodeId;
   }
-
-  int get namespace => _namespaceIndex;
-  int get numeric => _numericId!;
-  String get string => _stringId!;
-  // GUID
-  // String get byteString => _byteStringId!;
-
-  bool isNumeric() {
-    return _numericId != null;
-  }
-
-  bool isString() {
-    return _stringId != null;
-  }
-
-  // bool isGuid() {
-  //   return _nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_GUID;
-  // }
-
-  // bool isByteString() {
-  //   return _nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_BYTESTRING;
-  // }
-
-  @override
-  String toString() {
-    if (_stringId != null) {
-      return "ns=$namespace;s=$_stringId";
-    } else if (_numericId != null) {
-      return "ns=$namespace;i=$_numericId";
-    } else {
-      return 'NodeId(TODO)';
-    }
-  }
-
-  @override
-  bool operator ==(Object other) {
-    if (other is NodeId) {
-      return _namespaceIndex == other._namespaceIndex && _stringId == other._stringId && _numericId == other._numericId;
-    }
-    return false;
-  }
-
-  @override
-  int get hashCode => _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode;
-
-  String? _stringId;
-  int? _numericId;
-  // String? _byteStringId;
-  int _namespaceIndex;
 }

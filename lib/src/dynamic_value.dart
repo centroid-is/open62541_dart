@@ -1,6 +1,6 @@
 import 'dart:collection' show LinkedHashMap;
 
-import 'node_id.dart';
+import 'node_id_core.dart';
 
 enum DynamicType { object, array, string, boolean, nullValue, unknown, integer, double }
 
