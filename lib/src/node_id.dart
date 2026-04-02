@@ -19,10 +19,8 @@ extension NodeIdFfi on core.NodeId {
         str = str.substring(0, str.length - 15);
       }
       return core.NodeId.fromString(nodeId.namespaceIndex, str);
-    } else if (nodeId.identifierType ==
-        raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
-      return core.NodeId.fromNumeric(
-          nodeId.namespaceIndex, nodeId.identifier.numeric);
+    } else if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
+      return core.NodeId.fromNumeric(nodeId.namespaceIndex, nodeId.identifier.numeric);
     } else {
       throw 'NodeId todo implement';
     }
@@ -30,8 +28,7 @@ extension NodeIdFfi on core.NodeId {
 
   raw.UA_NodeId toRaw() {
     if (isString()) {
-      return raw.UA_NODEID_STRING(
-          namespace, string.toNativeUtf8(allocator: ua_malloc).cast());
+      return raw.UA_NODEID_STRING(namespace, string.toNativeUtf8(allocator: ua_malloc).cast());
     } else if (isNumeric()) {
       return raw.UA_NODEID_NUMERIC(namespace, numeric);
     } else {

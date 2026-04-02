@@ -82,16 +82,13 @@ class NodeId {
   @override
   bool operator ==(Object other) {
     if (other is NodeId) {
-      return _namespaceIndex == other._namespaceIndex &&
-          _stringId == other._stringId &&
-          _numericId == other._numericId;
+      return _namespaceIndex == other._namespaceIndex && _stringId == other._stringId && _numericId == other._numericId;
     }
     return false;
   }
 
   @override
-  int get hashCode =>
-      _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode;
+  int get hashCode => _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode;
 
   String? _stringId;
   int? _numericId;
