@@ -20,9 +20,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
+      - uses: actions/checkout@v6
 
       - name: Set up Dart
         uses: dart-lang/setup-dart@v1
@@ -56,15 +54,6 @@ jobs:
         shell: pwsh
         run: |
           choco install openssl
-
-      - name: Build open62541 library
-        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
-        run: ./open62541_tooling/build_lib.sh
-
-      - name: Build open62541 library windows
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: ./open62541_tooling/build_lib.ps1
 
       - name: Run tests
         run: dart test

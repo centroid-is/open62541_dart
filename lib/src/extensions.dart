@@ -5,8 +5,8 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'dynamic_value.dart';
-import 'generated/open62541_bindings.dart' as raw;
 import 'node_id.dart';
+import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
 typedef MonitoringMode = raw.UA_MonitoringMode;
@@ -371,7 +371,8 @@ extension UA_StructFieldFormat on raw.UA_StructureDefinition {
 
   String _formatField(raw.UA_StructureField field, int depth) {
     final indent = '  ' * (depth + 1);
-    final fieldStr = '''$indent{
+    final fieldStr =
+        '''$indent{
 $indent  structureName: ${field.name.value},
 $indent  name: ${field.fieldName},
 $indent  NodeId: ${field.dataType.format()}${field.dimensions.isEmpty ? '' : ','}${field.dimensions.isEmpty ? '' : '''

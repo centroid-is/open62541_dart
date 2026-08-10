@@ -5,7 +5,7 @@ import 'package:binarize/binarize.dart';
 import 'package:ffi/ffi.dart';
 import 'package:test/test.dart';
 
-import 'package:open62541/src/generated/open62541_bindings.dart' as raw;
+import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'package:open62541/src/types/payloads.dart';
 
 void main() {

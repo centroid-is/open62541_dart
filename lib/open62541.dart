@@ -13,8 +13,15 @@ export 'src/extensions.dart'
         SecureChannelState,
         SessionState,
         LogLevel;
-export 'src/generated/open62541_bindings.dart' show UA_STATUSCODE_GOOD;
+export 'src/third_party/open62541.g.dart'
+    show
+        UA_STATUSCODE_GOOD,
+        UA_OPEN62541_VER_MAJOR,
+        UA_OPEN62541_VER_MINOR,
+        UA_OPEN62541_VER_PATCH,
+        UA_OPEN62541_VER_LABEL,
+        UA_OPEN62541_VER_COMMIT,
+        UA_OPEN62541_VERSION;
 export 'src/node_id.dart' show NodeId;
 export 'src/server.dart' show Server;
 export 'src/types/errors.dart' show Inactivity;
-export 'src/common.dart' show loadOpen62541Library;

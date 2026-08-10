@@ -3,5 +3,6 @@ include: package:lints/recommended.yaml
 analyzer:
   exclude:
     - '**/generated/*.dart'
+    - '**/third_party/*.dart'
 formatter:
   page_width: 120

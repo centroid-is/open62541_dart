@@ -1,87 +1,64 @@
-# Open62541 Dart Bindings - WIP
-## Currently working
+# open62541 Dart bindings - WIP
+
+Dart FFI bindings to the [open62541](https://github.com/open62541/open62541) OPC UA stack.
 
 There is a raw example where read and subscribe are implemented.
 
-## Notes
+## Building
 
-I am using the master branch of open62541 to have this commit https://github.com/open62541/open62541/pull/5445
+The native library is built automatically by the Dart [build hook](hook/build.dart)
+(`hook/build.dart`) whenever you run `dart pub get`, `dart test`, `dart run`, or build a
+depending app. The hook:
 
-When creating the build directory use -DUA_ENABLE_INLINABLE_EXPORT=ON to not expose the methods as static inline
-otherwise the functions will be skipped.
+1. Downloads the pinned upstream open62541 source (`v1.5.6`) directly from GitHub — no
+   submodule and no fork.
+2. Builds it with CMake and bundles the resulting shared library as a
+   [code asset](https://dart.dev/interop/c-interop) so the `@Native` bindings resolve at
+   runtime. No manual copying of `.so`/`.dylib`/`.dll` into `lib/`.
 
-complete command
+To bump the open62541 version, change `version` in `hook/build.dart` and regenerate the
+bindings (see below).
 
-Multithreading has to be off. We need to run open65421 periodically. Dart does not support multithreading.
+### Prerequisites
 
-## Create the .so file and the regenerate the bindings.
-Create a directory to build open62541
-```bash
-mkdir open62541_build
-```
+- CMake and a C compiler.
+- An encryption backend for open62541:
+  - Linux: `sudo apt install libmbedtls-dev`
+  - macOS: `brew install mbedtls`
+  - Windows: `choco install openssl` (the hook uses OpenSSL on Windows, mbedTLS elsewhere)
 
-Run this from the open62541_build directory
-```bash
-cmake ../open62541/ -DBUILD_SHARED_LIBS=ON -DUA_ENABLE_INLINABLE_EXPORT=ON -DCMAKE_INSTALL_PREFIX=install -DUA_BUILD_EXAMPLES=OFF -DUA_BUILD_UNIT_TESTS=OFF -DUA_ENABLE_AMALGAMATION=ON -DUA_MULTITHREADING=0
-make
-```
-Optionally you can set the log_level inside open62541
-```bash
-cmake ../open62541/ -DBUILD_SHARED_LIBS=ON -DUA_ENABLE_INLINABLE_EXPORT=ON -DCMAKE_INSTALL_PREFIX=install -DUA_BUILD_EXAMPLES=OFF -DUA_BUILD_UNIT_TESTS=OFF -DUA_ENABLE_AMALGAMATION=ON -DUA_MULTITHREADING=0 -DUA_LOGLEVEL=100
-make
-```
-Where the levels are defined as follows
-```
-600: Fatal
-500: Error
-400: Warning
-300: Info
-200: Debug
-100: Trace
-```
+### Notes on the build configuration
 
-Now modify the open62541_build/open62541.h file, remove the bitfields from 
-- UA_DiagnosticsInfo
-- UA_DataValue
-- UA_DataTypeMember
-- UA_DataType
+- `UA_MULTITHREADING=0` — Dart drives open62541 by calling `run_iterate` periodically from a
+  single isolate, so multithreading must be off.
+- `UA_ENABLE_INLINABLE_EXPORT=ON` — otherwise the API is emitted as `static inline` and the
+  symbols are not exported for FFI.
+- `UA_LOGLEVEL=100` (Trace) — levels: `600` Fatal, `500` Error, `400` Warning, `300` Info,
+  `200` Debug, `100` Trace.
 
-and replace with a single byte.
-In my experimentation I have added a static_assert and the size remains the same. I am not sure if this
-will cause issues in the future but seems to generate a much larger section of the library.
-Example of change
-```patch
-23244,23250c23244,23251
-<     UA_Boolean    hasSymbolicId          : 1;
-<     UA_Boolean    hasNamespaceUri        : 1;
-<     UA_Boolean    hasLocalizedText       : 1;
-<     UA_Boolean    hasLocale              : 1;
-<     UA_Boolean    hasAdditionalInfo      : 1;
-<     UA_Boolean    hasInnerStatusCode     : 1;
-<     UA_Boolean    hasInnerDiagnosticInfo : 1;
----
->     // UA_Boolean    hasSymbolicId          : 1;
->     // UA_Boolean    hasNamespaceUri        : 1;
->     // UA_Boolean    hasLocalizedText       : 1;
->     // UA_Boolean    hasLocale              : 1;
->     // UA_Boolean    hasAdditionalInfo      : 1;
->     // UA_Boolean    hasInnerStatusCode     : 1;
->     // UA_Boolean    hasInnerDiagnosticInfo : 1;
->     UA_Byte          hasBitfield;
-```
+## Regenerating the bindings
 
-Then you can generate the bindings with
-```bash
-dart run ffigen
-```
+The checked-in bindings (`lib/src/third_party/open62541.g.dart`) are generated from a patched
+copy of open62541's amalgamated header. ffigen removes all members of any struct that contains
+a bitfield, so `open62541_tooling/remove_bitfields.patch` replaces the bitfields of
+`UA_DataValue`, `UA_DiagnosticInfo`, `UA_DataTypeMember`, and `UA_DataType` with a single
+`substitute` field of the same width (the bits are decoded in `lib/src/extensions.dart`). The
+struct sizes are unchanged, which `test/verify_sizes_test.dart` verifies.
 
-Some clang errors have been turned off to disable errors coming from macos's pthread library and other standard libraries
+1. Produce the amalgamated header for the pinned version (any CMake configure with
+   `-DUA_ENABLE_AMALGAMATION=ON` emits `open62541.h`) and copy it to
+   `third_party/open62541/open62541.h`.
+2. Apply the bitfield patch:
+   ```bash
+   ./open62541_tooling/patch_header.sh   # -> third_party/open62541/open62541_modified.h
+   ```
+3. Generate the Dart bindings:
+   ```bash
+   dart run tool/ffigen.dart
+   ```
 
+## Known limitations
 
-## Notes
-
-### Stuff that does not work
-
-- Monitoring a structure with multi dimensional array member, turns as empty array. Don't know why.
+- Monitoring a structure with a multi-dimensional array member returns an empty array.
 - Description of structure fields is not working.
-- monitoredItemCreate<List<dynamic>> needs to be used instead of List<int> or any other element type.
+- `monitoredItemCreate<List<dynamic>>` must be used instead of `List<int>` or another element type.

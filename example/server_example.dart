@@ -1,8 +1,7 @@
 import 'package:open62541/open62541.dart';
 
 void main() async {
-  final lib = loadOpen62541Library(local: true);
-  final server = Server(lib);
+  final server = Server();
 
   print("Starting server");
   server.start();
@@ -35,10 +34,17 @@ void main() async {
 
   server.addCustomType(myStructureTypeId, structureValue);
 
-  server.addDataTypeNode(myStructureTypeId, "myStructureType",
-      displayName: LocalizedText("My Structure Type", "en-US"));
-  server.addVariableNode(structureVariableNodeId, structureValue,
-      accessLevel: AccessLevelMask(read: true, write: true), typeId: myStructureTypeId);
+  server.addDataTypeNode(
+    myStructureTypeId,
+    "myStructureType",
+    displayName: LocalizedText("My Structure Type", "en-US"),
+  );
+  server.addVariableNode(
+    structureVariableNodeId,
+    structureValue,
+    accessLevel: AccessLevelMask(read: true, write: true),
+    typeId: myStructureTypeId,
+  );
 
   final runTime = Duration(minutes: 60);
   print("The server will now run for $runTime");
