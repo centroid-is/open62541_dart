@@ -705,7 +705,7 @@ external int UA_Server_addNode_finish(ffi.Pointer<UA_Server> server, UA_NodeId n
 @ffi.Native<ffi.Pointer<UA_DataType> Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_NodeId>)>()
 external ffi.Pointer<UA_DataType> UA_Server_findDataType(ffi.Pointer<UA_Server> server, ffi.Pointer<UA_NodeId> typeId);
 
-/// amalgamated original file "/src/plugins/include/open62541/plugin/certificategroup_default.h"
+/// amalgamated original file "2541-1.5.6/plugins/include/open62541/plugin/certificategroup_default.h"
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_CertificateGroup>)>()
 external void UA_CertificateGroup_AcceptAll(ffi.Pointer<UA_CertificateGroup> certGroup);
 
@@ -721,7 +721,7 @@ external int UA_ServerConfig_setMinimal(
   ffi.Pointer<UA_ByteString> certificate,
 );
 
-/// amalgamated original file "/src/plugins/include/open62541/client_config_default.h"
+/// amalgamated original file "2541-1.5.6/plugins/include/open62541/client_config_default.h"
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig>)>()
 external int UA_ClientConfig_setDefault(ffi.Pointer<UA_ClientConfig> config);
 
@@ -3361,7 +3361,7 @@ final class UA_Logger extends ffi.Struct {
   external ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_Logger> logger)>> clear;
 }
 
-/// amalgamated original file "/src/include/open62541/util.h"
+/// amalgamated original file "2541-1.5.6/include/open62541/util.h"
 final class UA_Server extends ffi.Opaque {}
 
 /// Range Definition
@@ -3723,7 +3723,8 @@ final class UA_SecurityPolicy extends ffi.Opaque {}
 enum UA_SecurityPolicyType {
   UA_SECURITYPOLICYTYPE_NONE(0),
   UA_SECURITYPOLICYTYPE_RSA(1),
-  UA_SECURITYPOLICYTYPE_ECC(2);
+  UA_SECURITYPOLICYTYPE_ECC(2),
+  UA_SECURITYPOLICYTYPE_ECC_AEAD(3);
 
   final int value;
   const UA_SecurityPolicyType(this.value);
@@ -3732,6 +3733,7 @@ enum UA_SecurityPolicyType {
     0 => UA_SECURITYPOLICYTYPE_NONE,
     1 => UA_SECURITYPOLICYTYPE_RSA,
     2 => UA_SECURITYPOLICYTYPE_ECC,
+    3 => UA_SECURITYPOLICYTYPE_ECC_AEAD,
     _ => throw ArgumentError('Unknown value for UA_SecurityPolicyType: $value'),
   };
 }
@@ -3744,7 +3746,7 @@ enum UA_SecurityPolicyType {
 /// be set in the channel context before de/encrypting.
 final class UA_PubSubSecurityPolicy extends ffi.Opaque {}
 
-/// amalgamated original file "/src/include/open62541/plugin/eventloop.h"
+/// amalgamated original file "2541-1.5.6/include/open62541/plugin/eventloop.h"
 final class UA_EventLoop extends ffi.Opaque {}
 
 /// EventLoop Plugin API
@@ -4021,7 +4023,7 @@ final class UA_HistoryDatabase extends ffi.Struct {
   deleteEvent;
 }
 
-/// amalgamated original file "/src/include/open62541/client.h"
+/// amalgamated original file "2541-1.5.6/include/open62541/client.h"
 final class UA_Client extends ffi.Opaque {}
 
 /// .. _client-config:
@@ -4203,49 +4205,49 @@ final class UA_ClientConfig extends ffi.Struct {
 /// The figure below shows how the PubSub components are related.
 /// The PubSub Tutorials have more examples about the API usage::
 ///
-/// +--------+
-/// | Server |
-/// +--------+
-/// |  |
-/// |  |  +------------------------+
-/// |  +--> PubSubPublishedDataSet <----------+
-/// |     +------------------------+          |
-/// |       |                                 |
-/// |       |    +--------------+             |
-/// |       +----> DataSetField |             |
-/// |            +--------------+             |
-/// |                                         |
-/// |     +------------------+                |
-/// +-----> PubSubConnection |                |
-/// +------------------+                |
-/// |  |                              |
-/// |  |    +-------------+           |
-/// |  +----> WriterGroup |           |
-/// |       +-------------+           |
-/// |         |                       |
-/// |         |    +---------------+  |
-/// |         +----> DataSetWriter <--+
-/// |              +---------------+
-/// |
-/// |       +-------------+
-/// +-------> ReaderGroup |
-/// +-------------+
-/// |
-/// |    +---------------+
-/// +----> DataSetReader |
-/// +---------------+
-/// |
-/// |    +-------------------+
-/// +----> SubscribedDataSet |
-/// +-------------------+
-/// |
-/// |    +-------------------------+
-/// +----> TargetVariablesDataType |
-/// |    +-------------------------+
-/// |
-/// |    +---------------------------------+
-/// +----> SubscribedDataSetMirrorDataType |
-/// +---------------------------------+
+/// ┌────────┐
+/// │ Server │
+/// └────────┘
+/// │  │
+/// │  │  ┌────────────────────────┐
+/// │  └─>│ PubSubPublishedDataSet │<─────────┐
+/// │     └────────────────────────┘          │
+/// │       │                                 │
+/// │       │    ┌──────────────┐             │
+/// │       └───>│ DataSetField │             │
+/// │            └──────────────┘             │
+/// │                                         │
+/// │     ┌──────────────────┐                │
+/// └────>│ PubSubConnection │                │
+/// └──────────────────┘                │
+/// │  │                              │
+/// │  │    ┌─────────────┐           │
+/// │  └───>│ WriterGroup │           │
+/// │       └─────────────┘           │
+/// │         │                       │
+/// │         │    ┌───────────────┐  │
+/// │         └───>│ DataSetWriter │<─┘
+/// │              └───────────────┘
+/// │
+/// │    ┌─────────────┐
+/// └───>│ ReaderGroup │
+/// └─────────────┘
+/// │
+/// │    ┌───────────────┐
+/// └───>│ DataSetReader │
+/// └───────────────┘
+/// │
+/// │    ┌───────────────────┐
+/// └───>│ SubscribedDataSet │
+/// └───────────────────┘
+/// │
+/// │    ┌─────────────────────────┐
+/// ├───>│ TargetVariablesDataType │
+/// │    └─────────────────────────┘
+/// │
+/// │    ┌─────────────────────────────────┐
+/// └───>│ SubscribedDataSetMirrorDataType │
+/// └─────────────────────────────────┘
 ///
 /// PubSub Information Model Representation
 /// ---------------------------------------
@@ -5061,13 +5063,13 @@ const int UA_OPEN62541_VER_MAJOR = 1;
 
 const int UA_OPEN62541_VER_MINOR = 5;
 
-const int UA_OPEN62541_VER_PATCH = 2;
+const int UA_OPEN62541_VER_PATCH = 6;
 
 const String UA_OPEN62541_VER_LABEL = '';
 
 const String UA_OPEN62541_VER_COMMIT = 'unknown-commit';
 
-const String UA_OPEN62541_VERSION = 'v1.5.2';
+const String UA_OPEN62541_VERSION = 'v1.5.6';
 
 const int UA_STATUSCODE_INFOTYPE_DATAVALUE = 1024;
 

@@ -92,24 +92,29 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
 Future<Uri> download(Uri outputDirectory, String version) async {
   // Use short directory names to avoid Windows MAX_PATH (260 char) limit.
   final extractDir = Directory.fromUri(outputDirectory.resolve('dl/'));
-
-  // Return early if already downloaded and renamed
   final srcDir = Directory.fromUri(extractDir.uri.resolve('src/'));
-  if (await srcDir.exists()) {
+  final stamp = File.fromUri(extractDir.uri.resolve('version.txt'));
+
+  // Return early only if the cached source is already this exact version.
+  // Keying on the version prevents a source tree from a previous version being
+  // reused after the pinned version below is bumped.
+  if (await srcDir.exists() && await stamp.exists() && (await stamp.readAsString()).trim() == version) {
     return srcDir.uri;
   }
 
-  // final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
-  final url = Uri.parse('https://github.com/open62541/open62541/archive/$version.zip');
+  // Start from a clean download directory so a stale source tree can never be
+  // picked up by the firstWhere() below and built instead.
+  if (await extractDir.exists()) {
+    await extractDir.delete(recursive: true);
+  }
+  await extractDir.create(recursive: true);
+
+  final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
   final response = await http.get(url);
   if (response.statusCode != 200) {
     throw Exception('Error downloading open62541 version $version: ${response.statusCode}');
   }
   final archive = ZipDecoder().decodeBytes(response.bodyBytes);
-
-  if (!await extractDir.exists()) {
-    await extractDir.create(recursive: true);
-  }
 
   for (var file in archive) {
     if (file.isFile) {
@@ -118,12 +123,10 @@ Future<Uri> download(Uri outputDirectory, String version) async {
       outputStream.closeSync();
     }
   }
-  // Rename extracted folder (e.g. open62541-includes) to 'src' for shorter paths
+  // Rename the single extracted folder (open62541-<ref>) to 'src' for shorter paths
   final folder = extractDir.listSync().firstWhere((element) => element is Directory);
-  if (!await Directory.fromUri(folder.uri).exists()) {
-    throw Exception('Error extracting open62541 version $version: extracted directory not found');
-  }
   await (folder as Directory).rename(srcDir.path);
+  await stamp.writeAsString(version);
   return srcDir.uri;
 }
 
@@ -138,17 +141,19 @@ Future<void> _applyPatches(Uri sourceDir) async {
 
   // OPC UA Part 4, 5.13.5, Table 95: when BadNoSubscription arrives with
   // subscriptionId == 0, clean ALL client-side subscriptions so that
-  // deleteCallback fires for each.
-  const original = '''        if(sub != NULL)
-            __Client_Subscription_deleteInternal(client, sub);
+  // deleteCallback fires for each. Anchored on the v1.5.x BadNoSubscription
+  // case in the PublishResponse handler.
+  const original = '''        UA_LOG_DEBUG(client->config.logging, UA_LOGCATEGORY_CLIENT,
+                     "PublishResponse: Received BadNoSubscription status");
         return;''';
 
-  const patched = '''        if(sub != NULL) {
-            __Client_Subscription_deleteInternal(client, sub);
-        } else if(response->subscriptionId == 0) {
-            /* OPC UA Part 4, 5.13.5, Table 95: subscriptionId 0 means
-             * "no Subscriptions defined for which a response could be sent."
-             * Clean up all client-side subscriptions. */
+  const patched = '''        UA_LOG_DEBUG(client->config.logging, UA_LOGCATEGORY_CLIENT,
+                     "PublishResponse: Received BadNoSubscription status");
+        /* OPC UA Part 4, 5.13.5, Table 95: subscriptionId 0 means "no
+         * Subscriptions defined for which a response could be sent."
+         * Clean up all client-side subscriptions so deleteCallback fires
+         * for each. */
+        if(response->subscriptionId == 0) {
             UA_Client_Subscription *s, *s_tmp;
             LIST_FOREACH_SAFE(s, &client->subscriptions, listEntry, s_tmp)
                 __Client_Subscription_deleteInternal(client, s);
@@ -163,8 +168,7 @@ Future<void> _applyPatches(Uri sourceDir) async {
 }
 
 Future<void> main(List<String> args) async {
-  // final version = "v1.5.2";
-  final version = "97a4ee6c1c687ba1909ca59369e2b73b1c938d07";
+  final version = "v1.5.6";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
     await _applyPatches(extractedFiles);
@@ -191,6 +195,9 @@ Future<void> main(List<String> args) async {
       generator: Generator.defaultGenerator,
       defines: {
         'CMAKE_BUILD_TYPE': 'Release',
+        // Predefine this so open62541 skips its check_ipo_supported() probe,
+        // whose LTO try-compile fails under the native_toolchain_cmake toolchain.
+        'CMAKE_INTERPROCEDURAL_OPTIMIZATION': 'OFF',
         'CMAKE_INSTALL_PREFIX': '${input.outputDirectory.toFilePath()}/install',
         'BUILD_SHARED_LIBS': 'ON',
         'UA_ENABLE_INLINABLE_EXPORT': 'ON',
