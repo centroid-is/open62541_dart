@@ -198,6 +198,11 @@ Future<void> main(List<String> args) async {
         // Predefine this so open62541 skips its check_ipo_supported() probe,
         // whose LTO try-compile fails under the native_toolchain_cmake toolchain.
         'CMAKE_INTERPROCEDURAL_OPTIMIZATION': 'OFF',
+        // Build the object library position-independent. Required to link the
+        // shared library on Linux (ELF): without LTO (disabled above) the
+        // object files otherwise carry non-PIC relocations and `ld` rejects
+        // them with "recompile with -fPIC".
+        'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
         'CMAKE_INSTALL_PREFIX': '${input.outputDirectory.toFilePath()}/install',
         'BUILD_SHARED_LIBS': 'ON',
         'UA_ENABLE_INLINABLE_EXPORT': 'ON',
