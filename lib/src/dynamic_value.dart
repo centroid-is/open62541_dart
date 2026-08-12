@@ -63,6 +63,9 @@ class DynamicValue {
 
   factory DynamicValue.fromList(List<dynamic> entries, {NodeId? typeId, String? name}) {
     DynamicValue v = DynamicValue(typeId: typeId, name: name);
+    // Ensure an empty list still reads as an (empty) array rather than a null
+    // value, so a zero-length array round-trips as isArray/length 0.
+    v.value = <DynamicValue>[];
     var counter = 0;
     for (var value in entries) {
       v[counter] = value;

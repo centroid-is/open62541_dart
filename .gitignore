@@ -19,3 +19,9 @@ mbedtls-*
 lib/libopen62541.dll
 lib/libopen62541.so
 lib/libopen62541.dylib
+
+# Local-only integration test dependencies (fetched by test/integration/setup_local.sh)
+test/integration/.bin/
+test/integration/.venv/
+test/integration/servers/node_modules/
+test/integration/servers/package-lock.json

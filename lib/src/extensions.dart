@@ -264,12 +264,19 @@ enum UaTypes {
 
 // ignore: camel_case_extensions
 extension UA_DataTypeMemberExtension on raw.UA_DataTypeMember {
-  int get padding => (substitute >> 6) & 0x3F;
-  set padding(int value) => substitute = (substitute & 0x00FFFFFF) | (value << 6);
-  bool get isArray => (substitute >> 7) & 0x1 == 1;
-  set isArray(bool value) => substitute = (substitute & 0x00FFFFFF) | (value ? 1 : 0);
-  bool get isOptional => (substitute >> 8) & 0x1 == 1;
-  set isOptional(bool value) => substitute = (substitute & 0x00FFFFFF) | (value ? 1 : 0);
+  // `substitute` maps to open62541's single-byte bitfield
+  // `UA_Byte padding : 6; UA_Boolean isArray : 1; UA_Boolean isOptional : 1;`
+  // On a little-endian target the first-declared field occupies the least
+  // significant bits: padding = bits 0-5, isArray = bit 6, isOptional = bit 7.
+  // Each accessor must therefore touch only its own bits (the previous code read
+  // and wrote the wrong offsets, so `isArray = true` never reached bit 6 and
+  // open62541 saw the member as a scalar).
+  int get padding => substitute & 0x3F;
+  set padding(int value) => substitute = (substitute & 0xC0) | (value & 0x3F);
+  bool get isArray => (substitute >> 6) & 0x1 == 1;
+  set isArray(bool value) => substitute = (substitute & 0xBF) | ((value ? 1 : 0) << 6);
+  bool get isOptional => (substitute >> 7) & 0x1 == 1;
+  set isOptional(bool value) => substitute = (substitute & 0x7F) | ((value ? 1 : 0) << 7);
 }
 
 // ignore: camel_case_extensions

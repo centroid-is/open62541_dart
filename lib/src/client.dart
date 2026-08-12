@@ -260,11 +260,160 @@ class Client implements ClientApi {
 
   @override
   Future<void> connect(String url) async {
-    final instantReturn = raw.UA_Client_connectAsync(_client, url.toNativeUtf8(allocator: ua_malloc).cast());
+    final instantReturn = _issueConnect(url);
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
     }
     await awaitConnect();
+  }
+
+  /// Issues a (re)connect to [url] without awaiting session activation.
+  ///
+  /// This calls `UA_Client_connectAsync`, which restarts open62541's internal
+  /// connect state machine and — crucially — resets `connectStatus` back to
+  /// GOOD. After an unexpected drop open62541 makes only a single reconnect
+  /// attempt; if the peer is briefly unreachable that attempt fails, leaves
+  /// `connectStatus` bad, and the state machine then bails permanently. Only a
+  /// fresh connect call clears that latch, which is what the auto-reconnect
+  /// supervisor relies on. Returns the immediate status code.
+  int _issueConnect(String url) {
+    if (_client == ffi.nullptr) {
+      return raw.UA_STATUSCODE_BADSERVERNOTCONNECTED;
+    }
+    return raw.UA_Client_connectAsync(_client, url.toNativeUtf8(allocator: ua_malloc).cast());
+  }
+
+  /// Whether an auto-reconnect supervisor is currently running (see
+  /// [keepConnected]).
+  bool get isKeepingConnected => _keepConnected;
+
+  /// Fires once each time the session returns to ACTIVATED after having left it
+  /// (i.e. after a recovered drop). Does not fire for the very first connect.
+  ///
+  /// open62541 clears all client-side subscriptions on a drop, so a monitored
+  /// item cannot be silently resumed — after reconnect the old subscription is
+  /// gone. Listen here (or to [stateStream]) to re-create subscriptions and
+  /// monitored items once the client is back.
+  Stream<void> get reconnectStream => _reconnectController.stream;
+
+  /// Opt-in auto-reconnect. Keeps this [Client] connected to [url] across
+  /// server crashes/restarts and transient network partitions without the
+  /// caller hand-rolling a pump-and-reconnect loop.
+  ///
+  /// It does three things a plain `while (runIterate()) ...` loop cannot:
+  ///  1. Owns the `run_iterate` pump and keeps pumping even when the status is
+  ///     non-GOOD, so open62541's event loop stays alive during a drop (the
+  ///     usual stop-on-non-GOOD loops kill the event loop and can never
+  ///     recover).
+  ///  2. Watches the channel/session state and, whenever the session is not
+  ///     ACTIVATED and open62541's own connect latch has gone bad, re-issues
+  ///     `connect()` — resetting `connectStatus` — with capped exponential
+  ///     backoff until the session is ACTIVATED again.
+  ///  3. Emits [reconnectStream] on each recovery so the app can re-establish
+  ///     subscriptions (which open62541 drops on disconnect).
+  ///
+  /// The returned future completes when the session first reaches ACTIVATED.
+  /// After that the supervisor keeps running in the background until
+  /// [stopKeepConnected] (or [delete]) is called. This method OWNS the event
+  /// loop pump — do not run your own `runIterate` loop alongside it.
+  ///
+  /// Existing `connect()` / `runIterate()` semantics are unchanged; recovery is
+  /// entirely opt-in via this method.
+  ///
+  /// Usage:
+  /// ```dart
+  /// final client = Client();
+  /// await client.keepConnected('opc.tcp://localhost:4840');
+  /// client.reconnectStream.listen((_) async {
+  ///   // subscriptions are cleared on a drop — re-create them here
+  ///   final sub = await client.subscriptionCreate();
+  ///   client.monitor(myNode, sub).listen(handleValue);
+  /// });
+  /// ```
+  Future<void> keepConnected(
+    String url, {
+    Duration retryInterval = const Duration(milliseconds: 500),
+    Duration maxBackoff = const Duration(seconds: 5),
+    Duration iterateInterval = const Duration(milliseconds: 10),
+  }) {
+    // Restart cleanly if already supervising.
+    _keepConnected = false;
+    final firstActivation = Completer<void>();
+    _keepConnected = true;
+    _startPump(iterateInterval);
+    _superviseConnection(url, retryInterval, maxBackoff, firstActivation);
+    return firstActivation.future;
+  }
+
+  /// Stops the auto-reconnect supervisor and its event-loop pump started by
+  /// [keepConnected]. Does not disconnect an established session; call
+  /// [disconnect] / [delete] separately if desired.
+  void stopKeepConnected() {
+    _keepConnected = false;
+  }
+
+  void _startPump(Duration iterateInterval) {
+    () async {
+      while (_keepConnected && _client != ffi.nullptr) {
+        // Deliberately ignore the return value: unlike a typical drive loop we
+        // must NOT stop pumping when the status goes non-GOOD, otherwise the
+        // event loop dies and the client can never recover.
+        runIterate(iterateInterval);
+        await Future.delayed(iterateInterval);
+      }
+    }();
+  }
+
+  Future<void> _superviseConnection(
+    String url,
+    Duration retryInterval,
+    Duration maxBackoff,
+    Completer<void> firstActivation,
+  ) async {
+    const pollInterval = Duration(milliseconds: 100);
+    var backoff = retryInterval;
+    var everActivated = false;
+    var wasActivated = false;
+
+    while (_keepConnected && _client != ffi.nullptr) {
+      final snapshot = state;
+      final activated = snapshot.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED;
+
+      if (activated) {
+        // Signal a recovery (session came back after having dropped).
+        if (everActivated && !wasActivated && !_reconnectController.isClosed) {
+          _reconnectController.add(null);
+        }
+        if (!everActivated) {
+          everActivated = true;
+          if (!firstActivation.isCompleted) firstActivation.complete();
+        }
+        wasActivated = true;
+        backoff = retryInterval;
+        await Future.delayed(pollInterval);
+        continue;
+      }
+
+      wasActivated = false;
+
+      // A connect/handshake is still in flight (connectStatus is GOOD and the
+      // channel is not closed) — give it time rather than hammering it.
+      final connecting =
+          snapshot.recoveryStatus == raw.UA_STATUSCODE_GOOD &&
+          snapshot.channelState != raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CLOSED;
+      if (connecting) {
+        await Future.delayed(pollInterval);
+        continue;
+      }
+
+      // Either we have never connected, or the connect latch has gone bad and
+      // open62541 has given up. Re-issue connect to reset connectStatus and
+      // restart the state machine, then back off before re-checking.
+      _issueConnect(url);
+      await Future.delayed(backoff);
+      backoff = backoff * 2;
+      if (backoff > maxBackoff) backoff = maxBackoff;
+    }
   }
 
   bool runIterate(Duration iterate) {
@@ -996,7 +1145,13 @@ class Client implements ClientApi {
     // Track config stream subscriptions so we can cancel them on close
     StreamSubscription? inactivitySub, deletedSub, stateSub;
 
-    controller.onCancel = () {
+    // The actual teardown of the native monitored items and callables. This is
+    // invoked either through the stream's onCancel (normal user cancellation) or
+    // directly by Client.delete() via the _activeMonitoredStreams registry, so
+    // that active streams are always torn down before UA_Client_delete frees the
+    // native client (otherwise an in-flight Publish notification would be
+    // delivered into a freed NativeCallable and crash the VM with a SEGV).
+    Future<void> monitorTeardown() {
       inactivitySub?.cancel();
       deletedSub?.cancel();
       stateSub?.cancel();
@@ -1081,9 +1236,18 @@ class Client implements ClientApi {
         );
       }
       return completer.future;
+    }
+
+    controller.onCancel = () {
+      _activeMonitoredStreams.remove(controller);
+      return monitorTeardown();
     };
 
     controller.onListen = () async {
+      // Register this stream so Client.delete() can tear it down if it is still
+      // active at delete time. Cleanup paths that bypass onCancel remove it.
+      _activeMonitoredStreams[controller] = monitorTeardown;
+
       // Create our request
       ffi.Pointer<raw.UA_MonitoredItemCreateRequest> monRequest = ua_calloc<raw.UA_MonitoredItemCreateRequest>(
         nodeCount,
@@ -1274,6 +1438,7 @@ class Client implements ClientApi {
               }
             });
             cleanup() {
+              _activeMonitoredStreams.remove(controller);
               controller.onCancel = () {}; // Don't invoke the real close callback
               inactivitySub?.cancel();
               deletedSub?.cancel();
@@ -1391,6 +1556,7 @@ class Client implements ClientApi {
         createCallback.close();
         controller.addError('Unable to create monitored item: $statusCode ${statusCodeToString(statusCode)}');
         // Don't invoke the real onCancel — resources are already freed above.
+        _activeMonitoredStreams.remove(controller);
         controller.onCancel = () {};
       }
     };
@@ -1532,6 +1698,10 @@ class Client implements ClientApi {
       val.typeId =
           nodeIdType; // TODO: Inside the read enum typeids are overwritten as int32. This is a mix and needs to be cleaned up
     }
+    // Now that the real DataType NodeId is known, restore any field metadata
+    // (descriptions / display names) the DataTypeDefinition could not carry but
+    // an in-process server registered locally.
+    OpcUaDynamicValueSerializer.overlayLocalFieldMetadata(nodeIdType, val);
     if (val.isObject) {
       for (var entry in val.entries) {
         if (nodeIdToPayloadType(entry.value.typeId) == null) {
@@ -1592,6 +1762,49 @@ class Client implements ClientApi {
 
   @override
   Future<void> delete() async {
+    // Tear down any monitored-item streams that are still active BEFORE the
+    // native client is freed. Otherwise an in-flight Publish data-change
+    // notification would be delivered into the monitor's NativeCallable against
+    // freed native memory, hard-crashing the Dart VM (SEGV / SEGV_ACCERR).
+    // This mirrors the isolate client's DeleteMessage handler, which cancels
+    // every active stream before calling client.delete(). The native monitored
+    // items delete is async, so we run the teardowns while _client is still
+    // valid and the run_iterate loop (the caller's, or the keepConnected pump
+    // below) is still processing responses -- hence this runs before the pump
+    // is stopped.
+    final teardowns = <Future<void>>[];
+    for (final entry in _activeMonitoredStreams.entries.toList()) {
+      final controller = entry.key;
+      final teardown = entry.value;
+      // We invoke the teardown directly here, so neutralise the stream's
+      // onCancel to avoid running the native teardown a second time when the
+      // controller is closed below.
+      controller.onCancel = () {};
+      teardowns.add(teardown().whenComplete(controller.close));
+    }
+    _activeMonitoredStreams.clear();
+    // The native monitored-items delete completes via a callback dispatched
+    // inside run_iterate, so we must keep pumping until the teardowns finish.
+    // We drive it ourselves rather than relying on the caller's loop, which may
+    // already have stopped (e.g. a dispose that halts its pump before delete,
+    // or a server crash). Bounded so a dead connection can never hang delete():
+    // if the peer is gone the native delete cannot be acked, and UA_Client_delete
+    // below tears the subscriptions down natively anyway.
+    if (teardowns.isNotEmpty) {
+      var done = false;
+      unawaited(Future.wait(teardowns).whenComplete(() => done = true));
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      while (!done && _client != ffi.nullptr && DateTime.now().isBefore(deadline)) {
+        raw.UA_Client_run_iterate(_client, 5);
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+    }
+
+    // Stop the auto-reconnect supervisor/pump before tearing down the client.
+    _keepConnected = false;
+    if (!_reconnectController.isClosed) {
+      await _reconnectController.close();
+    }
     ffi.Pointer<raw.UA_Client> client = _client;
     _client = ffi.nullptr;
     await Future.delayed(Duration(milliseconds: 10));
@@ -1605,4 +1818,14 @@ class Client implements ClientApi {
   late ffi.Pointer<raw.UA_Client> _client;
   late final ClientConfig _clientConfig;
   final List<ffi.NativeCallable> _subscriptionDeleteCallbacks = [];
+
+  // Registry of active monitored-item streams keyed by their StreamController,
+  // mapped to their native teardown function. Populated on onListen, removed on
+  // cancel/cleanup, and drained by delete() so that no monitored-item callback
+  // can fire into freed native memory after UA_Client_delete.
+  final Map<StreamController<Map<NodeId, DynamicValue>>, Future<void> Function()> _activeMonitoredStreams = {};
+
+  // Auto-reconnect (opt-in via [keepConnected]) state.
+  bool _keepConnected = false;
+  final StreamController<void> _reconnectController = StreamController<void>.broadcast();
 }
