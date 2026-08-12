@@ -138,17 +138,19 @@ Future<void> _applyPatches(Uri sourceDir) async {
 
   // OPC UA Part 4, 5.13.5, Table 95: when BadNoSubscription arrives with
   // subscriptionId == 0, clean ALL client-side subscriptions so that
-  // deleteCallback fires for each.
-  const original = '''        if(sub != NULL)
-            __Client_Subscription_deleteInternal(client, sub);
+  // deleteCallback fires for each. Anchored on the v1.5.x BadNoSubscription
+  // case in the PublishResponse handler.
+  const original = '''        UA_LOG_DEBUG(client->config.logging, UA_LOGCATEGORY_CLIENT,
+                     "PublishResponse: Received BadNoSubscription status");
         return;''';
 
-  const patched = '''        if(sub != NULL) {
-            __Client_Subscription_deleteInternal(client, sub);
-        } else if(response->subscriptionId == 0) {
-            /* OPC UA Part 4, 5.13.5, Table 95: subscriptionId 0 means
-             * "no Subscriptions defined for which a response could be sent."
-             * Clean up all client-side subscriptions. */
+  const patched = '''        UA_LOG_DEBUG(client->config.logging, UA_LOGCATEGORY_CLIENT,
+                     "PublishResponse: Received BadNoSubscription status");
+        /* OPC UA Part 4, 5.13.5, Table 95: subscriptionId 0 means "no
+         * Subscriptions defined for which a response could be sent."
+         * Clean up all client-side subscriptions so deleteCallback fires
+         * for each. */
+        if(response->subscriptionId == 0) {
             UA_Client_Subscription *s, *s_tmp;
             LIST_FOREACH_SAFE(s, &client->subscriptions, listEntry, s_tmp)
                 __Client_Subscription_deleteInternal(client, s);
@@ -163,8 +165,7 @@ Future<void> _applyPatches(Uri sourceDir) async {
 }
 
 Future<void> main(List<String> args) async {
-  // final version = "v1.5.2";
-  final version = "97a4ee6c1c687ba1909ca59369e2b73b1c938d07";
+  final version = "v1.5.6";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
     await _applyPatches(extractedFiles);
