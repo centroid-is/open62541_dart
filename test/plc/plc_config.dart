@@ -114,15 +114,14 @@ class PlcConfig {
     final defaults = _defaults[target]!;
     final timeoutMs = int.tryParse(Platform.environment['${prefix}_SESSION_TIMEOUT_MS'] ?? '') ?? defaults.timeoutMs;
     final useEmulator = url.trim().toLowerCase() == 'emulator';
-    // Honour an explicit PLC_<X>_SECURITY; otherwise default real Schneider
-    // controllers (M241/M262) to `token` — they refuse a plaintext password even
-    // under "None" security — while emulators and TwinCAT use plain `none`.
+    // Honour an explicit PLC_<X>_SECURITY; otherwise default real controllers to
+    // `token` — every real controller tried (Schneider M241/M262, Beckhoff
+    // TwinCAT) refuses a plaintext password even under "None" security and
+    // requires the UserName token encrypted — while emulators use plain `none`.
     final securityEnv = Platform.environment['${prefix}_SECURITY'];
     final security = securityEnv != null
         ? PlcSecurity.parse(securityEnv)
-        : (!useEmulator && (target == PlcTarget.m240 || target == PlcTarget.m262)
-              ? PlcSecurity.token
-              : PlcSecurity.none);
+        : (useEmulator ? PlcSecurity.none : PlcSecurity.token);
     return PlcConfig(
       target: target,
       url: url.trim(),

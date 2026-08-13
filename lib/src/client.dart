@@ -615,9 +615,14 @@ class Client implements ClientApi {
               final attributeId = indorderNodes[i].$2;
 
               if (status != raw.UA_STATUSCODE_GOOD) {
-                // Allow description to be missing — some servers don't support it
+                // Tolerate attributes a server legitimately doesn't expose:
+                //  - DESCRIPTION: optional metadata, not all servers have it.
+                //  - DATATYPEDEFINITION: only structured/enum types have one; a
+                //    simple type (incl. vendor DataType aliases like TwinCAT's
+                //    STRING at a custom NodeId) returns BadAttributeIdInvalid.
                 if (status == raw.UA_STATUSCODE_BADATTRIBUTEIDINVALID &&
-                    attributeId == AttributeId.UA_ATTRIBUTEID_DESCRIPTION) {
+                    (attributeId == AttributeId.UA_ATTRIBUTEID_DESCRIPTION ||
+                        attributeId == AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION)) {
                   continue;
                 }
                 completer.completeError(
@@ -1698,9 +1703,17 @@ class Client implements ClientApi {
 
   Future<Schema> buildSchema(NodeId nodeIdType) async {
     var map = Schema();
-    map[nodeIdType] = (await readAttribute({
+    final read = await readAttribute({
       nodeIdType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION],
-    })).values.first;
+    });
+    if (read.isEmpty) {
+      // The server exposes no DataTypeDefinition for this type — it is a simple
+      // type (or a vendor alias of one, e.g. TwinCAT's STRING at a custom
+      // NodeId), not a struct/enum. Return an empty schema; the value then
+      // decodes by its wire type.
+      return map;
+    }
+    map[nodeIdType] = read.values.first;
     final val = map[nodeIdType]!;
     if (val.typeId == NodeId.structureDefinition) {
       val.typeId =

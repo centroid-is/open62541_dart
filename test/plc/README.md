@@ -10,14 +10,15 @@ real hardware by pointing an env var at the controller.
 
 ## The problems these controllers pose, and our solutions
 
-All rows below except reconnection are **verified against a physical Schneider
-M241** (the rest against the per-vendor emulators).
+The rows below (except reconnection) are **verified against physical hardware**:
+a Schneider **M241** and a Beckhoff **TwinCAT** (the rest against the emulators).
 
 | Problem | Solution (verified by) |
 |---|---|
-| A controller (Schneider M241/M262) refuses a plaintext password even under "None" security — it requires the **UserName token encrypted** (Basic256Sha256), yet it can't trust a client cert | **`PlcSecurity.token`**: connect on a `None` channel but load the client cert/key so the token is encrypted with the *server's* cert — **no controller-side cert trust needed**. (default for real M241/M262; every M241 test) |
+| A controller (Schneider M241/M262, Beckhoff TwinCAT) refuses a plaintext password even under "None" security — it requires the **UserName token encrypted** (Basic256Sha256), yet may not trust a client cert | **`PlcSecurity.token`**: connect on a `None` channel but load the client cert/key so the token is encrypted with the *server's* cert — **no controller-side cert trust needed**. (default for real controllers; M241 + TwinCAT) |
 | Some controllers advertise **only** `SignAndEncrypt` endpoints | **`Client(securityMode: …SIGNANDENCRYPT, certificate:, privateKey:)`** — encrypted channel; the controller must trust our cert (`test/plc/certs/`). (`PlcSecurity.encrypt`) |
 | Username/password over an unencrypted channel silently fails (open62541 drops the plaintext-password token) | **`Client(allowUnencryptedPassword: true)`** — new library option. (emulators, `PlcSecurity.none`) |
+| TwinCAT exposes `STRING` (and other simple types) under a **vendor DataType NodeId** with no `DataTypeDefinition`; the library used to fail the read (`BadAttributeIdInvalid`, then `Unsupported nodeId type`) | Library tolerates a missing `DataTypeDefinition` and **falls back to the variant's wire type**, so a value read never fails on a vendor type alias. (TwinCAT `TestString`) |
 | A PLC `STRING` is single-byte and returns the **whole fixed buffer** with trailing garbage; non-UTF-8 bytes previously **crashed** the read | Library now decodes leniently (`utf8.decode(allowMalformed)`) so a read never throws; tests treat a PLC `STRING` as a NUL-terminated C string. (every scalar `TestString`) |
 | CODESYS qualifies BrowseNames (`GVL_Test.TestBool`) and publishes arrays **element-wise** (`TestArray[0..9]`) | BrowseName lookup matches the trailing segment; the array test handles both one-node and element-wise layouts. (`scalar_roundtrip_test`) |
 | Tiny session table (M240 ≈ 4, M262 ≈ 5); a crashed/dropped client squats a slot until a long timeout | **Short `requestedSessionTimeout`** so the controller reaps an abandoned session in seconds (**confirmed on the real M241**); **guaranteed `CloseSession`** on `dispose()` for the clean case. Proven via `CurrentSessionCount`. (`session_management_test`) |
@@ -57,8 +58,10 @@ credentials if not the defaults `tester` / `test-pass-1`). Real M241/M262 defaul
 to `token` security automatically, so the URL alone is enough:
 
 ```bash
-# Schneider M241 — verified working:
+# Schneider M241 / Beckhoff TwinCAT — verified working (token security is the
+# default for real controllers, so the URL alone is enough):
 PLC_M240_URL=opc.tcp://10.50.10.235:4840 dart test --run-skipped test/plc
+PLC_TWINCAT_URL=opc.tcp://10.50.10.10:4840 dart test --run-skipped test/plc
 
 # Several controllers at once:
 PLC_TWINCAT_URL=opc.tcp://192.168.0.10:4840 PLC_TWINCAT_USER=... PLC_TWINCAT_PASS=... \

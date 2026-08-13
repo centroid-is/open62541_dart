@@ -141,6 +141,14 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
     if (defs != null && defs.containsKey(typeId)) {
       return DynamicValue.from(defs[typeId]!);
     }
+    // The declared DataType has no known payload and no schema — e.g. a vendor
+    // alias of a simple type (TwinCAT exposes STRING at a custom NodeId like
+    // ns=3;i=3013). Fall back to the variant's actual wire type, which open62541
+    // knows how to decode.
+    final wireTypeId = data.type.ref.typeId.toNodeId();
+    if (wireTypeId != typeId && nodeIdToPayloadType(wireTypeId) != null) {
+      return DynamicValue(typeId: wireTypeId);
+    }
     throw 'Unsupported nodeId type: $typeId';
   }
 
