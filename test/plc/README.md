@@ -13,8 +13,7 @@ real hardware by pointing an env var at the controller.
 | Problem | Solution (verified by) |
 |---|---|
 | Username/password auth over an unencrypted channel silently fails (open62541 drops the plaintext-password token) | **`Client(allowUnencryptedPassword: true)`** — new library option. (`session_management_test`, every scalar test) |
-| Tiny session table (M240 ≈ 4, M262 ≈ 5); a crashed/dropped client squats a slot until a long timeout | **Short `requestedSessionTimeout`** so an abandoned session is reaped in seconds; **guaranteed `CloseSession`** on `dispose()`. (`session_management_test`) |
-| An occasional-poll HMI shouldn't hold a slot at all | **`LeasedPlcClient`** — holds *zero* sessions while idle, opens on demand, closes after a short idle window. Proven to add 0 to the server's `CurrentSessionCount`. (`session_management_test`) |
+| Tiny session table (M240 ≈ 4, M262 ≈ 5); a crashed/dropped client squats a slot until a long timeout | **Short `requestedSessionTimeout`** so the controller reaps an abandoned session in seconds; **guaranteed `CloseSession`** on `dispose()` for the clean case. Proven via the server's `CurrentSessionCount`. (`session_management_test`) |
 | Accidentally opening too many sessions | **Client-side session-budget guard** — fails loud before over-opening. (`session_management_test`) |
 | Reconnecting after a network blip must not pile up stale sessions | **`Client.keepConnected()`** reconnect reuses one slot. Tested by putting **toxiproxy in front of the controller** and dropping the link. (`reconnect_test`) |
 
@@ -26,8 +25,8 @@ real hardware by pointing an env var at the controller.
 - `session_management_test.dart` — the session solutions above.
 - `reconnect_test.dart` — reconnection + no-session-accumulation via toxiproxy.
 
-Harness: `plc_config.dart` (env-driven per-PLC config), `plc_session.dart` (one shared
-session + budget guard + shared emulator), `plc_client.dart` (`LeasedPlcClient`),
+Harness: `plc_config.dart` (env-driven per-PLC config; short session timeout),
+`plc_session.dart` (one shared session + budget guard + shared emulator),
 `plc_browse.dart` (BrowseName lookup), `plc_fixture.dart` (the canonical fixture).
 
 ## Running locally (emulators)

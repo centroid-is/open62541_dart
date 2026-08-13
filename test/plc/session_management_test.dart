@@ -1,20 +1,21 @@
 // Verifies the library-side SOLUTIONS to the small-controller session problem:
 //   1. a clean close (delete()) frees the controller session slot immediately;
-//   2. the leased client (LeasedPlcClient) holds NO session while idle, so an
-//      occasional-poll HMI never squats a slot;
+//   2. a SHORT requestedSessionTimeout lets the controller reap an ABANDONED
+//      session (a crashed/killed client that never sent CloseSession) in
+//      seconds, not the multi-minute vendor default that piles them up;
 //   3. our client-side session budget guard fails loud before over-opening.
 //
 // Runs against a real controller (set PLC_<X>_URL) or a local emulator
 // (PLC_<X>_URL=emulator). Session counts are proven via the server's
-// CurrentSessionCount where exposed (always on the emulator); the leased-client
-// release is also asserted client-side (hasOpenSession), so it is verified even
-// on controllers that don't publish diagnostics.
+// CurrentSessionCount (always exposed on the emulator).
 @Tags(['plc'])
 library;
 
+import 'dart:async';
+
 import 'package:test/test.dart';
 
-import 'plc_client.dart';
+import 'package:open62541/open62541.dart';
 import 'plc_config.dart';
 import 'plc_fixture.dart';
 import 'plc_session.dart';
@@ -62,35 +63,56 @@ void main() {
         }
       });
 
-      test('leased client holds NO session while idle', () async {
+      test('a short session timeout reaps an abandoned session', () async {
         final base = await _settledCount(observer);
-        final leased = LeasedPlcClient(cfg, idle: const Duration(milliseconds: 400));
-        try {
-          expect(leased.hasOpenSession, isFalse, reason: 'no session before first use');
-
-          // A read opens a session on demand...
-          final v = await leased.read(PlcFixture.counterName);
-          expect(v.asInt, isNotNull);
-          expect(leased.hasOpenSession, isTrue);
-          if (base != null) {
-            expect(await observer.currentSessionCount(), greaterThan(base));
-          }
-
-          // ...and after the idle window the session is released.
-          await _eventually(() async => !leased.hasOpenSession, const Duration(seconds: 3));
-          expect(leased.hasOpenSession, isFalse, reason: 'idle session must be released');
-          if (base != null) {
-            await _eventually(() async => (await observer.currentSessionCount()) == base, const Duration(seconds: 3));
-            expect(await observer.currentSessionCount(), base, reason: 'idle leased client must add 0 sessions');
-          }
-
-          // A later read transparently reconnects.
-          final again = await leased.read(PlcFixture.counterName);
-          expect(again.asInt, isNotNull);
-        } finally {
-          await leased.dispose();
+        if (base == null) {
+          markTestSkipped('${cfg.name} does not expose CurrentSessionCount');
+          return;
         }
-      });
+
+        // A client with a deliberately tiny session timeout, which we then
+        // ABANDON: stop pumping (no keepalive) and never call delete() (no
+        // CloseSession) -- i.e. a crashed/killed process.
+        final up = await PlcSession.upstream(cfg);
+        final client = Client(
+          username: cfg.username,
+          password: cfg.password,
+          allowUnencryptedPassword: true,
+          requestedSessionTimeout: const Duration(seconds: 4),
+          secureChannelLifeTime: const Duration(seconds: 3),
+          logLevel: LogLevel.UA_LOGLEVEL_FATAL,
+        );
+        var running = true;
+        unawaited(() async {
+          while (running && client.runIterate(const Duration(milliseconds: 10))) {
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+        }());
+        await client.connect('opc.tcp://${up.host}:${up.port}/').timeout(const Duration(seconds: 20));
+
+        // The session is now live on the controller.
+        await _eventually(
+          () async => (await observer.currentSessionCount() ?? base) > base,
+          const Duration(seconds: 5),
+        );
+        expect(await observer.currentSessionCount(), greaterThan(base));
+
+        // Abandon it: stop the pump (no keepalive), do NOT close.
+        running = false;
+
+        // The controller must reap it within roughly the (short) session timeout.
+        await _eventually(
+          () async => (await observer.currentSessionCount() ?? (base + 1)) <= base,
+          const Duration(seconds: 25),
+        );
+        expect(
+          await observer.currentSessionCount(),
+          lessThanOrEqualTo(base),
+          reason: 'a short session timeout must let the controller reap an abandoned session',
+        );
+
+        await client.delete(); // free native resources (session already gone server-side)
+      }, timeout: const Timeout(Duration(seconds: 60)));
 
       test('session budget guard fails loud before over-opening', () async {
         // Emulator-only: deliberately reaching the cap on real hardware is
