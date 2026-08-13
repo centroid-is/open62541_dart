@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.0">
+  <DUT Name="ST_TestStruct" Id="{7C968A08-4278-44CE-B333-4E365E07338C}">
+    <Declaration><![CDATA[// DUT for the OPC UA test fixture struct (TwinCAT / TF6100).
+//
+// The OPC UA BrowseName of the *instance* is "TestStruct" (declared in
+// GVL_Test). This TYPE only has to match the field names + scalar types the
+// tests expect, resolved by BrowseName:
+//   Id      : DINT   -> OPC UA Int32
+//   Value   : REAL   -> OPC UA Float
+//   Enabled : BOOL   -> OPC UA Boolean
+//   Label   : STRING -> OPC UA String
+//
+// TF6100 publishes this as a real OPC UA structured data type when the instance
+// carries the OPC.UA.DA.StructuredType attribute (see GVL_Test).
+TYPE ST_TestStruct :
+STRUCT
+    Id      : DINT;
+    Value   : REAL;
+    Enabled : BOOL;
+    Label   : STRING;
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

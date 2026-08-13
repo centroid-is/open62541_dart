@@ -178,6 +178,7 @@ class Client implements ClientApi {
     Uint8List? privateKey,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    bool allowUnencryptedPassword = false,
   }) {
     final config = ua_calloc<raw.UA_ClientConfig>();
 
@@ -241,6 +242,13 @@ class Client implements ClientApi {
         username.toNativeUtf8(allocator: ua_malloc).cast(),
         password != null ? password.toNativeUtf8(allocator: ua_malloc).cast() : ffi.nullptr,
       );
+      // open62541 drops the plaintext-password UserTokenPolicy on an
+      // unencrypted (SecurityPolicy#None) channel, so username auth silently
+      // fails there unless this is enabled. Many PLC lab setups (and our
+      // emulator) use username/password over None, so allow it opt-in.
+      if (allowUnencryptedPassword) {
+        config.ref.allowNonePolicyPassword = true;
+      }
     }
 
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
