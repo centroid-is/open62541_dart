@@ -409,7 +409,10 @@ extension UA_StringExtension on raw.UA_String {
 
   String get value {
     final bytes = data.asTypedList(length);
-    return utf8.decode(bytes);
+    // OPC UA String is UTF-8, but real controllers (e.g. CODESYS `STRING`, which
+    // is single-byte Latin-1/ASCII) can return non-UTF-8 bytes. Decode leniently
+    // so a read never throws — malformed bytes become U+FFFD.
+    return utf8.decode(bytes, allowMalformed: true);
   }
 
   void fromBytes(Iterable<int> bytes) {

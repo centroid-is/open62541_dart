@@ -15,7 +15,6 @@ import 'dart:async';
 
 import 'package:test/test.dart';
 
-import 'package:open62541/open62541.dart';
 import 'plc_config.dart';
 import 'plc_fixture.dart';
 import 'plc_session.dart';
@@ -70,17 +69,15 @@ void main() {
           return;
         }
 
-        // A client with a deliberately tiny session timeout, which we then
-        // ABANDON: stop pumping (no keepalive) and never call delete() (no
-        // CloseSession) -- i.e. a crashed/killed process.
+        // A client (wired for this controller's security) with a deliberately
+        // tiny session timeout, which we then ABANDON: stop pumping (no
+        // keepalive) and never call delete() (no CloseSession) -- i.e. a
+        // crashed/killed process.
         final up = await PlcSession.upstream(cfg);
-        final client = Client(
-          username: cfg.username,
-          password: cfg.password,
-          allowUnencryptedPassword: true,
+        final client = PlcSession.rawClient(
+          cfg,
           requestedSessionTimeout: const Duration(seconds: 4),
           secureChannelLifeTime: const Duration(seconds: 3),
-          logLevel: LogLevel.UA_LOGLEVEL_FATAL,
         );
         var running = true;
         unawaited(() async {
@@ -88,7 +85,13 @@ void main() {
             await Future<void>.delayed(const Duration(milliseconds: 5));
           }
         }());
-        await client.connect('opc.tcp://${up.host}:${up.port}/').timeout(const Duration(seconds: 20));
+        try {
+          await client.connect('opc.tcp://${up.host}:${up.port}/').timeout(const Duration(seconds: 20));
+        } catch (e) {
+          running = false;
+          await client.delete();
+          rethrow;
+        }
 
         // The session is now live on the controller.
         await _eventually(
@@ -116,7 +119,12 @@ void main() {
 
       test('session budget guard fails loud before over-opening', () async {
         // Emulator-only: deliberately reaching the cap on real hardware is
-        // exactly what we are trying to avoid.
+        // exactly what we are trying to avoid. Guard in-body (not via `skip:`)
+        // because the suite runs with `--run-skipped`, which overrides `skip:`.
+        if (!cfg.useEmulator) {
+          markTestSkipped('budget-cap test is emulator-only (would stress real hardware)');
+          return;
+        }
         final sessions = <PlcSession>[];
         try {
           // observer already holds 1; fill up to the cap.
@@ -129,7 +137,7 @@ void main() {
             await s.dispose();
           }
         }
-      }, skip: cfg.useEmulator ? false : 'budget-cap test is emulator-only (would stress real hardware)');
+      });
     });
   }
 }

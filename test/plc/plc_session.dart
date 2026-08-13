@@ -37,6 +37,40 @@ class PlcSession {
   /// Shared emulator per target (emulator mode only).
   static final Map<PlcTarget, ({Process proc, String url})> _emulators = {};
 
+  /// Builds a client wired for [config]'s security, without opening/registering
+  /// a managed session. Shared by [open] and tests that need a bare client.
+  ///
+  /// Security modes (see PlcSecurity):
+  ///  - none:    plain None channel, plaintext password over None.
+  ///  - token:   None channel, but load encryption policies so the UserName
+  ///             token is encrypted (Basic256Sha256, using the server's cert).
+  ///             Schneider M241/M262 demand this; no client-cert trust needed.
+  ///  - encrypt: SignAndEncrypt channel (controller must trust our cert).
+  static Client rawClient(
+    PlcConfig config, {
+    Duration? requestedSessionTimeout,
+    Duration? secureChannelLifeTime,
+    LogLevel logLevel = LogLevel.UA_LOGLEVEL_FATAL,
+  }) {
+    final needsCert = config.security.needsCert;
+    return Client(
+      username: config.username,
+      password: config.password,
+      securityMode: switch (config.security) {
+        PlcSecurity.encrypt => MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
+        PlcSecurity.token => MessageSecurityMode.UA_MESSAGESECURITYMODE_NONE,
+        PlcSecurity.none => null,
+      },
+      certificate: needsCert ? File(config.certPath).readAsBytesSync() : null,
+      privateKey: needsCert ? File(config.keyPath).readAsBytesSync() : null,
+      allowUnencryptedPassword: config.security == PlcSecurity.none,
+      // SHORT timeouts so an abandoned session/channel is reaped by the PLC.
+      requestedSessionTimeout: requestedSessionTimeout ?? config.sessionTimeout,
+      secureChannelLifeTime: secureChannelLifeTime ?? config.secureChannelLifetime,
+      logLevel: logLevel,
+    );
+  }
+
   static Future<PlcSession> open(PlcConfig config, {Duration connectTimeout = const Duration(seconds: 20)}) async {
     final current = _open[config.target] ?? 0;
     if (current + 1 > config.maxSessions) {
@@ -48,18 +82,7 @@ class PlcSession {
     }
 
     final url = config.useEmulator ? await _sharedEmulatorUrl(config) : config.url;
-
-    final client = Client(
-      username: config.username,
-      password: config.password,
-      // Lab controllers commonly use username/password over an unencrypted
-      // channel; open62541 needs this to send the password there.
-      allowUnencryptedPassword: true,
-      // SHORT timeouts so an abandoned session/channel is reaped by the PLC.
-      requestedSessionTimeout: config.sessionTimeout,
-      secureChannelLifeTime: config.secureChannelLifetime,
-      logLevel: LogLevel.UA_LOGLEVEL_FATAL,
-    );
+    final client = rawClient(config);
     var running = true;
     unawaited(() async {
       while (running && client.runIterate(const Duration(milliseconds: 10))) {
@@ -89,13 +112,21 @@ class PlcSession {
   /// caching the result. Vendor namespaces/paths differ, so tests never
   /// hard-code NodeIds.
   Future<NodeId> node(String browseName) async {
-    final cached = _byName[browseName];
-    if (cached != null) return cached;
-    final found = await findByBrowseName(client, browseName);
+    final found = await tryNode(browseName);
     if (found == null) {
       throw StateError('BrowseName "$browseName" not found on ${config.name}');
     }
-    _byName[browseName] = found;
+    return found;
+  }
+
+  /// Like [node] but returns null instead of throwing when the BrowseName is
+  /// absent (e.g. probing whether an array is published as one node or
+  /// element-wise).
+  Future<NodeId?> tryNode(String browseName) async {
+    final cached = _byName[browseName];
+    if (cached != null) return cached;
+    final found = await findByBrowseName(client, browseName);
+    if (found != null) _byName[browseName] = found;
     return found;
   }
 

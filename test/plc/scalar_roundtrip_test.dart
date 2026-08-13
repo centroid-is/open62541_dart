@@ -33,6 +33,11 @@ void main() {
             final got = (await s.client.read(node)).value;
             if (v.tolerance > 0) {
               expect((got as num).toDouble(), closeTo((want as num).toDouble(), v.tolerance.toDouble()));
+            } else if (want is String) {
+              // A PLC `STRING` is a fixed-capacity, NUL-terminated buffer; some
+              // controllers (CODESYS/Schneider) return the whole buffer with
+              // trailing bytes, so compare up to the terminator.
+              expect((got as String).split('\u0000').first, want, reason: '${v.name}: wrote $want got $got');
             } else {
               expect(got, want, reason: '${v.name}: wrote $want got $got');
             }
@@ -49,12 +54,23 @@ void main() {
       });
 
       test('TestArray round-trips', () async {
-        final node = await s.node(PlcFixture.arrayName);
         final want = [for (var i = 0; i < PlcFixture.arrayLength; i++) (i + 1) * 111];
-        await s.client.write(node, DynamicValue.fromList(want, typeId: PlcFixture.arrayTypeId));
-        final got = await s.client.read(node);
-        expect(got.isArray, isTrue);
-        expect([for (var i = 0; i < PlcFixture.arrayLength; i++) got[i].asInt], want);
+        final single = await s.tryNode(PlcFixture.arrayName);
+        if (single != null) {
+          // Published as one array-valued node (emulator, TwinCAT).
+          await s.client.write(single, DynamicValue.fromList(want, typeId: PlcFixture.arrayTypeId));
+          final got = await s.client.read(single);
+          expect(got.isArray, isTrue);
+          expect([for (var i = 0; i < PlcFixture.arrayLength; i++) got[i].asInt], want);
+        } else {
+          // CODESYS controllers (Schneider M241/M262) expose array elements as
+          // individual nodes: GVL_Test.TestArray[0..N].
+          for (var i = 0; i < PlcFixture.arrayLength; i++) {
+            final el = await s.node('${PlcFixture.arrayName}[$i]');
+            await s.client.write(el, DynamicValue(value: want[i], typeId: PlcFixture.arrayTypeId));
+            expect((await s.client.read(el)).asInt, want[i], reason: 'element $i');
+          }
+        }
       });
     });
   }

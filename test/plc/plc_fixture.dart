@@ -42,7 +42,9 @@ class PlcFixture {
   static final int32 = ScalarVar('TestDint', NodeId.int32, 2000000000, -2000000000);
   static final real = ScalarVar('TestReal', NodeId.float, 3.5, -12.25, tolerance: 1e-3);
   static final lreal = ScalarVar('TestLreal', NodeId.double, 3.141592653589793, -2.718281828, tolerance: 1e-9);
-  static final string = ScalarVar('TestString', NodeId.uastring, 'hello-plc', 'Ω≈ç√-2');
+  // PLC `STRING` (CODESYS/TwinCAT) is single-byte ASCII/Latin-1, not Unicode
+  // (that is `WSTRING`), so both round-trip values stay in printable ASCII.
+  static final string = ScalarVar('TestString', NodeId.uastring, 'hello-plc', 'PLC_v2-ok!');
 
   /// Writable setpoint (REAL) — used by the write/timing tests.
   static final setpoint = ScalarVar('Setpoint', NodeId.float, 42.5, 7.25, tolerance: 1e-3);

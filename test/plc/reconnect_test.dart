@@ -29,6 +29,22 @@ void main() {
   }
 
   for (final cfg in targets) {
+    // The toxiproxy technique only works against a server that advertises the
+    // proxy's address. A real controller advertises its own IP in GetEndpoints,
+    // and open62541 follows it ("Use the EndpointURL returned from FindServers
+    // and reconnect") — reconnecting directly and bypassing the proxy, so the
+    // link can't be dropped. keepConnected() itself is vendor-independent and is
+    // covered by the emulator run, so skip the proxy reconnect on real hardware.
+    if (!cfg.useEmulator) {
+      test('reconnection [${cfg.name}] (emulator-only)', () {
+        markTestSkipped(
+          'toxiproxy reconnect is emulator-only: a real controller advertises its own '
+          'EndpointURL, which open62541 follows and thereby bypasses the proxy.',
+        );
+      });
+      continue;
+    }
+
     group('reconnection [${cfg.name}]', () {
       late Toxiproxy toxi;
       late ToxiProxyHandle proxy;
@@ -46,14 +62,8 @@ void main() {
       });
 
       Future<Client> connectThroughProxy() async {
-        final client = Client(
-          username: cfg.username,
-          password: cfg.password,
-          allowUnencryptedPassword: true,
-          requestedSessionTimeout: cfg.sessionTimeout,
-          secureChannelLifeTime: cfg.secureChannelLifetime,
-          logLevel: LogLevel.UA_LOGLEVEL_FATAL,
-        );
+        // Same security wiring as PlcSession (token encryption on M241/M262).
+        final client = PlcSession.rawClient(cfg);
         await client.keepConnected('opc.tcp://127.0.0.1:${proxy.listenPort}/').timeout(const Duration(seconds: 30));
         return client;
       }

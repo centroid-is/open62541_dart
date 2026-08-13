@@ -1,0 +1,5 @@
+# Generated client cert/key (regenerate with gen.sh); never commit the private key.
+*.der
+*.pem
+key.pem
+openssl.cnf
