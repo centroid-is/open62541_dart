@@ -26,12 +26,12 @@ Server setupServer(int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR}) {
   final server = Server(port: port, logLevel: logLevel);
   server.start();
 
-  // Run the server while we test
+  // Run the server while we test.
+  // runIterate() defaults to a non-blocking poll, so this loop cooperates
+  // with other servers/clients pumped on the same isolate. The 50ms delay
+  // is REQUIRED to throttle the loop and avoid a 100% CPU busy-spin.
   () async {
     while (server.runIterate()) {
-      // The function returns how long it can wait before the next iteration
-      // That is a really high number and causes my tests to run slow.
-      // Lets just wait 50ms
       await Future.delayed(Duration(milliseconds: 50));
     }
   }();

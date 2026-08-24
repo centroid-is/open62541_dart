@@ -103,26 +103,34 @@ class Server {
     final variant = valueToVariant(value);
     typeId ??= value.typeId;
 
-    // The returned variant is a encoded extension object. extract that and set the scalar value of the variant
-    if (variant.ref.type.ref.typeId.toNodeId() == NodeId.structure) {
-      final t = _findDataType(typeId!);
-      if (t == ffi.nullptr) {
-        throw 'Failed to find data type $typeId';
-      }
-      variant.ref.type = t;
-      attr.ref.value.type = t;
-      attr.ref.value.arrayLength = 0;
-      final extObjView = variant.ref.data.cast<raw.UA_ExtensionObject>();
-      final length = extObjView.ref.content.encoded.body.length;
-
-      attr.ref.value.data = ua_calloc<raw.UA_Byte>(length).cast();
-      attr.ref.value.data
-          .cast<raw.UA_Byte>()
-          .asTypedList(length)
-          .setRange(0, length, extObjView.ref.content.encoded.body.data.asTypedList(length));
-    } else {
-      attr.ref.value = variant.ref;
+    // Enum metadata: when the value carries enum field definitions, publish a
+    // custom enum DataType so a client can read back an EnumDefinition (field
+    // value + name). open62541 derives the DataTypeDefinition attribute of a
+    // DataType node from the registered custom `UA_DataType`, so we register an
+    // enum-kind type and point this node's DataType attribute at it. The stored
+    // value stays Int32 on the wire; open62541 relabels it to the enum type on
+    // write via `adjustType` (an enum is Int32-equivalent).
+    if (value.enumFields != null && value.enumFields!.isNotEmpty) {
+      typeId = _addEnumType(value, typeId);
     }
+
+    // For a structured value, `valueToVariant` returns a variant wrapping a
+    // binary-encoded UA_ExtensionObject. Store it as such and keep the node's
+    // DataType attribute (set below) pointing at the concrete custom type.
+    //
+    // Historically this branch instead re-labelled the variant as the native
+    // custom type and copied the *binary-encoded* body into `value.data`. That
+    // only happens to work for structs whose members are all fixed-size,
+    // pointer-free primitives (int/bool/double), where the encoded layout
+    // coincides with the in-memory layout. For any member that is a pointer type
+    // in native memory - notably UA_String, which is `{size_t length; UA_Byte*
+    // data}` in memory but `[int32 length][utf8 bytes]` on the wire - open62541
+    // would later walk the members and dereference the encoded bytes as a
+    // pointer, corrupting the heap and aborting the process (e.g. during the
+    // UA_Variant_copy performed by UA_Server_addVariableNode). Storing the value
+    // as an ExtensionObject lets open62541 keep it opaque, and the client read
+    // path already decodes the encoded body via variantToValue/deserialize.
+    attr.ref.value = variant.ref;
     attr.ref.accessLevel = accessLevel.value;
     attr.ref.dataType = typeId!.toRaw();
 
@@ -374,6 +382,12 @@ class Server {
     if (!value.isObject) {
       throw 'Value must be a object';
     }
+
+    // Record the rich schema locally. open62541's generated DataTypeDefinition
+    // cannot carry per-field descriptions / display names, so an in-process
+    // client read restores them from here (see
+    // OpcUaDynamicValueSerializer.overlayLocalFieldMetadata).
+    OpcUaDynamicValueSerializer.registerLocalSchema(typeId, value);
     array.ref.typesSize = 1;
     array.ref.types = ua_calloc<raw.UA_DataType>(1);
     array.ref.types[0].typeId = typeId.toRaw();
@@ -382,12 +396,20 @@ class Server {
       "BinaryEncoding_Default:${value.name}",
     ).toRaw();
 
-    array.ref.types[0].memSize = 9;
     array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
 
     final memberCount = value.asObject.length;
     array.ref.types[0].membersSize = memberCount;
     array.ref.types[0].members = ua_calloc<raw.UA_DataTypeMember>(memberCount);
+    // Accumulate the in-memory size of the struct. open62541 materialises the
+    // struct in native memory (e.g. when validating/decoding the value) by
+    // walking the members: each member is placed at the running offset plus its
+    // `padding`, then the offset advances by the member type's `memSize`. With a
+    // packed layout (padding == 0) the total size must therefore equal the sum
+    // of the member type sizes. A too-small `memSize` makes open62541 write
+    // past the allocation while placing pointer-bearing members (e.g. UA_String),
+    // corrupting the heap and aborting the process.
+    int memSize = 0;
     for (var i = 0; i < memberCount; i++) {
       final entry = value.asObject.entries.elementAt(i);
       final member = entry.value;
@@ -396,17 +418,76 @@ class Server {
         // If we contain a member add that first
         addCustomType(member.typeId!, member);
       }
+      final memberType = _findDataType(member.typeId!);
+      if (memberType == ffi.nullptr) {
+        throw 'Unable to resolve data type for member "$memberName" (${member.typeId}) of $typeId';
+      }
       array.ref.types[0].members[i].memberName = memberName.toNativeUtf8(allocator: ua_malloc).cast();
-      array.ref.types[0].members[i].memberType = _findDataType(member.typeId!);
+      array.ref.types[0].members[i].memberType = memberType;
       array.ref.types[0].members[i].isOptional = member.isOptional;
       array.ref.types[0].members[i].isArray = member.isArray;
       array.ref.types[0].members[i].padding = 0;
+      // Arrays are stored as a (size_t length, T* data) pair in the native
+      // struct; scalar members occupy the member type's own size.
+      memSize += member.isArray ? ffi.sizeOf<ffi.Size>() + ffi.sizeOf<ffi.Pointer<ffi.Void>>() : memberType.ref.memSize;
     }
+    array.ref.types[0].memSize = memSize;
 
     // Have open62541 clear the pointers we are allocating here on configuration clean-up
     array.ref.cleanup = true;
     array.ref.next = _config.ref.customDataTypes;
     _config.ref.customDataTypes = array;
+  }
+
+  /// Registers a custom enum `UA_DataType` (kind [raw.UA_DataTypeKind.UA_DATATYPEKIND_ENUM])
+  /// for [value]'s [DynamicValue.enumFields] and adds a matching DataType node
+  /// (a subtype of `Enumeration`). Returns the synthesized enum type NodeId,
+  /// which the caller uses as the variable's DataType so a client reading the
+  /// DataType node's `DataTypeDefinition` attribute gets an `EnumDefinition`.
+  ///
+  /// open62541 stores each enum field's integer value in the member's
+  /// `memberType` pointer slot and its name in `memberName`
+  /// (see `UA_DataType_toEnumDescription`); enum values are copied as a flat
+  /// Int32 (`copy4Byte`), so the pointer slot is never dereferenced.
+  NodeId _addEnumType(DynamicValue value, NodeId? underlying) {
+    final fields = value.enumFields!;
+    final ns = underlying?.namespace ?? value.typeId?.namespace ?? 1;
+    final browseName = 'EnumType_${value.name ?? 'anon'}';
+    final enumTypeId = NodeId.fromString(ns, browseName);
+
+    // Reuse if this enum type was already published on the server.
+    if (_findDataType(enumTypeId) != ffi.nullptr) {
+      return enumTypeId;
+    }
+
+    final array = ua_calloc<raw.UA_DataTypeArray>();
+    array.ref.typesSize = 1;
+    array.ref.types = ua_calloc<raw.UA_DataType>(1);
+    array.ref.types[0].typeId = enumTypeId.toRaw();
+    array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_ENUM;
+
+    final memberCount = fields.length;
+    array.ref.types[0].membersSize = memberCount;
+    array.ref.types[0].members = ua_calloc<raw.UA_DataTypeMember>(memberCount);
+    var i = 0;
+    for (final field in fields.values) {
+      array.ref.types[0].members[i].memberName = field.name.toNativeUtf8(allocator: ua_malloc).cast();
+      array.ref.types[0].members[i].memberType = ffi.Pointer.fromAddress(field.value);
+      i++;
+    }
+    // Int32-sized. Set memSize last so the packed bitfield write preserves the
+    // typeKind/membersSize bits set above (mirrors `addCustomType`).
+    array.ref.types[0].memSize = ffi.sizeOf<ffi.Int32>();
+
+    // Have open62541 clear the pointers we are allocating here on clean-up.
+    array.ref.cleanup = true;
+    array.ref.next = _config.ref.customDataTypes;
+    _config.ref.customDataTypes = array;
+
+    // Publish the DataType node so the client can read its DataTypeDefinition.
+    addDataTypeNode(enumTypeId, browseName, parentNodeId: NodeId.fromNumeric(0, raw.UA_NS0ID_ENUMERATION));
+
+    return enumTypeId;
   }
 
   ffi.Pointer<raw.UA_DataType> _findDataType(NodeId typeId) {
@@ -423,23 +504,49 @@ class Server {
   /// asynchronous operations on the server. It is required for the server to
   /// function properly and handle client requests.
   ///
-  /// The [waitInterval] parameter determines whether the server should wait for
-  /// messages in the network layer. If `true`, the server will wait for incoming
-  /// messages; if `false`, it will process any pending operations and return
-  /// immediately.
+  /// The [waitInterval] parameter determines whether the server should block the
+  /// calling isolate thread while waiting for network activity. If `false` (the
+  /// default) the server performs a single non-blocking poll of pending
+  /// operations and returns immediately, yielding control back to the Dart event
+  /// loop. If `true`, the underlying native call blocks the isolate thread until
+  /// the server's next scheduled activity.
+  ///
+  /// The default is non-blocking on purpose. Dart runs cooperatively on a single
+  /// isolate, so a blocking iterate parks the whole isolate: any sibling
+  /// [Server] (or a [Client]) driven on the same isolate is starved until this
+  /// call returns. Concretely, three cooperatively-pumped servers with the old
+  /// blocking default let the first client connect quickly but starved later
+  /// ones for seconds (or indefinitely). A non-blocking poll returns promptly so
+  /// every pump on the isolate gets a turn.
+  ///
+  /// IMPORTANT (busy-spin): because the non-blocking default returns immediately,
+  /// callers MUST `await` a short delay between iterations. A tight
+  /// `while (server.runIterate());` with no delay would spin at 100% CPU. Drive
+  /// the server from an `async` loop with a `Future.delayed` (or a
+  /// `Timer.periodic`) as the examples below show. The native `UA_Server_run_iterate`
+  /// API only exposes a boolean (block-until-next-scheduled vs poll-once) with no
+  /// intermediate timeout, so throttling is the caller's responsibility via that
+  /// delay rather than an internal wait cap.
   ///
   /// Returns `false` if the server is stopped or if the server is not initialized.
   /// returns `true` if the server is running and the iteration was successful.
   ///
-  /// Example:
+  /// Example (non-blocking default — cooperates with other work on the isolate):
   /// ```dart
-  /// // Run server iterations with waiting for messages
-  /// while (true) {
-  ///   server.runIterate(waitInterval: true);
+  /// // MUST include a delay so the loop does not busy-spin.
+  /// while (server.runIterate()) {
   ///   await Future.delayed(Duration(milliseconds: 50));
   /// }
   /// ```
-  bool runIterate({bool waitInterval = true}) {
+  ///
+  /// Opt back into the old blocking behavior only for a single, standalone
+  /// server that owns the isolate:
+  /// ```dart
+  /// while (server.runIterate(waitInterval: true)) {
+  ///   await Future.delayed(Duration(milliseconds: 50));
+  /// }
+  /// ```
+  bool runIterate({bool waitInterval = false}) {
     if (_server != ffi.nullptr) {
       // Check if the server is running
       final state = raw.UA_Server_getLifecycleState(_server);

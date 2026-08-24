@@ -23,14 +23,20 @@ ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType) {
   return ffi.Pointer.fromAddress(baseAddress.address + (type * ffi.sizeOf<raw.UA_DataType>()));
 }
 
+/// Sentinel `data` pointer that open62541 uses to distinguish an array of
+/// length 0 (empty array) from a null variant (`data == NULL`) or a scalar
+/// (`data` above the sentinel). Mirrors `UA_EMPTY_ARRAY_SENTINEL` which is a C
+/// macro (`(void*)0x01`) and therefore not emitted into the generated bindings.
+final ffi.Pointer<ffi.Void> _uaEmptyArraySentinel = ffi.Pointer.fromAddress(0x01);
+
 ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
+  final isEmptyArray = value.isArray && value.asArray.isEmpty;
+
   binarize.ByteWriter wr = binarize.ByteWriter();
   OpcUaDynamicValueSerializer.serialize(value, wr, value, Endian.little, false, true);
-  final pointer = ua_calloc<ffi.Uint8>(wr.length);
-  pointer.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
 
   Namespace0Id? id;
-  if (value.typeId!.isNumeric()) {
+  if (value.typeId != null && value.typeId!.isNumeric()) {
     id = Namespace0Id.fromInt(value.typeId!.numeric);
   }
 
@@ -39,8 +45,9 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
       return [];
     }
     if (value.asArray.isEmpty) {
-      // I would like this to be an error case
-      throw ArgumentError('Empty array');
+      // A zero-length array is legal in OPC UA. Represent it as a single
+      // dimension of length 0 (arrayLength 0 + the empty-array sentinel below).
+      return [0];
     }
     var dims = [value.asArray.length];
     if (value[0].isArray) {
@@ -51,11 +58,40 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
 
   final dimensions = getDimensions(value);
   ffi.Pointer<raw.UA_Variant> variant = raw.UA_Variant_new();
-  variant.ref.data = pointer.cast();
-  if (value.isObject || value.isArray && value.asArray.first.isObject) {
+
+  if (isEmptyArray) {
+    // Empty array: no payload. Point at the sentinel so open62541 reads this
+    // back as an array of length 0 rather than a null variant or a scalar.
+    variant.ref.data = _uaEmptyArraySentinel;
+  } else {
+    final pointer = ua_calloc<ffi.Uint8>(wr.length);
+    pointer.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
+    variant.ref.data = pointer.cast();
+  }
+
+  // Determine the element type from the innermost element: for a multi-dimensional
+  // array the first element is itself an array, so peel arrays until a leaf is
+  // reached. A struct leaf means the whole (possibly nested) array is encoded as
+  // an array of extension objects.
+  DynamicValue? innermostLeaf(DynamicValue v) {
+    var cur = v;
+    while (cur.isArray) {
+      if (cur.asArray.isEmpty) return null;
+      cur = cur.asArray.first;
+    }
+    return cur;
+  }
+
+  final leaf = innermostLeaf(value);
+  final hasObjectElement = value.isArray && leaf != null && leaf.isObject;
+  if (value.isObject || hasObjectElement) {
     variant.ref.type = getType(UaTypes.extensionObject);
   } else if (id != null) {
     variant.ref.type = getType(id.toUaTypes()); //TODO: This is not really the correct.
+  } else if (isEmptyArray) {
+    // The element type cannot be recovered from an untyped empty array: there
+    // is no element to inspect and no numeric typeId to map to a UA type.
+    throw ArgumentError('Cannot encode an empty array without a known element type; set DynamicValue.typeId.');
   } else {
     throw 'Unable to determine type for $value';
   }
@@ -78,6 +114,14 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
   }
 
   var typeId = dataTypeId ?? data.type.ref.typeId.toNodeId();
+
+  // Empty array: arrayLength 0 with data pointing at the empty-array sentinel
+  // (as opposed to a real pointer, which would be a scalar). Read it back as an
+  // array of length 0 rather than dereferencing the sentinel.
+  if (data.arrayLength == 0 && data.data.address == _uaEmptyArraySentinel.address) {
+    return DynamicValue(value: <DynamicValue>[], typeId: typeId);
+  }
+
   NodeId? extObjEncodingId;
   if (data.type.ref.typeKind == raw.UA_DataTypeKind.UA_DATATYPEKIND_EXTENSIONOBJECT) {
     final ext = data.data.cast<raw.UA_ExtensionObject>();

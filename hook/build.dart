@@ -205,7 +205,21 @@ Future<void> main(List<String> args) async {
         'MBEDTLS_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedtls$libSuffix').toFilePath(),
         'MBEDX509_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedx509$libSuffix').toFilePath(),
         'MBEDCRYPTO_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedcrypto$libSuffix').toFilePath(),
-        if (sanitizer) 'CMAKE_C_FLAGS': '-fsanitize=address,undefined -fno-omit-frame-pointer',
+        // Force the fast (memcpy/"overlayable") IEEE 754 encoding path.
+        //
+        // open62541's config.h only sets UA_FLOAT_LITTLE_ENDIAN=1 when the
+        // compiler defines __FLOAT_WORD_ORDER__ (a GCC-only macro) or when the
+        // target is x86. clang (e.g. on macOS arm64) defines neither, so
+        // UA_FLOAT_LITTLE_ENDIAN resolves to 0, UA_BINARY_OVERLAYABLE_FLOAT
+        // becomes 0, and the library falls back to the slow generic pack754/
+        // unpack754 codec in ua_types_encoding_binary.c. That generic codec
+        // normalizes the mantissa to "1.x" and therefore silently corrupts
+        // subnormal (denormalized) Float/Double values on the wire. Every
+        // target we build for uses little-endian IEEE 754 floats, so forcing
+        // this on is both correct and required for subnormals to round-trip.
+        'CMAKE_C_FLAGS': sanitizer
+            ? '-DUA_FLOAT_LITTLE_ENDIAN=1 -fsanitize=address,undefined -fno-omit-frame-pointer'
+            : '-DUA_FLOAT_LITTLE_ENDIAN=1',
         if (sanitizer) 'CMAKE_SHARED_LINKER_FLAGS': '-fsanitize=address,undefined',
       },
       targets: ['install'],
