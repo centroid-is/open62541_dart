@@ -22,7 +22,7 @@ export 'src/third_party/open62541.g.dart'
         UA_OPEN62541_VER_LABEL,
         UA_OPEN62541_VER_COMMIT,
         UA_OPEN62541_VERSION;
-export 'src/node_id.dart' show NodeId;
+export 'src/node_id.dart' show NodeId, NodeIdFfi;
 export 'src/server.dart' show Server;
 export 'src/types/errors.dart' show Inactivity, SecureChannelClosed, SubscriptionDeleted;
 export 'src/isolate.dart' show ClientIsolate;
