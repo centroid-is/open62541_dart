@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.0">
+  <GVL Name="GVL_Test" Id="{12F29192-3013-4405-9DE3-9B4FBECA7B32}">
+    <Declaration><![CDATA[// Global variable list holding the OPC UA test fixture for the open62541_dart
+// PLC test-suite. Mirrors test/plc/plc_fixture.dart -- BrowseNames and IEC types
+// below MUST NOT change; the tests resolve every node by BrowseName.
+//
+// Each fixture variable is tagged {attribute 'OPC.UA.DA' := '1'} so TF6100
+// publishes it. We deliberately do NOT add {attribute 'OPC.UA.DA.Access' := '1'}
+// (read-only) on the writable variables, so they stay CurrentRead|CurrentWrite.
+// Counter is the one variable the tests treat as read-only; TF6100 still exposes
+// it read/write here (harmless -- the tests only READ it), and MAIN owns it.
+{attribute 'qualified_only'}
+VAR_GLOBAL
+    // --- Scalars (read/write) ---------------------------------------------
+    {attribute 'OPC.UA.DA' := '1'}
+    TestBool    : BOOL;
+
+    {attribute 'OPC.UA.DA' := '1'}
+    TestInt     : INT;        // 16-bit -> OPC UA Int16
+
+    {attribute 'OPC.UA.DA' := '1'}
+    TestDint    : DINT;       // 32-bit -> OPC UA Int32
+
+    {attribute 'OPC.UA.DA' := '1'}
+    TestReal    : REAL;       // float32 -> OPC UA Float
+
+    {attribute 'OPC.UA.DA' := '1'}
+    TestLreal   : LREAL;      // float64 -> OPC UA Double
+
+    {attribute 'OPC.UA.DA' := '1'}
+    TestString  : STRING;     // -> OPC UA String
+
+    // --- Writable setpoint (REAL) -----------------------------------------
+    {attribute 'OPC.UA.DA' := '1'}
+    Setpoint    : REAL;
+
+    // --- Free-running liveness counter (DINT) -----------------------------
+    // Incremented by MAIN every cycle. Read-only from a client's point of view.
+    {attribute 'OPC.UA.DA' := '1'}
+    Counter     : DINT;
+
+    // --- Array[0..9] OF DINT (read/write) ---------------------------------
+    {attribute 'OPC.UA.DA' := '1'}
+    TestArray   : ARRAY[0..9] OF DINT;
+
+    // --- Struct instance (read/write) -------------------------------------
+    // The StructuredType attribute makes TF6100 expose TestStruct as a genuine
+    // OPC UA structured data type (Id/Value/Enabled/Label as members).
+    {attribute 'OPC.UA.DA' := '1'}
+    {attribute 'OPC.UA.DA.StructuredType' := '1'}
+    TestStruct  : ST_TestStruct;
+END_VAR
+]]></Declaration>
+  </GVL>
+</TcPlcObject>

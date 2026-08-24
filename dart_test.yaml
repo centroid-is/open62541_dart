@@ -11,3 +11,9 @@ tags:
   integration:
     timeout: 2x
     skip: "local-only; run with: dart test --run-skipped test/integration"
+  # Physical-PLC tests. Need PLC_<X>_URL env (or =emulator) + the asyncua venv;
+  # local-only. Run with:
+  #     dart test --run-skipped test/plc     (set PLC_<X>_URL=emulator to emulate)
+  plc:
+    timeout: 2x
+    skip: "local-only; run with: dart test --run-skipped test/plc (set PLC_<X>_URL)"

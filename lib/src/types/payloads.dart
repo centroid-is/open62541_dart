@@ -230,7 +230,9 @@ class UA_StringPayload extends PayloadType<String> {
     if (length <= 0) return '';
     final ptr = ffi.Pointer<raw.UA_Byte>.fromAddress(ptrValue);
     final buffer = ptr.asTypedList(length);
-    return utf8.decode(buffer);
+    // Decode leniently: PLCs can return non-UTF-8 bytes in an OPC UA String
+    // (CODESYS `STRING` is single-byte), so a read must not throw.
+    return utf8.decode(buffer, allowMalformed: true);
   }
 
   @override
@@ -260,7 +262,8 @@ class ContiguousStringPayload extends PayloadType<String?> {
     if (length == -1) return null;
     if (length == 0) return '';
     final bytes = reader.read(length);
-    return utf8.decode(bytes);
+    // Lenient: see UA_StringPayload.get — controllers may return non-UTF-8.
+    return utf8.decode(bytes, allowMalformed: true);
   }
 
   @override
