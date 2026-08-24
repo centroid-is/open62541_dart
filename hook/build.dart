@@ -1,17 +1,92 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:code_assets/code_assets.dart';
+import 'package:crypto/crypto.dart';
 import 'package:hooks/hooks.dart';
 import 'package:logging/logging.dart';
 import 'package:native_toolchain_cmake/native_toolchain_cmake.dart';
 import 'package:http/http.dart' as http;
 
+// ---------------------------------------------------------------------------
+// Pinned download checksums (supply-chain / reproducibility hardening).
+//
+// Every third-party source archive fetched by this hook is downloaded over
+// HTTPS and verified against a pinned SHA-256 before use. A mismatch fails the
+// build loudly instead of silently building tampered or unexpected sources.
+//
+// Bumping a version is a one-line change: add/replace the {version: sha256}
+// entry below (and, for open62541, the `version` string in main()).
+//
+// How to (re)generate a checksum for a version:
+//   open62541 (auto-generated GitHub source archive):
+//     curl -sL -o o62.zip \
+//       https://github.com/open62541/open62541/archive/<version>.zip
+//     sha256sum o62.zip
+//   mbedTLS (official release asset):
+//     curl -sL -o mbedtls.tar.bz2 \
+//       https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-<v>/mbedtls-<v>.tar.bz2
+//     sha256sum mbedtls.tar.bz2
+//
+// NOTE: The open62541 URL uses GitHub's *auto-generated* source archive
+// (/archive/<tag>.zip). GitHub has historically kept these byte-stable, but has
+// changed auto-generated archive bytes once before (Jan 2023). If a checksum
+// mismatch ever appears without an intentional version bump, re-verify against a
+// trusted source before updating the pin. The mbedTLS URL is an uploaded
+// release asset, which is immutable.
+// ---------------------------------------------------------------------------
+
+/// SHA-256 of the open62541 source archive, keyed by version tag.
+const Map<String, String> _open62541Sha256 = {
+  'v1.5.6': 'c142bd304f7f614f570a2b8ec0a618608bc22a94b43e4e477525829ba1c69641',
+  'v1.5.7': '79ded488caf7b8dc7f1ad1269d0142a80c47bab1d5725663f194f72ac8911a78',
+};
+
+/// mbedTLS release version and the SHA-256 of its `.tar.bz2` release asset.
+const String _mbedtlsVersion = '3.6.5';
+const String _mbedtlsSha256 = '4a11f1777bb95bf4ad96721cac945a26e04bf19f57d905f241fe77ebeddf46d8';
+
+/// Downloads [url] over HTTPS and verifies the payload against
+/// [expectedSha256], returning the raw bytes.
+///
+/// Fails loudly (throws) when:
+///   - [url] is not HTTPS,
+///   - the HTTP request does not return 200, or
+///   - the SHA-256 of the downloaded bytes does not match [expectedSha256].
+Future<Uint8List> _downloadVerified(Uri url, {required String expectedSha256, required String what}) async {
+  if (url.scheme != 'https') {
+    throw Exception(
+      'Refusing to download $what over insecure scheme "${url.scheme}": $url '
+      '(HTTPS is required).',
+    );
+  }
+  final response = await http.get(url);
+  if (response.statusCode != 200) {
+    throw Exception('Error downloading $what: HTTP ${response.statusCode} from $url');
+  }
+  final bytes = response.bodyBytes;
+  final actual = sha256.convert(bytes).toString();
+  if (actual != expectedSha256.toLowerCase()) {
+    throw Exception(
+      'Checksum mismatch for $what downloaded from $url\n'
+      '  expected sha256: $expectedSha256\n'
+      '  actual   sha256: $actual\n'
+      'Refusing to build with an unverified artifact. If you intentionally '
+      'changed the version, update the pinned checksum in hook/build.dart.',
+    );
+  }
+  return bytes;
+}
+
 Future<Uri> _downloadMbedTLS(Uri baseDir) async {
   // Use short directory names to avoid Windows MAX_PATH (260 char) limit.
   // CMake TryCompile creates deeply nested paths inside the build directory.
   final extractDir = Directory.fromUri(baseDir.resolve('tls/'));
-  final url = 'https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.5/mbedtls-3.6.5.tar.bz2';
+  final url = Uri.parse(
+    'https://github.com/Mbed-TLS/mbedtls/releases/download/'
+    'mbedtls-$_mbedtlsVersion/mbedtls-$_mbedtlsVersion.tar.bz2',
+  );
 
   // Return early if already downloaded and renamed
   final srcDir = Directory.fromUri(extractDir.uri.resolve('src/'));
@@ -19,12 +94,9 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
     return srcDir.uri;
   }
 
-  final response = await http.get(Uri.parse(url));
-  if (response.statusCode != 200) {
-    throw Exception('Error downloading mbedTLS: ${response.statusCode}');
-  }
+  final bytes = await _downloadVerified(url, expectedSha256: _mbedtlsSha256, what: 'mbedTLS $_mbedtlsVersion');
 
-  final decompressed = BZip2Decoder().decodeBytes(response.bodyBytes);
+  final decompressed = BZip2Decoder().decodeBytes(bytes);
   final archive = TarDecoder().decodeBytes(decompressed);
 
   if (!await extractDir.exists()) {
@@ -50,6 +122,33 @@ String _targetKey(BuildInput input) {
   return '$os-$arch';
 }
 
+/// Configures + builds + installs a CMake project via `native_toolchain_cmake`.
+///
+/// [CMakeBuilder] manages its own build directory via `buildLocal`, and honors
+/// `CMAKE_INSTALL_PREFIX` passed in [defines], so callers pick up the install
+/// output the same way.
+Future<void> _buildCmakeProject({
+  required BuildInput input,
+  required BuildOutputBuilder output,
+  required Logger logger,
+  required String name,
+  required Uri sourceDir,
+  required Map<String, String?> defines,
+  required List<String> targets,
+}) async {
+  final builder = CMakeBuilder.create(
+    name: name,
+    sourceDir: sourceDir,
+    buildMode: BuildMode.release,
+    generator: Generator.defaultGenerator,
+    defines: defines,
+    targets: targets,
+    buildLocal: true,
+    logger: logger,
+  );
+  await builder.run(input: input, output: output, logger: logger);
+}
+
 Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger logger) async {
   final targetKey = _targetKey(input);
   final mbedtlsBase = input.outputDirectoryShared.resolve('tls/');
@@ -64,11 +163,12 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
 
   final sourceDir = await _downloadMbedTLS(input.outputDirectoryShared);
 
-  final builder = CMakeBuilder.create(
+  await _buildCmakeProject(
+    input: input,
+    output: output,
+    logger: logger,
     name: 'mbedtls',
     sourceDir: sourceDir,
-    buildMode: BuildMode.release,
-    generator: Generator.defaultGenerator,
     defines: {
       'CMAKE_BUILD_TYPE': 'Release',
       'CMAKE_INSTALL_PREFIX': installPrefix.toFilePath(),
@@ -80,11 +180,7 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
       'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
     },
     targets: ['install'],
-    buildLocal: true,
-    logger: logger,
   );
-
-  await builder.run(input: input, output: output, logger: logger);
 
   return installPrefix;
 }
@@ -99,13 +195,19 @@ Future<Uri> download(Uri outputDirectory, String version) async {
     return srcDir.uri;
   }
 
+  final expectedSha256 = _open62541Sha256[version];
+  if (expectedSha256 == null) {
+    throw Exception(
+      'No pinned SHA-256 checksum for open62541 version "$version". '
+      'Add its checksum to _open62541Sha256 in hook/build.dart '
+      '(see the regeneration note at the top of the file).',
+    );
+  }
+
   // final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
   final url = Uri.parse('https://github.com/open62541/open62541/archive/$version.zip');
-  final response = await http.get(url);
-  if (response.statusCode != 200) {
-    throw Exception('Error downloading open62541 version $version: ${response.statusCode}');
-  }
-  final archive = ZipDecoder().decodeBytes(response.bodyBytes);
+  final bytes = await _downloadVerified(url, expectedSha256: expectedSha256, what: 'open62541 $version');
+  final archive = ZipDecoder().decodeBytes(bytes);
 
   if (!await extractDir.exists()) {
     await extractDir.create(recursive: true);
@@ -165,7 +267,7 @@ Future<void> _applyPatches(Uri sourceDir) async {
 }
 
 Future<void> main(List<String> args) async {
-  final version = "v1.5.6";
+  final version = "v1.5.7";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
     await _applyPatches(extractedFiles);
@@ -185,11 +287,12 @@ Future<void> main(List<String> args) async {
 
     final sanitizer = Platform.environment['ENABLE_SANITIZER'] == '1';
 
-    final builder = CMakeBuilder.create(
+    await _buildCmakeProject(
+      input: input,
+      output: output,
+      logger: logger,
       name: name,
       sourceDir: extractedFiles,
-      buildMode: BuildMode.release,
-      generator: Generator.defaultGenerator,
       defines: {
         'CMAKE_BUILD_TYPE': 'Release',
         'CMAKE_INSTALL_PREFIX': '${input.outputDirectory.toFilePath()}/install',
@@ -223,19 +326,16 @@ Future<void> main(List<String> args) async {
         if (sanitizer) 'CMAKE_SHARED_LINKER_FLAGS': '-fsanitize=address,undefined',
       },
       targets: ['install'],
-      buildLocal: true,
-      logger: logger,
     );
 
-    await builder.run(input: input, output: output, logger: logger);
-
-    // manually add assets
-    final libPath = switch (input.config.code.targetOS) {
-      OS.linux => "install/lib/libopen62541.so",
-      OS.macOS => "install/lib/libopen62541.dylib",
-      OS.windows => "install/bin/open62541.dll",
-      OS.android => "install/lib/libopen62541.so",
-      OS.iOS => "install/lib/libopen62541.dylib",
+    // Manually add assets. Switch on OS.name (a String with primitive
+    // equality) rather than on the OS constants directly: code_assets 2.x
+    // overrides OS.== / OS.hashCode, which makes the OS values illegal as
+    // constant switch patterns. Keying on the name works on both 1.x and 2.x.
+    final libPath = switch (input.config.code.targetOS.name) {
+      'linux' || 'android' => "install/lib/libopen62541.so",
+      'macos' || 'ios' => "install/lib/libopen62541.dylib",
+      'windows' => "install/bin/open62541.dll",
       _ => throw UnsupportedError("Unsupported OS"),
     };
     output.assets.code.add(

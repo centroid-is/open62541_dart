@@ -16,5 +16,7 @@ ffigen.yaml
 .vscode
 doc/
 test/
-flake.lock
-flake.nix
+
+# Dev-only files not needed by consumers
+tool/
+dart_test.yaml

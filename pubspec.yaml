@@ -1,15 +1,26 @@
 name: open62541
-description: OPC UA stack, bindings to the open62541 library.
-version: 1.5.6-1
+description: >-
+  Dart FFI bindings to the open62541 OPC UA stack. Provides client and server
+  APIs for OPC UA over TCP, with subscriptions, custom types and mbedTLS encryption.
+version: 1.5.7
 repository: https://github.com/centroid-is/open62541_dart
+homepage: https://github.com/centroid-is/open62541_dart
+issue_tracker: https://github.com/centroid-is/open62541_dart/issues
 
 environment:
-  sdk: ^3.9.0
+  # Native build hooks (hook/build.dart) are stable only from Dart 3.10.
+  sdk: ^3.10.0
 dependencies:
   archive: ^4.0.7
   binarize: ^2.0.0
-  code_assets: ^1.0.0
+  # The build hook is compatible with code_assets 1.x and 2.x. Resolution
+  # currently lands on 1.x because native_toolchain_c (via
+  # native_toolchain_cmake) and ffigen have not yet migrated to code_assets
+  # 2.0.0's breaking Architecture/OS equality change; pub will pick 2.x
+  # automatically once they do.
+  code_assets: ">=1.0.0 <3.0.0"
   collection: ^1.19.0
+  crypto: ^3.0.0
   ffi: ^2.1.2
   hooks: ">=1.0.0 <3.0.0"
   http: ^1.6.0

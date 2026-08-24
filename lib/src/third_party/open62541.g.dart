@@ -41,7 +41,7 @@ external void UA_BrowseRequest_init(ffi.Pointer<UA_BrowseRequest> p);
 @ffi.Native<ffi.Pointer<UA_BrowseRequest> Function()>()
 external ffi.Pointer<UA_BrowseRequest> UA_BrowseRequest_new();
 
-/// amalgamated original file "2541-1.5.6/plugins/include/open62541/plugin/certificategroup_default.h"
+/// amalgamated original file "/src/plugins/include/open62541/plugin/certificategroup_default.h"
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_CertificateGroup>)>()
 external void UA_CertificateGroup_AcceptAll(ffi.Pointer<UA_CertificateGroup> certGroup);
 
@@ -52,7 +52,7 @@ external int UA_ClientConfig_setAuthenticationUsername(
   ffi.Pointer<ffi.Char> password,
 );
 
-/// amalgamated original file "2541-1.5.6/plugins/include/open62541/client_config_default.h"
+/// amalgamated original file "/src/plugins/include/open62541/client_config_default.h"
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig>)>()
 external int UA_ClientConfig_setDefault(ffi.Pointer<UA_ClientConfig> config);
 
@@ -1833,7 +1833,7 @@ final class UA_CertificateGroup extends ffi.Struct {
   external ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<UA_CertificateGroup> certGroup)>> clear;
 }
 
-/// amalgamated original file "2541-1.5.6/include/open62541/client.h"
+/// amalgamated original file "/src/include/open62541/client.h"
 final class UA_Client extends ffi.Opaque {}
 
 /// .. _client-config:
@@ -2647,7 +2647,7 @@ final class UA_EventFieldList extends ffi.Opaque {}
 
 final class UA_EventFilter extends ffi.Opaque {}
 
-/// amalgamated original file "2541-1.5.6/include/open62541/plugin/eventloop.h"
+/// amalgamated original file "/src/include/open62541/plugin/eventloop.h"
 final class UA_EventLoop extends ffi.Opaque {}
 
 enum UA_EventLoopState {
@@ -54897,7 +54897,7 @@ final class UA_NumericRange extends ffi.Struct {
 /// with a single element (min==max).
 final class UA_NumericRangeDimension extends ffi.Opaque {}
 
-const String UA_OPEN62541_VERSION = 'v1.5.6';
+const String UA_OPEN62541_VERSION = 'v1.5.7';
 
 const String UA_OPEN62541_VER_COMMIT = 'unknown-commit';
 
@@ -54907,7 +54907,7 @@ const int UA_OPEN62541_VER_MAJOR = 1;
 
 const int UA_OPEN62541_VER_MINOR = 5;
 
-const int UA_OPEN62541_VER_PATCH = 6;
+const int UA_OPEN62541_VER_PATCH = 7;
 
 enum UA_OpenFileMode {
   UA_OPENFILEMODE_READ(1),
@@ -56109,7 +56109,7 @@ enum UA_SecurityTokenRequestType {
   };
 }
 
-/// amalgamated original file "2541-1.5.6/include/open62541/util.h"
+/// amalgamated original file "/src/include/open62541/util.h"
 final class UA_Server extends ffi.Opaque {}
 
 /// .. _server-configuration:
