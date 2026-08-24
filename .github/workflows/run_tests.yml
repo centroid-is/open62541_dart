@@ -21,8 +21,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Set up Dart
         uses: dart-lang/setup-dart@v1.8.0
@@ -56,8 +54,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Set up Dart
         uses: dart-lang/setup-dart@v1.8.0
