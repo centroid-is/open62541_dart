@@ -1,17 +1,92 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:code_assets/code_assets.dart';
+import 'package:crypto/crypto.dart';
 import 'package:hooks/hooks.dart';
 import 'package:logging/logging.dart';
 import 'package:native_toolchain_cmake/native_toolchain_cmake.dart';
 import 'package:http/http.dart' as http;
 
+// ---------------------------------------------------------------------------
+// Pinned download checksums (supply-chain / reproducibility hardening).
+//
+// Every third-party source archive fetched by this hook is downloaded over
+// HTTPS and verified against a pinned SHA-256 before use. A mismatch fails the
+// build loudly instead of silently building tampered or unexpected sources.
+//
+// Bumping a version is a one-line change: add/replace the {version: sha256}
+// entry below (and, for open62541, the `version` string in main()).
+//
+// How to (re)generate a checksum for a version:
+//   open62541 (auto-generated GitHub source archive):
+//     curl -sL -o o62.zip \
+//       https://github.com/open62541/open62541/archive/<version>.zip
+//     sha256sum o62.zip
+//   mbedTLS (official release asset):
+//     curl -sL -o mbedtls.tar.bz2 \
+//       https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-<v>/mbedtls-<v>.tar.bz2
+//     sha256sum mbedtls.tar.bz2
+//
+// NOTE: The open62541 URL uses GitHub's *auto-generated* source archive
+// (/archive/<tag>.zip). GitHub has historically kept these byte-stable, but has
+// changed auto-generated archive bytes once before (Jan 2023). If a checksum
+// mismatch ever appears without an intentional version bump, re-verify against a
+// trusted source before updating the pin. The mbedTLS URL is an uploaded
+// release asset, which is immutable.
+// ---------------------------------------------------------------------------
+
+/// SHA-256 of the open62541 source archive, keyed by version tag.
+const Map<String, String> _open62541Sha256 = {
+  'v1.5.6': 'c142bd304f7f614f570a2b8ec0a618608bc22a94b43e4e477525829ba1c69641',
+};
+
+/// mbedTLS release version and the SHA-256 of its `.tar.bz2` release asset.
+const String _mbedtlsVersion = '3.6.5';
+const String _mbedtlsSha256 = '4a11f1777bb95bf4ad96721cac945a26e04bf19f57d905f241fe77ebeddf46d8';
+
+/// Downloads [url] over HTTPS and verifies the payload against
+/// [expectedSha256], returning the raw bytes.
+///
+/// Fails loudly (throws) when:
+///   - [url] is not HTTPS,
+///   - the HTTP request does not return 200, or
+///   - the SHA-256 of the downloaded bytes does not match [expectedSha256].
+Future<Uint8List> _downloadVerified(Uri url, {required String expectedSha256, required String what}) async {
+  if (url.scheme != 'https') {
+    throw Exception(
+      'Refusing to download $what over insecure scheme "${url.scheme}": $url '
+      '(HTTPS is required).',
+    );
+  }
+  final response = await http.get(url);
+  if (response.statusCode != 200) {
+    throw Exception('Error downloading $what: HTTP ${response.statusCode} from $url');
+  }
+  final bytes = response.bodyBytes;
+  final actual = sha256.convert(bytes).toString();
+  if (actual != expectedSha256.toLowerCase()) {
+    throw Exception(
+      'Checksum mismatch for $what downloaded from $url\n'
+      '  expected sha256: $expectedSha256\n'
+      '  actual   sha256: $actual\n'
+      'Refusing to build with an unverified artifact. If you intentionally '
+      'changed the version, update the pinned checksum in hook/build.dart.',
+    );
+  }
+  return bytes;
+}
+
 Future<Uri> _downloadMbedTLS(Uri baseDir) async {
   // Use short directory names to avoid Windows MAX_PATH (260 char) limit.
   // CMake TryCompile creates deeply nested paths inside the build directory.
   final extractDir = Directory.fromUri(baseDir.resolve('tls/'));
-  final url = 'https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.5/mbedtls-3.6.5.tar.bz2';
+  final url = Uri.parse(
+    'https://github.com/Mbed-TLS/mbedtls/releases/download/'
+    'mbedtls-$_mbedtlsVersion/mbedtls-$_mbedtlsVersion.tar.bz2',
+  );
 
   // Return early if already downloaded and renamed
   final srcDir = Directory.fromUri(extractDir.uri.resolve('src/'));
@@ -19,12 +94,9 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
     return srcDir.uri;
   }
 
-  final response = await http.get(Uri.parse(url));
-  if (response.statusCode != 200) {
-    throw Exception('Error downloading mbedTLS: ${response.statusCode}');
-  }
+  final bytes = await _downloadVerified(url, expectedSha256: _mbedtlsSha256, what: 'mbedTLS $_mbedtlsVersion');
 
-  final decompressed = BZip2Decoder().decodeBytes(response.bodyBytes);
+  final decompressed = BZip2Decoder().decodeBytes(bytes);
   final archive = TarDecoder().decodeBytes(decompressed);
 
   if (!await extractDir.exists()) {
@@ -50,6 +122,175 @@ String _targetKey(BuildInput input) {
   return '$os-$arch';
 }
 
+// ---------------------------------------------------------------------------
+// CMake build indirection.
+//
+// By default we drive CMake through the third-party `native_toolchain_cmake`
+// package. Setting OPEN62541_DIRECT_CMAKE=1 switches to an experimental path
+// that invokes `cmake` directly via `dart:io` `Process`, with no dependency on
+// `native_toolchain_cmake`. See [_runCmakeDirect] for scope and limitations.
+// ---------------------------------------------------------------------------
+
+/// Whether to use the experimental direct-`cmake`-via-`Process` build path
+/// ([_runCmakeDirect]) instead of `native_toolchain_cmake`.
+///
+/// IMPORTANT: `hooks_runner` invokes build hooks with a *filtered* environment
+/// (`includeParentEnvironment: false` plus a small static allowlist: PATH,
+/// HOME, ANDROID_HOME, TMPDIR, SYSTEMROOT, ...). Arbitrary variables such as
+/// `OPEN62541_DIRECT_CMAKE` are therefore NOT forwarded to the hook through a
+/// plain `dart test` / `dart build`. The env check below only takes effect on
+/// invocation paths that happen to forward it; to force the prototype on for
+/// local experimentation, temporarily change this getter to `return true;`.
+///
+/// (The pre-existing `ENABLE_SANITIZER` gate below is subject to the same
+/// hooks_runner env-filtering limitation.)
+bool get _directCmakeEnabled => Platform.environment['OPEN62541_DIRECT_CMAKE'] == '1';
+
+/// Configures + builds + installs a CMake project.
+///
+/// Routes to [_runCmakeDirect] when [_directCmakeEnabled], otherwise to
+/// `native_toolchain_cmake`'s [CMakeBuilder]. Both honor `CMAKE_INSTALL_PREFIX`
+/// passed in [defines], so callers pick up the install output the same way.
+///
+/// [buildDir] is only used by the direct path; [CMakeBuilder] manages its own
+/// build directory via `buildLocal`.
+Future<void> _buildCmakeProject({
+  required BuildInput input,
+  required BuildOutputBuilder output,
+  required Logger logger,
+  required String name,
+  required Uri sourceDir,
+  required Uri buildDir,
+  required Map<String, String?> defines,
+  required List<String> targets,
+}) async {
+  if (_directCmakeEnabled) {
+    logger.info('Building $name via direct cmake (OPEN62541_DIRECT_CMAKE=1)');
+    await _runCmakeDirect(
+      input: input,
+      sourceDir: sourceDir,
+      buildDir: buildDir,
+      defines: defines,
+      targets: targets,
+      logger: logger,
+    );
+    return;
+  }
+
+  final builder = CMakeBuilder.create(
+    name: name,
+    sourceDir: sourceDir,
+    buildMode: BuildMode.release,
+    generator: Generator.defaultGenerator,
+    defines: defines,
+    targets: targets,
+    buildLocal: true,
+    logger: logger,
+  );
+  await builder.run(input: input, output: output, logger: logger);
+}
+
+/// PROTOTYPE alternative to `native_toolchain_cmake`: drives `cmake` directly
+/// via `dart:io` `Process` (configure -> build -> install), using only the
+/// official `hooks` / `code_assets` APIs plus a `cmake` on PATH.
+///
+/// Enable with OPEN62541_DIRECT_CMAKE=1.
+///
+/// SCOPE: **host desktop builds only** (Linux / macOS / Windows building for
+/// the machine that runs the hook). It deliberately does NOT reimplement the
+/// cross-compilation toolchain handling that `native_toolchain_cmake` provides:
+///   * Android: NDK root discovery + `android.toolchain.cmake`, `ANDROID_ABI`,
+///     `ANDROID_PLATFORM` (API level). The hook input does not expose the NDK
+///     root directly; it must be derived from the compiler path or env vars.
+///   * iOS / macOS-cross: `ios.toolchain.cmake` (leetal/ios-cmake), `PLATFORM`,
+///     `DEPLOYMENT_TARGET`, device-vs-simulator SDK selection.
+///   * Windows: MSVC "vcvars" developer-environment injection. Here we rely on
+///     CMake's Visual Studio generator auto-detection instead, which works for
+///     host builds but has not been exercised in CI.
+///   * Linux-cross (arm64/riscv64): GNU cross toolchain files.
+///
+/// Do NOT make this the default until those paths are implemented and tested on
+/// every target platform. This exists to show the shape of a dependency-free
+/// build and to serve as an escape hatch if `native_toolchain_cmake` becomes
+/// unmaintained.
+Future<void> _runCmakeDirect({
+  required BuildInput input,
+  required Uri sourceDir,
+  required Uri buildDir,
+  required Map<String, String?> defines,
+  required List<String> targets,
+  required Logger logger,
+}) async {
+  final targetOS = input.config.code.targetOS;
+  final targetArch = input.config.code.targetArchitecture;
+
+  // Host-only guard: refuse to silently emit a wrong-arch/OS artifact.
+  if (targetOS != OS.current) {
+    throw UnsupportedError(
+      'OPEN62541_DIRECT_CMAKE is a host-build-only prototype; cross-compiling '
+      'to $targetOS is not implemented. Unset OPEN62541_DIRECT_CMAKE to use '
+      'native_toolchain_cmake.',
+    );
+  }
+
+  await Directory.fromUri(buildDir).create(recursive: true);
+  final srcPath = Directory.fromUri(sourceDir).absolute.path;
+  final buildPath = Directory.fromUri(buildDir).absolute.path;
+
+  // Configure. CMAKE_BUILD_TYPE / install prefix / all project options arrive
+  // via [defines]; callers already set them.
+  final configureArgs = <String>['-S', srcPath, '-B', buildPath];
+  if (targetOS == OS.windows) {
+    // Visual Studio generator architecture selection (-A).
+    final vsArch = switch (targetArch) {
+      Architecture.x64 => 'x64',
+      Architecture.arm64 => 'ARM64',
+      Architecture.ia32 => 'Win32',
+      _ => throw UnsupportedError('Unsupported Windows architecture: $targetArch'),
+    };
+    configureArgs.addAll(['-A', vsArch]);
+  }
+  defines.forEach((k, v) => configureArgs.add('-D$k=${v ?? '1'}'));
+  await _runProcess('cmake', configureArgs, buildDir, logger, 'cmake configure');
+
+  // Build + install.
+  final buildArgs = <String>[
+    '--build',
+    buildPath,
+    '--config',
+    'Release',
+    if (targets.isNotEmpty) '--target',
+    if (targets.isNotEmpty) ...targets,
+    '--parallel',
+  ];
+  await _runProcess('cmake', buildArgs, buildDir, logger, 'cmake build');
+}
+
+/// Runs [executable] with [arguments], streaming stdout/stderr to [logger] and
+/// throwing if it exits non-zero.
+Future<void> _runProcess(
+  String executable,
+  List<String> arguments,
+  Uri workingDirectory,
+  Logger logger,
+  String what,
+) async {
+  logger.info('[$what] $executable ${arguments.join(' ')}');
+  final process = await Process.start(
+    executable,
+    arguments,
+    workingDirectory: Directory.fromUri(workingDirectory).absolute.path,
+    runInShell: Platform.isWindows,
+  );
+  final stdoutDone = process.stdout.transform(utf8.decoder).transform(const LineSplitter()).forEach(logger.info);
+  final stderrDone = process.stderr.transform(utf8.decoder).transform(const LineSplitter()).forEach(logger.info);
+  final exitCode = await process.exitCode;
+  await Future.wait([stdoutDone, stderrDone]);
+  if (exitCode != 0) {
+    throw Exception('$what failed with exit code $exitCode');
+  }
+}
+
 Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger logger) async {
   final targetKey = _targetKey(input);
   final mbedtlsBase = input.outputDirectoryShared.resolve('tls/');
@@ -64,11 +305,13 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
 
   final sourceDir = await _downloadMbedTLS(input.outputDirectoryShared);
 
-  final builder = CMakeBuilder.create(
+  await _buildCmakeProject(
+    input: input,
+    output: output,
+    logger: logger,
     name: 'mbedtls',
     sourceDir: sourceDir,
-    buildMode: BuildMode.release,
-    generator: Generator.defaultGenerator,
+    buildDir: mbedtlsBase.resolve('b-$targetKey/'),
     defines: {
       'CMAKE_BUILD_TYPE': 'Release',
       'CMAKE_INSTALL_PREFIX': installPrefix.toFilePath(),
@@ -80,11 +323,7 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
       'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
     },
     targets: ['install'],
-    buildLocal: true,
-    logger: logger,
   );
-
-  await builder.run(input: input, output: output, logger: logger);
 
   return installPrefix;
 }
@@ -99,13 +338,19 @@ Future<Uri> download(Uri outputDirectory, String version) async {
     return srcDir.uri;
   }
 
+  final expectedSha256 = _open62541Sha256[version];
+  if (expectedSha256 == null) {
+    throw Exception(
+      'No pinned SHA-256 checksum for open62541 version "$version". '
+      'Add its checksum to _open62541Sha256 in hook/build.dart '
+      '(see the regeneration note at the top of the file).',
+    );
+  }
+
   // final url = Uri.parse('https://github.com/open62541/open62541/archive/refs/tags/$version.zip');
   final url = Uri.parse('https://github.com/open62541/open62541/archive/$version.zip');
-  final response = await http.get(url);
-  if (response.statusCode != 200) {
-    throw Exception('Error downloading open62541 version $version: ${response.statusCode}');
-  }
-  final archive = ZipDecoder().decodeBytes(response.bodyBytes);
+  final bytes = await _downloadVerified(url, expectedSha256: expectedSha256, what: 'open62541 $version');
+  final archive = ZipDecoder().decodeBytes(bytes);
 
   if (!await extractDir.exists()) {
     await extractDir.create(recursive: true);
@@ -185,11 +430,13 @@ Future<void> main(List<String> args) async {
 
     final sanitizer = Platform.environment['ENABLE_SANITIZER'] == '1';
 
-    final builder = CMakeBuilder.create(
+    await _buildCmakeProject(
+      input: input,
+      output: output,
+      logger: logger,
       name: name,
       sourceDir: extractedFiles,
-      buildMode: BuildMode.release,
-      generator: Generator.defaultGenerator,
+      buildDir: input.outputDirectory.resolve('b/'),
       defines: {
         'CMAKE_BUILD_TYPE': 'Release',
         'CMAKE_INSTALL_PREFIX': '${input.outputDirectory.toFilePath()}/install',
@@ -223,11 +470,7 @@ Future<void> main(List<String> args) async {
         if (sanitizer) 'CMAKE_SHARED_LINKER_FLAGS': '-fsanitize=address,undefined',
       },
       targets: ['install'],
-      buildLocal: true,
-      logger: logger,
     );
-
-    await builder.run(input: input, output: output, logger: logger);
 
     // manually add assets
     final libPath = switch (input.config.code.targetOS) {
