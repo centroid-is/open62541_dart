@@ -165,7 +165,7 @@ Future<void> _applyPatches(Uri sourceDir) async {
 }
 
 Future<void> main(List<String> args) async {
-  final version = "v1.5.6";
+  final version = "v1.5.7";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
     await _applyPatches(extractedFiles);
