@@ -38,15 +38,14 @@ Because of this you need a working C/C++ toolchain, **CMake**, and network
 access available at build time. The first build is slow; subsequent builds are
 cached.
 
-Native build hooks are a recent Dart feature. See
-[`PUBLISHING.md`](PUBLISHING.md) for the current state of publishing and
-consuming build-hook packages.
+Native build hooks are stable since Dart 3.10, so consumers need no experiment
+flag.
 
 ## Installation
 
 ```yaml
 dependencies:
-  open62541: ^1.5.6
+  open62541: ^1.5.7
 ```
 
 Then run `dart pub get` (allow extra time for the first native build).

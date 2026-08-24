@@ -18,6 +18,5 @@ doc/
 test/
 
 # Dev-only files not needed by consumers
-PUBLISHING.md
 tool/
 dart_test.yaml
