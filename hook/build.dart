@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -41,6 +40,7 @@ import 'package:http/http.dart' as http;
 /// SHA-256 of the open62541 source archive, keyed by version tag.
 const Map<String, String> _open62541Sha256 = {
   'v1.5.6': 'c142bd304f7f614f570a2b8ec0a618608bc22a94b43e4e477525829ba1c69641',
+  'v1.5.7': '79ded488caf7b8dc7f1ad1269d0142a80c47bab1d5725663f194f72ac8911a78',
 };
 
 /// mbedTLS release version and the SHA-256 of its `.tar.bz2` release asset.
@@ -122,61 +122,20 @@ String _targetKey(BuildInput input) {
   return '$os-$arch';
 }
 
-// ---------------------------------------------------------------------------
-// CMake build indirection.
-//
-// By default we drive CMake through the third-party `native_toolchain_cmake`
-// package. Setting OPEN62541_DIRECT_CMAKE=1 switches to an experimental path
-// that invokes `cmake` directly via `dart:io` `Process`, with no dependency on
-// `native_toolchain_cmake`. See [_runCmakeDirect] for scope and limitations.
-// ---------------------------------------------------------------------------
-
-/// Whether to use the experimental direct-`cmake`-via-`Process` build path
-/// ([_runCmakeDirect]) instead of `native_toolchain_cmake`.
+/// Configures + builds + installs a CMake project via `native_toolchain_cmake`.
 ///
-/// IMPORTANT: `hooks_runner` invokes build hooks with a *filtered* environment
-/// (`includeParentEnvironment: false` plus a small static allowlist: PATH,
-/// HOME, ANDROID_HOME, TMPDIR, SYSTEMROOT, ...). Arbitrary variables such as
-/// `OPEN62541_DIRECT_CMAKE` are therefore NOT forwarded to the hook through a
-/// plain `dart test` / `dart build`. The env check below only takes effect on
-/// invocation paths that happen to forward it; to force the prototype on for
-/// local experimentation, temporarily change this getter to `return true;`.
-///
-/// (The pre-existing `ENABLE_SANITIZER` gate below is subject to the same
-/// hooks_runner env-filtering limitation.)
-bool get _directCmakeEnabled => Platform.environment['OPEN62541_DIRECT_CMAKE'] == '1';
-
-/// Configures + builds + installs a CMake project.
-///
-/// Routes to [_runCmakeDirect] when [_directCmakeEnabled], otherwise to
-/// `native_toolchain_cmake`'s [CMakeBuilder]. Both honor `CMAKE_INSTALL_PREFIX`
-/// passed in [defines], so callers pick up the install output the same way.
-///
-/// [buildDir] is only used by the direct path; [CMakeBuilder] manages its own
-/// build directory via `buildLocal`.
+/// [CMakeBuilder] manages its own build directory via `buildLocal`, and honors
+/// `CMAKE_INSTALL_PREFIX` passed in [defines], so callers pick up the install
+/// output the same way.
 Future<void> _buildCmakeProject({
   required BuildInput input,
   required BuildOutputBuilder output,
   required Logger logger,
   required String name,
   required Uri sourceDir,
-  required Uri buildDir,
   required Map<String, String?> defines,
   required List<String> targets,
 }) async {
-  if (_directCmakeEnabled) {
-    logger.info('Building $name via direct cmake (OPEN62541_DIRECT_CMAKE=1)');
-    await _runCmakeDirect(
-      input: input,
-      sourceDir: sourceDir,
-      buildDir: buildDir,
-      defines: defines,
-      targets: targets,
-      logger: logger,
-    );
-    return;
-  }
-
   final builder = CMakeBuilder.create(
     name: name,
     sourceDir: sourceDir,
@@ -188,107 +147,6 @@ Future<void> _buildCmakeProject({
     logger: logger,
   );
   await builder.run(input: input, output: output, logger: logger);
-}
-
-/// PROTOTYPE alternative to `native_toolchain_cmake`: drives `cmake` directly
-/// via `dart:io` `Process` (configure -> build -> install), using only the
-/// official `hooks` / `code_assets` APIs plus a `cmake` on PATH.
-///
-/// Enable with OPEN62541_DIRECT_CMAKE=1.
-///
-/// SCOPE: **host desktop builds only** (Linux / macOS / Windows building for
-/// the machine that runs the hook). It deliberately does NOT reimplement the
-/// cross-compilation toolchain handling that `native_toolchain_cmake` provides:
-///   * Android: NDK root discovery + `android.toolchain.cmake`, `ANDROID_ABI`,
-///     `ANDROID_PLATFORM` (API level). The hook input does not expose the NDK
-///     root directly; it must be derived from the compiler path or env vars.
-///   * iOS / macOS-cross: `ios.toolchain.cmake` (leetal/ios-cmake), `PLATFORM`,
-///     `DEPLOYMENT_TARGET`, device-vs-simulator SDK selection.
-///   * Windows: MSVC "vcvars" developer-environment injection. Here we rely on
-///     CMake's Visual Studio generator auto-detection instead, which works for
-///     host builds but has not been exercised in CI.
-///   * Linux-cross (arm64/riscv64): GNU cross toolchain files.
-///
-/// Do NOT make this the default until those paths are implemented and tested on
-/// every target platform. This exists to show the shape of a dependency-free
-/// build and to serve as an escape hatch if `native_toolchain_cmake` becomes
-/// unmaintained.
-Future<void> _runCmakeDirect({
-  required BuildInput input,
-  required Uri sourceDir,
-  required Uri buildDir,
-  required Map<String, String?> defines,
-  required List<String> targets,
-  required Logger logger,
-}) async {
-  final targetOS = input.config.code.targetOS;
-  final targetArch = input.config.code.targetArchitecture;
-
-  // Host-only guard: refuse to silently emit a wrong-arch/OS artifact.
-  if (targetOS != OS.current) {
-    throw UnsupportedError(
-      'OPEN62541_DIRECT_CMAKE is a host-build-only prototype; cross-compiling '
-      'to $targetOS is not implemented. Unset OPEN62541_DIRECT_CMAKE to use '
-      'native_toolchain_cmake.',
-    );
-  }
-
-  await Directory.fromUri(buildDir).create(recursive: true);
-  final srcPath = Directory.fromUri(sourceDir).absolute.path;
-  final buildPath = Directory.fromUri(buildDir).absolute.path;
-
-  // Configure. CMAKE_BUILD_TYPE / install prefix / all project options arrive
-  // via [defines]; callers already set them.
-  final configureArgs = <String>['-S', srcPath, '-B', buildPath];
-  if (targetOS == OS.windows) {
-    // Visual Studio generator architecture selection (-A).
-    final vsArch = switch (targetArch) {
-      Architecture.x64 => 'x64',
-      Architecture.arm64 => 'ARM64',
-      Architecture.ia32 => 'Win32',
-      _ => throw UnsupportedError('Unsupported Windows architecture: $targetArch'),
-    };
-    configureArgs.addAll(['-A', vsArch]);
-  }
-  defines.forEach((k, v) => configureArgs.add('-D$k=${v ?? '1'}'));
-  await _runProcess('cmake', configureArgs, buildDir, logger, 'cmake configure');
-
-  // Build + install.
-  final buildArgs = <String>[
-    '--build',
-    buildPath,
-    '--config',
-    'Release',
-    if (targets.isNotEmpty) '--target',
-    if (targets.isNotEmpty) ...targets,
-    '--parallel',
-  ];
-  await _runProcess('cmake', buildArgs, buildDir, logger, 'cmake build');
-}
-
-/// Runs [executable] with [arguments], streaming stdout/stderr to [logger] and
-/// throwing if it exits non-zero.
-Future<void> _runProcess(
-  String executable,
-  List<String> arguments,
-  Uri workingDirectory,
-  Logger logger,
-  String what,
-) async {
-  logger.info('[$what] $executable ${arguments.join(' ')}');
-  final process = await Process.start(
-    executable,
-    arguments,
-    workingDirectory: Directory.fromUri(workingDirectory).absolute.path,
-    runInShell: Platform.isWindows,
-  );
-  final stdoutDone = process.stdout.transform(utf8.decoder).transform(const LineSplitter()).forEach(logger.info);
-  final stderrDone = process.stderr.transform(utf8.decoder).transform(const LineSplitter()).forEach(logger.info);
-  final exitCode = await process.exitCode;
-  await Future.wait([stdoutDone, stderrDone]);
-  if (exitCode != 0) {
-    throw Exception('$what failed with exit code $exitCode');
-  }
 }
 
 Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger logger) async {
@@ -311,7 +169,6 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
     logger: logger,
     name: 'mbedtls',
     sourceDir: sourceDir,
-    buildDir: mbedtlsBase.resolve('b-$targetKey/'),
     defines: {
       'CMAKE_BUILD_TYPE': 'Release',
       'CMAKE_INSTALL_PREFIX': installPrefix.toFilePath(),
@@ -436,7 +293,6 @@ Future<void> main(List<String> args) async {
       logger: logger,
       name: name,
       sourceDir: extractedFiles,
-      buildDir: input.outputDirectory.resolve('b/'),
       defines: {
         'CMAKE_BUILD_TYPE': 'Release',
         'CMAKE_INSTALL_PREFIX': '${input.outputDirectory.toFilePath()}/install',
@@ -472,13 +328,14 @@ Future<void> main(List<String> args) async {
       targets: ['install'],
     );
 
-    // manually add assets
-    final libPath = switch (input.config.code.targetOS) {
-      OS.linux => "install/lib/libopen62541.so",
-      OS.macOS => "install/lib/libopen62541.dylib",
-      OS.windows => "install/bin/open62541.dll",
-      OS.android => "install/lib/libopen62541.so",
-      OS.iOS => "install/lib/libopen62541.dylib",
+    // Manually add assets. Switch on OS.name (a String with primitive
+    // equality) rather than on the OS constants directly: code_assets 2.x
+    // overrides OS.== / OS.hashCode, which makes the OS values illegal as
+    // constant switch patterns. Keying on the name works on both 1.x and 2.x.
+    final libPath = switch (input.config.code.targetOS.name) {
+      'linux' || 'android' => "install/lib/libopen62541.so",
+      'macos' || 'ios' => "install/lib/libopen62541.dylib",
+      'windows' => "install/bin/open62541.dll",
       _ => throw UnsupportedError("Unsupported OS"),
     };
     output.assets.code.add(
