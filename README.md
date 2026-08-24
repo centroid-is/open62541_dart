@@ -100,43 +100,45 @@ More examples are in the [`example/`](example/) directory: a minimal client
 The sections below are only relevant if you are hacking on the package itself
 (for example regenerating the FFI bindings), not for normal use.
 
-### Building open62541 manually
-
-```bash
-mkdir open62541_build
-cd open62541_build
-cmake ../open62541/ -DBUILD_SHARED_LIBS=ON -DUA_ENABLE_INLINABLE_EXPORT=ON \
-  -DCMAKE_INSTALL_PREFIX=install -DUA_BUILD_EXAMPLES=OFF \
-  -DUA_BUILD_UNIT_TESTS=OFF -DUA_ENABLE_AMALGAMATION=ON -DUA_MULTITHREADING=0
-make
-```
-
-`-DUA_ENABLE_INLINABLE_EXPORT=ON` is required so that methods are not exported as
-`static inline` (otherwise the functions are skipped by the bindings generator).
-Optionally set `-DUA_LOGLEVEL=100` to control the log level (600 Fatal, 500
-Error, 400 Warning, 300 Info, 200 Debug, 100 Trace).
-
 ### Regenerating the bindings
 
-After building, copy the generated header and regenerate:
+The native library is built automatically by `hook/build.dart`, which downloads a
+pinned open62541 source archive and builds it with CMake (amalgamation enabled,
+so it also produces a single `open62541.h`). You do **not** need to build
+open62541 by hand for normal use.
+
+To regenerate the FFI bindings (for example after bumping the open62541 version),
+build once, then copy the amalgamated header the hook produced and run the
+generator:
 
 ```bash
-cp .dart_tool/hooks_runner/shared/open62541/build/download/open62541-includes/build/linux/x64/open62541.h third_party/open62541/open62541.h
+dart test test/verify_version_test.dart   # triggers the hook build
+
+# Locate the amalgamated header (the path is OS/arch-specific):
+find .dart_tool/hooks_runner -name open62541.h
+# e.g. on macOS/arm64:
+cp .dart_tool/hooks_runner/shared/open62541/build/dl/src/build/macos/arm64/open62541.h \
+   third_party/open62541/open62541.h
+
 bash open62541_tooling/patch_header.sh
-CPATH="/usr/lib/clang/21/include:/usr/include" dart run tool/ffigen.dart
+dart run tool/ffigen.dart
 ```
 
-The header patch removes the bitfields from `UA_DiagnosticsInfo`,
-`UA_DataValue`, `UA_DataTypeMember` and `UA_DataType`, replacing them with a
-single byte (the struct size is unchanged).
+`ffigen` needs libclang; on some Linux setups you may need to prefix the last
+command with `CPATH=/usr/lib/clang/<version>/include:/usr/include`.
+
+The header patch removes the bitfields from `UA_DiagnosticInfo`, `UA_DataValue`,
+`UA_DataTypeMember` and `UA_DataType`, replacing each with a single field (the
+struct size is unchanged) so the generator does not drop the surrounding members.
 
 ### Known limitations
 
-- Monitoring a structure with a multi-dimensional array member yields an empty
-  array.
-- Descriptions of structure fields are not propagated.
-- `monitoredItemCreate<List<dynamic>>` must be used instead of a concrete
-  element type such as `List<int>`.
+- A multi-dimensional array that is a **member of a structure** is not modeled and
+  decodes as an empty array. (Top-level multi-dimensional arrays are supported.)
+- Structure-field descriptions are not carried over the wire by open62541
+  (v1.5.x), so they do not surface from a remote server. For an in-process Dart
+  `Server` + `Client`, descriptions are restored from the locally registered
+  schema.
 
 ## License
 
