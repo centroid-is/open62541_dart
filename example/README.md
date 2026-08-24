@@ -39,4 +39,3 @@ directory:
 ```bash
 dart run example/resilient_client.dart opc.tcp://localhost:4840 [username] [password]
 ```
-</content>

@@ -187,4 +187,27 @@ No source code under `lib/` was changed.
 8. **Publish (human):** `dart pub publish` and authenticate in the browser.
 9. **Post-publish:** check the live pub.dev page — pub points, the platform tags,
    and that the README/example render correctly.
-</content>
+
+## Known limitation: code_assets 2.x adoption is blocked upstream
+
+The build hook (`hook/build.dart`) is written to be compatible with both
+`code_assets` 1.x and 2.x (it keys OS handling on `OS.name`, a `String` with
+primitive equality, rather than on the `OS` constants). `hooks` already resolves
+to 2.x (2.2.0). However, the dependency solver keeps `code_assets` on 1.x
+(1.2.1) today, and forcing `code_assets: 2.0.0` fails the native build with
+"Generating kernel failed" / `The key 'Architecture {name: "arm64"}' does not
+have a primitive equality`.
+
+Cause: `code_assets` 2.0.0 overrode `==`/`hashCode` on `OS`/`Architecture`
+(a breaking change), and two upstream packages still use those types as `const`
+map/set keys and therefore fail to compile against 2.0.0:
+
+- `ffigen` 21.0.0 (latest) — its `hook/build.dart`, and it also caps
+  `code_assets` at `^1.1.0`, so 2.x cannot even resolve while ffigen is present.
+- `native_toolchain_c` 0.19.3 (pulled in transitively by
+  `native_toolchain_cmake`).
+
+Action: once `ffigen` and `native_toolchain_c`/`native_toolchain_cmake` publish
+`code_assets` 2.x-compatible releases, no code change is needed here — the
+existing `code_assets: ">=1.0.0 <3.0.0"` constraint will pick up 2.x
+automatically. Re-run a full native build on every target before relying on it.
