@@ -1,0 +1,4 @@
+# Patch files must stay LF so `git apply` works on Windows checkouts
+# (core.autocrlf would otherwise convert them to CRLF and the LF open62541
+# source would no longer match — "patch does not apply").
+*.patch text eol=lf

@@ -376,42 +376,70 @@ Future<void> _patchBoundedSend(Uri sourceDir, Uri packageRoot) async {
 /// is present we fail with an explicit, actionable message.
 Future<void> _applyUnifiedDiff({required Uri sourceDir, required File patchFile, required String what}) async {
   final workingDirectory = sourceDir.toFilePath();
-  final patchPath = patchFile.absolute.path;
 
-  // Preferred path: `git apply`.
-  final gitCheck = await _tryRun('git', ['apply', '--check', '-p1', patchPath], workingDirectory);
-  if (gitCheck != null) {
-    if (gitCheck.exitCode != 0) {
+  // Apply an LF-normalized COPY of the patch. On a Windows checkout with
+  // core.autocrlf=true the committed .patch file becomes CRLF, but the extracted
+  // open62541 source is always LF — mismatched line endings make `git apply`
+  // fail with "patch does not apply". Normalizing to LF here fixes it on every
+  // platform regardless of how the file was checked out. (A .gitattributes rule
+  // also keeps the committed patch LF; this is belt-and-suspenders and also
+  // covers `patch` consumers.)
+  final normalized = patchFile.readAsStringSync().replaceAll('\r\n', '\n');
+  final tmpDir = Directory.systemTemp.createTempSync('o62_patch_');
+  try {
+    final patchPath = (File('${tmpDir.path}/$what.patch')..writeAsStringSync(normalized)).absolute.path;
+
+    // Preferred path: `git apply` (--ignore-whitespace adds tolerance).
+    final gitCheck = await _tryRun('git', [
+      'apply',
+      '--check',
+      '--ignore-whitespace',
+      '-p1',
+      patchPath,
+    ], workingDirectory);
+    if (gitCheck != null) {
+      if (gitCheck.exitCode != 0) {
+        throw Exception(
+          'Cannot apply $what patch: `git apply --check` failed (exit '
+          '${gitCheck.exitCode}). The extracted open62541 source no longer matches '
+          '${patchFile.path} — an upstream version bump likely changed its shape; '
+          're-verify and regenerate the patch.\n${gitCheck.stderr}',
+        );
+      }
+      final applied = await _tryRun('git', [
+        'apply',
+        '--verbose',
+        '--ignore-whitespace',
+        '-p1',
+        patchPath,
+      ], workingDirectory);
+      if (applied == null || applied.exitCode != 0) {
+        throw Exception(
+          'Cannot apply $what patch: `git apply` failed (exit '
+          '${applied?.exitCode}).\n${applied?.stderr}',
+        );
+      }
+      return;
+    }
+
+    // Fallback: POSIX `patch -p1` when git is unavailable.
+    final patched = await _tryRun('patch', ['-p1', '-i', patchPath], workingDirectory);
+    if (patched == null) {
       throw Exception(
-        'Cannot apply $what patch: `git apply --check` failed (exit '
-        '${gitCheck.exitCode}). The extracted open62541 source no longer matches '
-        '$patchPath — an upstream version bump likely changed its shape; '
-        're-verify and regenerate the patch.\n${gitCheck.stderr}',
+        'Cannot apply $what patch: neither `git` nor `patch` is available on PATH. '
+        'Install git (recommended) or a patch tool to build this package.',
       );
     }
-    final applied = await _tryRun('git', ['apply', '--verbose', '-p1', patchPath], workingDirectory);
-    if (applied == null || applied.exitCode != 0) {
+    if (patched.exitCode != 0) {
       throw Exception(
-        'Cannot apply $what patch: `git apply` failed (exit '
-        '${applied?.exitCode}).\n${applied?.stderr}',
+        'Cannot apply $what patch: `patch -p1` failed (exit ${patched.exitCode}).\n'
+        'stdout: ${patched.stdout}\nstderr: ${patched.stderr}',
       );
     }
-    return;
-  }
-
-  // Fallback: POSIX `patch -p1` when git is unavailable.
-  final patched = await _tryRun('patch', ['-p1', '-i', patchPath], workingDirectory);
-  if (patched == null) {
-    throw Exception(
-      'Cannot apply $what patch: neither `git` nor `patch` is available on PATH. '
-      'Install git (recommended) or a patch tool to build this package.',
-    );
-  }
-  if (patched.exitCode != 0) {
-    throw Exception(
-      'Cannot apply $what patch: `patch -p1` failed (exit ${patched.exitCode}).\n'
-      'stdout: ${patched.stdout}\nstderr: ${patched.stderr}',
-    );
+  } finally {
+    try {
+      tmpDir.deleteSync(recursive: true);
+    } catch (_) {}
   }
 }
 
