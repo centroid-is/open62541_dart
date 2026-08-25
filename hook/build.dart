@@ -229,13 +229,14 @@ Future<Uri> download(Uri outputDirectory, String version) async {
   return srcDir.uri;
 }
 
-/// Applies every open62541 source patch this package carries. Each patch is
-/// anchored on stable surrounding source text, verifies it applies to exactly
-/// one location, and fails the build loudly if its anchor is missing — so a
-/// future open62541 version bump cannot silently drop a fix.
-Future<void> _applyPatches(Uri sourceDir) async {
+/// Applies every open62541 source patch this package carries against the
+/// freshly extracted source tree at [sourceDir]. Patch files live under
+/// `[packageRoot]/hook/`. Each patch is anchored on stable surrounding source
+/// text and fails the build loudly if it cannot be applied — so a future
+/// open62541 version bump cannot silently drop a fix.
+Future<void> _applyPatches(Uri sourceDir, Uri packageRoot) async {
   await _patchSubscriptionCleanup(sourceDir);
-  await _patchBoundedSend(sourceDir);
+  await _patchBoundedSend(sourceDir, packageRoot);
 }
 
 /// OPC UA Part 4, 5.13.5, Table 95: when BadNoSubscription arrives with
@@ -302,97 +303,133 @@ Future<void> _patchSubscriptionCleanup(Uri sourceDir) async {
 /// freezes the whole isolate: state queries, monitored items and even
 /// `disconnect` are never processed again.
 ///
-/// This patch adds a monotonic wall-clock deadline to the retry loop. When the
-/// socket cannot be written for longer than [UA62541_DART_SEND_DEADLINE_MS] the
+/// This fix adds a monotonic wall-clock deadline to the retry loop. When the
+/// socket cannot be written for longer than `UA62541_DART_SEND_DEADLINE_MS` the
 /// send is treated as a dead connection (`goto shutdown`), exactly like any
 /// other unrecoverable send error: `UA_Client_run_iterate` returns,
 /// `connectStatus` goes bad, and the existing `keepConnected` supervisor
 /// reconnects — with no isolate killed and no leaked `UA_Client`. The deadline
 /// is wall-clock and independent of what poll reports, so it fixes every
 /// platform including the Windows WSAPoll case.
-Future<void> _patchBoundedSend(Uri sourceDir) async {
+///
+/// The change ships as a unified-diff patch file,
+/// `hook/bounded_send_deadline.patch`, applied here with a standard patch tool
+/// (`git apply`, falling back to `patch`). See [_applyUnifiedDiff]. The
+/// patched loop uses two symbols (`UA_DateTime_nowMonotonic`, `UA_DATETIME_MSEC`)
+/// both declared in open62541/types.h, which this translation unit includes
+/// directly.
+Future<void> _patchBoundedSend(Uri sourceDir, Uri packageRoot) async {
   final targetFile = File.fromUri(sourceDir.resolve('arch/posix/eventloop_posix_tcp.c'));
   if (!await targetFile.exists()) {
     throw Exception('Cannot apply bounded-send patch: eventloop_posix_tcp.c not found under $sourceDir');
   }
 
-  var content = await targetFile.readAsString();
+  // Idempotent: the patch injects a uniquely-named compile-time constant. If it
+  // is already present the source is patched (e.g. a warm shared source dir
+  // reused across builds), so there is nothing to do.
+  if ((await targetFile.readAsString()).contains('UA62541_DART_SEND_DEADLINE_MS')) {
+    return;
+  }
 
-  // Already patched?
-  if (content.contains('UA62541_DART_SEND_DEADLINE_MS')) return;
-
-  // Anchor on the exact unbounded send-retry loop. Both symbols the patch uses
-  // (UA_DateTime_nowMonotonic, UA_DATETIME_MSEC) are declared in
-  // open62541/types.h, which this translation unit includes directly.
-  const original = '''                /* Poll for the socket resources to become available and retry
-                 * (blocking) */
-                int poll_ret;
-                do {
-                    UA_RESET_ERRNO;
-                    poll_ret = UA_poll(&tmp_poll_fd, 1, 100);
-                    if(poll_ret < 0 && UA_ERRNO != UA_INTERRUPTED)
-                        goto shutdown;
-                } while(poll_ret <= 0);''';
-
-  const patched = '''                /* Poll for the socket resources to become available and retry.
-                 *
-                 * open62541_dart patch (bounded-send-fix): the upstream loop has
-                 * no overall deadline — it bounds each single UA_poll to 100 ms
-                 * but spins `while(poll_ret <= 0)` forever. On a dead / half-open
-                 * peer whose OS send buffer has filled and never drains (POLLOUT
-                 * never arrives; on Windows WSAPoll never reports POLLHUP/POLLERR
-                 * for a peer gone without RST) this call — reached from
-                 * UA_Client_run_iterate on the Dart client isolate's single
-                 * event-loop thread — never returns, wedging the whole isolate.
-                 * We add a monotonic wall-clock deadline: once the socket has
-                 * been unwritable for longer than UA62541_DART_SEND_DEADLINE_MS
-                 * we treat it as a dead connection and `goto shutdown`, exactly
-                 * as any other unrecoverable send error would. run_iterate then
-                 * returns, connectStatus goes bad, and the Dart-side
-                 * keepConnected supervisor reconnects. The deadline is wall-clock
-                 * and independent of what poll reports, so it fixes every
-                 * platform including the Windows WSAPoll case.
-                 *
-                 * Default 5000 ms: long enough not to trip a legitimately slow
-                 * but alive send (TCP retransmit backoff, a briefly congested
-                 * link), short enough that a genuinely dead channel is torn down
-                 * and reconnected promptly. This lives deep in the C event loop,
-                 * so it is a compile-time constant — not runtime/Dart-tunable and
-                 * not an env var (the build hook forwards no arbitrary env to the
-                 * compiler). */
-                #define UA62541_DART_SEND_DEADLINE_MS 5000
-                int poll_ret;
-                UA_DateTime ua62541DartSendDeadline =
-                    UA_DateTime_nowMonotonic() +
-                    (UA_DateTime)UA62541_DART_SEND_DEADLINE_MS * UA_DATETIME_MSEC;
-                do {
-                    UA_RESET_ERRNO;
-                    poll_ret = UA_poll(&tmp_poll_fd, 1, 100);
-                    if(poll_ret < 0 && UA_ERRNO != UA_INTERRUPTED)
-                        goto shutdown;
-                    if(poll_ret <= 0 &&
-                       UA_DateTime_nowMonotonic() > ua62541DartSendDeadline)
-                        goto shutdown; /* send deadline exceeded: dead connection */
-                } while(poll_ret <= 0);''';
-
-  final matches = original.allMatches(content).length;
-  if (matches != 1) {
+  final patchFile = File.fromUri(packageRoot.resolve('hook/bounded_send_deadline.patch'));
+  if (!await patchFile.exists()) {
     throw Exception(
-      'Cannot apply bounded-send patch: expected exactly 1 occurrence of the '
-      'send-retry loop in eventloop_posix_tcp.c, found $matches. The upstream '
-      'source changed shape — re-verify and update the anchor before shipping, '
-      'otherwise the client-isolate wedge fix would be silently dropped.',
+      'Cannot apply bounded-send patch: patch file not found at ${patchFile.path}. '
+      'It must ship with the package (check .pubignore does not exclude hook/).',
     );
   }
-  content = content.replaceFirst(original, patched);
-  await targetFile.writeAsString(content);
+
+  await _applyUnifiedDiff(sourceDir: sourceDir, patchFile: patchFile, what: 'bounded-send');
+
+  // Belt-and-suspenders: confirm the fix actually landed, so a patch tool that
+  // exits 0 without applying (should never happen) still fails the build loudly
+  // rather than silently shipping the wedge.
+  if (!(await targetFile.readAsString()).contains('UA62541_DART_SEND_DEADLINE_MS')) {
+    throw Exception(
+      'bounded-send patch tool reported success but UA62541_DART_SEND_DEADLINE_MS '
+      'is absent from eventloop_posix_tcp.c — refusing to ship the client-isolate '
+      'wedge. The upstream source likely changed shape; re-verify the patch.',
+    );
+  }
+}
+
+/// Applies the unified-diff [patchFile] to the extracted source tree rooted at
+/// [sourceDir] using a standard patch tool, and fails the build loudly on any
+/// non-zero exit.
+///
+/// Preference order:
+///   1. `git apply -p1` — works on a plain (non-repo) extracted directory and
+///      is the most predictable. `-p1` strips the leading `a/`/`b/` component
+///      from the diff headers so the hunk lands on
+///      `<sourceDir>/arch/posix/eventloop_posix_tcp.c`. A `git apply --check`
+///      runs first; a non-zero check means the source no longer matches the
+///      diff (an upstream version bump changed its shape), which is a hard
+///      error — we do NOT silently fall through to another tool that would just
+///      fail again with a murkier message.
+///   2. `patch -p1` — used only when `git` is not on PATH at all.
+///
+/// TRADE-OFF: applying with an external tool adds a build-time dependency on
+/// `git` (or `patch`) on the *consumer's* machine, which the previous in-Dart
+/// string surgery did not need. In practice git is near-ubiquitous wherever a
+/// native build runs — it sits alongside cmake and a C toolchain, and on Windows
+/// it ships with Git-for-Windows (which also provides `patch`). If neither tool
+/// is present we fail with an explicit, actionable message.
+Future<void> _applyUnifiedDiff({required Uri sourceDir, required File patchFile, required String what}) async {
+  final workingDirectory = sourceDir.toFilePath();
+  final patchPath = patchFile.absolute.path;
+
+  // Preferred path: `git apply`.
+  final gitCheck = await _tryRun('git', ['apply', '--check', '-p1', patchPath], workingDirectory);
+  if (gitCheck != null) {
+    if (gitCheck.exitCode != 0) {
+      throw Exception(
+        'Cannot apply $what patch: `git apply --check` failed (exit '
+        '${gitCheck.exitCode}). The extracted open62541 source no longer matches '
+        '$patchPath — an upstream version bump likely changed its shape; '
+        're-verify and regenerate the patch.\n${gitCheck.stderr}',
+      );
+    }
+    final applied = await _tryRun('git', ['apply', '--verbose', '-p1', patchPath], workingDirectory);
+    if (applied == null || applied.exitCode != 0) {
+      throw Exception(
+        'Cannot apply $what patch: `git apply` failed (exit '
+        '${applied?.exitCode}).\n${applied?.stderr}',
+      );
+    }
+    return;
+  }
+
+  // Fallback: POSIX `patch -p1` when git is unavailable.
+  final patched = await _tryRun('patch', ['-p1', '-i', patchPath], workingDirectory);
+  if (patched == null) {
+    throw Exception(
+      'Cannot apply $what patch: neither `git` nor `patch` is available on PATH. '
+      'Install git (recommended) or a patch tool to build this package.',
+    );
+  }
+  if (patched.exitCode != 0) {
+    throw Exception(
+      'Cannot apply $what patch: `patch -p1` failed (exit ${patched.exitCode}).\n'
+      'stdout: ${patched.stdout}\nstderr: ${patched.stderr}',
+    );
+  }
+}
+
+/// Runs [executable] with [arguments] in [workingDirectory], returning its
+/// [ProcessResult], or `null` if the executable is not found on PATH.
+Future<ProcessResult?> _tryRun(String executable, List<String> arguments, String workingDirectory) async {
+  try {
+    return await Process.run(executable, arguments, workingDirectory: workingDirectory);
+  } on ProcessException {
+    return null; // executable not installed / not on PATH
+  }
 }
 
 Future<void> main(List<String> args) async {
   final version = "v1.5.7";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
-    await _applyPatches(extractedFiles);
+    await _applyPatches(extractedFiles, input.packageRoot);
 
     final name = 'open62541';
     final logger = Logger('')

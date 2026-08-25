@@ -15,14 +15,18 @@ changes that ship the same native library version.
   WSAPoll never reports `POLLHUP`/`POLLERR` for a peer gone without RST), so the
   call — made synchronously from `UA_Client_run_iterate` on the client isolate's
   single event-loop thread — never returns and freezes the whole isolate. The
-  patch (`hook/build.dart` `_patchBoundedSend`) adds a monotonic wall-clock
-  deadline (compile-time constant `UA62541_DART_SEND_DEADLINE_MS`, default
-  5000 ms): on timeout the send is treated as a dead connection and shuts down
-  exactly like any other send error, so `run_iterate` returns, `connectStatus`
-  goes bad, and the existing `keepConnected` supervisor reconnects — no isolate
-  killed, no `UA_Client` leaked. The deadline is wall-clock and independent of
-  what poll reports, so it fixes every platform including the Windows WSAPoll
-  case. Bundled open62541 is unchanged (still v1.5.7); this is a binding-only
+  fix adds a monotonic wall-clock deadline (compile-time constant
+  `UA62541_DART_SEND_DEADLINE_MS`, default 5000 ms): on timeout the send is
+  treated as a dead connection and shuts down exactly like any other send error,
+  so `run_iterate` returns, `connectStatus` goes bad, and the existing
+  `keepConnected` supervisor reconnects — no isolate killed, no `UA_Client`
+  leaked. The deadline is wall-clock and independent of what poll reports, so it
+  fixes every platform including the Windows WSAPoll case. The change ships as a
+  unified-diff patch file (`hook/bounded_send_deadline.patch`) that the build
+  hook applies to the extracted open62541 source with a standard patch tool
+  (`git apply -p1`, falling back to `patch -p1`); a missing patch file, a
+  missing target file, or a non-zero exit from the patch tool fails the build
+  loudly. Bundled open62541 is unchanged (still v1.5.7); this is a binding-only
   build change.
 
 ## 1.5.7+1
