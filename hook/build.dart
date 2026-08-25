@@ -229,19 +229,31 @@ Future<Uri> download(Uri outputDirectory, String version) async {
   return srcDir.uri;
 }
 
+/// Applies every open62541 source patch this package carries. Each patch is
+/// anchored on stable surrounding source text, verifies it applies to exactly
+/// one location, and fails the build loudly if its anchor is missing — so a
+/// future open62541 version bump cannot silently drop a fix.
 Future<void> _applyPatches(Uri sourceDir) async {
+  await _patchSubscriptionCleanup(sourceDir);
+  await _patchBoundedSend(sourceDir);
+}
+
+/// OPC UA Part 4, 5.13.5, Table 95: when BadNoSubscription arrives with
+/// subscriptionId == 0, clean ALL client-side subscriptions so that
+/// deleteCallback fires for each.
+Future<void> _patchSubscriptionCleanup(Uri sourceDir) async {
   final targetFile = File.fromUri(sourceDir.resolve('src/client/ua_client_subscriptions.c'));
-  if (!await targetFile.exists()) return;
+  if (!await targetFile.exists()) {
+    throw Exception('Cannot apply subscription patch: ua_client_subscriptions.c not found under $sourceDir');
+  }
 
   var content = await targetFile.readAsString();
 
   // Already patched?
   if (content.contains('Clean up all client-side subscriptions')) return;
 
-  // OPC UA Part 4, 5.13.5, Table 95: when BadNoSubscription arrives with
-  // subscriptionId == 0, clean ALL client-side subscriptions so that
-  // deleteCallback fires for each. Anchored on the v1.5.x BadNoSubscription
-  // case in the PublishResponse handler.
+  // Anchored on the v1.5.x BadNoSubscription case in the PublishResponse
+  // handler.
   const original = '''        UA_LOG_DEBUG(client->config.logging, UA_LOGCATEGORY_CLIENT,
                      "PublishResponse: Received BadNoSubscription status");
         return;''';
@@ -259,8 +271,118 @@ Future<void> _applyPatches(Uri sourceDir) async {
         }
         return;''';
 
-  if (!content.contains(original)) {
-    throw Exception('Cannot apply subscription patch: expected code not found');
+  final matches = original.allMatches(content).length;
+  if (matches != 1) {
+    throw Exception(
+      'Cannot apply subscription patch: expected exactly 1 occurrence of the '
+      'BadNoSubscription anchor in ua_client_subscriptions.c, found $matches. '
+      'The upstream source changed shape — re-verify and update the anchor.',
+    );
+  }
+  content = content.replaceFirst(original, patched);
+  await targetFile.writeAsString(content);
+}
+
+/// Bounds the blocking send-retry loop in the POSIX/WinSock TCP connection
+/// manager so a dead secured connection can no longer wedge the client isolate.
+///
+/// ROOT CAUSE (bounded-send-fix; bench evidence tfc-hmi #345/#346):
+/// `TCP_sendWithConnection` in `arch/posix/eventloop_posix_tcp.c` uses a
+/// non-blocking socket, but when `UA_send` returns EWOULDBLOCK (the OS send
+/// buffer is full and cannot drain because the peer stopped ACKing — a
+/// half-open / CloseWait socket) it enters
+///
+///     do { poll_ret = UA_poll(&fd, 1, 100); ... } while(poll_ret <= 0);
+///
+/// with NO overall deadline: the 100 ms only bounds a single poll. On a dead
+/// peer POLLOUT never becomes ready (and on Windows, WSAPoll never reports
+/// POLLHUP/POLLERR for a peer gone without RST), so the loop spins forever
+/// *inside* `UA_Client_run_iterate`. Because the Dart client isolate drives
+/// open62541 from its single event-loop thread, that one synchronous FFI call
+/// freezes the whole isolate: state queries, monitored items and even
+/// `disconnect` are never processed again.
+///
+/// This patch adds a monotonic wall-clock deadline to the retry loop. When the
+/// socket cannot be written for longer than [UA62541_DART_SEND_DEADLINE_MS] the
+/// send is treated as a dead connection (`goto shutdown`), exactly like any
+/// other unrecoverable send error: `UA_Client_run_iterate` returns,
+/// `connectStatus` goes bad, and the existing `keepConnected` supervisor
+/// reconnects — with no isolate killed and no leaked `UA_Client`. The deadline
+/// is wall-clock and independent of what poll reports, so it fixes every
+/// platform including the Windows WSAPoll case.
+Future<void> _patchBoundedSend(Uri sourceDir) async {
+  final targetFile = File.fromUri(sourceDir.resolve('arch/posix/eventloop_posix_tcp.c'));
+  if (!await targetFile.exists()) {
+    throw Exception('Cannot apply bounded-send patch: eventloop_posix_tcp.c not found under $sourceDir');
+  }
+
+  var content = await targetFile.readAsString();
+
+  // Already patched?
+  if (content.contains('UA62541_DART_SEND_DEADLINE_MS')) return;
+
+  // Anchor on the exact unbounded send-retry loop. Both symbols the patch uses
+  // (UA_DateTime_nowMonotonic, UA_DATETIME_MSEC) are declared in
+  // open62541/types.h, which this translation unit includes directly.
+  const original = '''                /* Poll for the socket resources to become available and retry
+                 * (blocking) */
+                int poll_ret;
+                do {
+                    UA_RESET_ERRNO;
+                    poll_ret = UA_poll(&tmp_poll_fd, 1, 100);
+                    if(poll_ret < 0 && UA_ERRNO != UA_INTERRUPTED)
+                        goto shutdown;
+                } while(poll_ret <= 0);''';
+
+  const patched = '''                /* Poll for the socket resources to become available and retry.
+                 *
+                 * open62541_dart patch (bounded-send-fix): the upstream loop has
+                 * no overall deadline — it bounds each single UA_poll to 100 ms
+                 * but spins `while(poll_ret <= 0)` forever. On a dead / half-open
+                 * peer whose OS send buffer has filled and never drains (POLLOUT
+                 * never arrives; on Windows WSAPoll never reports POLLHUP/POLLERR
+                 * for a peer gone without RST) this call — reached from
+                 * UA_Client_run_iterate on the Dart client isolate's single
+                 * event-loop thread — never returns, wedging the whole isolate.
+                 * We add a monotonic wall-clock deadline: once the socket has
+                 * been unwritable for longer than UA62541_DART_SEND_DEADLINE_MS
+                 * we treat it as a dead connection and `goto shutdown`, exactly
+                 * as any other unrecoverable send error would. run_iterate then
+                 * returns, connectStatus goes bad, and the Dart-side
+                 * keepConnected supervisor reconnects. The deadline is wall-clock
+                 * and independent of what poll reports, so it fixes every
+                 * platform including the Windows WSAPoll case.
+                 *
+                 * Default 5000 ms: long enough not to trip a legitimately slow
+                 * but alive send (TCP retransmit backoff, a briefly congested
+                 * link), short enough that a genuinely dead channel is torn down
+                 * and reconnected promptly. This lives deep in the C event loop,
+                 * so it is a compile-time constant — not runtime/Dart-tunable and
+                 * not an env var (the build hook forwards no arbitrary env to the
+                 * compiler). */
+                #define UA62541_DART_SEND_DEADLINE_MS 5000
+                int poll_ret;
+                UA_DateTime ua62541DartSendDeadline =
+                    UA_DateTime_nowMonotonic() +
+                    (UA_DateTime)UA62541_DART_SEND_DEADLINE_MS * UA_DATETIME_MSEC;
+                do {
+                    UA_RESET_ERRNO;
+                    poll_ret = UA_poll(&tmp_poll_fd, 1, 100);
+                    if(poll_ret < 0 && UA_ERRNO != UA_INTERRUPTED)
+                        goto shutdown;
+                    if(poll_ret <= 0 &&
+                       UA_DateTime_nowMonotonic() > ua62541DartSendDeadline)
+                        goto shutdown; /* send deadline exceeded: dead connection */
+                } while(poll_ret <= 0);''';
+
+  final matches = original.allMatches(content).length;
+  if (matches != 1) {
+    throw Exception(
+      'Cannot apply bounded-send patch: expected exactly 1 occurrence of the '
+      'send-retry loop in eventloop_posix_tcp.c, found $matches. The upstream '
+      'source changed shape — re-verify and update the anchor before shipping, '
+      'otherwise the client-isolate wedge fix would be silently dropped.',
+    );
   }
   content = content.replaceFirst(original, patched);
   await targetFile.writeAsString(content);
