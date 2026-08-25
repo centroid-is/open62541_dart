@@ -36,6 +36,6 @@ An encrypted channel is **mutual**: the controller must trust our client cert.
 Once both are done:
 
 ```bash
-PLC_M240_URL=opc.tcp://10.50.10.235:4840 PLC_M240_SECURE=1 \
+PLC_M240_URL=opc.tcp://192.168.0.20:4840 PLC_M240_SECURE=1 \
   dart test --run-skipped test/plc
 ```
