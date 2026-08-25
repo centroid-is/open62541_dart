@@ -87,6 +87,16 @@ class Server {
   final Map<NodeId, DynamicValue Function()> _dataSourceReads = {};
   final Map<NodeId, void Function(DynamicValue)> _dataSourceWrites = {};
 
+  // The declared DataType of each data-source node whose `typeId` was given.
+  // The write dispatcher uses it to marshal an incoming custom-struct value with
+  // the correct field schema: a client writes a structured value as a binary
+  // ExtensionObject, and decoding it back into a [DynamicValue] with typed
+  // fields requires the registered schema (see [addCustomType]). Without it a
+  // struct write would decode as an opaque ExtensionObject and fail. Keyed by
+  // the node's NodeId; scalar nodes are present too but resolve to a payload
+  // type and take the plain (schema-less) decode path.
+  final Map<NodeId, NodeId> _dataSourceTypeIds = {};
+
   // Keeps the native callbacks backing method nodes alive for as long as the
   // node (and the server) exists. A `NativeCallable` must not be garbage
   // collected while open62541 still holds its function pointer; it is closed
@@ -321,12 +331,28 @@ class Server {
       ffi.Pointer<raw.UA_DataValue> value,
     ) {
       try {
-        final handler = _dataSourceWrites[nodeId.ref.toNodeId()];
+        final nid = nodeId.ref.toNodeId();
+        final handler = _dataSourceWrites[nid];
         if (handler == null) {
           return raw.UA_STATUSCODE_BADWRITENOTSUPPORTED;
         }
         // Same first-field aliasing trick as the read path.
-        final dyn = variantToValue(value.cast<raw.UA_Variant>().ref);
+        final variant = value.cast<raw.UA_Variant>().ref;
+        // A client writes a structured value as a binary-encoded
+        // ExtensionObject (typeKind EXTENSIONOBJECT), not a native struct. To
+        // restore its typed fields we must decode against the registered schema:
+        // pass the node's declared DataType as `dataTypeId` and the local schema
+        // registry as `defs`. Scalars (whose typeId maps to a known payload
+        // type, or nodes created without a typeId) take the plain decode path,
+        // preserving the previous behaviour. See [addCustomType] /
+        // [OpcUaDynamicValueSerializer.localSchemas].
+        final structType = _dataSourceTypeIds[nid];
+        final DynamicValue dyn;
+        if (structType != null && OpcUaDynamicValueSerializer.localSchemas.containsKey(structType)) {
+          dyn = variantToValue(variant, defs: OpcUaDynamicValueSerializer.localSchemas, dataTypeId: structType);
+        } else {
+          dyn = variantToValue(variant);
+        }
         handler(dyn);
         return raw.UA_STATUSCODE_GOOD;
       } catch (_) {
@@ -387,8 +413,13 @@ class Server {
   ///   open62541's permissive defaults.
   ///
   /// The value marshalling reuses `valueToVariant`/`variantToValue`, so scalar
-  /// numeric/bool/string types work directly. See the notes in the PR for
-  /// current limitations around structured/custom types.
+  /// numeric/bool/string types work directly. Custom **structured** types are
+  /// also supported end to end: pass the struct's DataType as [typeId] (after
+  /// registering it with [addCustomType] + [addDataTypeNode]) and return a
+  /// struct-valued [DynamicValue] from [onRead]. A client read then decodes it
+  /// as a structured value, and a client write is decoded back into a
+  /// struct-valued [DynamicValue] (its typed fields restored from the registered
+  /// schema) before [onWrite] receives it.
   void addDataSourceVariableNode(
     NodeId nodeId, {
     required DynamicValue Function() onRead,
@@ -409,6 +440,9 @@ class Server {
     _dataSourceReads[nodeId] = onRead;
     if (onWrite != null) {
       _dataSourceWrites[nodeId] = onWrite;
+    }
+    if (typeId != null) {
+      _dataSourceTypeIds[nodeId] = typeId;
     }
 
     // 2) Create a plain variable node (no stored value). Its value comes from
@@ -452,6 +486,7 @@ class Server {
     if (addStatus != raw.UA_STATUSCODE_GOOD) {
       _dataSourceReads.remove(nodeId);
       _dataSourceWrites.remove(nodeId);
+      _dataSourceTypeIds.remove(nodeId);
       throw 'Failed to add data source variable node ${statusCodeToString(addStatus)}, nodeId: $nodeId';
     }
 
@@ -469,6 +504,7 @@ class Server {
     if (setStatus != raw.UA_STATUSCODE_GOOD) {
       _dataSourceReads.remove(nodeId);
       _dataSourceWrites.remove(nodeId);
+      _dataSourceTypeIds.remove(nodeId);
       throw 'Failed to attach data source ${statusCodeToString(setStatus)}, nodeId: $nodeId';
     }
   }
@@ -523,6 +559,27 @@ class Server {
     if (res != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add variable type node ${statusCodeToString(res)}';
     }
+  }
+
+  /// Registers an application namespace [uri] and returns its namespace index.
+  ///
+  /// The returned index can then be used to create nodes in that namespace
+  /// instead of the default application namespace (`ns=1`), e.g.
+  /// ```dart
+  /// final ns = server.addNamespace('urn:test:bridge');
+  /// server.addVariableNode(NodeId.fromString(ns, 'x'), value);
+  /// ```
+  /// open62541 does not duplicate namespaces: registering a [uri] that is
+  /// already present returns its existing index. The namespace array is
+  /// 0-based, so a freshly added application namespace has an index `>= 2`
+  /// (index 0 is the OPC UA namespace, index 1 the local application URI).
+  int addNamespace(String uri) {
+    final cstr = uri.toNativeUtf8(allocator: ua_malloc);
+    // open62541 copies the name into its namespace array (UA_String_fromChars),
+    // so the temporary C string can be freed immediately after the call.
+    final index = raw.UA_Server_addNamespace(_server, cstr.cast());
+    ua_malloc.free(cstr);
+    return index;
   }
 
   void addDataTypeNode(
@@ -881,6 +938,7 @@ class Server {
     _methodCallbacks.remove(nodeId)?.close();
     _dataSourceReads.remove(nodeId);
     _dataSourceWrites.remove(nodeId);
+    _dataSourceTypeIds.remove(nodeId);
   }
 
   /// Adds a reference between two nodes.

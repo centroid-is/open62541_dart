@@ -603,6 +603,9 @@ external int UA_Server_addMethodNode(
   ffi.Pointer<UA_NodeId> outNewNodeId,
 );
 
+@ffi.Native<UA_UInt16 Function(ffi.Pointer<UA_Server>, ffi.Pointer<ffi.Char>)>()
+external int UA_Server_addNamespace(ffi.Pointer<UA_Server> server, ffi.Pointer<ffi.Char> name);
+
 /// Detailed Node Construction
 /// ~~~~~~~~~~~~~~~~~~~~~~~~~~
 /// The method pair UA_Server_addNode_begin and _finish splits the AddNodes

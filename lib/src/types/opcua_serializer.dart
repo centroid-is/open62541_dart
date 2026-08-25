@@ -41,6 +41,13 @@ class OpcUaDynamicValueSerializer {
     _localSchemas[typeId] = DynamicValue.from(value);
   }
 
+  /// The locally-registered custom-type schemas as a [Schema] (NodeId →
+  /// schema tree), for decoding a structured value marshalled back into an
+  /// in-process [Server] — e.g. a data-source node's write callback receives a
+  /// client-written struct as a binary ExtensionObject and needs the registered
+  /// field schema to restore its typed fields. Read-only view of the registry.
+  static Schema get localSchemas => _localSchemas;
+
   /// Overlays locally-recorded field descriptions / display names for [typeId]
   /// onto [tree] (a struct schema built from a DataTypeDefinition), filling only
   /// the metadata the wire could not carry. No-op when [typeId] was not

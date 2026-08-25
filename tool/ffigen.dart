@@ -80,6 +80,7 @@ Future<void> main() async {
       'UA_Server_readValue',
       'UA_Server_writeValue',
       'UA_Server_findDataType',
+      'UA_Server_addNamespace',
       'UA_Server_getLifecycleState',
       'UA_Server_run_iterate',
       'UA_Server_run_shutdown',
