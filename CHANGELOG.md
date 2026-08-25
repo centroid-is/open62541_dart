@@ -4,7 +4,7 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
+## 1.5.7+1
 
 - `ClientIsolate.keepConnected` / `stopKeepConnected` / `reconnectStream`:
   the auto-reconnect supervisor introduced for `Client` in 1.5.7 is now
