@@ -579,6 +579,7 @@ class Server {
   /// }
   /// ```
   void shutdown() {
+    if (_server == ffi.nullptr) return;
     int ret = raw.UA_Server_run_shutdown(_server);
     if (ret != 0) {
       throw "Failed to shutdown server ${statusCodeToString(ret)}";
@@ -604,7 +605,14 @@ class Server {
   /// }
   /// ```
   void delete() {
-    int ret = raw.UA_Server_delete(_server);
+    // Null the handle BEFORE freeing: any still-running drive loop
+    // (`while (server.runIterate()) ...`) otherwise calls
+    // UA_Server_getLifecycleState on freed memory on its next tick — a
+    // use-after-free that read garbage enum values on Windows CI.
+    final server = _server;
+    _server = ffi.nullptr;
+    if (server == ffi.nullptr) return;
+    int ret = raw.UA_Server_delete(server);
     if (ret != 0) {
       throw "Failed to delete server ${statusCodeToString(ret)}";
     }
