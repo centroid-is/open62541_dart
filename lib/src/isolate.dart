@@ -138,6 +138,28 @@ class StateStreamMessage extends IsolateMessage {
   const StateStreamMessage(super.requestId);
 }
 
+class KeepConnectedMessage extends IsolateMessage {
+  final String url;
+  final Duration retryInterval;
+  final Duration maxBackoff;
+  final Duration iterateInterval;
+  const KeepConnectedMessage(
+    super.requestId,
+    this.url, {
+    required this.retryInterval,
+    required this.maxBackoff,
+    required this.iterateInterval,
+  });
+}
+
+class StopKeepConnectedMessage extends IsolateMessage {
+  const StopKeepConnectedMessage(super.requestId);
+}
+
+class ReconnectStreamMessage extends IsolateMessage {
+  const ReconnectStreamMessage(super.requestId);
+}
+
 class StreamDataMessage<T> {
   final String streamId;
   final T? data;
@@ -602,6 +624,90 @@ class ClientIsolate implements ClientApi {
     return controller.stream;
   }
 
+  /// Opt-in auto-reconnect, mirroring [Client.keepConnected] for the isolate
+  /// client. The supervisor (and its run_iterate pump) runs INSIDE the
+  /// isolate, so recovery works even when the session dies without native
+  /// runIterate ever returning an error — the failure mode where a
+  /// caller-driven [runIterate] loop parks forever.
+  ///
+  /// The returned future completes when the session first reaches ACTIVATED.
+  /// After that the supervisor keeps running until [stopKeepConnected] (or
+  /// [delete]) is called. This method OWNS the event-loop pump: do not run
+  /// [runIterate] alongside it — any caller-started iterate loop is stopped
+  /// when the supervisor starts.
+  ///
+  /// Listen to [reconnectStream] to re-create subscriptions after each
+  /// recovered drop (open62541 clears client-side subscriptions on a drop).
+  Future<void> keepConnected(
+    String url, {
+    Duration retryInterval = const Duration(milliseconds: 500),
+    Duration maxBackoff = const Duration(seconds: 5),
+    Duration iterateInterval = const Duration(milliseconds: 10),
+  }) async {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final completer = Completer<void>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(
+      KeepConnectedMessage(
+        id,
+        url,
+        retryInterval: retryInterval,
+        maxBackoff: maxBackoff,
+        iterateInterval: iterateInterval,
+      ),
+    );
+
+    try {
+      await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
+  /// Stops the auto-reconnect supervisor started by [keepConnected]. Does not
+  /// disconnect an established session; call [disconnect] / [delete]
+  /// separately if desired.
+  Future<void> stopKeepConnected() async {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final completer = Completer<void>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(StopKeepConnectedMessage(id));
+
+    try {
+      await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
+  /// Fires once each time the session returns to ACTIVATED after a recovered
+  /// drop (see [Client.reconnectStream]). Only emits while [keepConnected]
+  /// is supervising. Does not fire for the very first connect.
+  Stream<void> get reconnectStream {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final controller = StreamController<void>();
+    final id = _generateId();
+    _streamControllers[id] = controller;
+
+    _sendPort.send(ReconnectStreamMessage(id));
+
+    controller.onCancel = () {
+      _streamControllers.remove(id);
+      if (!_isClosed) {
+        _sendPort.send(MonitorCancelMessage(id));
+      }
+    };
+
+    return controller.stream;
+  }
+
   /// Disconnect from the server
   Future<void> disconnect() async {
     if (_isClosed) throw const ClientIsolateClosedException();
@@ -904,6 +1010,47 @@ void _isolateEntryPoint(_IsolateData data) {
           }
           stopped.complete();
         }();
+      } else if (message is KeepConnectedMessage) {
+        // The supervisor owns the run_iterate pump — stop any caller-driven
+        // iterate loop first so the client is not pumped twice.
+        iterateRunning = false;
+        if (iterateStopped != null) {
+          await iterateStopped!.future;
+        }
+        endpoint = message.url;
+        // Respond on first activation; the supervisor keeps running inside
+        // this isolate afterwards, reconnecting across drops on its own.
+        unawaited(
+          client
+              .keepConnected(
+                message.url,
+                retryInterval: message.retryInterval,
+                maxBackoff: message.maxBackoff,
+                iterateInterval: message.iterateInterval,
+              )
+              .then((_) => sendPort.send(IsolateResponse.success(message.requestId, null)))
+              .catchError((Object e) => sendPort.send(IsolateResponse.error(message.requestId, e.toString()))),
+        );
+      } else if (message is StopKeepConnectedMessage) {
+        client.stopKeepConnected();
+        sendPort.send(IsolateResponse.success(message.requestId, null));
+      } else if (message is ReconnectStreamMessage) {
+        final subscription = client.reconnectStream.listen(
+          (_) {
+            sendPort.send(StreamDataMessage<void>.success(message.requestId, null));
+          },
+          onError: (error) {
+            sendPort.send(StreamDataMessage<void>.error(message.requestId, error.toString()));
+          },
+          onDone: () {
+            activeStreams.remove(message.requestId);
+          },
+        );
+
+        activeStreams[message.requestId] = subscription;
+
+        // Send success response to indicate stream is ready
+        sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is StateStreamMessage) {
         final stream = client.config.stateStream;
 
