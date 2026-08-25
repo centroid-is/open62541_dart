@@ -229,19 +229,32 @@ Future<Uri> download(Uri outputDirectory, String version) async {
   return srcDir.uri;
 }
 
-Future<void> _applyPatches(Uri sourceDir) async {
+/// Applies every open62541 source patch this package carries against the
+/// freshly extracted source tree at [sourceDir]. Patch files live under
+/// `[packageRoot]/hook/`. Each patch is anchored on stable surrounding source
+/// text and fails the build loudly if it cannot be applied — so a future
+/// open62541 version bump cannot silently drop a fix.
+Future<void> _applyPatches(Uri sourceDir, Uri packageRoot) async {
+  await _patchSubscriptionCleanup(sourceDir);
+  await _patchBoundedSend(sourceDir, packageRoot);
+}
+
+/// OPC UA Part 4, 5.13.5, Table 95: when BadNoSubscription arrives with
+/// subscriptionId == 0, clean ALL client-side subscriptions so that
+/// deleteCallback fires for each.
+Future<void> _patchSubscriptionCleanup(Uri sourceDir) async {
   final targetFile = File.fromUri(sourceDir.resolve('src/client/ua_client_subscriptions.c'));
-  if (!await targetFile.exists()) return;
+  if (!await targetFile.exists()) {
+    throw Exception('Cannot apply subscription patch: ua_client_subscriptions.c not found under $sourceDir');
+  }
 
   var content = await targetFile.readAsString();
 
   // Already patched?
   if (content.contains('Clean up all client-side subscriptions')) return;
 
-  // OPC UA Part 4, 5.13.5, Table 95: when BadNoSubscription arrives with
-  // subscriptionId == 0, clean ALL client-side subscriptions so that
-  // deleteCallback fires for each. Anchored on the v1.5.x BadNoSubscription
-  // case in the PublishResponse handler.
+  // Anchored on the v1.5.x BadNoSubscription case in the PublishResponse
+  // handler.
   const original = '''        UA_LOG_DEBUG(client->config.logging, UA_LOGCATEGORY_CLIENT,
                      "PublishResponse: Received BadNoSubscription status");
         return;''';
@@ -259,18 +272,192 @@ Future<void> _applyPatches(Uri sourceDir) async {
         }
         return;''';
 
-  if (!content.contains(original)) {
-    throw Exception('Cannot apply subscription patch: expected code not found');
+  final matches = original.allMatches(content).length;
+  if (matches != 1) {
+    throw Exception(
+      'Cannot apply subscription patch: expected exactly 1 occurrence of the '
+      'BadNoSubscription anchor in ua_client_subscriptions.c, found $matches. '
+      'The upstream source changed shape — re-verify and update the anchor.',
+    );
   }
   content = content.replaceFirst(original, patched);
   await targetFile.writeAsString(content);
+}
+
+/// Bounds the blocking send-retry loop in the POSIX/WinSock TCP connection
+/// manager so a dead secured connection can no longer wedge the client isolate.
+///
+/// ROOT CAUSE (bounded-send-fix; bench evidence tfc-hmi #345/#346):
+/// `TCP_sendWithConnection` in `arch/posix/eventloop_posix_tcp.c` uses a
+/// non-blocking socket, but when `UA_send` returns EWOULDBLOCK (the OS send
+/// buffer is full and cannot drain because the peer stopped ACKing — a
+/// half-open / CloseWait socket) it enters
+///
+///     do { poll_ret = UA_poll(&fd, 1, 100); ... } while(poll_ret <= 0);
+///
+/// with NO overall deadline: the 100 ms only bounds a single poll. On a dead
+/// peer POLLOUT never becomes ready (and on Windows, WSAPoll never reports
+/// POLLHUP/POLLERR for a peer gone without RST), so the loop spins forever
+/// *inside* `UA_Client_run_iterate`. Because the Dart client isolate drives
+/// open62541 from its single event-loop thread, that one synchronous FFI call
+/// freezes the whole isolate: state queries, monitored items and even
+/// `disconnect` are never processed again.
+///
+/// This fix adds a monotonic wall-clock deadline to the retry loop. When the
+/// socket cannot be written for longer than `UA62541_DART_SEND_DEADLINE_MS` the
+/// send is treated as a dead connection (`goto shutdown`), exactly like any
+/// other unrecoverable send error: `UA_Client_run_iterate` returns,
+/// `connectStatus` goes bad, and the existing `keepConnected` supervisor
+/// reconnects — with no isolate killed and no leaked `UA_Client`. The deadline
+/// is wall-clock and independent of what poll reports, so it fixes every
+/// platform including the Windows WSAPoll case.
+///
+/// The change ships as a unified-diff patch file,
+/// `hook/bounded_send_deadline.patch`, applied here with a standard patch tool
+/// (`git apply`, falling back to `patch`). See [_applyUnifiedDiff]. The
+/// patched loop uses two symbols (`UA_DateTime_nowMonotonic`, `UA_DATETIME_MSEC`)
+/// both declared in open62541/types.h, which this translation unit includes
+/// directly.
+Future<void> _patchBoundedSend(Uri sourceDir, Uri packageRoot) async {
+  final targetFile = File.fromUri(sourceDir.resolve('arch/posix/eventloop_posix_tcp.c'));
+  if (!await targetFile.exists()) {
+    throw Exception('Cannot apply bounded-send patch: eventloop_posix_tcp.c not found under $sourceDir');
+  }
+
+  // Idempotent: the patch injects a uniquely-named compile-time constant. If it
+  // is already present the source is patched (e.g. a warm shared source dir
+  // reused across builds), so there is nothing to do.
+  if ((await targetFile.readAsString()).contains('UA62541_DART_SEND_DEADLINE_MS')) {
+    return;
+  }
+
+  final patchFile = File.fromUri(packageRoot.resolve('hook/bounded_send_deadline.patch'));
+  if (!await patchFile.exists()) {
+    throw Exception(
+      'Cannot apply bounded-send patch: patch file not found at ${patchFile.path}. '
+      'It must ship with the package (check .pubignore does not exclude hook/).',
+    );
+  }
+
+  await _applyUnifiedDiff(sourceDir: sourceDir, patchFile: patchFile, what: 'bounded-send');
+
+  // Belt-and-suspenders: confirm the fix actually landed, so a patch tool that
+  // exits 0 without applying (should never happen) still fails the build loudly
+  // rather than silently shipping the wedge.
+  if (!(await targetFile.readAsString()).contains('UA62541_DART_SEND_DEADLINE_MS')) {
+    throw Exception(
+      'bounded-send patch tool reported success but UA62541_DART_SEND_DEADLINE_MS '
+      'is absent from eventloop_posix_tcp.c — refusing to ship the client-isolate '
+      'wedge. The upstream source likely changed shape; re-verify the patch.',
+    );
+  }
+}
+
+/// Applies the unified-diff [patchFile] to the extracted source tree rooted at
+/// [sourceDir] using a standard patch tool, and fails the build loudly on any
+/// non-zero exit.
+///
+/// Preference order:
+///   1. `git apply -p1` — works on a plain (non-repo) extracted directory and
+///      is the most predictable. `-p1` strips the leading `a/`/`b/` component
+///      from the diff headers so the hunk lands on
+///      `<sourceDir>/arch/posix/eventloop_posix_tcp.c`. A `git apply --check`
+///      runs first; a non-zero check means the source no longer matches the
+///      diff (an upstream version bump changed its shape), which is a hard
+///      error — we do NOT silently fall through to another tool that would just
+///      fail again with a murkier message.
+///   2. `patch -p1` — used only when `git` is not on PATH at all.
+///
+/// TRADE-OFF: applying with an external tool adds a build-time dependency on
+/// `git` (or `patch`) on the *consumer's* machine, which the previous in-Dart
+/// string surgery did not need. In practice git is near-ubiquitous wherever a
+/// native build runs — it sits alongside cmake and a C toolchain, and on Windows
+/// it ships with Git-for-Windows (which also provides `patch`). If neither tool
+/// is present we fail with an explicit, actionable message.
+Future<void> _applyUnifiedDiff({required Uri sourceDir, required File patchFile, required String what}) async {
+  final workingDirectory = sourceDir.toFilePath();
+
+  // Apply an LF-normalized COPY of the patch. On a Windows checkout with
+  // core.autocrlf=true the committed .patch file becomes CRLF, but the extracted
+  // open62541 source is always LF — mismatched line endings make `git apply`
+  // fail with "patch does not apply". Normalizing to LF here fixes it on every
+  // platform regardless of how the file was checked out. (A .gitattributes rule
+  // also keeps the committed patch LF; this is belt-and-suspenders and also
+  // covers `patch` consumers.)
+  final normalized = patchFile.readAsStringSync().replaceAll('\r\n', '\n');
+  final tmpDir = Directory.systemTemp.createTempSync('o62_patch_');
+  try {
+    final patchPath = (File('${tmpDir.path}/$what.patch')..writeAsStringSync(normalized)).absolute.path;
+
+    // Preferred path: `git apply` (--ignore-whitespace adds tolerance).
+    final gitCheck = await _tryRun('git', [
+      'apply',
+      '--check',
+      '--ignore-whitespace',
+      '-p1',
+      patchPath,
+    ], workingDirectory);
+    if (gitCheck != null) {
+      if (gitCheck.exitCode != 0) {
+        throw Exception(
+          'Cannot apply $what patch: `git apply --check` failed (exit '
+          '${gitCheck.exitCode}). The extracted open62541 source no longer matches '
+          '${patchFile.path} — an upstream version bump likely changed its shape; '
+          're-verify and regenerate the patch.\n${gitCheck.stderr}',
+        );
+      }
+      final applied = await _tryRun('git', [
+        'apply',
+        '--verbose',
+        '--ignore-whitespace',
+        '-p1',
+        patchPath,
+      ], workingDirectory);
+      if (applied == null || applied.exitCode != 0) {
+        throw Exception(
+          'Cannot apply $what patch: `git apply` failed (exit '
+          '${applied?.exitCode}).\n${applied?.stderr}',
+        );
+      }
+      return;
+    }
+
+    // Fallback: POSIX `patch -p1` when git is unavailable.
+    final patched = await _tryRun('patch', ['-p1', '-i', patchPath], workingDirectory);
+    if (patched == null) {
+      throw Exception(
+        'Cannot apply $what patch: neither `git` nor `patch` is available on PATH. '
+        'Install git (recommended) or a patch tool to build this package.',
+      );
+    }
+    if (patched.exitCode != 0) {
+      throw Exception(
+        'Cannot apply $what patch: `patch -p1` failed (exit ${patched.exitCode}).\n'
+        'stdout: ${patched.stdout}\nstderr: ${patched.stderr}',
+      );
+    }
+  } finally {
+    try {
+      tmpDir.deleteSync(recursive: true);
+    } catch (_) {}
+  }
+}
+
+/// Runs [executable] with [arguments] in [workingDirectory], returning its
+/// [ProcessResult], or `null` if the executable is not found on PATH.
+Future<ProcessResult?> _tryRun(String executable, List<String> arguments, String workingDirectory) async {
+  try {
+    return await Process.run(executable, arguments, workingDirectory: workingDirectory);
+  } on ProcessException {
+    return null; // executable not installed / not on PATH
+  }
 }
 
 Future<void> main(List<String> args) async {
   final version = "v1.5.7";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
-    await _applyPatches(extractedFiles);
+    await _applyPatches(extractedFiles, input.packageRoot);
 
     final name = 'open62541';
     final logger = Logger('')
