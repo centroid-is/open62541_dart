@@ -18,6 +18,21 @@ class ClientIsolateClosedException implements Exception {
   String toString() => message;
 }
 
+/// Thrown into pending requests and monitored-item streams when the client
+/// isolate was abandoned and respawned because it stopped answering messages
+/// (see [ClientIsolate.keepConnected]'s `unresponsiveTimeout`). Requests
+/// should be retried and monitored items resubscribed — the new isolate
+/// reconnects on its own.
+class ClientIsolateRespawnedException implements Exception {
+  final String message;
+  const ClientIsolateRespawnedException([
+    this.message = 'ClientIsolate was respawned after the isolate became unresponsive',
+  ]);
+
+  @override
+  String toString() => message;
+}
+
 /// Message types for communication between main isolate and client isolate
 abstract class IsolateMessage {
   final String requestId;
@@ -160,6 +175,19 @@ class ReconnectStreamMessage extends IsolateMessage {
   const ReconnectStreamMessage(super.requestId);
 }
 
+/// Answered immediately by the isolate's message loop; the liveness probe
+/// behind [ClientIsolate.keepConnected]'s `unresponsiveTimeout`.
+class PingMessage extends IsolateMessage {
+  const PingMessage(super.requestId);
+}
+
+/// TEST-ONLY: busy-blocks the isolate's event loop for [duration],
+/// simulating a native call stuck on a dead socket.
+class DebugWedgeMessage extends IsolateMessage {
+  final Duration duration;
+  const DebugWedgeMessage(super.requestId, this.duration);
+}
+
 class StreamDataMessage<T> {
   final String streamId;
   final T? data;
@@ -195,7 +223,9 @@ class ClientIsolate implements ClientApi {
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
   }) {
-    _initIsolate(
+    // Stored as a factory rather than spawned inline so a respawn (see
+    // _respawn) can bring up a fresh isolate with the same configuration.
+    _isolateDataFactory = (sendPort) => _IsolateData(
       secureChannelLifeTime: secureChannelLifeTime,
       requestedSessionTimeout: requestedSessionTimeout,
       username: username,
@@ -205,7 +235,9 @@ class ClientIsolate implements ClientApi {
       privateKey: privateKey,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      sendPort: sendPort,
     );
+    _initIsolate();
   }
 
   /// Factory constructor that creates a ClientIsolate with the specified configuration
@@ -237,54 +269,55 @@ class ClientIsolate implements ClientApi {
     return isolate;
   }
 
-  late final Isolate _isolate;
-  late final SendPort _sendPort;
-  late final ReceivePort _receivePort;
-  final Completer<void> _initCompleter = Completer<void>();
+  // Reassignable (not `late final`): _respawn abandons the wedged isolate
+  // and installs a fresh one behind the same ClientIsolate object.
+  late Isolate _isolate;
+  late SendPort _sendPort;
+  late ReceivePort _receivePort;
+  Completer<void> _initCompleter = Completer<void>();
+  late final _IsolateData Function(SendPort sendPort) _isolateDataFactory;
 
   bool _isClosed = false;
   String? _currentIterateRequestId;
 
-  void _initIsolate({
-    Duration? secureChannelLifeTime,
-    Duration? requestedSessionTimeout,
-    String? username,
-    String? password,
-    MessageSecurityMode? securityMode,
-    Uint8List? certificate,
-    Uint8List? privateKey,
-    LogLevel? logLevel,
-    Duration connectivityCheckInterval = const Duration(seconds: 1),
-  }) async {
+  // keepConnected supervisor state on the MAIN side. The in-isolate
+  // supervisor handles everything open62541 reports; this side only has to
+  // handle the isolate itself going silent (wedged in a native call).
+  String? _keepConnectedUrl;
+  Duration _kcRetryInterval = const Duration(milliseconds: 500);
+  Duration _kcMaxBackoff = const Duration(seconds: 5);
+  Duration _kcIterateInterval = const Duration(milliseconds: 10);
+  Duration? _unresponsiveTimeout;
+  bool _pingLoopRunning = false;
+  bool _respawning = false;
+
+  // Stream ids that must survive a respawn as OBJECTS: callers subscribe to
+  // stateStream/reconnectStream once at construction and never again, so the
+  // same controllers are re-armed on the new isolate instead of being closed.
+  final Set<String> _stateStreamIds = {};
+  final Set<String> _reconnectStreamIds = {};
+
+  // Cancellable sleeps for the ping loop; delete()/stopKeepConnected wake
+  // them so no timer outlives the client (widget-test teardown asserts on
+  // pending timers).
+  final Map<Timer, Completer<void>> _supervisorSleeps = {};
+
+  void _initIsolate() async {
     try {
       _receivePort = ReceivePort();
 
-      _isolate = await Isolate.spawn(
-        _isolateEntryPoint,
-        _IsolateData(
-          secureChannelLifeTime: secureChannelLifeTime,
-          requestedSessionTimeout: requestedSessionTimeout,
-          username: username,
-          password: password,
-          securityMode: securityMode,
-          certificate: certificate,
-          privateKey: privateKey,
-          logLevel: logLevel,
-          connectivityCheckInterval: connectivityCheckInterval,
-          sendPort: _receivePort.sendPort,
-        ),
-      );
+      _isolate = await Isolate.spawn(_isolateEntryPoint, _isolateDataFactory(_receivePort.sendPort));
 
       _receivePort.listen(_handleMessage);
     } catch (e) {
-      _initCompleter.completeError(e);
+      if (!_initCompleter.isCompleted) _initCompleter.completeError(e);
     }
   }
 
   void _handleMessage(dynamic message) {
     if (message is SendPort) {
       _sendPort = message;
-      _initCompleter.complete();
+      if (!_initCompleter.isCompleted) _initCompleter.complete();
     } else if (message is IsolateResponse) {
       final completer = _pendingRequests[message.requestId];
       if (completer != null) {
@@ -611,11 +644,16 @@ class ClientIsolate implements ClientApi {
     final controller = StreamController<ClientState>();
     final id = _generateId();
     _streamControllers[id] = controller;
+    // Survives a respawn as an object: callers subscribe once at
+    // construction and never again, so _respawn re-arms this id on the new
+    // isolate and the same stream keeps emitting.
+    _stateStreamIds.add(id);
 
     _sendPort.send(StateStreamMessage(id));
 
     controller.onCancel = () {
       _streamControllers.remove(id);
+      _stateStreamIds.remove(id);
       if (!_isClosed) {
         _sendPort.send(MonitorCancelMessage(id));
       }
@@ -638,13 +676,35 @@ class ClientIsolate implements ClientApi {
   ///
   /// Listen to [reconnectStream] to re-create subscriptions after each
   /// recovered drop (open62541 clears client-side subscriptions on a drop).
+  /// See [Client.keepConnected]. With [unresponsiveTimeout] set, this side
+  /// additionally supervises the ISOLATE itself: it pings the isolate's
+  /// message loop, and when the isolate stops answering — observed in
+  /// production when a dead secured connection wedges a native call, at
+  /// which point nothing sent through the isolate (not even disconnect) is
+  /// ever processed — the isolate is abandoned and respawned:
+  ///
+  ///  * pending requests complete with [ClientIsolateRespawnedException]
+  ///    (retry them);
+  ///  * monitored-item streams get that error and close (their native
+  ///    subscriptions died with the old isolate — resubscribe);
+  ///  * [stateStream]/[reconnectStream] objects SURVIVE and keep emitting
+  ///    from the new isolate;
+  ///  * the supervisor re-arms itself, so the session reconnects with no
+  ///    action from the caller.
   Future<void> keepConnected(
     String url, {
     Duration retryInterval = const Duration(milliseconds: 500),
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
+    Duration? unresponsiveTimeout,
   }) async {
     if (_isClosed) throw const ClientIsolateClosedException();
+
+    _keepConnectedUrl = url;
+    _kcRetryInterval = retryInterval;
+    _kcMaxBackoff = maxBackoff;
+    _kcIterateInterval = iterateInterval;
+    _unresponsiveTimeout = unresponsiveTimeout;
 
     final completer = Completer<void>();
     final id = _generateId();
@@ -660,6 +720,10 @@ class ClientIsolate implements ClientApi {
       ),
     );
 
+    if (unresponsiveTimeout != null) {
+      _startPingLoop();
+    }
+
     try {
       await completer.future;
     } finally {
@@ -667,11 +731,174 @@ class ClientIsolate implements ClientApi {
     }
   }
 
+  /// Sleep that [delete]/[stopKeepConnected] can wake, so no timer outlives
+  /// the client.
+  Future<void> _sleep(Duration d) {
+    final c = Completer<void>();
+    late final Timer t;
+    t = Timer(d, () {
+      _supervisorSleeps.remove(t);
+      if (!c.isCompleted) c.complete();
+    });
+    _supervisorSleeps[t] = c;
+    return c.future;
+  }
+
+  void _wakeSleeps() {
+    for (final entry in _supervisorSleeps.entries.toList()) {
+      entry.key.cancel();
+      if (!entry.value.isCompleted) entry.value.complete();
+    }
+    _supervisorSleeps.clear();
+  }
+
+  /// One liveness probe: true if the isolate answered within [timeout].
+  Future<bool> _ping(Duration timeout) async {
+    final completer = Completer<void>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+    var answered = false;
+    final settled = completer.future.then((_) {
+      answered = true;
+    }, onError: (_) {});
+    try {
+      _sendPort.send(PingMessage(id));
+    } catch (_) {}
+    await Future.any([settled, _sleep(timeout)]);
+    _pendingRequests.remove(id);
+    return answered;
+  }
+
+  void _startPingLoop() {
+    if (_pingLoopRunning) return;
+    _pingLoopRunning = true;
+    () async {
+      var missed = 0;
+      while (!_isClosed && _keepConnectedUrl != null && _unresponsiveTimeout != null) {
+        // Three probes per timeout window: ~3 consecutive misses means the
+        // isolate has been silent for about unresponsiveTimeout.
+        final interval = _unresponsiveTimeout! ~/ 3;
+        await _sleep(interval);
+        if (_isClosed || _keepConnectedUrl == null) break;
+        if (_respawning) {
+          missed = 0;
+          continue;
+        }
+        final ok = await _ping(interval);
+        if (ok) {
+          missed = 0;
+          continue;
+        }
+        missed++;
+        if (missed >= 3) {
+          missed = 0;
+          try {
+            await _respawn();
+          } catch (_) {
+            // Spawn failed; the loop keeps probing and will try again.
+          }
+        }
+      }
+      _pingLoopRunning = false;
+    }();
+  }
+
+  /// Abandon the (presumed wedged) isolate and bring up a fresh one behind
+  /// this same object. Killing is BEST EFFORT: an isolate blocked inside a
+  /// native call only dies when that call returns — do not wait for it;
+  /// leaking one thread beats a frozen client.
+  Future<void> _respawn() async {
+    if (_isClosed || _respawning) return;
+    _respawning = true;
+    try {
+      stderr.writeln('[${_keepConnectedUrl ?? 'unknown'}] isolate unresponsive — abandoning it and respawning');
+      try {
+        _receivePort.close();
+      } catch (_) {}
+      try {
+        _isolate.kill(priority: Isolate.immediate);
+      } catch (_) {}
+
+      // Every pending request belonged to the dead isolate.
+      final pending = Map<String, Completer>.from(_pendingRequests);
+      _pendingRequests.clear();
+      for (final c in pending.values) {
+        if (!c.isCompleted) c.completeError(const ClientIsolateRespawnedException());
+      }
+      _currentIterateRequestId = null;
+
+      // Monitored-item streams: their native subscriptions died with the old
+      // isolate. Error + close so callers resubscribe. State/reconnect
+      // streams survive as objects and are re-armed below.
+      final surviving = {..._stateStreamIds, ..._reconnectStreamIds};
+      final doomed = <String, StreamController>{};
+      _streamControllers.forEach((id, controller) {
+        if (!surviving.contains(id)) doomed[id] = controller;
+      });
+      for (final entry in doomed.entries) {
+        _streamControllers.remove(entry.key);
+        if (!entry.value.isClosed) {
+          entry.value.addError(const ClientIsolateRespawnedException());
+          entry.value.close();
+        }
+      }
+
+      // Fresh isolate from the stored spawn parameters.
+      _initCompleter = Completer<void>();
+      _initIsolate();
+      await _initCompleter.future;
+
+      // Surviving streams keep emitting from the new isolate.
+      for (final id in _stateStreamIds) {
+        if (_streamControllers.containsKey(id)) {
+          _sendPort.send(StateStreamMessage(id));
+        }
+      }
+      for (final id in _reconnectStreamIds) {
+        if (_streamControllers.containsKey(id)) {
+          _sendPort.send(ReconnectStreamMessage(id));
+        }
+      }
+
+      // Re-arm the supervisor; the session then reconnects on its own. The
+      // response to this message is deliberately unregistered — first
+      // activation was already reported to the original caller.
+      final url = _keepConnectedUrl;
+      if (url != null) {
+        _sendPort.send(
+          KeepConnectedMessage(
+            _generateId(),
+            url,
+            retryInterval: _kcRetryInterval,
+            maxBackoff: _kcMaxBackoff,
+            iterateInterval: _kcIterateInterval,
+          ),
+        );
+      }
+    } finally {
+      _respawning = false;
+    }
+  }
+
+  /// TEST-ONLY: busy-blocks the isolate's event loop for [duration],
+  /// simulating a native call stuck on a dead socket. Unlike the real FFI
+  /// wedge the busy-wait is killable, so respawn tests can clean up.
+  void debugWedgeIsolate(Duration duration) {
+    if (_isClosed) throw const ClientIsolateClosedException();
+    _sendPort.send(DebugWedgeMessage(_generateId(), duration));
+  }
+
   /// Stops the auto-reconnect supervisor started by [keepConnected]. Does not
   /// disconnect an established session; call [disconnect] / [delete]
   /// separately if desired.
   Future<void> stopKeepConnected() async {
     if (_isClosed) throw const ClientIsolateClosedException();
+
+    // Stop the main-side liveness supervisor too, waking any sleep so no
+    // timer outlives the caller's interest.
+    _keepConnectedUrl = null;
+    _unresponsiveTimeout = null;
+    _wakeSleeps();
 
     final completer = Completer<void>();
     final id = _generateId();
@@ -695,11 +922,14 @@ class ClientIsolate implements ClientApi {
     final controller = StreamController<void>();
     final id = _generateId();
     _streamControllers[id] = controller;
+    // Survives a respawn as an object: re-armed on the new isolate.
+    _reconnectStreamIds.add(id);
 
     _sendPort.send(ReconnectStreamMessage(id));
 
     controller.onCancel = () {
       _streamControllers.remove(id);
+      _reconnectStreamIds.remove(id);
       if (!_isClosed) {
         _sendPort.send(MonitorCancelMessage(id));
       }
@@ -730,6 +960,12 @@ class ClientIsolate implements ClientApi {
   Future<void> delete() async {
     if (_isClosed) return;
     _isClosed = true;
+
+    // Stop the liveness supervisor and wake its sleeps so no timer outlives
+    // the client.
+    _keepConnectedUrl = null;
+    _unresponsiveTimeout = null;
+    _wakeSleeps();
 
     // Cancel all pending requests with an error before cleanup
     final pendingToCancel = Map<String, Completer>.from(_pendingRequests);
@@ -1010,6 +1246,17 @@ void _isolateEntryPoint(_IsolateData data) {
           }
           stopped.complete();
         }();
+      } else if (message is PingMessage) {
+        // Liveness probe: answered immediately. If this stops being
+        // answered, the isolate is wedged (typically a native call stuck on
+        // a dead socket) and the main side respawns it.
+        sendPort.send(IsolateResponse.success(message.requestId, null));
+      } else if (message is DebugWedgeMessage) {
+        // TEST-ONLY: synchronous busy-wait — blocks this isolate's event
+        // loop entirely, like a native call stuck on a dead socket.
+        final end = DateTime.now().add(message.duration);
+        while (DateTime.now().isBefore(end)) {}
+        sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is KeepConnectedMessage) {
         // The supervisor owns the run_iterate pump — stop any caller-driven
         // iterate loop first so the client is not pumped twice.

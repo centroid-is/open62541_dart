@@ -4,6 +4,29 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## 1.5.7+2
+
+- `ClientIsolate` self-heal: `keepConnected` gains `unresponsiveTimeout`. In
+  production a dead secured (SignAndEncrypt) connection can wedge the client
+  isolate inside a native call, after which the isolate stops answering
+  messages entirely — state queries time out and even `disconnect` is never
+  processed, so no supervisor working through the isolate can recover it.
+  With `unresponsiveTimeout` set, the main side pings the isolate's message
+  loop (`PingMessage`, answered immediately); ~3 consecutive missed probes
+  abandon the wedged isolate (best-effort kill — a thread blocked in native
+  code leaks until the call returns, which beats a frozen client) and respawn
+  a fresh one behind the same `ClientIsolate` object:
+  - pending requests complete with the new `ClientIsolateRespawnedException`
+    (callers retry);
+  - monitored-item streams get that error and close, so callers resubscribe;
+  - `stateStream` / `reconnectStream` objects survive and keep emitting from
+    the new isolate;
+  - the in-isolate `keepConnected` supervisor is re-armed, so the session
+    reconnects without caller action.
+  Opt-in: `unresponsiveTimeout` defaults to null (no behavior change).
+  `debugWedgeIsolate` (test-only) simulates the wedge deterministically.
+- Export `ClientIsolateClosedException` and `ClientIsolateRespawnedException`.
+
 ## 1.5.7+1
 
 - `ClientIsolate.keepConnected` / `stopKeepConnected` / `reconnectStream`:

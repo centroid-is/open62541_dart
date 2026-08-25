@@ -25,6 +25,6 @@ export 'src/third_party/open62541.g.dart'
 export 'src/node_id.dart' show NodeId;
 export 'src/server.dart' show Server;
 export 'src/types/errors.dart' show Inactivity, SecureChannelClosed, SubscriptionDeleted;
-export 'src/isolate.dart' show ClientIsolate;
+export 'src/isolate.dart' show ClientIsolate, ClientIsolateClosedException, ClientIsolateRespawnedException;
 export 'src/client_api.dart' show ClientApi;
 export 'src/types/opcua_serializer.dart' show OpcUaDynamicValueSerializer;
