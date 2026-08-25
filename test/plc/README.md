@@ -60,8 +60,8 @@ to `token` security automatically, so the URL alone is enough:
 ```bash
 # Schneider M241 / Beckhoff TwinCAT — verified working (token security is the
 # default for real controllers, so the URL alone is enough):
-PLC_M240_URL=opc.tcp://10.50.10.235:4840 dart test --run-skipped test/plc
-PLC_TWINCAT_URL=opc.tcp://10.50.10.10:4840 dart test --run-skipped test/plc
+PLC_M240_URL=opc.tcp://192.168.0.20:4840 dart test --run-skipped test/plc
+PLC_TWINCAT_URL=opc.tcp://192.168.0.10:4840 dart test --run-skipped test/plc
 
 # Several controllers at once:
 PLC_TWINCAT_URL=opc.tcp://192.168.0.10:4840 PLC_TWINCAT_USER=... PLC_TWINCAT_PASS=... \
