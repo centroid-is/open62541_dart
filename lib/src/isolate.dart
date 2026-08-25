@@ -650,13 +650,15 @@ class ClientIsolate implements ClientApi {
     final id = _generateId();
     _pendingRequests[id] = completer;
 
-    _sendPort.send(KeepConnectedMessage(
-      id,
-      url,
-      retryInterval: retryInterval,
-      maxBackoff: maxBackoff,
-      iterateInterval: iterateInterval,
-    ));
+    _sendPort.send(
+      KeepConnectedMessage(
+        id,
+        url,
+        retryInterval: retryInterval,
+        maxBackoff: maxBackoff,
+        iterateInterval: iterateInterval,
+      ),
+    );
 
     try {
       await completer.future;
@@ -1018,15 +1020,17 @@ void _isolateEntryPoint(_IsolateData data) {
         endpoint = message.url;
         // Respond on first activation; the supervisor keeps running inside
         // this isolate afterwards, reconnecting across drops on its own.
-        unawaited(client
-            .keepConnected(
-              message.url,
-              retryInterval: message.retryInterval,
-              maxBackoff: message.maxBackoff,
-              iterateInterval: message.iterateInterval,
-            )
-            .then((_) => sendPort.send(IsolateResponse.success(message.requestId, null)))
-            .catchError((Object e) => sendPort.send(IsolateResponse.error(message.requestId, e.toString()))));
+        unawaited(
+          client
+              .keepConnected(
+                message.url,
+                retryInterval: message.retryInterval,
+                maxBackoff: message.maxBackoff,
+                iterateInterval: message.iterateInterval,
+              )
+              .then((_) => sendPort.send(IsolateResponse.success(message.requestId, null)))
+              .catchError((Object e) => sendPort.send(IsolateResponse.error(message.requestId, e.toString()))),
+        );
       } else if (message is StopKeepConnectedMessage) {
         client.stopKeepConnected();
         sendPort.send(IsolateResponse.success(message.requestId, null));
