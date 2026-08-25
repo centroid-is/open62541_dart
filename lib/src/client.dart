@@ -134,6 +134,10 @@ class ClientConfig {
 
   int get outstandingPublishRequests => _clientConfig.ref.outStandingPublishRequests;
 
+  /// The bound on internal waits (service calls AND the synchronous selects
+  /// run_iterate performs during secured handshakes), in milliseconds.
+  int get timeoutMs => _clientConfig.ref.timeout;
+
   Future<void> close() async {
     await _stateStream.close();
     await _subscriptionInactivity.close();
@@ -179,6 +183,43 @@ class Client implements ClientApi {
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    Duration requestTimeout = const Duration(milliseconds: 500),
+  }) {
+    // Stored as a factory rather than built inline so the supervisor can
+    // recreate the native client between reconnect attempts (see
+    // _recreateNativeClient): UA_Client_disconnect mid-handshake does not
+    // close the socket, so re-issuing connect on the same client leaks one
+    // Established connection per attempt — enough leaked connections exhaust
+    // the server's connection pool and the client manufactures the server's
+    // "sickness".
+    _configFactory = () => _buildConfig(
+      secureChannelLifeTime: secureChannelLifeTime,
+      requestedSessionTimeout: requestedSessionTimeout,
+      username: username,
+      password: password,
+      securityMode: securityMode,
+      certificate: certificate,
+      privateKey: privateKey,
+      logLevel: logLevel,
+      connectivityCheckInterval: connectivityCheckInterval,
+      allowUnencryptedPassword: allowUnencryptedPassword,
+      requestTimeout: requestTimeout,
+    );
+    _buildNativeClient();
+  }
+
+  static ffi.Pointer<raw.UA_ClientConfig> _buildConfig({
+    Duration? secureChannelLifeTime,
+    Duration? requestedSessionTimeout,
+    String? username,
+    String? password,
+    MessageSecurityMode? securityMode,
+    Uint8List? certificate,
+    Uint8List? privateKey,
+    LogLevel? logLevel,
+    required Duration connectivityCheckInterval,
+    required bool allowUnencryptedPassword,
+    required Duration requestTimeout,
   }) {
     final config = ua_calloc<raw.UA_ClientConfig>();
 
@@ -252,8 +293,73 @@ class Client implements ClientApi {
     }
 
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
+    // Bound EVERY internal wait on this connection, including the
+    // synchronous multi-second selects UA_Client_run_iterate performs during
+    // secured-channel handshakes (captured in production parked in
+    // ws2_32!select for ~5s chunks regardless of the 10ms iterate budget,
+    // starving the whole isolate). 500ms keeps the event loop responsive; a
+    // handshake step that needs longer fails fast and is retried by the
+    // supervisor instead of napping. Raise it via `requestTimeout` if a slow
+    // network legitimately needs more per service call.
+    config.ref.timeout = requestTimeout.inMilliseconds;
+    return config;
+  }
+
+  void _buildNativeClient() {
+    final config = _configFactory();
     _clientConfig = ClientConfig(config);
     _client = raw.UA_Client_newWithConfig(config);
+    // Pipe the per-config streams into the client-lifetime forwarders so a
+    // native-client recreation is invisible to stream consumers.
+    _configPipes.add(_clientConfig.stateStream.listen(_stateForward.add));
+    _configPipes.add(_clientConfig.subscriptionInactivityStream.listen(_subscriptionInactivityForward.add));
+    _configPipes.add(_clientConfig.subscriptionDeletedStream.listen(_subscriptionDeletedForward.add));
+    _configPipes.add(_clientConfig.inactivityStream.listen(_inactivityForward.add));
+  }
+
+  /// Abandon the current native client and build a fresh one with the same
+  /// configuration. Called by the keepConnected supervisor between reconnect
+  /// attempts: UA_Client_delete is the only call observed to actually close a
+  /// transport left half-open by a failed secured handshake, and leaked
+  /// half-open connections exhaust the server's connection pool.
+  ///
+  /// Active monitored-item streams reference the old client; they get a
+  /// [SecureChannelClosed] error and close so callers resubscribe. Stream
+  /// getters on [Client] itself (stateStream & co.) are forwarders and keep
+  /// working across the swap.
+  Future<void> _recreateNativeClient() async {
+    if (_client == ffi.nullptr) return;
+
+    for (final entry in _activeMonitoredStreams.entries.toList()) {
+      final controller = entry.key;
+      // Don't run the native teardown — the native client is going away
+      // wholesale, and its monitored items with it.
+      controller.onCancel = () {};
+      if (!controller.isClosed) {
+        controller.addError(SecureChannelClosed());
+        controller.close();
+      }
+    }
+    _activeMonitoredStreams.clear();
+
+    for (final pipe in _configPipes) {
+      pipe.cancel();
+    }
+    _configPipes.clear();
+
+    final oldClient = _client;
+    final oldConfig = _clientConfig;
+    _client = ffi.nullptr;
+    // Native teardown may still fire callbacks; the old config's controllers
+    // and the delete callables are still open to receive them harmlessly.
+    raw.UA_Client_delete(oldClient);
+    for (final callback in _subscriptionDeleteCallbacks) {
+      callback.close();
+    }
+    _subscriptionDeleteCallbacks.clear();
+    await oldConfig.close();
+
+    _buildNativeClient();
   }
 
   ClientConfig get config => _clientConfig;
@@ -263,7 +369,11 @@ class Client implements ClientApi {
     if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
       return;
     }
-    await config.stateStream.firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
+    // The forwarder, not config.stateStream: this must keep waiting across a
+    // native-client recreation.
+    await _stateForward.stream.firstWhere(
+      (state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED,
+    );
   }
 
   @override
@@ -343,13 +453,14 @@ class Client implements ClientApi {
     Duration retryInterval = const Duration(milliseconds: 500),
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
+    Duration handshakeTimeout = const Duration(seconds: 10),
   }) {
     // Restart cleanly if already supervising.
     _keepConnected = false;
     final firstActivation = Completer<void>();
     _keepConnected = true;
     _startPump(iterateInterval);
-    _superviseConnection(url, retryInterval, maxBackoff, firstActivation);
+    _superviseConnection(url, retryInterval, maxBackoff, handshakeTimeout, firstActivation);
     return firstActivation.future;
   }
 
@@ -362,11 +473,14 @@ class Client implements ClientApi {
 
   void _startPump(Duration iterateInterval) {
     () async {
-      while (_keepConnected && _client != ffi.nullptr) {
+      while (_keepConnected) {
         // Deliberately ignore the return value: unlike a typical drive loop we
         // must NOT stop pumping when the status goes non-GOOD, otherwise the
-        // event loop dies and the client can never recover.
-        runIterate(iterateInterval);
+        // event loop dies and the client can never recover. A null _client is
+        // transient (mid-recreation) — keep the loop alive across it.
+        if (_client != ffi.nullptr) {
+          runIterate(iterateInterval);
+        }
         await Future.delayed(iterateInterval);
       }
     }();
@@ -376,15 +490,33 @@ class Client implements ClientApi {
     String url,
     Duration retryInterval,
     Duration maxBackoff,
+    Duration handshakeTimeout,
     Completer<void> firstActivation,
   ) async {
     const pollInterval = Duration(milliseconds: 100);
     var backoff = retryInterval;
     var everActivated = false;
     var wasActivated = false;
+    var issuedConnectBefore = false;
+    // Progress-aware handshake bound: the clock restarts on every observed
+    // channel/session/status CHANGE, so a slow-but-progressing secured
+    // handshake (CREATE → ACTIVATE_REQUESTED is progress) is never axed,
+    // while a handshake wedged in one state (a channel that expired
+    // mid-session-create, a HEL the server never ACKs, a server whose
+    // connection pool is exhausted) is abandoned after [handshakeTimeout]
+    // without any external watchdog.
+    ClientState? lastSnapshot;
+    var lastProgressAt = DateTime.now();
 
     while (_keepConnected && _client != ffi.nullptr) {
       final snapshot = state;
+      if (lastSnapshot == null ||
+          snapshot.channelState != lastSnapshot.channelState ||
+          snapshot.sessionState != lastSnapshot.sessionState ||
+          snapshot.recoveryStatus != lastSnapshot.recoveryStatus) {
+        lastProgressAt = DateTime.now();
+        lastSnapshot = snapshot;
+      }
       final activated = snapshot.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED;
 
       if (activated) {
@@ -405,11 +537,13 @@ class Client implements ClientApi {
       wasActivated = false;
 
       // A connect/handshake is still in flight (connectStatus is GOOD and the
-      // channel is not closed) — give it time rather than hammering it.
+      // channel is not closed) — give it time rather than hammering it, but
+      // only while it makes observable progress.
       final connecting =
           snapshot.recoveryStatus == raw.UA_STATUSCODE_GOOD &&
           snapshot.channelState != raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CLOSED;
-      if (connecting) {
+      final stalled = DateTime.now().difference(lastProgressAt) >= handshakeTimeout;
+      if (connecting && !stalled) {
         await Future.delayed(pollInterval);
         continue;
       }
@@ -417,7 +551,20 @@ class Client implements ClientApi {
       // Either we have never connected, or the connect latch has gone bad and
       // open62541 has given up. Re-issue connect to reset connectStatus and
       // restart the state machine, then back off before re-checking.
+      if (issuedConnectBefore) {
+        // The failed attempt can leave its transport half-open:
+        // UA_Client_disconnect mid-handshake does not close the socket, and
+        // one leaked Established connection per retry cycle eventually
+        // exhausts the server's connection pool (observed in production: 20
+        // zombies strangling one PLC). UA_Client_delete is what actually
+        // closes them — recreate the native client before trying again.
+        await _recreateNativeClient();
+      }
       _issueConnect(url);
+      issuedConnectBefore = true;
+      // The fresh attempt gets a full progress window of its own.
+      lastSnapshot = null;
+      lastProgressAt = DateTime.now();
       await Future.delayed(backoff);
       backoff = backoff * 2;
       if (backoff > maxBackoff) backoff = maxBackoff;
@@ -494,9 +641,24 @@ class Client implements ClientApi {
   }
 
   @override
-  Stream<ClientState> get stateStream => config.stateStream;
+  Stream<ClientState> get stateStream => _stateForward.stream;
+
+  /// Client-lifetime views of the per-config streams; unlike the getters on
+  /// [config] these keep emitting across native-client recreations.
+  Stream<int> get subscriptionInactivityStream => _subscriptionInactivityForward.stream;
+  Stream<int> get subscriptionDeletedStream => _subscriptionDeletedForward.stream;
+  Stream<void> get inactivityStream => _inactivityForward.stream;
 
   ClientState get state {
+    if (_client == ffi.nullptr) {
+      // Mid-recreation (or deleted): report the connection as fully down
+      // rather than dereferencing a null native client.
+      return ClientState(
+        channelState: raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CLOSED,
+        sessionState: raw.UA_SessionState.UA_SESSIONSTATE_CLOSED,
+        recoveryStatus: raw.UA_STATUSCODE_BADSERVERNOTCONNECTED,
+      );
+    }
     ffi.Pointer<ffi.UnsignedInt> state = ua_calloc<ffi.UnsignedInt>();
     ffi.Pointer<ffi.UnsignedInt> sessionState = ua_calloc<ffi.UnsignedInt>();
     ffi.Pointer<ffi.Uint32> connectStatus = ua_calloc<ffi.Uint32>();
@@ -1833,11 +1995,29 @@ class Client implements ClientApi {
     // Client_delete calls client config state callbacks
     // Need to close the config after deleting the client
     // s.t. the native callbacks are not closed when called
+    for (final pipe in _configPipes) {
+      pipe.cancel();
+    }
+    _configPipes.clear();
     await _clientConfig.close();
+    await _stateForward.close();
+    await _subscriptionInactivityForward.close();
+    await _subscriptionDeletedForward.close();
+    await _inactivityForward.close();
   }
 
   late ffi.Pointer<raw.UA_Client> _client;
-  late final ClientConfig _clientConfig;
+  // Reassignable: _recreateNativeClient swaps in a fresh native client (and
+  // config) between reconnect attempts.
+  late ClientConfig _clientConfig;
+  late final ffi.Pointer<raw.UA_ClientConfig> Function() _configFactory;
+  final List<StreamSubscription> _configPipes = [];
+  // Client-lifetime stream forwarders: consumers subscribe once and keep
+  // receiving across native-client recreations.
+  final StreamController<ClientState> _stateForward = StreamController<ClientState>.broadcast();
+  final StreamController<int> _subscriptionInactivityForward = StreamController<int>.broadcast();
+  final StreamController<int> _subscriptionDeletedForward = StreamController<int>.broadcast();
+  final StreamController<void> _inactivityForward = StreamController<void>.broadcast();
   final List<ffi.NativeCallable> _subscriptionDeleteCallbacks = [];
 
   // Registry of active monitored-item streams keyed by their StreamController,

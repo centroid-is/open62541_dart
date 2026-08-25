@@ -158,12 +158,14 @@ class KeepConnectedMessage extends IsolateMessage {
   final Duration retryInterval;
   final Duration maxBackoff;
   final Duration iterateInterval;
+  final Duration handshakeTimeout;
   const KeepConnectedMessage(
     super.requestId,
     this.url, {
     required this.retryInterval,
     required this.maxBackoff,
     required this.iterateInterval,
+    required this.handshakeTimeout,
   });
 }
 
@@ -222,6 +224,7 @@ class ClientIsolate implements ClientApi {
     Uint8List? privateKey,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    Duration requestTimeout = const Duration(milliseconds: 500),
   }) {
     // Stored as a factory rather than spawned inline so a respawn (see
     // _respawn) can bring up a fresh isolate with the same configuration.
@@ -235,6 +238,7 @@ class ClientIsolate implements ClientApi {
       privateKey: privateKey,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      requestTimeout: requestTimeout,
       sendPort: sendPort,
     );
     _initIsolate();
@@ -252,6 +256,7 @@ class ClientIsolate implements ClientApi {
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     Duration iterateInterval = const Duration(milliseconds: 10),
+    Duration requestTimeout = const Duration(milliseconds: 500),
   }) async {
     final isolate = ClientIsolate._(
       secureChannelLifeTime: secureChannelLifeTime,
@@ -263,6 +268,7 @@ class ClientIsolate implements ClientApi {
       privateKey: privateKey,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      requestTimeout: requestTimeout,
     );
 
     await isolate._initCompleter.future;
@@ -287,6 +293,7 @@ class ClientIsolate implements ClientApi {
   Duration _kcRetryInterval = const Duration(milliseconds: 500);
   Duration _kcMaxBackoff = const Duration(seconds: 5);
   Duration _kcIterateInterval = const Duration(milliseconds: 10);
+  Duration _kcHandshakeTimeout = const Duration(seconds: 10);
   Duration? _unresponsiveTimeout;
   bool _pingLoopRunning = false;
   bool _respawning = false;
@@ -696,6 +703,7 @@ class ClientIsolate implements ClientApi {
     Duration retryInterval = const Duration(milliseconds: 500),
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
+    Duration handshakeTimeout = const Duration(seconds: 10),
     Duration? unresponsiveTimeout,
   }) async {
     if (_isClosed) throw const ClientIsolateClosedException();
@@ -704,6 +712,7 @@ class ClientIsolate implements ClientApi {
     _kcRetryInterval = retryInterval;
     _kcMaxBackoff = maxBackoff;
     _kcIterateInterval = iterateInterval;
+    _kcHandshakeTimeout = handshakeTimeout;
     _unresponsiveTimeout = unresponsiveTimeout;
 
     final completer = Completer<void>();
@@ -717,6 +726,7 @@ class ClientIsolate implements ClientApi {
         retryInterval: retryInterval,
         maxBackoff: maxBackoff,
         iterateInterval: iterateInterval,
+        handshakeTimeout: handshakeTimeout,
       ),
     );
 
@@ -774,6 +784,11 @@ class ClientIsolate implements ClientApi {
     _pingLoopRunning = true;
     () async {
       var missed = 0;
+      // Respawn backoff: a genuinely dead endpoint must be respawned gently,
+      // not hammered — every respawn abandons a native client (thread +
+      // socket until the wedged call returns), so a tight loop would itself
+      // leak resources. Doubles per respawn, resets on any answered ping.
+      var respawnBackoff = _unresponsiveTimeout ?? const Duration(seconds: 15);
       while (!_isClosed && _keepConnectedUrl != null && _unresponsiveTimeout != null) {
         // Three probes per timeout window: ~3 consecutive misses means the
         // isolate has been silent for about unresponsiveTimeout.
@@ -787,6 +802,7 @@ class ClientIsolate implements ClientApi {
         final ok = await _ping(interval);
         if (ok) {
           missed = 0;
+          respawnBackoff = _unresponsiveTimeout!;
           continue;
         }
         missed++;
@@ -797,6 +813,10 @@ class ClientIsolate implements ClientApi {
           } catch (_) {
             // Spawn failed; the loop keeps probing and will try again.
           }
+          await _sleep(respawnBackoff);
+          respawnBackoff *= 2;
+          const maxRespawnBackoff = Duration(minutes: 1);
+          if (respawnBackoff > maxRespawnBackoff) respawnBackoff = maxRespawnBackoff;
         }
       }
       _pingLoopRunning = false;
@@ -843,10 +863,17 @@ class ClientIsolate implements ClientApi {
         }
       }
 
-      // Fresh isolate from the stored spawn parameters.
+      // Fresh isolate from the stored spawn parameters. Bounded: a hung
+      // spawn must not park the ping loop forever — on timeout we bail and
+      // the loop's next round retries the respawn.
       _initCompleter = Completer<void>();
       _initIsolate();
-      await _initCompleter.future;
+      var initDone = false;
+      final initSettled = _initCompleter.future.then((_) {
+        initDone = true;
+      }, onError: (_) {});
+      await Future.any([initSettled, _sleep(const Duration(seconds: 10))]);
+      if (!initDone) return;
 
       // Surviving streams keep emitting from the new isolate.
       for (final id in _stateStreamIds) {
@@ -872,6 +899,7 @@ class ClientIsolate implements ClientApi {
             retryInterval: _kcRetryInterval,
             maxBackoff: _kcMaxBackoff,
             iterateInterval: _kcIterateInterval,
+            handshakeTimeout: _kcHandshakeTimeout,
           ),
         );
       }
@@ -1074,6 +1102,7 @@ class _IsolateData {
   final Uint8List? privateKey;
   final LogLevel? logLevel;
   final Duration connectivityCheckInterval;
+  final Duration requestTimeout;
   final SendPort sendPort;
 
   _IsolateData({
@@ -1086,6 +1115,7 @@ class _IsolateData {
     this.privateKey,
     this.logLevel,
     required this.connectivityCheckInterval,
+    required this.requestTimeout,
     required this.sendPort,
   });
 }
@@ -1120,6 +1150,7 @@ void _isolateEntryPoint(_IsolateData data) {
     privateKey: data.privateKey,
     logLevel: data.logLevel,
     connectivityCheckInterval: data.connectivityCheckInterval,
+    requestTimeout: data.requestTimeout,
   );
 
   // Handle messages from the main isolate
@@ -1299,7 +1330,9 @@ void _isolateEntryPoint(_IsolateData data) {
         // Send success response to indicate stream is ready
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is StateStreamMessage) {
-        final stream = client.config.stateStream;
+        // The client-lifetime forwarder, not config.stateStream: it keeps
+        // emitting across native-client recreations inside keepConnected.
+        final stream = client.stateStream;
 
         final subscription = stream.listen(
           (state) {

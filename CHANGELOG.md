@@ -6,6 +6,29 @@ changes that ship the same native library version.
 
 ## 1.5.7+2
 
+- Root-cause fixes for the production frozen-client runaway (tfc-hmi#346
+  bench, captured native stack): `UA_Client_run_iterate` performs synchronous
+  multi-second selects during secured-channel handshakes, and a failed
+  handshake leaks its half-open transport on every retry — enough leaked
+  connections exhaust the server's connection pool and the client
+  manufactures the server's "sickness".
+  - `Client`/`ClientIsolate` gain `requestTimeout` (default **500ms**),
+    applied to `UA_ClientConfig.timeout`: bounds the handshake selects (and
+    service-call waits) so the event loop stays responsive. Raise it if a
+    slow network legitimately needs more per call.
+  - The `keepConnected` supervisor now **recreates the native client between
+    reconnect attempts** — `UA_Client_delete` is what actually closes a
+    transport left half-open by a failed handshake. Stream getters on
+    `Client` (`stateStream` & co.) are now client-lifetime forwarders that
+    keep emitting across the swap; active monitored-item streams get a
+    `SecureChannelClosed` error so callers resubscribe.
+  - `keepConnected` gains `handshakeTimeout` (default 10s), a
+    **progress-aware** bound: the clock restarts on every observed
+    channel/session/status change, so a slow-but-progressing secured
+    handshake is never axed while one wedged in a single state (channel
+    expired mid-session-create, HEL never ACKed, exhausted server pool) is
+    abandoned and retried without any external watchdog.
+
 - `ClientIsolate` self-heal: `keepConnected` gains `unresponsiveTimeout`. In
   production a dead secured (SignAndEncrypt) connection can wedge the client
   isolate inside a native call, after which the isolate stops answering
@@ -24,6 +47,9 @@ changes that ship the same native library version.
   - the in-isolate `keepConnected` supervisor is re-armed, so the session
     reconnects without caller action.
   Opt-in: `unresponsiveTimeout` defaults to null (no behavior change).
+  Respawn cycles back off exponentially (up to 1 minute) so a genuinely dead
+  endpoint is retried gently — every respawn abandons a native client, and a
+  tight loop would itself leak resources.
   `debugWedgeIsolate` (test-only) simulates the wedge deterministically.
 - Export `ClientIsolateClosedException` and `ClientIsolateRespawnedException`.
 
