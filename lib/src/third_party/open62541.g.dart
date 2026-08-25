@@ -509,6 +509,15 @@ external void UA_NodeId_delete(ffi.Pointer<UA_NodeId> p);
 @ffi.Native<ffi.Pointer<UA_NodeId> Function()>()
 external ffi.Pointer<UA_NodeId> UA_NodeId_new();
 
+@ffi.Native<UA_ObjectAttributes>()
+external final UA_ObjectAttributes UA_ObjectAttributes_default;
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_ObjectAttributes>)>()
+external void UA_ObjectAttributes_delete(ffi.Pointer<UA_ObjectAttributes> p);
+
+@ffi.Native<ffi.Pointer<UA_ObjectAttributes> Function()>()
+external ffi.Pointer<UA_ObjectAttributes> UA_ObjectAttributes_new();
+
 @ffi.Native<UA_QualifiedName Function(UA_UInt16, ffi.Pointer<ffi.Char>)>()
 external UA_QualifiedName UA_QUALIFIEDNAME(int nsIndex, ffi.Pointer<ffi.Char> chars);
 
@@ -526,6 +535,72 @@ external int UA_ServerConfig_setMinimal(
   ffi.Pointer<UA_ServerConfig> config,
   int portNumber,
   ffi.Pointer<UA_ByteString> certificate,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Server>,
+    UA_NodeId,
+    UA_NodeId,
+    UA_NodeId,
+    UA_QualifiedName,
+    UA_MethodAttributes,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        UA_StatusCode Function(
+          ffi.Pointer<UA_Server> server,
+          ffi.Pointer<UA_NodeId> sessionId,
+          ffi.Pointer<ffi.Void> sessionContext,
+          ffi.Pointer<UA_NodeId> methodId,
+          ffi.Pointer<ffi.Void> methodContext,
+          ffi.Pointer<UA_NodeId> objectId,
+          ffi.Pointer<ffi.Void> objectContext,
+          ffi.Size inputSize,
+          ffi.Pointer<UA_Variant> input,
+          ffi.Size outputSize,
+          ffi.Pointer<UA_Variant> output,
+        )
+      >
+    >,
+    ffi.Size,
+    ffi.Pointer<UA_Argument>,
+    ffi.Size,
+    ffi.Pointer<UA_Argument>,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_NodeId>,
+  )
+>()
+external int UA_Server_addMethodNode(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId requestedNewNodeId,
+  UA_NodeId parentNodeId,
+  UA_NodeId referenceTypeId,
+  UA_QualifiedName browseName,
+  UA_MethodAttributes attr,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      UA_StatusCode Function(
+        ffi.Pointer<UA_Server> server,
+        ffi.Pointer<UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<UA_NodeId> methodId,
+        ffi.Pointer<ffi.Void> methodContext,
+        ffi.Pointer<UA_NodeId> objectId,
+        ffi.Pointer<ffi.Void> objectContext,
+        ffi.Size inputSize,
+        ffi.Pointer<UA_Variant> input,
+        ffi.Size outputSize,
+        ffi.Pointer<UA_Variant> output,
+      )
+    >
+  >
+  method,
+  int inputArgumentsSize,
+  ffi.Pointer<UA_Argument> inputArguments,
+  int outputArgumentsSize,
+  ffi.Pointer<UA_Argument> outputArguments,
+  ffi.Pointer<ffi.Void> nodeContext,
+  ffi.Pointer<UA_NodeId> outNewNodeId,
 );
 
 /// Detailed Node Construction
@@ -616,6 +691,44 @@ DartUA_StatusCode UA_Server_addNode_begin(
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
 external int UA_Server_addNode_finish(ffi.Pointer<UA_Server> server, UA_NodeId nodeId);
 
+/// ObjectNode
+/// ~~~~~~~~~~
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Server>,
+    UA_NodeId,
+    UA_NodeId,
+    UA_NodeId,
+    UA_QualifiedName,
+    UA_NodeId,
+    UA_ObjectAttributes,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_NodeId>,
+  )
+>()
+external int UA_Server_addObjectNode(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId requestedNewNodeId,
+  UA_NodeId parentNodeId,
+  UA_NodeId referenceTypeId,
+  UA_QualifiedName browseName,
+  UA_NodeId typeDefinition,
+  UA_ObjectAttributes attr,
+  ffi.Pointer<ffi.Void> nodeContext,
+  ffi.Pointer<UA_NodeId> outNewNodeId,
+);
+
+/// Reference Management
+/// ~~~~~~~~~~~~~~~~~~~~
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_NodeId, UA_ExpandedNodeId, ffi.Bool)>()
+external int UA_Server_addReference(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId sourceId,
+  UA_NodeId refTypeId,
+  UA_ExpandedNodeId targetId,
+  bool isForward,
+);
+
 /// By default, when adding a VariableNode, the value from the
 /// ``UA_VariableAttributes`` is used. The methods following afterwards can be
 /// used to override the value source.
@@ -673,6 +786,21 @@ external int UA_Server_addVariableTypeNode(
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>)>()
 external int UA_Server_delete(ffi.Pointer<UA_Server> server);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Bool)>()
+external int UA_Server_deleteNode(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, bool deleteReferences);
+
+@ffi.Native<
+  UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_NodeId, ffi.Bool, UA_ExpandedNodeId, ffi.Bool)
+>()
+external int UA_Server_deleteReference(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId sourceNodeId,
+  UA_NodeId referenceTypeId,
+  bool isForward,
+  UA_ExpandedNodeId targetNodeId,
+  bool deleteBidirectional,
+);
 
 /// Utility Functions
 /// -----------------
@@ -1332,6 +1460,22 @@ enum UA_ApplicationType {
     2147483647 => __UA_APPLICATIONTYPE_FORCE32BIT,
     _ => throw ArgumentError('Unknown value for UA_ApplicationType: $value'),
   };
+}
+
+final class UA_Argument extends ffi.Struct {
+  external UA_String name;
+
+  external UA_NodeId dataType;
+
+  @UA_Int32()
+  external int valueRank;
+
+  @ffi.Size()
+  external int arrayDimensionsSize;
+
+  external ffi.Pointer<UA_UInt32> arrayDimensions;
+
+  external UA_LocalizedText description;
 }
 
 /// .. _common:
@@ -3593,6 +3737,27 @@ enum UA_MessageSecurityMode {
     2147483647 => __UA_MESSAGESECURITYMODE_FORCE32BIT,
     _ => throw ArgumentError('Unknown value for UA_MessageSecurityMode: $value'),
   };
+}
+
+final class UA_MethodAttributes extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedAttributes;
+
+  external UA_LocalizedText displayName;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt32()
+  external int writeMask;
+
+  @UA_UInt32()
+  external int userWriteMask;
+
+  @ffi.Bool()
+  external bool executable;
+
+  @ffi.Bool()
+  external bool userExecutable;
 }
 
 enum UA_ModelChangeStructureVerbMask {
@@ -54908,6 +55073,24 @@ const int UA_OPEN62541_VER_MAJOR = 1;
 const int UA_OPEN62541_VER_MINOR = 5;
 
 const int UA_OPEN62541_VER_PATCH = 7;
+
+final class UA_ObjectAttributes extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedAttributes;
+
+  external UA_LocalizedText displayName;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt32()
+  external int writeMask;
+
+  @UA_UInt32()
+  external int userWriteMask;
+
+  @UA_Byte()
+  external int eventNotifier;
+}
 
 enum UA_OpenFileMode {
   UA_OPENFILEMODE_READ(1),
