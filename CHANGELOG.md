@@ -4,6 +4,22 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## Unreleased
+
+- `ClientIsolate.keepConnected` / `stopKeepConnected` / `reconnectStream`:
+  the auto-reconnect supervisor introduced for `Client` in 1.5.7 is now
+  available on the isolate client too, by delegating to the native client's
+  supervisor inside the isolate. This matters because the isolate client is
+  where a dead session is the most invisible: the caller-side `runIterate()`
+  future only completes when native run_iterate returns non-GOOD, so a
+  session that dies while iterate keeps reporting GOOD (seen in production:
+  channel expiring mid-session-create, server FIN never surfacing) parks the
+  caller forever with no error. With `keepConnected` the supervisor and its
+  pump live inside the isolate, so recovery does not depend on any error
+  ever reaching the caller. Starting it stops any caller-driven
+  `runIterate()` loop — the supervisor owns the pump, same contract as
+  `Client.keepConnected`.
+
 ## 1.5.7
 
 - Bump bundled open62541 from `v1.5.6` to `v1.5.7`.
