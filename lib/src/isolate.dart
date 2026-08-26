@@ -26,7 +26,8 @@ abstract class IsolateMessage {
 
 class ConnectMessage extends IsolateMessage {
   final String url;
-  const ConnectMessage(super.requestId, this.url);
+  final Duration timeout;
+  const ConnectMessage(super.requestId, this.url, {required this.timeout});
 }
 
 class ReadMessage extends IsolateMessage {
@@ -143,12 +144,14 @@ class KeepConnectedMessage extends IsolateMessage {
   final Duration retryInterval;
   final Duration maxBackoff;
   final Duration iterateInterval;
+  final Duration connectTimeout;
   const KeepConnectedMessage(
     super.requestId,
     this.url, {
     required this.retryInterval,
     required this.maxBackoff,
     required this.iterateInterval,
+    required this.connectTimeout,
   });
 }
 
@@ -306,16 +309,18 @@ class ClientIsolate implements ClientApi {
     }
   }
 
-  /// Connect to an OPC UA server
+  /// Connect to an OPC UA server. Bounded like [Client.connect]: fails
+  /// instead of waiting forever when the attempt dies or makes no progress
+  /// within [timeout].
   @override
-  Future<void> connect(String url) async {
+  Future<void> connect(String url, {Duration timeout = const Duration(seconds: 15)}) async {
     if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<void>();
     final id = _generateId();
     _pendingRequests[id] = completer;
 
-    _sendPort.send(ConnectMessage(id, url));
+    _sendPort.send(ConnectMessage(id, url, timeout: timeout));
 
     try {
       await completer.future;
@@ -643,6 +648,7 @@ class ClientIsolate implements ClientApi {
     Duration retryInterval = const Duration(milliseconds: 500),
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
+    Duration connectTimeout = const Duration(seconds: 15),
   }) async {
     if (_isClosed) throw const ClientIsolateClosedException();
 
@@ -657,6 +663,7 @@ class ClientIsolate implements ClientApi {
         retryInterval: retryInterval,
         maxBackoff: maxBackoff,
         iterateInterval: iterateInterval,
+        connectTimeout: connectTimeout,
       ),
     );
 
@@ -891,7 +898,7 @@ void _isolateEntryPoint(_IsolateData data) {
     try {
       if (message is ConnectMessage) {
         endpoint = message.url;
-        await client.connect(message.url);
+        await client.connect(message.url, timeout: message.timeout);
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is ReadMessage) {
         final result = await client.read(message.nodeId);
@@ -1027,6 +1034,7 @@ void _isolateEntryPoint(_IsolateData data) {
                 retryInterval: message.retryInterval,
                 maxBackoff: message.maxBackoff,
                 iterateInterval: message.iterateInterval,
+                connectTimeout: message.connectTimeout,
               )
               .then((_) => sendPort.send(IsolateResponse.success(message.requestId, null)))
               .catchError((Object e) => sendPort.send(IsolateResponse.error(message.requestId, e.toString()))),

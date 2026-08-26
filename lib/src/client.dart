@@ -267,12 +267,62 @@ class Client implements ClientApi {
   }
 
   @override
-  Future<void> connect(String url) async {
+  Future<void> connect(String url, {Duration timeout = const Duration(seconds: 15)}) async {
     final instantReturn = _issueConnect(url);
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
     }
-    await awaitConnect();
+    final generation = ++_connectGeneration;
+    if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
+      return;
+    }
+    try {
+      // Wait for session activation, but bounded: fail fast when the attempt
+      // dies (a non-GOOD connectStatus is terminal for the attempt — only a
+      // fresh connect resets it), and fall back to [timeout] for the states
+      // that die WITHOUT an error. The observed field failure is a client
+      // whose secure channel reopens after a mid-handshake fatal but whose
+      // session is never re-created: channel Open, session Closed,
+      // connectStatus Good, forever. An unbounded wait parks on it for good;
+      // run_iterate keeps returning GOOD so the caller's iterate loop never
+      // notices either. The bound is generous: every state transition a
+      // healthy connect makes is itself bounded by open62541's own request
+      // timeout (5 s default) and errors on failure, so only a genuinely
+      // stuck connect can spend [timeout] here without progress or error.
+      await config.stateStream
+          .map((s) {
+            if (s.recoveryStatus != raw.UA_STATUSCODE_GOOD) {
+              throw 'Failed to connect to $url: ${statusCodeToString(s.recoveryStatus)}';
+            }
+            return s;
+          })
+          .firstWhere((s) => s.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED)
+          .timeout(timeout);
+    } catch (e) {
+      // The client can have been delete()d while we waited (that also closes
+      // the state stream, which lands here) — never touch native state then.
+      if (_client == ffi.nullptr) {
+        rethrow;
+      }
+      // The stream subscription starts after _issueConnect, so a very fast
+      // activation can slip past firstWhere — re-check before declaring death.
+      if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
+        return;
+      }
+      // Tear the dead attempt down so its state cannot outlive this call:
+      // disconnect forces the channel CLOSED and connectStatus to
+      // BadConnectionClosed, which makes the next runIterate() return false —
+      // so even a caller that fires connect() un-awaited and only watches its
+      // iterate loop gets unwedged and retries, instead of pumping a zombie
+      // forever. Skip the teardown if a newer connect was issued meanwhile;
+      // this failure belongs to a superseded attempt.
+      if (generation == _connectGeneration && _client != ffi.nullptr) {
+        try {
+          disconnect();
+        } catch (_) {}
+      }
+      rethrow;
+    }
   }
 
   /// Issues a (re)connect to [url] without awaiting session activation.
@@ -343,13 +393,14 @@ class Client implements ClientApi {
     Duration retryInterval = const Duration(milliseconds: 500),
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
+    Duration connectTimeout = const Duration(seconds: 15),
   }) {
     // Restart cleanly if already supervising.
     _keepConnected = false;
     final firstActivation = Completer<void>();
     _keepConnected = true;
     _startPump(iterateInterval);
-    _superviseConnection(url, retryInterval, maxBackoff, firstActivation);
+    _superviseConnection(url, retryInterval, maxBackoff, connectTimeout, firstActivation);
     return firstActivation.future;
   }
 
@@ -376,12 +427,14 @@ class Client implements ClientApi {
     String url,
     Duration retryInterval,
     Duration maxBackoff,
+    Duration connectTimeout,
     Completer<void> firstActivation,
   ) async {
     const pollInterval = Duration(milliseconds: 100);
     var backoff = retryInterval;
     var everActivated = false;
     var wasActivated = false;
+    DateTime? connectingSince;
 
     while (_keepConnected && _client != ffi.nullptr) {
       final snapshot = state;
@@ -398,6 +451,7 @@ class Client implements ClientApi {
         }
         wasActivated = true;
         backoff = retryInterval;
+        connectingSince = null;
         await Future.delayed(pollInterval);
         continue;
       }
@@ -405,18 +459,32 @@ class Client implements ClientApi {
       wasActivated = false;
 
       // A connect/handshake is still in flight (connectStatus is GOOD and the
-      // channel is not closed) — give it time rather than hammering it.
+      // channel is not closed) — give it time rather than hammering it. But
+      // only bounded time: a client can wedge with the channel OPEN, the
+      // session never re-created and connectStatus GOOD (seen in the field
+      // after a mid-handshake fatal during an endpoint-switch reconnect).
+      // That state looks like "connecting" forever, and no error will ever
+      // arrive to break the wait — so once the grace expires, tear the
+      // channel down and fall through to a fresh connect.
       final connecting =
           snapshot.recoveryStatus == raw.UA_STATUSCODE_GOOD &&
           snapshot.channelState != raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CLOSED;
       if (connecting) {
-        await Future.delayed(pollInterval);
-        continue;
+        connectingSince ??= DateTime.now();
+        if (DateTime.now().difference(connectingSince) < connectTimeout) {
+          await Future.delayed(pollInterval);
+          continue;
+        }
+        try {
+          disconnect();
+        } catch (_) {}
       }
+      connectingSince = null;
 
-      // Either we have never connected, or the connect latch has gone bad and
-      // open62541 has given up. Re-issue connect to reset connectStatus and
-      // restart the state machine, then back off before re-checking.
+      // Either we have never connected, the connect latch has gone bad and
+      // open62541 has given up, or a wedged connect was just torn down.
+      // Re-issue connect to reset connectStatus and restart the state
+      // machine, then back off before re-checking.
       _issueConnect(url);
       await Future.delayed(backoff);
       backoff = backoff * 2;
@@ -1848,5 +1916,8 @@ class Client implements ClientApi {
 
   // Auto-reconnect (opt-in via [keepConnected]) state.
   bool _keepConnected = false;
+  // Incremented on every connect() so a stale bounded-connect waiter never
+  // tears down a newer in-flight attempt.
+  int _connectGeneration = 0;
   final StreamController<void> _reconnectController = StreamController<void>.broadcast();
 }
