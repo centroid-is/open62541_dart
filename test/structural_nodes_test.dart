@@ -73,8 +73,6 @@ void main() {
     client.disconnect();
     await client.delete();
     server.shutdown();
-    // Let the setupServer runIterate loop observe the shutdown before delete.
-    await Future.delayed(const Duration(milliseconds: 100));
     server.delete();
   });
 

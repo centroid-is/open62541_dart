@@ -294,6 +294,13 @@ class Server {
         if (handler == null) {
           return raw.UA_STATUSCODE_BADNODEIDUNKNOWN;
         }
+        // Index-range reads are rejected. open62541 forwards the parsed range
+        // to a callback value source and does NOT apply it afterwards, so
+        // ignoring it here would return the FULL value with status Good for a
+        // request like `arr[1:2]` - silently wrong data.
+        if (range != ffi.nullptr && range.ref.dimensionsSize > 0) {
+          return raw.UA_STATUSCODE_BADINDEXRANGEINVALID;
+        }
         // onRead is synchronous and may throw; a throw surfaces to the client
         // as a Bad status rather than crashing the isolate.
         final dyn = handler();
@@ -335,6 +342,12 @@ class Server {
         final handler = _dataSourceWrites[nid];
         if (handler == null) {
           return raw.UA_STATUSCODE_BADWRITENOTSUPPORTED;
+        }
+        // Index-range writes are rejected (mirroring the read dispatcher):
+        // accepting one would hand [onWrite] the sub-array as if it were the
+        // whole value, silently replacing the entire node value.
+        if (range != ffi.nullptr && range.ref.dimensionsSize > 0) {
+          return raw.UA_STATUSCODE_BADINDEXRANGEINVALID;
         }
         // Same first-field aliasing trick as the read path.
         final variant = value.cast<raw.UA_Variant>().ref;
@@ -420,6 +433,13 @@ class Server {
   /// as a structured value, and a client write is decoded back into a
   /// struct-valued [DynamicValue] (its typed fields restored from the registered
   /// schema) before [onWrite] receives it.
+  ///
+  /// **Index ranges are not supported.** A client read or write that specifies
+  /// an index range (e.g. `arr[1:2]`) is rejected with `BadIndexRangeInvalid`:
+  /// open62541 forwards the range to the value-source callbacks without
+  /// applying it itself, and the callbacks always produce/consume the complete
+  /// value, so honouring the request silently would return (or overwrite) the
+  /// full value instead of the requested slice.
   void addDataSourceVariableNode(
     NodeId nodeId, {
     required DynamicValue Function() onRead,
@@ -435,18 +455,8 @@ class Server {
 
     final effectiveAccess = accessLevel ?? AccessLevelMask(read: true, write: onWrite != null);
 
-    // 1) Register the Dart handlers before the node exists so the very first
-    //    read/write dispatched by the server finds them.
-    _dataSourceReads[nodeId] = onRead;
-    if (onWrite != null) {
-      _dataSourceWrites[nodeId] = onWrite;
-    }
-    if (typeId != null) {
-      _dataSourceTypeIds[nodeId] = typeId;
-    }
-
-    // 2) Create a plain variable node (no stored value). Its value comes from
-    //    the callback source attached in step 3.
+    // 1) Create a plain variable node (no stored value). Its value comes from
+    //    the callback source attached in step 2.
     final attr = raw.UA_VariableAttributes_new();
     attr.ref = raw.UA_VariableAttributes_default;
     attr.ref.accessLevel = effectiveAccess.value;
@@ -484,13 +494,10 @@ class Server {
     _freeRawNodeId(typeRaw);
     raw.UA_VariableAttributes_delete(attr);
     if (addStatus != raw.UA_STATUSCODE_GOOD) {
-      _dataSourceReads.remove(nodeId);
-      _dataSourceWrites.remove(nodeId);
-      _dataSourceTypeIds.remove(nodeId);
       throw 'Failed to add data source variable node ${statusCodeToString(addStatus)}, nodeId: $nodeId';
     }
 
-    // 3) Attach the callback value source. The struct is passed by value; the
+    // 2) Attach the callback value source. The struct is passed by value; the
     //    server copies the two function pointers, so the temporary can be freed
     //    immediately. The NativeCallables themselves outlive this call (they are
     //    server fields, closed in [delete]).
@@ -502,10 +509,21 @@ class Server {
     _freeRawNodeId(setNodeIdRaw);
     ua_calloc.free(source);
     if (setStatus != raw.UA_STATUSCODE_GOOD) {
-      _dataSourceReads.remove(nodeId);
-      _dataSourceWrites.remove(nodeId);
-      _dataSourceTypeIds.remove(nodeId);
       throw 'Failed to attach data source ${statusCodeToString(setStatus)}, nodeId: $nodeId';
+    }
+
+    // 3) Register the Dart handlers only once BOTH native calls succeeded.
+    //    Requests are dispatched from runIterate on this isolate, so no client
+    //    read/write can race the registration between steps 1-3. Installing the
+    //    entries earlier (and removing them again on failure) would let a failed
+    //    duplicate add - e.g. BadNodeIdExists for a NodeId that already has a
+    //    data source - wipe the EXISTING node's live handlers and schema.
+    _dataSourceReads[nodeId] = onRead;
+    if (onWrite != null) {
+      _dataSourceWrites[nodeId] = onWrite;
+    }
+    if (typeId != null) {
+      _dataSourceTypeIds[nodeId] = typeId;
     }
   }
 
@@ -1086,10 +1104,11 @@ class Server {
 
   // populate structschema for out type
   void addCustomType(NodeId typeId, DynamicValue value) {
-    final array = ua_calloc<raw.UA_DataTypeArray>();
     if (!value.isObject) {
       throw 'Value must be a object';
     }
+
+    final array = ua_calloc<raw.UA_DataTypeArray>();
 
     // Record the rich schema locally. open62541's generated DataTypeDefinition
     // cannot carry per-field descriptions / display names, so an in-process
@@ -1099,10 +1118,14 @@ class Server {
     array.ref.typesSize = 1;
     array.ref.types = ua_calloc<raw.UA_DataType>(1);
     array.ref.types[0].typeId = typeId.toRaw();
-    array.ref.types[0].binaryEncodingId = NodeId.fromString(
-      typeId.namespace,
-      "BinaryEncoding_Default:${value.name}",
-    ).toRaw();
+    // Derive the DefaultBinary DataTypeEncoding NodeId from the typeId, which
+    // is unique by construction. Deriving it from `value.name` (as done
+    // previously) collides for same-namespace types with a null or duplicate
+    // name - e.g. nested auto-registered schemas - and open62541 resolves an
+    // incoming ExtensionObject by the FIRST type whose encoding id matches, so
+    // colliding ids made client writes decode against the wrong schema. Keep
+    // this derivation stable: it is part of the wire contract for this type.
+    array.ref.types[0].binaryEncodingId = NodeId.fromString(typeId.namespace, "BinaryEncoding_Default:$typeId").toRaw();
 
     array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
 
@@ -1299,6 +1322,9 @@ class Server {
   /// }
   /// ```
   void shutdown() {
+    if (_server == ffi.nullptr) {
+      throw StateError('Server has been deleted; shutdown() must be called before delete()');
+    }
     int ret = raw.UA_Server_run_shutdown(_server);
     if (ret != 0) {
       throw "Failed to shutdown server ${statusCodeToString(ret)}";
@@ -1324,7 +1350,17 @@ class Server {
   /// }
   /// ```
   void delete() {
-    int ret = raw.UA_Server_delete(_server);
+    // Already deleted: a second delete() is a safe no-op (not a double free).
+    if (_server == ffi.nullptr) {
+      return;
+    }
+    final server = _server;
+    // Invalidate the handle FIRST so nothing can observe a dangling pointer:
+    // [runIterate] (typically driven from a detached async loop) checks
+    // `_server != nullptr` and now returns false instead of calling into freed
+    // native memory when the loop ticks after this delete.
+    _server = ffi.nullptr;
+    int ret = raw.UA_Server_delete(server);
     // The server no longer holds references to any of our native callbacks, so
     // it is safe to close them and release the native trampolines.
     //
