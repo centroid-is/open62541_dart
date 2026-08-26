@@ -24,6 +24,9 @@ import 'common.dart';
 ///     type's schema.
 ///   * F4 - index-range reads/writes on data-source nodes are rejected with
 ///     BadIndexRangeInvalid instead of being silently ignored.
+///   * F5 - re-registering an already-registered custom type is a no-op that
+///     keeps the original schema (instead of prepending a duplicate native
+///     type entry and silently overwriting the local schema).
 void main() {
   group('F1: failed duplicate addDataSourceVariableNode keeps original handlers', () {
     late int port;
@@ -297,6 +300,71 @@ void main() {
       );
       expect(writesSeen, isEmpty, reason: 'onWrite must not observe a rejected ranged write');
       expect(backing, [1, 2, 3, 4]);
+    });
+  });
+
+  group('F5: duplicate addCustomType registration is a schema-preserving no-op', () {
+    late int port;
+    late Server server;
+    late Client client;
+
+    final typeId = NodeId.fromString(1, 'review.FT_Dup');
+    final nodeId = NodeId.fromString(1, 'review.f5.node');
+
+    DynamicValue makeSchema() {
+      final s = DynamicValue(name: 'FT_Dup', typeId: typeId);
+      s['i'] = DynamicValue(value: 0, typeId: NodeId.int32);
+      return s;
+    }
+
+    // A conflicting layout for the same typeId; if a re-registration were
+    // honoured, decoding an {i: Int32} write against this would fail.
+    DynamicValue makeConflictingSchema() {
+      final s = DynamicValue(name: 'FT_Dup', typeId: typeId);
+      s['d'] = DynamicValue(value: 0.0, typeId: NodeId.double);
+      return s;
+    }
+
+    DynamicValue? captured;
+
+    setUp(() async {
+      port = Random().nextInt(10000) + 4840;
+      server = setupServer(port);
+      client = await setupClient(port);
+
+      server.addCustomType(typeId, makeSchema());
+      server.addDataTypeNode(typeId, 'FT_Dup');
+
+      captured = null;
+      server.addDataSourceVariableNode(
+        nodeId,
+        browseName: 'F5Tag',
+        typeId: typeId,
+        onRead: makeSchema,
+        onWrite: (value) => captured = value,
+      );
+    });
+
+    tearDown(() async {
+      await client.delete();
+      server.shutdown();
+      server.delete();
+    });
+
+    test('re-registration keeps the original schema decoding writes', () async {
+      // Re-register the same typeId (mirrors _addEnumType's reuse semantics:
+      // no throw, no duplicate). Even a conflicting schema must not displace
+      // the original registration.
+      server.addCustomType(typeId, makeConflictingSchema());
+
+      final w = makeSchema();
+      w['i'] = DynamicValue(value: 42, typeId: NodeId.int32);
+      await client.write(nodeId, w).timeout(const Duration(seconds: 10));
+
+      expect(captured, isNotNull);
+      expect(captured!.isObject, isTrue);
+      expect(captured!.asObject.keys, ['i'], reason: 'the ORIGINAL schema must keep decoding writes');
+      expect(captured!['i'].value, 42);
     });
   });
 }

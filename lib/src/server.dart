@@ -1108,6 +1108,15 @@ class Server {
       throw 'Value must be a object';
     }
 
+    // Already registered: keep the first registration (mirroring
+    // [_addEnumType]'s reuse semantics). Without this guard a second call
+    // would prepend a duplicate native type entry (identical typeId AND
+    // encoding id) and silently overwrite the local schema, breaking the
+    // decoding of writes against the original layout.
+    if (_findDataType(typeId) != ffi.nullptr) {
+      return;
+    }
+
     final array = ua_calloc<raw.UA_DataTypeArray>();
 
     // Record the rich schema locally. open62541's generated DataTypeDefinition
@@ -1371,6 +1380,7 @@ class Server {
     _dsWriteDispatcher = null;
     _dataSourceReads.clear();
     _dataSourceWrites.clear();
+    _dataSourceTypeIds.clear();
     // Per-method-node callbacks:
     for (final callback in _methodCallbacks.values) {
       callback.close();
