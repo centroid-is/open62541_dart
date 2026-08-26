@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:ffi' as ffi;
 
 import 'package:ffi/ffi.dart';
@@ -8,6 +7,28 @@ import 'common.dart';
 import 'extensions.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
+
+/// Describes a single input or output argument of a method node.
+///
+/// Mirrors open62541's `UA_Argument`: a [name], the argument's [dataType]
+/// (a [NodeId], e.g. [NodeId.int32]), a [valueRank] (`-1` = scalar — the
+/// default, `0` = one-or-more dimensions, `>= 1` = a fixed number of
+/// dimensions), optional [arrayDimensions], and an optional [description].
+class Argument {
+  const Argument({
+    required this.name,
+    required this.dataType,
+    this.valueRank = -1,
+    this.arrayDimensions = const [],
+    this.description,
+  });
+
+  final String name;
+  final NodeId dataType;
+  final int valueRank;
+  final List<int> arrayDimensions;
+  final LocalizedText? description;
+}
 
 class Server {
   Server({LogLevel? logLevel, int? port}) {
@@ -28,6 +49,82 @@ class Server {
 
   late ffi.Pointer<raw.UA_Server> _server;
   late ffi.Pointer<raw.UA_ServerConfig> _config;
+
+  // ---- Data-source (callback) variable node plumbing -----------------------
+  //
+  // A data-source node sources its value live from a Dart callback on every
+  // client read, and (optionally) delivers client writes to a Dart callback.
+  // Rather than allocate one NativeCallable per node, the server keeps a single
+  // shared read/write dispatcher pair (created lazily on first use) and routes
+  // to the per-node Dart handlers via [_dataSourceReads]/[_dataSourceWrites],
+  // keyed by NodeId. This keeps exactly two native callbacks alive for the
+  // whole server, both closed in [delete].
+  ffi.NativeCallable<
+    raw.UA_StatusCode Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Bool,
+      ffi.Pointer<raw.UA_NumericRange>,
+      ffi.Pointer<raw.UA_DataValue>,
+    )
+  >?
+  _dsReadDispatcher;
+  ffi.NativeCallable<
+    raw.UA_StatusCode Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NumericRange>,
+      ffi.Pointer<raw.UA_DataValue>,
+    )
+  >?
+  _dsWriteDispatcher;
+  final Map<NodeId, DynamicValue Function()> _dataSourceReads = {};
+  final Map<NodeId, void Function(DynamicValue)> _dataSourceWrites = {};
+
+  // The declared DataType of each data-source node whose `typeId` was given.
+  // The write dispatcher uses it to marshal an incoming custom-struct value with
+  // the correct field schema: a client writes a structured value as a binary
+  // ExtensionObject, and decoding it back into a [DynamicValue] with typed
+  // fields requires the registered schema (see [addCustomType]). Without it a
+  // struct write would decode as an opaque ExtensionObject and fail. Keyed by
+  // the node's NodeId; scalar nodes are present too but resolve to a payload
+  // type and take the plain (schema-less) decode path.
+  final Map<NodeId, NodeId> _dataSourceTypeIds = {};
+
+  // Keeps the native callbacks backing method nodes alive for as long as the
+  // node (and the server) exists. A `NativeCallable` must not be garbage
+  // collected while open62541 still holds its function pointer; it is closed
+  // when the owning node is deleted ([deleteNode]) or the server is torn down
+  // ([delete]). Keyed by the method node's NodeId.
+  final Map<NodeId, ffi.NativeCallable> _methodCallbacks = {};
+
+  /// Releases the UTF-8 identifier buffer that [NodeId.toRaw] allocates (via
+  /// `ua_malloc`) for a **string** NodeId. Numeric NodeIds own no heap memory,
+  /// so this is a no-op for them.
+  ///
+  /// open62541's `UA_Server_add*Node` / `addReference` / `deleteNode` /
+  /// `readValue` / `writeValue` / `writeDescription` / `findDataType` APIs all
+  /// take their `UA_NodeId` arguments **by value** and either deep-copy them
+  /// into the node or use them only transiently for a lookup; none retain the
+  /// caller's pointer past the call. It is therefore safe to free the raw
+  /// NodeId once such a call has returned. Do NOT call this on a NodeId that was
+  /// stored into a struct with its own clean-up (e.g. a `*Attributes.dataType`
+  /// field freed by `UA_*Attributes_delete`, or a `UA_DataType.typeId` cleared
+  /// by open62541's config teardown) — that would double-free.
+  void _freeRawNodeId(raw.UA_NodeId rawNodeId) {
+    if (rawNodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
+      final data = rawNodeId.identifier.string.data;
+      if (data != ffi.nullptr) {
+        ua_malloc.free(data);
+      }
+    }
+  }
 
   /// Initializes and starts the OPC UA server.
   ///
@@ -143,13 +240,14 @@ class Server {
     parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
     baseDataVariableType ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
 
+    final variableNodeIdRaw = variableNodeId.toRaw();
     final parentNodeIdRaw = parentNodeId.toRaw();
     final parentReferenceNodeIdRaw = parentReferenceNodeId.toRaw();
     final baseDataVariableTypeRaw = baseDataVariableType.toRaw();
 
     var returnCode = raw.UA_Server_addVariableNode(
       _server,
-      variableNodeId.toRaw(),
+      variableNodeIdRaw,
       parentNodeIdRaw,
       parentReferenceNodeIdRaw,
       name,
@@ -158,10 +256,274 @@ class Server {
       ffi.nullptr,
       ffi.nullptr,
     );
+    // open62541 deep-copied the NodeId arguments; free our copies. The
+    // `attr.ref.dataType` NodeId is owned by `attr` and released by
+    // `UA_VariableAttributes_delete` below, so it is not freed here.
+    _freeRawNodeId(variableNodeIdRaw);
+    _freeRawNodeId(parentNodeIdRaw);
+    _freeRawNodeId(parentReferenceNodeIdRaw);
+    _freeRawNodeId(baseDataVariableTypeRaw);
     raw.UA_VariableAttributes_delete(attr);
     ua_calloc.free(variant);
     if (returnCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add variable node ${statusCodeToString(returnCode)}, nodeId: $variableNodeId';
+    }
+  }
+
+  /// Lazily creates the shared native read/write dispatchers used by every
+  /// data-source variable node on this server. See [addDataSourceVariableNode].
+  void _ensureDataSourceDispatchers() {
+    if (_dsReadDispatcher != null) return;
+
+    // Read: invoked by the server (inside runIterate, on this isolate) whenever
+    // a client reads the node's value. It looks up the per-node [onRead], asks
+    // it for the live value, and copies that into the outgoing UA_DataValue.
+    int readCb(
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionContext,
+      ffi.Pointer<raw.UA_NodeId> nodeId,
+      ffi.Pointer<ffi.Void> nodeContext,
+      bool includeSourceTimeStamp,
+      ffi.Pointer<raw.UA_NumericRange> range,
+      ffi.Pointer<raw.UA_DataValue> value,
+    ) {
+      ffi.Pointer<raw.UA_Variant>? srcVar;
+      try {
+        final handler = _dataSourceReads[nodeId.ref.toNodeId()];
+        if (handler == null) {
+          return raw.UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        // Index-range reads are rejected. open62541 forwards the parsed range
+        // to a callback value source and does NOT apply it afterwards, so
+        // ignoring it here would return the FULL value with status Good for a
+        // request like `arr[1:2]` - silently wrong data.
+        if (range != ffi.nullptr && range.ref.dimensionsSize > 0) {
+          return raw.UA_STATUSCODE_BADINDEXRANGEINVALID;
+        }
+        // onRead is synchronous and may throw; a throw surfaces to the client
+        // as a Bad status rather than crashing the isolate.
+        final dyn = handler();
+        srcVar = valueToVariant(dyn);
+        // UA_Variant is the first member of UA_DataValue, so a UA_DataValue*
+        // cast to UA_Variant* points at the inline `value` field. Deep-copy the
+        // freshly built variant into it (the server owns/frees it afterwards).
+        final status = raw.UA_Variant_copy(srcVar, value.cast<raw.UA_Variant>());
+        if (status != raw.UA_STATUSCODE_GOOD) {
+          return status;
+        }
+        // Flag hasValue (bit 0 of the UA_DataValue bitfield byte).
+        value.ref.substitute = value.ref.substitute | 0x01;
+        return raw.UA_STATUSCODE_GOOD;
+      } catch (_) {
+        return raw.UA_STATUSCODE_BADINTERNALERROR;
+      } finally {
+        if (srcVar != null) {
+          raw.UA_Variant_delete(srcVar);
+        }
+      }
+    }
+
+    // Write: invoked when a client writes the node. Marshals the incoming
+    // UA_DataValue's variant to a DynamicValue and hands it to the per-node
+    // [onWrite]. Nodes without an onWrite never register here (and are created
+    // read-only), so a missing handler is defensive only.
+    int writeCb(
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionContext,
+      ffi.Pointer<raw.UA_NodeId> nodeId,
+      ffi.Pointer<ffi.Void> nodeContext,
+      ffi.Pointer<raw.UA_NumericRange> range,
+      ffi.Pointer<raw.UA_DataValue> value,
+    ) {
+      try {
+        final nid = nodeId.ref.toNodeId();
+        final handler = _dataSourceWrites[nid];
+        if (handler == null) {
+          return raw.UA_STATUSCODE_BADWRITENOTSUPPORTED;
+        }
+        // Index-range writes are rejected (mirroring the read dispatcher):
+        // accepting one would hand [onWrite] the sub-array as if it were the
+        // whole value, silently replacing the entire node value.
+        if (range != ffi.nullptr && range.ref.dimensionsSize > 0) {
+          return raw.UA_STATUSCODE_BADINDEXRANGEINVALID;
+        }
+        // Same first-field aliasing trick as the read path.
+        final variant = value.cast<raw.UA_Variant>().ref;
+        // A client writes a structured value as a binary-encoded
+        // ExtensionObject (typeKind EXTENSIONOBJECT), not a native struct. To
+        // restore its typed fields we must decode against the registered schema:
+        // pass the node's declared DataType as `dataTypeId` and the local schema
+        // registry as `defs`. Scalars (whose typeId maps to a known payload
+        // type, or nodes created without a typeId) take the plain decode path,
+        // preserving the previous behaviour. See [addCustomType] /
+        // [OpcUaDynamicValueSerializer.localSchemas].
+        final structType = _dataSourceTypeIds[nid];
+        final DynamicValue dyn;
+        if (structType != null && OpcUaDynamicValueSerializer.localSchemas.containsKey(structType)) {
+          dyn = variantToValue(variant, defs: OpcUaDynamicValueSerializer.localSchemas, dataTypeId: structType);
+        } else {
+          dyn = variantToValue(variant);
+        }
+        handler(dyn);
+        return raw.UA_STATUSCODE_GOOD;
+      } catch (_) {
+        return raw.UA_STATUSCODE_BADINTERNALERROR;
+      }
+    }
+
+    _dsReadDispatcher =
+        ffi.NativeCallable<
+          raw.UA_StatusCode Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Bool,
+            ffi.Pointer<raw.UA_NumericRange>,
+            ffi.Pointer<raw.UA_DataValue>,
+          )
+        >.isolateLocal(readCb, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
+    _dsWriteDispatcher =
+        ffi.NativeCallable<
+          raw.UA_StatusCode Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NumericRange>,
+            ffi.Pointer<raw.UA_DataValue>,
+          )
+        >.isolateLocal(writeCb, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
+  }
+
+  /// Adds a variable node whose value is sourced live from a Dart callback.
+  ///
+  /// Unlike [addVariableNode] (which stores a static value in the address
+  /// space), the value of a data-source node is produced on demand: every time
+  /// a client reads the node, [onRead] is invoked and its returned
+  /// [DynamicValue] is sent to the client. This makes the server usable as a
+  /// proxy / data-source that bridges live external state (e.g. a PLC tag).
+  ///
+  /// * [onRead] is **synchronous** and returns the current value. It fires
+  ///   inside the server's `runIterate` on the calling isolate, so it cannot
+  ///   `await`. If it throws, the client read fails with a Bad status
+  ///   (`BadInternalError`) — the isolate is never crashed.
+  /// * [onWrite] (optional) receives the [DynamicValue] a client wrote. Passing
+  ///   `null` makes the node read-only: the node is created without the Write
+  ///   access bit, so client writes are rejected with `BadNotWritable`. When
+  ///   [onWrite] throws, the write fails with `BadInternalError`. `void` return
+  ///   semantics (throw-for-bad) are used rather than an `int` status code to
+  ///   keep the surface pure-Dart and mirror [onRead]'s throw behaviour.
+  /// * [accessLevel] defaults to read + (write iff [onWrite] != null). Pass a
+  ///   value to override (e.g. to expose a writable node whose backing store is
+  ///   currently read-only).
+  /// * [typeId] sets the node's DataType attribute (and marks it scalar) so
+  ///   browsing clients see the correct type; when omitted the node keeps
+  ///   open62541's permissive defaults.
+  ///
+  /// The value marshalling reuses `valueToVariant`/`variantToValue`, so scalar
+  /// numeric/bool/string types work directly. Custom **structured** types are
+  /// also supported end to end: pass the struct's DataType as [typeId] (after
+  /// registering it with [addCustomType] + [addDataTypeNode]) and return a
+  /// struct-valued [DynamicValue] from [onRead]. A client read then decodes it
+  /// as a structured value, and a client write is decoded back into a
+  /// struct-valued [DynamicValue] (its typed fields restored from the registered
+  /// schema) before [onWrite] receives it.
+  ///
+  /// **Index ranges are not supported.** A client read or write that specifies
+  /// an index range (e.g. `arr[1:2]`) is rejected with `BadIndexRangeInvalid`:
+  /// open62541 forwards the range to the value-source callbacks without
+  /// applying it itself, and the callbacks always produce/consume the complete
+  /// value, so honouring the request silently would return (or overwrite) the
+  /// full value instead of the requested slice.
+  void addDataSourceVariableNode(
+    NodeId nodeId, {
+    required DynamicValue Function() onRead,
+    void Function(DynamicValue value)? onWrite,
+    required String browseName,
+    NodeId? parentNodeId,
+    NodeId? parentReferenceNodeId,
+    NodeId? baseDataVariableType,
+    NodeId? typeId,
+    AccessLevelMask? accessLevel,
+  }) {
+    _ensureDataSourceDispatchers();
+
+    final effectiveAccess = accessLevel ?? AccessLevelMask(read: true, write: onWrite != null);
+
+    // 1) Create a plain variable node (no stored value). Its value comes from
+    //    the callback source attached in step 2.
+    final attr = raw.UA_VariableAttributes_new();
+    attr.ref = raw.UA_VariableAttributes_default;
+    attr.ref.accessLevel = effectiveAccess.value;
+    if (typeId != null) {
+      // Owned by `attr`; released by UA_VariableAttributes_delete below.
+      attr.ref.dataType = typeId.toRaw();
+      attr.ref.valueRank = raw.UA_VALUERANK_SCALAR;
+    }
+
+    final name = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
+
+    final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
+    final resolvedType = baseDataVariableType ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
+
+    final nodeIdRaw = nodeId.toRaw();
+    final parentRaw = resolvedParent.toRaw();
+    final refRaw = resolvedRef.toRaw();
+    final typeRaw = resolvedType.toRaw();
+
+    final addStatus = raw.UA_Server_addVariableNode(
+      _server,
+      nodeIdRaw,
+      parentRaw,
+      refRaw,
+      name,
+      typeRaw,
+      attr.ref,
+      ffi.nullptr,
+      ffi.nullptr,
+    );
+    _freeRawNodeId(nodeIdRaw);
+    _freeRawNodeId(parentRaw);
+    _freeRawNodeId(refRaw);
+    _freeRawNodeId(typeRaw);
+    raw.UA_VariableAttributes_delete(attr);
+    if (addStatus != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add data source variable node ${statusCodeToString(addStatus)}, nodeId: $nodeId';
+    }
+
+    // 2) Attach the callback value source. The struct is passed by value; the
+    //    server copies the two function pointers, so the temporary can be freed
+    //    immediately. The NativeCallables themselves outlive this call (they are
+    //    server fields, closed in [delete]).
+    final source = ua_calloc<raw.UA_CallbackValueSource>();
+    source.ref.read = _dsReadDispatcher!.nativeFunction;
+    source.ref.write = onWrite != null ? _dsWriteDispatcher!.nativeFunction : ffi.nullptr;
+    final setNodeIdRaw = nodeId.toRaw();
+    final setStatus = raw.UA_Server_setVariableNode_callbackValueSource(_server, setNodeIdRaw, source.ref);
+    _freeRawNodeId(setNodeIdRaw);
+    ua_calloc.free(source);
+    if (setStatus != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to attach data source ${statusCodeToString(setStatus)}, nodeId: $nodeId';
+    }
+
+    // 3) Register the Dart handlers only once BOTH native calls succeeded.
+    //    Requests are dispatched from runIterate on this isolate, so no client
+    //    read/write can race the registration between steps 1-3. Installing the
+    //    entries earlier (and removing them again on failure) would let a failed
+    //    duplicate add - e.g. BadNodeIdExists for a NodeId that already has a
+    //    data source - wipe the EXISTING node's live handlers and schema.
+    _dataSourceReads[nodeId] = onRead;
+    if (onWrite != null) {
+      _dataSourceWrites[nodeId] = onWrite;
+    }
+    if (typeId != null) {
+      _dataSourceTypeIds[nodeId] = typeId;
     }
   }
 
@@ -186,13 +548,14 @@ class Server {
     parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
     referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
 
+    final variableTypeIdRaw = variableTypeId.toRaw();
     final parentNodeIdRaw = parentNodeId.toRaw();
     final referenceTypeIdRaw = referenceTypeId.toRaw();
     final qualifiedName = raw.UA_QUALIFIEDNAME(1, name.toNativeUtf8(allocator: ua_malloc).cast());
 
     int res = raw.UA_Server_addVariableTypeNode(
       _server,
-      variableTypeId.toRaw(),
+      variableTypeIdRaw,
       parentNodeIdRaw,
       referenceTypeIdRaw,
       qualifiedName,
@@ -202,12 +565,39 @@ class Server {
       ffi.nullptr,
     );
 
+    // open62541 deep-copied the NodeId arguments; free our copies. The
+    // `dattr.ref.dataType` NodeId is owned by `dattr` and released by
+    // `UA_VariableTypeAttributes_delete` below.
+    _freeRawNodeId(variableTypeIdRaw);
+    _freeRawNodeId(parentNodeIdRaw);
+    _freeRawNodeId(referenceTypeIdRaw);
     raw.UA_Variant_delete(variant);
     raw.UA_VariableTypeAttributes_delete(dattr);
 
     if (res != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add variable type node ${statusCodeToString(res)}';
     }
+  }
+
+  /// Registers an application namespace [uri] and returns its namespace index.
+  ///
+  /// The returned index can then be used to create nodes in that namespace
+  /// instead of the default application namespace (`ns=1`), e.g.
+  /// ```dart
+  /// final ns = server.addNamespace('urn:test:bridge');
+  /// server.addVariableNode(NodeId.fromString(ns, 'x'), value);
+  /// ```
+  /// open62541 does not duplicate namespaces: registering a [uri] that is
+  /// already present returns its existing index. The namespace array is
+  /// 0-based, so a freshly added application namespace has an index `>= 2`
+  /// (index 0 is the OPC UA namespace, index 1 the local application URI).
+  int addNamespace(String uri) {
+    final cstr = uri.toNativeUtf8(allocator: ua_malloc);
+    // open62541 copies the name into its namespace array (UA_String_fromChars),
+    // so the temporary C string can be freed immediately after the call.
+    final index = raw.UA_Server_addNamespace(_server, cstr.cast());
+    ua_malloc.free(cstr);
+    return index;
   }
 
   void addDataTypeNode(
@@ -241,6 +631,375 @@ class Server {
     raw.UA_DataTypeAttributes_delete(attr);
   }
 
+  /// Adds a callable method node to the server's address space.
+  ///
+  /// When a client calls the method (see `ClientApi.call`), open62541 invokes
+  /// [callback] synchronously on this isolate from within [runIterate]. The
+  /// request's input variants are marshalled into a list of [DynamicValue]s and
+  /// passed to [callback]; the [DynamicValue]s it returns are marshalled back
+  /// into the method's output variants. Because the callback runs inside the
+  /// server's single-threaded iterate step it must be synchronous — it cannot
+  /// `await`.
+  ///
+  /// Each returned [DynamicValue] must carry a [DynamicValue.typeId] so it can
+  /// be encoded (e.g. `DynamicValue(value: 42, typeId: NodeId.int32)`). If the
+  /// callback throws, the caller receives a `Bad` status
+  /// (`UA_STATUSCODE_BADINTERNALERROR`) and the isolate is not disturbed.
+  ///
+  /// Required parameters:
+  /// * [methodNodeId] - The unique identifier for the new method node.
+  /// * [callback] - The Dart function invoked when a client calls the method.
+  ///
+  /// Optional parameters:
+  /// * [inputArguments] / [outputArguments] - describe the method's signature.
+  /// * [parentNodeId] - The parent node (defaults to the Objects folder). This
+  ///   is the object a client passes as the `objectId` when calling.
+  /// * [parentReferenceNodeId] - The reference type to the parent (defaults to
+  ///   HasComponent).
+  /// * [browseName] - The browse/display name (defaults to the method node's
+  ///   string identifier; required if [methodNodeId] is numeric).
+  void addMethodNode(
+    NodeId methodNodeId, {
+    required List<DynamicValue> Function(List<DynamicValue> inputs) callback,
+    List<Argument> inputArguments = const [],
+    List<Argument> outputArguments = const [],
+    NodeId? parentNodeId,
+    NodeId? parentReferenceNodeId,
+    String? browseName,
+  }) {
+    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
+    if (browseName == null) {
+      if (!methodNodeId.isString()) {
+        throw 'A browseName must be provided for a method node with a numeric NodeId';
+      }
+      browseName = methodNodeId.string;
+    }
+
+    // Method attributes. calloc zero-initializes; open62541's high-level
+    // addMethodNode uses the struct directly (no attribute-mask filtering), so
+    // we only set the fields we care about.
+    final attr = ua_calloc<raw.UA_MethodAttributes>();
+    attr.ref.displayName.text.set(browseName);
+    attr.ref.executable = true;
+    attr.ref.userExecutable = true;
+
+    final inputArgsPtr = _buildArguments(inputArguments);
+    final outputArgsPtr = _buildArguments(outputArguments);
+
+    // The native method callback. isolateLocal: it runs on this isolate,
+    // synchronously, from within runIterate.
+    final nativeCallback =
+        ffi.NativeCallable<
+          raw.UA_StatusCode Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Size,
+            ffi.Pointer<raw.UA_Variant>,
+            ffi.Size,
+            ffi.Pointer<raw.UA_Variant>,
+          )
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Server> server,
+          ffi.Pointer<raw.UA_NodeId> sessionId,
+          ffi.Pointer<ffi.Void> sessionContext,
+          ffi.Pointer<raw.UA_NodeId> methodId,
+          ffi.Pointer<ffi.Void> methodContext,
+          ffi.Pointer<raw.UA_NodeId> objectId,
+          ffi.Pointer<ffi.Void> objectContext,
+          int inputSize,
+          ffi.Pointer<raw.UA_Variant> input,
+          int outputSize,
+          ffi.Pointer<raw.UA_Variant> output,
+        ) {
+          try {
+            final inputs = <DynamicValue>[];
+            for (var i = 0; i < inputSize; i++) {
+              inputs.add(variantToValue(input[i]));
+            }
+
+            final results = callback(inputs);
+
+            // Marshal each result into the corresponding output variant. Deep
+            // copy into open62541-owned memory, then free our temporary.
+            for (var i = 0; i < results.length && i < outputSize; i++) {
+              final variantPtr = valueToVariant(results[i]);
+              raw.UA_Variant_copy(variantPtr, output + i);
+              raw.UA_Variant_delete(variantPtr);
+            }
+
+            return raw.UA_STATUSCODE_GOOD;
+          } catch (_) {
+            // Never let a Dart exception unwind into native code; report a Bad
+            // status to the caller instead.
+            return raw.UA_STATUSCODE_BADINTERNALERROR;
+          }
+        }, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
+
+    final browse = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
+
+    final methodNodeIdRaw = methodNodeId.toRaw();
+    final parentNodeIdRaw = parentNodeId.toRaw();
+    final parentReferenceNodeIdRaw = parentReferenceNodeId.toRaw();
+
+    final retCode = raw.UA_Server_addMethodNode(
+      _server,
+      methodNodeIdRaw,
+      parentNodeIdRaw,
+      parentReferenceNodeIdRaw,
+      browse,
+      attr.ref,
+      nativeCallback.nativeFunction,
+      inputArguments.length,
+      inputArgsPtr,
+      outputArguments.length,
+      outputArgsPtr,
+      ffi.nullptr,
+      ffi.nullptr,
+    );
+
+    // open62541 has deep-copied the attributes, argument arrays and NodeId
+    // arguments into the node; release our copies.
+    _freeRawNodeId(methodNodeIdRaw);
+    _freeRawNodeId(parentNodeIdRaw);
+    _freeRawNodeId(parentReferenceNodeIdRaw);
+    _freeArguments(inputArgsPtr, inputArguments.length);
+    _freeArguments(outputArgsPtr, outputArguments.length);
+    attr.ref.displayName.text.free();
+    ua_calloc.free(attr);
+
+    if (retCode != raw.UA_STATUSCODE_GOOD) {
+      nativeCallback.close();
+      throw 'Failed to add method node ${statusCodeToString(retCode)}, nodeId: $methodNodeId';
+    }
+
+    // Keep the callback alive for the lifetime of the node.
+    _methodCallbacks[methodNodeId] = nativeCallback;
+  }
+
+  /// Allocates and populates a native `UA_Argument` array from [args].
+  /// Returns `nullptr` for an empty list.
+  ffi.Pointer<raw.UA_Argument> _buildArguments(List<Argument> args) {
+    if (args.isEmpty) return ffi.nullptr;
+    final ptr = ua_calloc<raw.UA_Argument>(args.length);
+    for (var i = 0; i < args.length; i++) {
+      final a = args[i];
+      (ptr + i).ref.name.set(a.name);
+      (ptr + i).ref.dataType = a.dataType.toRaw();
+      (ptr + i).ref.valueRank = a.valueRank;
+      final description = a.description;
+      if (description != null) {
+        (ptr + i).ref.description.locale.set(description.locale);
+        (ptr + i).ref.description.text.set(description.value);
+      }
+      if (a.arrayDimensions.isNotEmpty) {
+        final dims = ua_calloc<ffi.Uint32>(a.arrayDimensions.length);
+        dims.asTypedList(a.arrayDimensions.length).setRange(0, a.arrayDimensions.length, a.arrayDimensions);
+        (ptr + i).ref.arrayDimensions = dims;
+        (ptr + i).ref.arrayDimensionsSize = a.arrayDimensions.length;
+      }
+    }
+    return ptr;
+  }
+
+  /// Frees the strings/arrays allocated by [_buildArguments] and the array
+  /// itself.
+  void _freeArguments(ffi.Pointer<raw.UA_Argument> ptr, int length) {
+    if (ptr == ffi.nullptr) return;
+    for (var i = 0; i < length; i++) {
+      (ptr + i).ref.name.free();
+      // The dataType NodeId's string identifier (if any) was allocated by
+      // NodeId.toRaw(); open62541 has copied it into the node, so free ours.
+      _freeRawNodeId((ptr + i).ref.dataType);
+      (ptr + i).ref.description.locale.free();
+      (ptr + i).ref.description.text.free();
+      if ((ptr + i).ref.arrayDimensions != ffi.nullptr) {
+        ua_calloc.free((ptr + i).ref.arrayDimensions);
+      }
+    }
+    ua_calloc.free(ptr);
+  }
+
+  /// Adds a generic Object node to the server's address space.
+  ///
+  /// Object nodes are the containers used to build an address-space hierarchy
+  /// (for example to mirror a PLC symbol tree). Use [addFolderNode] for the
+  /// common `FolderType` case.
+  ///
+  /// Required parameters:
+  /// * [nodeId] - The unique identifier for the new object node.
+  ///
+  /// Optional parameters:
+  /// * [browseName] - The BrowseName (defaults to [displayName], else empty).
+  /// * [displayName] - The human-readable DisplayName (defaults to [browseName]).
+  /// * [parentNodeId] - The parent node (defaults to the Objects folder).
+  /// * [parentReferenceNodeId] - The reference type to the parent (defaults to
+  ///   Organizes).
+  /// * [typeDefinition] - The object's TypeDefinition (defaults to
+  ///   BaseObjectType).
+  ///
+  /// Throws an exception if the server fails to add the node.
+  ///
+  /// Example:
+  /// ```dart
+  /// final tank = NodeId.fromString(1, "tank.1");
+  /// server.addObjectNode(tank, browseName: "Tank1", displayName: "Tank 1");
+  /// ```
+  void addObjectNode(
+    NodeId nodeId, {
+    String? browseName,
+    String? displayName,
+    NodeId? parentNodeId,
+    NodeId? parentReferenceNodeId,
+    NodeId? typeDefinition,
+  }) {
+    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
+    typeDefinition ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEOBJECTTYPE);
+
+    final effectiveBrowseName = browseName ?? displayName ?? '';
+    final effectiveDisplayName = displayName ?? browseName ?? '';
+
+    final attr = raw.UA_ObjectAttributes_new();
+    attr.ref = raw.UA_ObjectAttributes_default;
+    if (effectiveDisplayName.isNotEmpty) {
+      attr.ref.displayName.text.set(effectiveDisplayName);
+    }
+
+    _addNode(
+      raw.UA_NodeClass.UA_NODECLASS_OBJECT,
+      nodeId,
+      parentNodeId,
+      parentReferenceNodeId,
+      effectiveBrowseName,
+      typeDefinition,
+      attr.cast(),
+      getType(UaTypes.objectAttributes),
+    );
+
+    raw.UA_ObjectAttributes_delete(attr);
+  }
+
+  /// Adds an Object node of type `FolderType` - a convenience over
+  /// [addObjectNode].
+  ///
+  /// Folders are the idiomatic way to group nodes in the address space.
+  ///
+  /// Required parameters:
+  /// * [nodeId] - The unique identifier for the new folder node.
+  /// * [name] - The BrowseName for the folder (also used as the default
+  ///   DisplayName).
+  ///
+  /// Optional parameters:
+  /// * [displayName] - The DisplayName (defaults to [name]).
+  /// * [parentNodeId] - The parent node (defaults to the Objects folder).
+  /// * [parentReferenceNodeId] - The reference type to the parent (defaults to
+  ///   Organizes).
+  ///
+  /// Throws an exception if the server fails to add the node.
+  ///
+  /// Example:
+  /// ```dart
+  /// server.addFolderNode(NodeId.fromString(1, "plc"), "PLC");
+  /// ```
+  void addFolderNode(
+    NodeId nodeId,
+    String name, {
+    String? displayName,
+    NodeId? parentNodeId,
+    NodeId? parentReferenceNodeId,
+  }) {
+    addObjectNode(
+      nodeId,
+      browseName: name,
+      displayName: displayName ?? name,
+      parentNodeId: parentNodeId,
+      parentReferenceNodeId: parentReferenceNodeId,
+      typeDefinition: NodeId.fromNumeric(0, raw.UA_NS0ID_FOLDERTYPE),
+    );
+  }
+
+  /// Deletes a node from the server's address space.
+  ///
+  /// Required parameters:
+  /// * [nodeId] - The identifier of the node to remove.
+  ///
+  /// Optional parameters:
+  /// * [deleteReferences] - When `true` (the default) references pointing to and
+  ///   from the node are removed as well; when `false` only the node itself is
+  ///   removed, leaving any dangling references.
+  ///
+  /// Any per-node native resources this server holds for [nodeId] are released:
+  /// a method node's backing [ffi.NativeCallable] (from [addMethodNode]) is
+  /// closed, and any data-source read/write handlers (from
+  /// [addDataSourceVariableNode]) are dropped.
+  ///
+  /// Throws an exception if the server fails to delete the node.
+  ///
+  /// Example:
+  /// ```dart
+  /// server.deleteNode(NodeId.fromString(1, "the.int"));
+  /// ```
+  void deleteNode(NodeId nodeId, {bool deleteReferences = true}) {
+    final nodeIdRaw = nodeId.toRaw();
+    final code = raw.UA_Server_deleteNode(_server, nodeIdRaw, deleteReferences);
+    _freeRawNodeId(nodeIdRaw);
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to delete node ${statusCodeToString(code)}, nodeId: $nodeId';
+    }
+    // Release any native resources this server holds for the node.
+    _methodCallbacks.remove(nodeId)?.close();
+    _dataSourceReads.remove(nodeId);
+    _dataSourceWrites.remove(nodeId);
+    _dataSourceTypeIds.remove(nodeId);
+  }
+
+  /// Adds a reference between two nodes.
+  ///
+  /// Required parameters:
+  /// * [sourceNodeId] - The node the reference originates from.
+  /// * [referenceTypeId] - The reference type (e.g.
+  ///   `NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES)`).
+  /// * [targetNodeId] - The node the reference points to.
+  ///
+  /// Optional parameters:
+  /// * [forward] - Reference direction; `true` (the default) adds a forward
+  ///   reference from source to target, `false` adds an inverse reference.
+  ///
+  /// Throws an exception if the server fails to add the reference.
+  ///
+  /// Example:
+  /// ```dart
+  /// server.addReference(
+  ///   folderNodeId,
+  ///   NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES),
+  ///   variableNodeId,
+  /// );
+  /// ```
+  void addReference(NodeId sourceNodeId, NodeId referenceTypeId, NodeId targetNodeId, {bool forward = true}) {
+    final sourceRaw = sourceNodeId.toRaw();
+    final referenceTypeRaw = referenceTypeId.toRaw();
+    final target = ua_calloc<raw.UA_ExpandedNodeId>();
+    target.ref.nodeId = targetNodeId.toRaw();
+
+    final code = raw.UA_Server_addReference(_server, sourceRaw, referenceTypeRaw, target.ref, forward);
+    // open62541 deep-copied all three NodeIds; free our copies (the target's
+    // NodeId is nested inside the ExpandedNodeId).
+    _freeRawNodeId(sourceRaw);
+    _freeRawNodeId(referenceTypeRaw);
+    _freeRawNodeId(target.ref.nodeId);
+    ua_calloc.free(target);
+
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add reference ${statusCodeToString(code)}, source: $sourceNodeId, target: $targetNodeId';
+    }
+  }
+
   void _addNode(
     raw.UA_NodeClass nodeClass,
     NodeId requestedNewNodeId,
@@ -253,86 +1012,44 @@ class Server {
   ) {
     final browse = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
 
-    //TODO: It seems this method has been removed.
-    var retCode = raw.UA_Server_addNode_begin(
-      _server,
-      nodeClass,
-      requestedNewNodeId.toRaw(),
-      parentNodeId.toRaw(),
-      referenceTypeId.toRaw(),
-      browse,
-      typeDefinition.toRaw(),
-      attr.cast(),
-      attributeType,
-      ffi.nullptr,
-      ffi.nullptr,
-    );
+    final requestedRaw = requestedNewNodeId.toRaw();
+    final parentRaw = parentNodeId.toRaw();
+    final referenceRaw = referenceTypeId.toRaw();
+    final typeDefinitionRaw = typeDefinition.toRaw();
 
-    if (retCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to add node begin ${statusCodeToString(retCode)}';
+    try {
+      //TODO: It seems this method has been removed.
+      var retCode = raw.UA_Server_addNode_begin(
+        _server,
+        nodeClass,
+        requestedRaw,
+        parentRaw,
+        referenceRaw,
+        browse,
+        typeDefinitionRaw,
+        attr.cast(),
+        attributeType,
+        ffi.nullptr,
+        ffi.nullptr,
+      );
+
+      if (retCode != raw.UA_STATUSCODE_GOOD) {
+        throw 'Failed to add node begin ${statusCodeToString(retCode)}';
+      }
+
+      retCode = raw.UA_Server_addNode_finish(_server, requestedRaw);
+
+      if (retCode != raw.UA_STATUSCODE_GOOD) {
+        throw 'Failed to add node finish ${statusCodeToString(retCode)}';
+      }
+    } finally {
+      // open62541 deep-copied the NodeId arguments (both begin and finish use
+      // copies); free ours whether or not the calls succeeded.
+      _freeRawNodeId(requestedRaw);
+      _freeRawNodeId(parentRaw);
+      _freeRawNodeId(referenceRaw);
+      _freeRawNodeId(typeDefinitionRaw);
     }
-
-    retCode = raw.UA_Server_addNode_finish(_server, requestedNewNodeId.toRaw());
-
-    if (retCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to add node finish ${statusCodeToString(retCode)}';
-    }
-  }
-
-  // Register callbacks onto the `variableNodeId` to get notifications
-  // when the value is read and written to.
-  Stream<String> monitorVariable(NodeId variableNodeId) {
-    // UA_NodeId currentNodeId = UA_NODEID_STRING(1, "current-time-value-callback");
-    // UA_ValueCallback callback ;
-    // callback.onRead = beforeReadTime;
-    // callback.onWrite = afterWriteTime;
-    // UA_Server_setVariableNode_valueCallback(server, currentNodeId, callback);
-
-    StreamController<String> controller = StreamController<String>();
-
-    ffi.Pointer<raw.UA_CallbackValueSource> callback = ua_calloc<raw.UA_CallbackValueSource>();
-
-    //TODO : FIX
-    // raw.UA_UInt32 onRead(
-    //   ffi.Pointer<raw.UA_Server> server,
-    //   ffi.Pointer<raw.UA_NodeId> sessionId,
-    //   ffi.Pointer<ffi.Void> sessionContext,
-    //   ffi.Pointer<raw.UA_NodeId> nodeId,
-    //   ffi.Pointer<ffi.Void> nodeContext,
-    //   ffi.Bool includeSourceTimeStamp,
-    //   ffi.Pointer<raw.UA_NumericRange> range,
-    //   ffi.Pointer<raw.UA_DataValue> value,
-    // ) {
-    //   // TODO: Implement the read callback logic
-    //   controller.add("Read callback triggered");
-    //   return raw.UA_STATUSCODE_GOOD as raw.UA_StatusCode;
-    // }
-
-    //TODO: FIX
-    // final onReadCallback = ffi.NativeCallable<
-    //     raw.UA_UInt32 Function(
-    //         ffi.Pointer<raw.UA_Server>,
-    //         ffi.Pointer<raw.UA_NodeId>,
-    //         ffi.Pointer<ffi.Void>,
-    //         ffi.Pointer<raw.UA_NodeId>,
-    //         ffi.Pointer<ffi.Void>,
-    //         ffi.Bool,
-    //         ffi.Pointer<raw.UA_NumericRange>,
-    //         ffi.Pointer<raw.UA_DataValue>
-    //         )>.isolateLocal(onRead);
-
-    //callback.ref.read = onReadCallback.nativeFunction;
-    raw.UA_Server_setVariableNode_callbackValueSource(_server, variableNodeId.toRaw(), callback.ref);
-
-    controller.onCancel = () {
-      // _lib.UA_Server_setVariableNode_valueCallback(_server, variableNodeId.toRaw(_lib), ffi.nullptr); TODO: This cannot call us anymore
-
-      //TODO: FIX
-      //onReadCallback.close();
-      ua_calloc.free(callback);
-    };
-
-    return controller.stream;
   }
 
   /// Writes a description to a variable node in the OPC UA server.
@@ -358,13 +1075,19 @@ class Server {
     ffi.Pointer<raw.UA_LocalizedText> descriptionRaw = raw.UA_LocalizedText_new();
     descriptionRaw.ref.locale.set(description.locale);
     descriptionRaw.ref.text.set(description.value);
-    raw.UA_Server_writeDescription(_server, variableNodeId.toRaw(), descriptionRaw.ref);
+    final variableNodeIdRaw = variableNodeId.toRaw();
+    raw.UA_Server_writeDescription(_server, variableNodeIdRaw, descriptionRaw.ref);
+    // writeDescription uses the NodeId transiently for a lookup; free ours.
+    _freeRawNodeId(variableNodeIdRaw);
     raw.UA_LocalizedText_delete(descriptionRaw);
   }
 
   DynamicValue read(NodeId variableNodeId, {Schema? schema}) {
     final variant = raw.UA_Variant_new();
-    raw.UA_Server_readValue(_server, variableNodeId.toRaw(), variant);
+    final variableNodeIdRaw = variableNodeId.toRaw();
+    raw.UA_Server_readValue(_server, variableNodeIdRaw, variant);
+    // readValue uses the NodeId transiently for a lookup; free ours.
+    _freeRawNodeId(variableNodeIdRaw);
     final value = variantToValue(variant.ref, defs: schema);
     raw.UA_Variant_delete(variant);
     return value;
@@ -372,16 +1095,29 @@ class Server {
 
   void write(NodeId variableNodeId, DynamicValue value) {
     final variant = valueToVariant(value);
-    raw.UA_Server_writeValue(_server, variableNodeId.toRaw(), variant.ref);
+    final variableNodeIdRaw = variableNodeId.toRaw();
+    raw.UA_Server_writeValue(_server, variableNodeIdRaw, variant.ref);
+    // writeValue uses the NodeId transiently for a lookup; free ours.
+    _freeRawNodeId(variableNodeIdRaw);
     raw.UA_Variant_delete(variant);
   }
 
   // populate structschema for out type
   void addCustomType(NodeId typeId, DynamicValue value) {
-    final array = ua_calloc<raw.UA_DataTypeArray>();
     if (!value.isObject) {
       throw 'Value must be a object';
     }
+
+    // Already registered: keep the first registration (mirroring
+    // [_addEnumType]'s reuse semantics). Without this guard a second call
+    // would prepend a duplicate native type entry (identical typeId AND
+    // encoding id) and silently overwrite the local schema, breaking the
+    // decoding of writes against the original layout.
+    if (_findDataType(typeId) != ffi.nullptr) {
+      return;
+    }
+
+    final array = ua_calloc<raw.UA_DataTypeArray>();
 
     // Record the rich schema locally. open62541's generated DataTypeDefinition
     // cannot carry per-field descriptions / display names, so an in-process
@@ -391,10 +1127,14 @@ class Server {
     array.ref.typesSize = 1;
     array.ref.types = ua_calloc<raw.UA_DataType>(1);
     array.ref.types[0].typeId = typeId.toRaw();
-    array.ref.types[0].binaryEncodingId = NodeId.fromString(
-      typeId.namespace,
-      "BinaryEncoding_Default:${value.name}",
-    ).toRaw();
+    // Derive the DefaultBinary DataTypeEncoding NodeId from the typeId, which
+    // is unique by construction. Deriving it from `value.name` (as done
+    // previously) collides for same-namespace types with a null or duplicate
+    // name - e.g. nested auto-registered schemas - and open62541 resolves an
+    // incoming ExtensionObject by the FIRST type whose encoding id matches, so
+    // colliding ids made client writes decode against the wrong schema. Keep
+    // this derivation stable: it is part of the wire contract for this type.
+    array.ref.types[0].binaryEncodingId = NodeId.fromString(typeId.namespace, "BinaryEncoding_Default:$typeId").toRaw();
 
     array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
 
@@ -415,8 +1155,17 @@ class Server {
       final member = entry.value;
       final memberName = entry.key;
       if (member.isObject && _findDataType(member.typeId!) == ffi.nullptr) {
-        // If we contain a member add that first
+        // A struct-valued member is itself a structured DataType. Register its
+        // encoding type AND publish its DataType node (a HasSubtype child of
+        // Structure). A dynamic client decodes the outer struct by resolving
+        // each field type's DataTypeDefinition over the wire, so every nested
+        // type in the transitive closure must exist as a node — otherwise the
+        // read fails BadNodeIdUnknown even though writes (which decode against
+        // the local schema) succeed. The `_findDataType == null` guard fires
+        // once per type, so a type shared by several parents is published
+        // exactly once. Mirrors what _addEnumType already does for enums.
         addCustomType(member.typeId!, member);
+        addDataTypeNode(member.typeId!, member.name ?? memberName);
       }
       final memberType = _findDataType(member.typeId!);
       if (memberType == ffi.nullptr) {
@@ -494,6 +1243,9 @@ class Server {
     final nodeId = ua_calloc<raw.UA_NodeId>();
     nodeId.ref = typeId.toRaw();
     final ret = raw.UA_Server_findDataType(_server, nodeId);
+    // findDataType only reads the NodeId; free the string identifier buffer
+    // toRaw() allocated before releasing the container.
+    _freeRawNodeId(nodeId.ref);
     ua_calloc.free(nodeId);
     return ret;
   }
@@ -579,6 +1331,9 @@ class Server {
   /// }
   /// ```
   void shutdown() {
+    if (_server == ffi.nullptr) {
+      throw StateError('Server has been deleted; shutdown() must be called before delete()');
+    }
     int ret = raw.UA_Server_run_shutdown(_server);
     if (ret != 0) {
       throw "Failed to shutdown server ${statusCodeToString(ret)}";
@@ -604,7 +1359,33 @@ class Server {
   /// }
   /// ```
   void delete() {
-    int ret = raw.UA_Server_delete(_server);
+    // Already deleted: a second delete() is a safe no-op (not a double free).
+    if (_server == ffi.nullptr) {
+      return;
+    }
+    final server = _server;
+    // Invalidate the handle FIRST so nothing can observe a dangling pointer:
+    // [runIterate] (typically driven from a detached async loop) checks
+    // `_server != nullptr` and now returns false instead of calling into freed
+    // native memory when the loop ticks after this delete.
+    _server = ffi.nullptr;
+    int ret = raw.UA_Server_delete(server);
+    // The server no longer holds references to any of our native callbacks, so
+    // it is safe to close them and release the native trampolines.
+    //
+    // Data-source dispatchers (shared read/write pair):
+    _dsReadDispatcher?.close();
+    _dsWriteDispatcher?.close();
+    _dsReadDispatcher = null;
+    _dsWriteDispatcher = null;
+    _dataSourceReads.clear();
+    _dataSourceWrites.clear();
+    _dataSourceTypeIds.clear();
+    // Per-method-node callbacks:
+    for (final callback in _methodCallbacks.values) {
+      callback.close();
+    }
+    _methodCallbacks.clear();
     if (ret != 0) {
       throw "Failed to delete server ${statusCodeToString(ret)}";
     }
