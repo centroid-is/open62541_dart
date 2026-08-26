@@ -622,6 +622,67 @@ void main() {
       );
     });
 
+    // ---- Doubly-nested struct (struct-in-struct-in-struct) -------------
+
+    test('Doubly-nested struct (L1 contains L2 contains L3)', () async {
+      final l3 = NodeId.fromString(1, 'M_L3');
+      final l2 = NodeId.fromString(1, 'M_L2');
+      final l1 = NodeId.fromString(1, 'M_L1');
+
+      // Deepest leaf struct.
+      DynamicValue mkL3(int n, bool flag) {
+        final s = DynamicValue(name: 'M_L3', typeId: l3);
+        s['n'] = scalarField(NodeId.int32, n);
+        s['flag'] = scalarField(NodeId.boolean, flag);
+        return s;
+      }
+
+      // Middle struct: a scalar plus an L3.
+      DynamicValue mkL2(double ratio, int n, bool flag) {
+        final s = DynamicValue(name: 'M_L2', typeId: l2);
+        s['ratio'] = scalarField(NodeId.double, ratio);
+        s['leaf'] = mkL3(n, flag);
+        return s;
+      }
+
+      // Top struct: a scalar plus an L2 (which itself carries an L3).
+      DynamicValue mkL1(String tag, double ratio, int n, bool flag) {
+        final s = DynamicValue(name: 'M_L1', typeId: l1);
+        s['tag'] = scalarField(NodeId.uastring, tag);
+        s['mid'] = mkL2(ratio, n, flag);
+        return s;
+      }
+
+      // Only the top type is registered. addCustomType recurses the whole
+      // chain (L1 -> L2 -> L3), auto-publishing the DataType node at every
+      // level; a read that decodes all three levels proves the transitive
+      // closure was published, not just the first level down.
+      await runCase(
+        typeId: l1,
+        nodeId: NodeId.fromString(1, 'ds.nested2'),
+        browseName: 'DoublyNestedStruct',
+        schema: mkL1('', 0.0, 0, false),
+        initial: mkL1('root', 1.5, 42, true),
+        toWrite: mkL1('root2', -1.5, -42, false),
+        checkRead: (r) {
+          expect(r['tag'].value, 'root');
+          expect(r['mid'].isObject, isTrue, reason: 'L2 should decode as a struct');
+          expect(r['mid']['ratio'].value, 1.5);
+          expect(r['mid']['leaf'].isObject, isTrue, reason: 'L3 should decode as a struct');
+          expect(r['mid']['leaf']['n'].value, 42);
+          expect(r['mid']['leaf']['flag'].value, isTrue);
+        },
+        checkBacking: (b) {
+          expect(b['tag'].value, 'root2');
+          expect(b['mid'].isObject, isTrue);
+          expect(b['mid']['ratio'].value, -1.5);
+          expect(b['mid']['leaf'].isObject, isTrue);
+          expect(b['mid']['leaf']['n'].value, -42);
+          expect(b['mid']['leaf']['flag'].value, isFalse);
+        },
+      );
+    });
+
     // ---- Array-valued field inside a struct ----------------------------
 
     test('Array-valued field inside a struct (Int32[])', () async {
