@@ -590,14 +590,14 @@ void main() {
         return s;
       }
 
-      // The nested type is registered as a custom DataType automatically by
-      // addCustomType (it recurses into struct-valued members), but the client
-      // reads each struct type's DataTypeDefinition attribute over the wire, so
-      // the inner type's DataType *node* must also be published explicitly.
-      // Register it before runCase adds the outer type.
-      server.addCustomType(inner, mkInner(0, 0.0));
-      server.addDataTypeNode(inner, 'M_Inner', displayName: LocalizedText('Inner', 'en-US'));
-
+      // The inner type is registered AND its DataType node published
+      // automatically: addCustomType recurses into struct-valued members and
+      // publishes each nested type's node (a HasSubtype child of Structure).
+      // This is required for reads — a dynamic client resolves every field
+      // type's DataTypeDefinition over the wire, so the inner type's node must
+      // exist or the read fails BadNodeIdUnknown. We deliberately do NOT
+      // pre-register `inner` here; runCase only registers the outer type, and
+      // the nested read below proves the inner node was auto-published.
       await runCase(
         typeId: outer,
         nodeId: NodeId.fromString(1, 'ds.nested'),

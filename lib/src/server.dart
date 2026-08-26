@@ -1123,8 +1123,17 @@ class Server {
       final member = entry.value;
       final memberName = entry.key;
       if (member.isObject && _findDataType(member.typeId!) == ffi.nullptr) {
-        // If we contain a member add that first
+        // A struct-valued member is itself a structured DataType. Register its
+        // encoding type AND publish its DataType node (a HasSubtype child of
+        // Structure). A dynamic client decodes the outer struct by resolving
+        // each field type's DataTypeDefinition over the wire, so every nested
+        // type in the transitive closure must exist as a node — otherwise the
+        // read fails BadNodeIdUnknown even though writes (which decode against
+        // the local schema) succeed. The `_findDataType == null` guard fires
+        // once per type, so a type shared by several parents is published
+        // exactly once. Mirrors what _addEnumType already does for enums.
         addCustomType(member.typeId!, member);
+        addDataTypeNode(member.typeId!, member.name ?? memberName);
       }
       final memberType = _findDataType(member.typeId!);
       if (memberType == ffi.nullptr) {
