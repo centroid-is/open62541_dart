@@ -237,6 +237,123 @@ Future<Uri> download(Uri outputDirectory, String version) async {
 Future<void> _applyPatches(Uri sourceDir, Uri packageRoot) async {
   await _patchSubscriptionCleanup(sourceDir);
   await _patchBoundedSend(sourceDir, packageRoot);
+  await _patchSessionRecreateRace(sourceDir, packageRoot);
+  await _patchDeleteByClientHandle(sourceDir, packageRoot);
+}
+
+/// Stops a transient, recoverable event from permanently wedging the client's
+/// session state machine.
+///
+/// ROOT CAUSE (session-recreate-race; field evidence: Beckhoff TwinCAT,
+/// SignAndEncrypt/Aes256_Sha256_RsaPss, reproduced 6/6 process restarts):
+/// two paths in the client's connect logic latch a fatal `connectStatus`
+/// during a live handshake, after which `connectActivity` returns on its first
+/// line forever and only a fresh application-driven connect can revive it.
+///
+///  1. `processServiceResponse` (ua_client.c) tears the Session down on ANY
+///     BadSessionIdInvalid/BadSessionClosed response regardless of state. When
+///     a CreateSession is already in flight, a late response for a request from
+///     the *previous* Session resets the state to CLOSED; the next connect
+///     iteration issues a SECOND CreateSession, `createSessionAsync`
+///     regenerates `clientSessionNonce`, and the response to the FIRST
+///     CreateSession is then verified against the wrong nonce ->
+///     BadSecurityChecksFailed -> fatal.
+///  2. A CreateSession/ActivateSession cancelled by a SecureChannel close
+///     (BadSecureChannelClosed) reaches the same failure path as a server
+///     rejection and latches fatal, so the channel reconnect that follows
+///     never re-creates the Session.
+///
+/// The fix (ua_client.c + ua_client_connect.c): only tear the Session down on
+/// a stale-session response while it is ACTIVATED, and treat a
+/// BadSecureChannelClosed on the CreateSession/ActivateSession callbacks as the
+/// local cancellation it is (put the session state back, let the reconnected
+/// channel finish the handshake) instead of a fatal server rejection.
+///
+/// Submitted upstream; carried here as a build-time patch until it lands in a
+/// tagged open62541 release. Same delivery mechanism as [_patchBoundedSend].
+Future<void> _patchSessionRecreateRace(Uri sourceDir, Uri packageRoot) async {
+  final clientFile = File.fromUri(sourceDir.resolve('src/client/ua_client.c'));
+  final connectFile = File.fromUri(sourceDir.resolve('src/client/ua_client_connect.c'));
+  if (!await clientFile.exists() || !await connectFile.exists()) {
+    throw Exception(
+      'Cannot apply session-recreate patch: ua_client.c / ua_client_connect.c '
+      'not found under $sourceDir.',
+    );
+  }
+
+  // Idempotent: the patch injects a uniquely-worded comment. If it is already
+  // present the source is patched (e.g. a warm shared source dir reused across
+  // builds), so there is nothing to do.
+  const marker = 'The request was cancelled locally because the SecureChannel closed';
+  if ((await connectFile.readAsString()).contains(marker)) {
+    return;
+  }
+
+  final patchFile = File.fromUri(packageRoot.resolve('hook/session_recreate_race.patch'));
+  if (!await patchFile.exists()) {
+    throw Exception(
+      'Cannot apply session-recreate patch: patch file not found at '
+      '${patchFile.path}. It must ship with the package (check .pubignore does '
+      'not exclude hook/).',
+    );
+  }
+
+  await _applyUnifiedDiff(sourceDir: sourceDir, patchFile: patchFile, what: 'session-recreate');
+
+  // Belt-and-suspenders: confirm the fix actually landed, so a patch tool that
+  // exits 0 without applying still fails the build loudly.
+  if (!(await connectFile.readAsString()).contains(marker)) {
+    throw Exception(
+      'session-recreate patch tool reported success but the fix is absent from '
+      'ua_client_connect.c — refusing to ship the frozen-session bug. The '
+      'upstream source likely changed shape; re-verify the patch.',
+    );
+  }
+}
+
+/// Fixes the orphaned-monitored-item bookkeeping race in open62541's
+/// DeleteMonitoredItems response handling.
+///
+/// ROOT CAUSE (stale-keys / orphaned monitored items): the delete-response
+/// handler removes local MonitoredItems by their server-assigned
+/// `monitoredItemId` at response-processing time. That id is server-recyclable,
+/// so when a delete and a create interleave the handler can erase the NEW live
+/// item locally while the server keeps sampling and publishing it — the
+/// notification then arrives for a clientHandle the client has forgotten
+/// ("Could not process a notification with clienthandle N") and the key freezes
+/// silently. The patch snapshots the client-assigned, monotonically-unique
+/// `clientHandle` of each requested id at request-build time and removes by that
+/// handle at response time, so the collision is structurally impossible.
+///
+/// Delivered as a build-time source patch (same mechanism as
+/// [_patchBoundedSend]); submitted upstream in parallel.
+Future<void> _patchDeleteByClientHandle(Uri sourceDir, Uri packageRoot) async {
+  final targetFile = File.fromUri(sourceDir.resolve('src/client/ua_client_subscriptions.c'));
+  if (!await targetFile.exists()) {
+    throw Exception('Cannot apply delete-by-client-handle patch: ua_client_subscriptions.c not found under $sourceDir');
+  }
+
+  if ((await targetFile.readAsString()).contains('UA62541_DART_DELETE_BY_HANDLE')) {
+    return; // already patched (warm shared source dir)
+  }
+
+  final patchFile = File.fromUri(packageRoot.resolve('hook/delete_by_client_handle.patch'));
+  if (!await patchFile.exists()) {
+    throw Exception(
+      'Cannot apply delete-by-client-handle patch: patch file not found at ${patchFile.path}. '
+      'It must ship with the package (check .pubignore does not exclude hook/).',
+    );
+  }
+
+  await _applyUnifiedDiff(sourceDir: sourceDir, patchFile: patchFile, what: 'delete-by-client-handle');
+
+  if (!(await targetFile.readAsString()).contains('UA62541_DART_DELETE_BY_HANDLE')) {
+    throw Exception(
+      'delete-by-client-handle patch tool reported success but UA62541_DART_DELETE_BY_HANDLE '
+      'is absent from ua_client_subscriptions.c — refusing to ship the orphaned-monitored-item '
+      'bookkeeping race. The upstream source likely changed shape; re-verify the patch.',
+    );
+  }
 }
 
 /// OPC UA Part 4, 5.13.5, Table 95: when BadNoSubscription arrives with
