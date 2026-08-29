@@ -57,9 +57,7 @@ Future<SessionState> _connectDroppingAt(int port, SessionState dropAt) async {
     // intermediate state and act inside the handshake window. connect() awaits
     // ACTIVATED; we don't await it (it may never come pre-fix) and read the
     // live state directly.
-    unawaited(client
-        .connect('opc.tcp://localhost:$port')
-        .catchError((Object _) {}));
+    unawaited(client.connect('opc.tcp://localhost:$port').catchError((Object _) {}));
 
     var dropped = false;
     final deadline = DateTime.now().add(const Duration(seconds: 30));
@@ -83,8 +81,7 @@ Future<SessionState> _connectDroppingAt(int port, SessionState dropAt) async {
       await Future.delayed(const Duration(milliseconds: 2));
     }
 
-    expect(dropped, isTrue,
-        reason: 'test did not observe the $dropAt window to arm the drop');
+    expect(dropped, isTrue, reason: 'test did not observe the $dropAt window to arm the drop');
     return client.state.sessionState;
   } finally {
     try {
@@ -111,10 +108,8 @@ void main() {
   test(
     'a drop during CreateSession recovers to an activated session',
     () async {
-      final end = await _connectDroppingAt(
-          _randomPort(), SessionState.UA_SESSIONSTATE_CREATE_REQUESTED);
-      expect(end, SessionState.UA_SESSIONSTATE_ACTIVATED,
-          reason: 'client wedged after a drop during CreateSession');
+      final end = await _connectDroppingAt(_randomPort(), SessionState.UA_SESSIONSTATE_CREATE_REQUESTED);
+      expect(end, SessionState.UA_SESSIONSTATE_ACTIVATED, reason: 'client wedged after a drop during CreateSession');
     },
     timeout: const Timeout(Duration(seconds: 90)),
     tags: 'integration',
