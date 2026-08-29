@@ -285,7 +285,6 @@ Future<void> _patchDeleteByClientHandle(Uri sourceDir, Uri packageRoot) async {
   }
 }
 
-
 /// OPC UA Part 4, 5.13.5, Table 95: when BadNoSubscription arrives with
 /// subscriptionId == 0, clean ALL client-side subscriptions so that
 /// deleteCallback fires for each.
