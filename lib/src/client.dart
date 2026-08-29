@@ -1152,6 +1152,15 @@ class Client implements ClientApi {
 
     // Store the monitored item id here so we can use it in the onCancel closure
     List<int> monIds = [];
+    // Set when the stream is cancelled while CreateMonitoredItems is still in
+    // flight. The Cancel service only stops requests the server has not begun
+    // processing, so the server usually creates the items anyway; when the
+    // create response finally arrives, createCallback checks this flag and
+    // sends a real DeleteMonitoredItems for whatever the server created.
+    // Without this the items leak server-side forever (they keep sampling and
+    // publishing; open62541 drops each notification with "Could not process a
+    // notification with clienthandle N") — the "stale keys" orphan bug.
+    bool cancelledInFlight = false;
     ffi.Pointer<ffi.Uint32> localRequestId = ffi.nullptr;
     Map<int, Tuple2<NodeId, AttributeId>> monIdToNodeAndAttribute = {};
 
@@ -1173,7 +1182,14 @@ class Client implements ClientApi {
         if (localRequestId == ffi.nullptr) {
           throw 'This should not happen';
         } else {
-          // The monitored item request has not yet returned
+          // The monitored item request has not yet returned. Ask the server to
+          // cancel it (best effort — Cancel only affects requests it has not
+          // started processing) and leave a marker so createCallback deletes
+          // whatever the server did create once the response arrives. Note the
+          // cancel call below pumps the connection synchronously, so the
+          // create response can be processed (and the deferred delete sent)
+          // before it even returns.
+          cancelledInFlight = true;
           raw.UA_Client_cancelByRequestId(_client, localRequestId.value, ffi.nullptr);
           completer.complete();
         }
@@ -1422,6 +1438,51 @@ class Client implements ClientApi {
             raw.UA_CreateMonitoredItemsRequest_delete(createRequest);
             createCallback.close();
             ua_calloc.free(localRequestId);
+
+            if (cancelledInFlight) {
+              // The stream was cancelled while this create was on the wire.
+              // Nobody listens any more; the only job left is to undo whatever
+              // the server did and release the natives the cancel path could
+              // not free (it did not know whether this callback would run).
+              if (response != ffi.nullptr && response.ref.responseHeader.serviceResult == raw.UA_STATUSCODE_GOOD) {
+                for (var i = 0; i < response.ref.resultsSize; i++) {
+                  if (response.ref.results[i].statusCode == raw.UA_STATUSCODE_GOOD) {
+                    monIds.add(response.ref.results[i].monitoredItemId);
+                  }
+                }
+              }
+              if (monIds.isNotEmpty) {
+                // The server ignored the cancel and created the items: delete
+                // them for real. monIds is non-empty, so monitorTeardown takes
+                // the DeleteMonitoredItems branch (which also closes
+                // monitorCallback and frees the callback array) and cannot
+                // recurse into the cancel branch.
+                // Deferred to a microtask: this callback runs synchronously
+                // inside the C response-processing stack (runIterate, a
+                // blocking service call, or even UA_Client_delete), and
+                // issuing a new service call from there re-enters the native
+                // client mid-decode. The microtask runs as soon as control
+                // returns to the Dart event loop — and must re-check that the
+                // client still exists: if the response was delivered during
+                // Client.delete()'s native teardown, the client is freed by
+                // the time we run and the server side is gone with it.
+                scheduleMicrotask(() {
+                  if (_client == ffi.nullptr) {
+                    monitorCallback.close();
+                    ua_calloc.free(callbacks);
+                    return;
+                  }
+                  unawaited(monitorTeardown());
+                });
+              } else {
+                // The cancel was honoured (BadRequestCancelledByRequest) or
+                // the service failed: the C layer already dropped any local
+                // items and the server holds nothing. Just release.
+                scheduleMicrotask(() => monitorCallback.close());
+                ua_calloc.free(callbacks);
+              }
+              return;
+            }
 
             inactivitySub = config.subscriptionInactivityStream.listen((inactiveSubscriptionId) {
               if (controller.isClosed) {

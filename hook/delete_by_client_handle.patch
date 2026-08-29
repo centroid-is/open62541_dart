@@ -1,0 +1,193 @@
+--- a/src/client/ua_client_subscriptions.c
++++ b/src/client/ua_client_subscriptions.c
+@@ -984,10 +984,57 @@
+     return res;
+ }
+ 
++/* UA62541_DART_DELETE_BY_HANDLE: identify the MonitoredItems a
++ * DeleteMonitoredItemsRequest refers to by their clientHandle, snapshotted at
++ * send time, instead of matching monitoredItemIds against the live tree when
++ * the response is processed. monitoredItemIds are server-assigned and may be
++ * recycled the moment the server frees them; if a subsequent
++ * CreateMonitoredItems response re-using one of the ids is processed before
++ * this delete's response (out-of-order service completion on the server is
++ * legal), matching by id would remove the NEW item from the local tree while
++ * the server keeps publishing it — every notification is then dropped with
++ * "Could not process a notification with clienthandle N" and the value
++ * freezes silently. clientHandles are client-assigned and monotonically
++ * unique for the lifetime of the UA_Client, so they cannot collide. */
++typedef struct {
++    UA_DeleteMonitoredItemsRequest *request;
++    UA_UInt32 *clientHandles; /* 1:1 with request->monitoredItemIds;
++                               * 0 = no local item existed at send time */
++} DeleteMonitoredItemsData;
++
++static void *
++MonitoredItem_findByID(void *data, UA_Client_MonitoredItem *mon);
++
++/* Resolve each requested monitoredItemId to the clientHandle of the local
++ * item it refers to right now. Must be called with the client lock held,
++ * before the request is put on the wire. Returns NULL on allocation failure
++ * (the caller then falls back to matching by id). */
++static UA_UInt32 *
++MonitoredItems_snapshotHandles(UA_Client *client, UA_UInt32 subscriptionId,
++                               const UA_UInt32 *monitoredItemIds, size_t size) {
++    UA_UInt32 *handles = (UA_UInt32*)
++        UA_calloc(size > 0 ? size : 1, sizeof(UA_UInt32));
++    if(!handles)
++        return NULL;
++    UA_Client_Subscription *sub = findSubscriptionById(client, subscriptionId);
++    if(!sub)
++        return handles;
++    for(size_t i = 0; i < size; i++) {
++        UA_UInt32 id = monitoredItemIds[i];
++        UA_Client_MonitoredItem *mon = (UA_Client_MonitoredItem*)
++            ZIP_ITER(MonitorItemsTree, &sub->monitoredItems,
++                     MonitoredItem_findByID, &id);
++        if(mon)
++            handles[i] = mon->parameters.clientHandle;
++    }
++    return handles;
++}
++
+ static void
+ MonitoredItems_delete(UA_Client *client, UA_Client_Subscription *sub,
+                       const UA_DeleteMonitoredItemsRequest *request,
+-                      const UA_DeleteMonitoredItemsResponse *response) {
++                      const UA_DeleteMonitoredItemsResponse *response,
++                      const UA_UInt32 *clientHandles) {
+ #ifdef __clang_analyzer__
+     return;
+ #endif
+@@ -1003,6 +1050,21 @@
+            response->results[i] != UA_STATUSCODE_BADMONITOREDITEMIDINVALID) {
+             continue;
+         }
++        if(i >= request->monitoredItemIdsSize)
++            break;
++        if(clientHandles) {
++            /* Remove exactly the item the request referred to at send time.
++             * If it is already gone (or the id had no local item then), do
++             * nothing — in particular never remove a newer item that
++             * inherited a recycled monitoredItemId. */
++            if(clientHandles[i] == 0)
++                continue;
++            UA_Client_MonitoredItem *mon =
++                findMonitoredItemByHandle(sub, clientHandles[i]);
++            if(mon)
++                MonitoredItem_delete(client, sub, mon);
++            continue;
++        }
+         deleteMonitoredItem.monitoredItemId = &request->monitoredItemIds[i];
+         /* Delete the internal representation */
+         ZIP_ITER(MonitorItemsTree,&sub->monitoredItems,
+@@ -1015,8 +1077,9 @@
+     UA_Client_Subscription *sub = NULL;
+     CustomCallback *cc = (CustomCallback *)d;
+     UA_DeleteMonitoredItemsResponse *response = (UA_DeleteMonitoredItemsResponse *)r;
+-    UA_DeleteMonitoredItemsRequest *request =
+-        (UA_DeleteMonitoredItemsRequest *)cc->clientData;
++    DeleteMonitoredItemsData *data =
++        (DeleteMonitoredItemsData *)cc->clientData;
++    UA_DeleteMonitoredItemsRequest *request = data->request;
+ 
+     lockClient(client);
+ 
+@@ -1032,12 +1095,14 @@
+     }
+ 
+     /* Delete MonitoredItems from the internal representation */
+-    MonitoredItems_delete(client, sub, request, response);
++    MonitoredItems_delete(client, sub, request, response, data->clientHandles);
+ 
+ cleanup:
+     if(cc->userCallback)
+         cc->userCallback(client, cc->userData, requestId, response);
+     UA_DeleteMonitoredItemsRequest_delete(request);
++    UA_free(data->clientHandles);
++    UA_free(data);
+     UA_free(cc);
+ 
+     unlockClient(client);
+@@ -1046,14 +1111,27 @@
+ UA_DeleteMonitoredItemsResponse
+ UA_Client_MonitoredItems_delete(UA_Client *client,
+                                 const UA_DeleteMonitoredItemsRequest request) {
++    /* Snapshot which local items the requested ids refer to BEFORE the
++     * request goes out: the blocking service call below still processes
++     * incoming messages, so by the time the response is handled the ids may
++     * already have been recycled into newer items. */
++    lockClient(client);
++    UA_UInt32 *clientHandles =
++        MonitoredItems_snapshotHandles(client, request.subscriptionId,
++                                       request.monitoredItemIds,
++                                       request.monitoredItemIdsSize);
++    unlockClient(client);
++
+     /* Send the request */
+     UA_DeleteMonitoredItemsResponse response;
+     __UA_Client_Service(client, &request, &UA_TYPES[UA_TYPES_DELETEMONITOREDITEMSREQUEST],
+                         &response, &UA_TYPES[UA_TYPES_DELETEMONITOREDITEMSRESPONSE]);
+ 
+     /* A problem occured remote? */
+-    if(response.responseHeader.serviceResult != UA_STATUSCODE_GOOD)
++    if(response.responseHeader.serviceResult != UA_STATUSCODE_GOOD) {
++        UA_free(clientHandles);
+         return response;
++    }
+ 
+     lockClient(client);
+ 
+@@ -1064,13 +1142,15 @@
+                     "No internal representation of subscription %" PRIu32,
+                     request.subscriptionId);
+         unlockClient(client);
++        UA_free(clientHandles);
+         return response;
+     }
+ 
+     /* Remove MonitoredItems in the internal representation */
+-    MonitoredItems_delete(client, sub, &request, &response);
++    MonitoredItems_delete(client, sub, &request, &response, clientHandles);
+ 
+     unlockClient(client);
++    UA_free(clientHandles);
+ 
+     return response;
+ }
+@@ -1091,8 +1171,25 @@
+         return UA_STATUSCODE_BADOUTOFMEMORY;
+     }
+ 
++    DeleteMonitoredItemsData *data = (DeleteMonitoredItemsData *)
++        UA_calloc(1, sizeof(DeleteMonitoredItemsData));
++    if(!data) {
++        UA_DeleteMonitoredItemsRequest_delete(req_copy);
++        UA_free(cc);
++        return UA_STATUSCODE_BADOUTOFMEMORY;
++    }
++
+     UA_DeleteMonitoredItemsRequest_copy(&request, req_copy);
+-    cc->clientData = req_copy;
++    data->request = req_copy;
++    /* Snapshot which local items the requested ids refer to BEFORE the
++     * request goes out (see DeleteMonitoredItemsData). */
++    lockClient(client);
++    data->clientHandles =
++        MonitoredItems_snapshotHandles(client, request.subscriptionId,
++                                       request.monitoredItemIds,
++                                       request.monitoredItemIdsSize);
++    unlockClient(client);
++    cc->clientData = data;
+     cc->userCallback = (UA_ClientAsyncServiceCallback)callback;
+     cc->userData = userdata;
+ 
+@@ -1104,6 +1201,8 @@
+                                  cc, requestId);
+     if(res != UA_STATUSCODE_GOOD) {
+         UA_DeleteMonitoredItemsRequest_delete(req_copy);
++        UA_free(data->clientHandles);
++        UA_free(data);
+         UA_free(cc);
+     }
+     return res;
