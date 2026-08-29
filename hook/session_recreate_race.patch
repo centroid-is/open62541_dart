@@ -42,7 +42,7 @@
                           "The client is configured not to create a new Session.",
 --- a/src/client/ua_client_connect.c
 +++ b/src/client/ua_client_connect.c
-@@ -961,24 +961,37 @@ extractEphemeralKeyFromAddHeader(UA_Client *client, UA_ExtensionObject *ah) {
+@@ -961,24 +961,48 @@ extractEphemeralKeyFromAddHeader(UA_Client *client, UA_ExtensionObject *ah) {
      client->serverEphemeralPubKey = ephKey->publicKey;
      UA_ByteString_init(&ephKey->publicKey);
  
@@ -57,12 +57,23 @@
      UA_ActivateSessionResponse *ar = (UA_ActivateSessionResponse*)response;
 +
 +    /* The request was cancelled locally because the SecureChannel closed
-+     * before the response arrived. The Session still exists on the server
-+     * (it was created; only the activation is unconfirmed). Keep it and
-+     * activate it again on the reconnected SecureChannel, exactly like a
-+     * Session that was ACTIVATED when the channel dropped. If the server has
-+     * discarded it meanwhile, the retry answers BadSessionIdInvalid and a new
-+     * Session is created below. */
++     * before the response arrived (BadSecureChannelClosed comes from
++     * __Client_AsyncService_removeAll on the channel-close path, not from the
++     * server). This is not an activation failure: the Session still exists on
++     * the server -- it was created, only its activation is unconfirmed.
++     *
++     * Set the state to CREATED, not CLOSED, on this "closed" status code on
++     * purpose. CREATED makes connectActivity re-ActivateSession the existing
++     * Session on the reconnected channel -- the same thing open62541 already
++     * does for an ACTIVATED Session, which the CLOSING branch of
++     * __Client_networkCallback demotes to CREATED (not CLOSED) precisely so it
++     * is re-activated rather than recreated. CLOSED would instead discard a
++     * still-valid server-side Session and force a fresh CreateSession, which is
++     * the path whose CreateSession-nonce race the ua_client.c half of this
++     * change fixes -- so keeping the Session and re-activating it is both more
++     * correct and avoids re-entering that path. If the server did discard the
++     * Session during the drop, the retried ActivateSession comes back
++     * BadSessionIdInvalid and the branch below creates a new one. */
 +    if(ar->responseHeader.serviceResult == UA_STATUSCODE_BADSECURECHANNELCLOSED) {
 +        client->sessionState = UA_SESSIONSTATE_CREATED;
 +        return;
@@ -80,7 +91,7 @@
                           UA_StatusCode_name(ar->responseHeader.serviceResult));
              setConnectStatus(client, ar->responseHeader.serviceResult);
              return;
-@@ -1664,24 +1677,34 @@ requestFindServers(UA_Client *client) {
+@@ -1664,24 +1688,34 @@ requestFindServers(UA_Client *client) {
  
      client->findServersHandshake = true;
      return UA_STATUSCODE_GOOD;
