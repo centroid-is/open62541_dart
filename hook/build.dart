@@ -239,6 +239,94 @@ Future<void> _applyPatches(Uri sourceDir, Uri packageRoot) async {
   await _patchBoundedSend(sourceDir, packageRoot);
   await _patchSessionRecreateRace(sourceDir, packageRoot);
   await _patchDeleteByClientHandle(sourceDir, packageRoot);
+  await _patchAsyncManagerSingleThread(sourceDir);
+}
+
+/// Runs the server's AsyncManager lifecycle in single-threaded builds too.
+///
+/// open62541 1.5.7 compiles the async-operation SERVICE paths unconditionally
+/// (a method/read/write callback may return
+/// `UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY` and complete later via
+/// `UA_Server_setAsyncCallMethodResult` etc.), but guards the AsyncManager's
+/// init/start/stop/clear calls in `ua_server.c` behind
+/// `#if UA_MULTITHREADING >= 100`. This package builds with
+/// `UA_MULTITHREADING=0`, so the manager's TAILQ heads stay zeroed and the
+/// FIRST parked async operation crashes with a NULL store
+/// (`TAILQ_INSERT_TAIL` through `waitingOps.tqh_last == NULL`).
+///
+/// The async machinery itself is thread-agnostic — operations are parked and
+/// completed on the event-loop thread; the 1s timeout sweep is a regular
+/// server callback; ready responses are flushed via the event loop's delayed
+/// callbacks — so the fix is simply to run the manager lifecycle
+/// unconditionally. The threading model is NOT changed (UA_MULTITHREADING
+/// stays 0). Anchored string replacement, same delivery mechanism as
+/// [_patchSubscriptionCleanup].
+Future<void> _patchAsyncManagerSingleThread(Uri sourceDir) async {
+  final targetFile = File.fromUri(sourceDir.resolve('src/server/ua_server.c'));
+  if (!await targetFile.exists()) {
+    throw Exception('Cannot apply async-manager patch: ua_server.c not found under $sourceDir');
+  }
+
+  var content = await targetFile.readAsString();
+
+  // Already patched? (idempotency marker)
+  if (content.contains('AsyncManager also runs in single-threaded builds')) return;
+
+  const blocks = <(String original, String patched)>[
+    (
+      '''
+#if UA_MULTITHREADING >= 100
+    UA_AsyncManager_init(&server->asyncManager, server);
+#endif''',
+      '''
+    /* AsyncManager also runs in single-threaded builds (open62541_dart patch):
+     * the async service paths are compiled unconditionally upstream, so the
+     * manager must be initialized regardless of UA_MULTITHREADING. */
+    UA_AsyncManager_init(&server->asyncManager, server);''',
+    ),
+    (
+      '''
+#if UA_MULTITHREADING >= 100
+    /* Add regulare callback for async operation processing */
+    UA_AsyncManager_start(&server->asyncManager, server);
+#endif''',
+      '''
+    /* Add regular callback for async operation processing */
+    UA_AsyncManager_start(&server->asyncManager, server);''',
+    ),
+    (
+      '''
+#if UA_MULTITHREADING >= 100
+    /* Stop regular callback for async operation processing */
+    UA_AsyncManager_stop(&server->asyncManager, server);
+#endif''',
+      '''
+    /* Stop regular callback for async operation processing */
+    UA_AsyncManager_stop(&server->asyncManager, server);''',
+    ),
+    (
+      '''
+#if UA_MULTITHREADING >= 100
+    UA_AsyncManager_clear(&server->asyncManager, server);
+#endif''',
+      '''
+    UA_AsyncManager_clear(&server->asyncManager, server);''',
+    ),
+  ];
+
+  for (final (original, patched) in blocks) {
+    final matches = original.allMatches(content).length;
+    if (matches != 1) {
+      throw Exception(
+        'Cannot apply async-manager patch: expected exactly 1 occurrence of '
+        'anchor "${original.trim().split('\n').last.trim()}" in ua_server.c, '
+        'found $matches. The upstream source changed shape — re-verify and '
+        'update the anchors.',
+      );
+    }
+    content = content.replaceFirst(original, patched);
+  }
+  await targetFile.writeAsString(content);
 }
 
 /// Stops a transient, recoverable event from permanently wedging the client's

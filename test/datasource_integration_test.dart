@@ -33,7 +33,7 @@ void main() {
         browseName: 'Temperature',
         typeId: NodeId.double,
         onRead: () => DynamicValue(name: 'Temperature', value: temperature, typeId: NodeId.double),
-        onWrite: (value) => temperature = (value.value as num).toDouble(),
+        onWrite: (value) async => temperature = (value.value as num).toDouble(),
       );
 
       // Initial read comes from onRead.
@@ -104,7 +104,7 @@ void main() {
         browseName: 'WriteThrows',
         typeId: NodeId.int32,
         onRead: () => DynamicValue(name: 'WriteThrows', value: 0, typeId: NodeId.int32),
-        onWrite: (value) => throw Exception('rejected'),
+        onWrite: (value) async => throw Exception('rejected'),
       );
 
       await expectLater(client.write(nodeId, DynamicValue(value: 5, typeId: NodeId.int32)), throwsA(anything));
@@ -118,7 +118,7 @@ void main() {
         browseName: 'Label',
         typeId: NodeId.uastring,
         onRead: () => DynamicValue(name: 'Label', value: label, typeId: NodeId.uastring),
-        onWrite: (value) => label = value.value as String,
+        onWrite: (value) async => label = value.value as String,
       );
 
       expect((await client.read(nodeId)).value, 'hello');

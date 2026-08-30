@@ -282,6 +282,7 @@ class ClientIsolate implements ClientApi {
   late final Isolate _isolate;
   late final SendPort _sendPort;
   late final ReceivePort _receivePort;
+  late final ReceivePort _errPort;
   final Completer<void> _initCompleter = Completer<void>();
 
   bool _isClosed = false;
@@ -305,8 +306,11 @@ class ClientIsolate implements ClientApi {
       // uncaught error no longer kills the worker; this port receives it so the
       // failure is recorded instead of vanishing (on a detached GUI process
       // stderr is a dead handle, so route it through _safeErr to the log file).
-      final errPort = ReceivePort();
-      errPort.listen((e) {
+      // Stored as a field so [delete] can close it: an open ReceivePort keeps
+      // the owning isolate alive, so leaking it prevents the process (e.g. a
+      // CLI) from ever exiting after the client is deleted.
+      _errPort = ReceivePort();
+      _errPort.listen((e) {
         _safeErr('ISOLATE ERROR: $e');
       });
 
@@ -332,7 +336,7 @@ class ClientIsolate implements ClientApi {
         // ("lines 1 & 3 offline"). errorsAreFatal:false reports such errors to
         // onError but keeps the isolate running.
         errorsAreFatal: false,
-        onError: errPort.sendPort,
+        onError: _errPort.sendPort,
       );
 
       _receivePort.listen(_handleMessage);
@@ -856,6 +860,7 @@ class ClientIsolate implements ClientApi {
 
     _isolate.kill();
     _receivePort.close();
+    _errPort.close();
   }
 
   /// Wait for the connection to be fully established

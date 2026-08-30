@@ -34,7 +34,7 @@ void main() {
           Argument(name: 'b', dataType: NodeId.int32),
         ],
         outputArguments: [Argument(name: 'sum', dataType: NodeId.int32)],
-        callback: (inputs) {
+        callback: (inputs, session) async {
           final sum = inputs[0].asInt + inputs[1].asInt;
           return [DynamicValue(value: sum, typeId: NodeId.int32)];
         },
@@ -56,7 +56,7 @@ void main() {
         browseName: 'upper',
         inputArguments: [Argument(name: 'text', dataType: NodeId.uastring)],
         outputArguments: [Argument(name: 'upper', dataType: NodeId.uastring)],
-        callback: (inputs) {
+        callback: (inputs, session) async {
           return [DynamicValue(value: inputs[0].asString.toUpperCase(), typeId: NodeId.uastring)];
         },
       );
@@ -76,7 +76,7 @@ void main() {
         browseName: 'boom',
         inputArguments: [Argument(name: 'a', dataType: NodeId.int32)],
         outputArguments: [Argument(name: 'out', dataType: NodeId.int32)],
-        callback: (inputs) {
+        callback: (inputs, session) async {
           throw StateError('boom');
         },
       );
@@ -92,10 +92,61 @@ void main() {
         okId,
         browseName: 'ok',
         outputArguments: [Argument(name: 'out', dataType: NodeId.int32)],
-        callback: (inputs) => [DynamicValue(value: 7, typeId: NodeId.int32)],
+        callback: (inputs, session) async => [DynamicValue(value: 7, typeId: NodeId.int32)],
       );
       final ok = await client.call(NodeId.objectsFolder, okId, const []);
       expect(ok.first.asInt, 7);
+    });
+
+    test('callback receives the calling session identity', () async {
+      // A dedicated client so we can declare the session attributes the
+      // handler should observe. Username coverage: the Server constructor
+      // cannot enable server-side username/password logins today (its default
+      // access control allows anonymous only — backlog item 15), so this
+      // exercises the anonymous path; username/certificate identities land
+      // with item 15.
+      final identifiedClient = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+      identifiedClient.config.applicationUri = 'urn:open62541_dart:test:session-identity';
+      identifiedClient.config.applicationName = 'session identity test client';
+      identifiedClient.config.sessionName = 'session-identity-test-session';
+      () async {
+        while (identifiedClient.runIterate(Duration(milliseconds: 10))) {
+          await Future.delayed(Duration(milliseconds: 5));
+        }
+      }();
+      await identifiedClient.connect('opc.tcp://localhost:$port');
+
+      MethodSessionInfo? captured;
+      final methodId = NodeId.fromString(1, 'method.whoami');
+      server.addMethodNode(
+        methodId,
+        browseName: 'whoami',
+        outputArguments: [Argument(name: 'out', dataType: NodeId.int32)],
+        callback: (inputs, session) async {
+          captured = session;
+          return [DynamicValue(value: 1, typeId: NodeId.int32)];
+        },
+      );
+
+      try {
+        final result = await identifiedClient.call(NodeId.objectsFolder, methodId, const []);
+        expect(result.first.asInt, 1);
+
+        final info = captured!;
+        // open62541 assigns each session a Guid NodeId; it must be a real,
+        // non-null id (and not the admin session's all-but-one-zero guid).
+        expect(info.sessionId, isNot(NodeId.nullId));
+        expect(info.sessionId.isGuid(), isTrue);
+        expect(info.sessionId, isNot(NodeId.fromGuid(0, '00000001-0000-0000-0000-000000000000')));
+        // The attributes the client declared above.
+        expect(info.applicationUri, 'urn:open62541_dart:test:session-identity');
+        expect(info.applicationName, 'session identity test client');
+        expect(info.sessionName, 'session-identity-test-session');
+        // The default client connects without a user token -> anonymous.
+        expect(info.identity, isA<AnonymousSessionIdentity>());
+      } finally {
+        await identifiedClient.delete();
+      }
     });
 
     test('deleteNode releases a method node and its callback', () async {
@@ -104,7 +155,7 @@ void main() {
         methodId,
         browseName: 'temp',
         outputArguments: [Argument(name: 'out', dataType: NodeId.int32)],
-        callback: (inputs) => [DynamicValue(value: 1, typeId: NodeId.int32)],
+        callback: (inputs, session) async => [DynamicValue(value: 1, typeId: NodeId.int32)],
       );
 
       // Callable before deletion.

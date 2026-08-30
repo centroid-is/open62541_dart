@@ -26,6 +26,7 @@ Future<void> main() async {
       'UA_CertificateGroup_AcceptAll',
       'UA_ClientConfig_setAuthenticationUsername',
       'UA_Client_newWithConfig',
+      'UA_Client_getConfig',
       'UA_Client_connectAsync',
       'UA_Client_run_iterate',
       'UA_Client_writeValueAttribute_async',
@@ -126,6 +127,13 @@ Future<void> main() async {
 
       // Statistics / diagnostics
       'UA_Server_getStatistics',
+
+      // Session introspection (method-callback session identity)
+      'UA_Server_getSessionAttribute',
+
+      // Async operations (method calls now; async data-source writes later)
+      'UA_Server_setAsyncCallMethodResult',
+      'UA_Server_setAsyncWriteResult',
 
       'UA_DataTypeAttributes_new',
       'UA_DataTypeAttributes_delete',
@@ -251,6 +259,7 @@ Future<void> main() async {
       'UA_SessionStatistics',
       'UA_ServerDiagnosticsSummaryDataType',
       'UA_SubscriptionDiagnosticsDataType',
+      'UA_SessionSecurityDiagnosticsDataType',
       // PubSub structs
       'UA_PublisherId',
       'UA_PubSubConnectionConfig',

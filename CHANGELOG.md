@@ -6,6 +6,77 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **BREAKING: data-source `onWrite` callbacks are async.**
+  `Server.addDataSourceVariableNode` / `Server.setVariableValueSource` take
+  `Future<void> Function(DynamicValue)` for `onWrite`. The client's write
+  parks as an open62541 async operation and is answered with the handler's
+  awaited outcome — complete normally for `Good`, complete with a
+  `UaStatusException` for that exact code, anything else for
+  `Bad_InternalError` — so a proxy can answer with the REAL downstream
+  (device) result instead of an optimistic Good. Writes not completed within
+  `Server.asyncOperationTimeout` are cancelled with `Bad_Timeout`. Migrate
+  handlers by adding `async`.
+- **BREAKING: method callbacks are async.** `Server.addMethodNode`'s
+  `callback` now returns `Future<List<DynamicValue>>`. The call is parked as
+  an open62541 async operation (`GoodCompletesAsynchronously`) and the
+  client's request stays in flight — without blocking the server's iterate
+  loop — until the future completes; the response goes out on a following
+  `runIterate`. Multiple calls can be in flight concurrently. A
+  `UaStatusException` completes the call with exactly that status; any other
+  error yields `Bad_InternalError`. Calls not completed within
+  `Server.asyncOperationTimeout` (new getter/setter, default 2 minutes) are
+  cancelled with `Bad_Timeout`, and unfinished calls are dropped on shutdown.
+  The sync path is removed (async is the API): migrate handlers by adding
+  `async` — `callback: (inputs, session) async { ... }`.
+- **Fixed: only the first method output argument reached the caller.**
+  `Client.call`'s response callback is async, and open62541 frees the
+  `UA_CallResponse` the moment the native callback returns (at the first
+  `await`) — outputs beyond index 0 were read from freed memory. The client
+  now deep-copies every output variant synchronously before decoding, so
+  multi-output methods return all outputs, typed.
+- **Build: the server's AsyncManager now also runs in single-threaded
+  builds** (`hook/build.dart` source patch). open62541 1.5.7 compiles the
+  async-operation service paths unconditionally but only initializes the
+  AsyncManager under `UA_MULTITHREADING >= 100`, so the first parked async
+  operation in this package's `UA_MULTITHREADING=0` build crashed on an
+  uninitialized queue. The threading model is unchanged.
+- **BREAKING: method callbacks receive the calling session's identity.**
+  `Server.addMethodNode`'s `callback` signature changed from
+  `(List<DynamicValue> inputs)` to
+  `(List<DynamicValue> inputs, MethodSessionInfo session)`. The new
+  `MethodSessionInfo` carries the calling session's `sessionId` (the Guid
+  NodeId open62541 assigns), `sessionName`, the client's `applicationUri` /
+  `applicationName` (from the session's `0:clientDescription` attribute) and
+  the activation `identity` — a sealed `SessionIdentity` that is
+  `AnonymousSessionIdentity`, `UsernameSessionIdentity` (the
+  UserNameIdentityToken's userName) or `CertificateSessionIdentity` (the X509
+  token's subject DN), resolved from open62541's session attributes and the
+  NS0 SessionSecurityDiagnosticsArray. Update existing handlers by adding the
+  second parameter: `callback: (inputs, session) { ... }`.
+- **`Server.setVariableValueSource` — take over existing (incl. NS0) variable
+  nodes.** Replaces the value source of an existing variable node with live
+  Dart callbacks (`onRead`/`onReadValue` + optional `onWrite`), the same
+  mechanism as `addDataSourceVariableNode` but without creating a node. This
+  unlocks the NS0 redundancy surface open62541 1.5 otherwise pins:
+  `Server/ServiceLevel` (`ns=0;i=2267`, internally fixed at 255) and
+  `Server/ServerRedundancy/RedundancySupport` (`ns=0;i=3709`, stored `None`)
+  now serve whatever the callback returns. The standard `ServerUriArray`
+  property (`ns=0;i=11314`, deleted from NS0 by open62541 at startup) can be
+  re-added with `addVariableNode` under ServerRedundancy (`i=2296`,
+  HasProperty/PropertyType) — see `test/ns0_value_source_test.dart`.
+- `ClientConfig` gained `applicationUri`, `applicationName` and `sessionName`
+  getters/setters (set before connecting) so a client can declare the
+  ApplicationDescription and session name the server observes.
+- Fixed a process-lifetime leak in `ClientIsolate`: the worker's error
+  `ReceivePort` was never closed, so a process (e.g. a CLI) that created a
+  `ClientIsolate` never exited after `delete()` — the open port kept the main
+  isolate alive indefinitely. `delete()` now closes it.
+- Fixed `ClientConfig` wrapping a stale config struct: `UA_Client_newWithConfig`
+  *copies* the config into the client, so post-construction writes through the
+  previously wrapped temporary (e.g. the `securityMode` / `securityPolicyUri`
+  setters) never reached the running client — and freed strings the client's
+  copy still pointed at. `ClientConfig` now wraps the client's live config
+  (`UA_Client_getConfig`), and the temporary struct is freed instead of leaked.
 - **`Server.write` surfaces the native status code**: it now throws a
   `UaStatusException` when the write is not Good (e.g. `Bad_NodeIdUnknown`,
   `Bad_TypeMismatch`). Previously the status was silently discarded and

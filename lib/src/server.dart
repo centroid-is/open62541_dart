@@ -95,6 +95,111 @@ class ServerStatistics {
       'monitoredItems: $currentMonitoredItemCount)';
 }
 
+/// The activation identity of the session that invoked a method callback —
+/// i.e. which OPC UA UserIdentityToken the client presented in
+/// ActivateSession.
+///
+/// Derived server-side from open62541's per-session security diagnostics
+/// (`authenticationMechanism` in the NS0 SessionSecurityDiagnosticsArray,
+/// available because this package's native build enables
+/// `UA_ENABLE_DIAGNOSTICS`) combined with the session's `0:clientUserId`
+/// attribute. The identity is established by open62541's core in
+/// ActivateSession *before* the access-control plugin runs, so it is available
+/// with the default access-control plugin — no custom plugin required.
+sealed class SessionIdentity {
+  const SessionIdentity();
+}
+
+/// The session was activated anonymously (an AnonymousIdentityToken, or an
+/// empty token — which OPC UA interprets as anonymous).
+class AnonymousSessionIdentity extends SessionIdentity {
+  const AnonymousSessionIdentity();
+
+  @override
+  String toString() => 'SessionIdentity.anonymous';
+}
+
+/// The session was activated with a UserNameIdentityToken.
+class UsernameSessionIdentity extends SessionIdentity {
+  const UsernameSessionIdentity(this.username);
+
+  /// The token's userName. open62541 records it as the session's
+  /// `0:clientUserId` attribute during ActivateSession (the password is never
+  /// retained).
+  final String username;
+
+  @override
+  String toString() => 'SessionIdentity.username($username)';
+}
+
+/// The session was activated with an X509IdentityToken (client certificate).
+class CertificateSessionIdentity extends SessionIdentity {
+  const CertificateSessionIdentity(this.subjectName);
+
+  /// The subject distinguished name of the identity certificate. open62541
+  /// extracts it (`UA_CertificateUtils_getSubjectName`) into the session's
+  /// `0:clientUserId` attribute during ActivateSession; the certificate
+  /// thumbprint itself is not exposed through the public 1.5.x API.
+  final String subjectName;
+
+  @override
+  String toString() => 'SessionIdentity.certificate($subjectName)';
+}
+
+/// Identity of the client session that invoked a method callback (see
+/// [Server.addMethodNode]).
+///
+/// All fields other than [sessionId] are looked up live when the method is
+/// called, via `UA_Server_getSessionAttribute` (open62541 keeps
+/// `0:sessionName`, `0:clientDescription` and `0:clientUserId` as always
+/// defined, read-only session attributes) and the NS0
+/// SessionSecurityDiagnosticsArray. They are `null` when the session cannot
+/// be resolved — e.g. a local call through the internal admin session, or a
+/// session that disappeared mid-call.
+class MethodSessionInfo {
+  const MethodSessionInfo({
+    required this.sessionId,
+    this.sessionName,
+    this.applicationUri,
+    this.applicationName,
+    this.identity,
+  });
+
+  /// The server-assigned identifier of the calling session (a Guid NodeId in
+  /// open62541), taken directly from the native method callback's `sessionId`
+  /// argument. The internal admin session (used for local calls) has the
+  /// well-known identifier `g=00000001-0000-0000-0000-000000000000`.
+  final NodeId sessionId;
+
+  /// The client-defined session name (`0:sessionName` session attribute,
+  /// from the CreateSession request), or `null` if the session cannot be
+  /// resolved. open62541 falls back to a generated name (e.g.
+  /// `<application uri>:<counter>`) when the client did not provide one.
+  final String? sessionName;
+
+  /// The `applicationUri` of the client's ApplicationDescription
+  /// (`0:clientDescription` session attribute, from the CreateSession
+  /// request), or `null` if the session cannot be resolved.
+  final String? applicationUri;
+
+  /// The text of the `applicationName` LocalizedText in the client's
+  /// ApplicationDescription (`0:clientDescription` session attribute), or
+  /// `null` if the session cannot be resolved.
+  final String? applicationName;
+
+  /// The activation identity (anonymous / username / certificate), or `null`
+  /// when it cannot be determined — a local admin-session call, a session
+  /// that vanished, or an unsupported token type (e.g. IssuedIdentityToken,
+  /// which open62541 1.5 does not record).
+  final SessionIdentity? identity;
+
+  @override
+  String toString() =>
+      'MethodSessionInfo(sessionId: $sessionId, sessionName: $sessionName, '
+      'applicationUri: $applicationUri, applicationName: $applicationName, '
+      'identity: $identity)';
+}
+
 /// The complete read result of a data-source variable node: the [value] plus
 /// the OPC UA operation [statusCode] and an optional [sourceTimestamp].
 ///
@@ -174,7 +279,7 @@ class Server {
   >?
   _dsWriteDispatcher;
   final Map<NodeId, DataSourceValue Function()> _dataSourceReads = {};
-  final Map<NodeId, void Function(DynamicValue)> _dataSourceWrites = {};
+  final Map<NodeId, Future<void> Function(DynamicValue)> _dataSourceWrites = {};
 
   // The declared DataType of each data-source node whose `typeId` was given.
   // The write dispatcher uses it to marshal an incoming custom-struct value with
@@ -209,6 +314,54 @@ class Server {
   // when the owning node is deleted ([deleteNode]) or the server is torn down
   // ([delete]). Keyed by the method node's NodeId.
   final Map<NodeId, ffi.NativeCallable> _methodCallbacks = {};
+
+  // In-flight async method calls, keyed by the address of the call's native
+  // output array (open62541 uses that pointer as the async operation's
+  // identity). An entry is retired exactly once — by the handler's future
+  // completing, by [_asyncCancelDispatcher] (operation timeout / server
+  // shutdown), or by [delete] — and only the retiring party may touch the
+  // output array, which open62541 frees on cancel.
+  final Map<int, ({ffi.Pointer<raw.UA_Variant> output, int outputSize})> _inFlightMethodCalls = {};
+
+  // In-flight async data-source writes, keyed by the address of the native
+  // UA_DataValue open62541 handed the write dispatcher (the async write
+  // operation's identity — see UA_Server_setAsyncWriteResult). Same
+  // retire-exactly-once discipline as [_inFlightMethodCalls].
+  final Map<int, ffi.Pointer<raw.UA_DataValue>> _inFlightWrites = {};
+
+  // The server-wide async-operation cancel hook (one per server, installed
+  // lazily by [addMethodNode] / the write dispatcher, closed in [delete]).
+  // open62541 calls it when an async operation is cancelled — deadline
+  // exceeded ([asyncOperationTimeout]) or server shutdown — after which the
+  // operation's output memory is freed. The identity pointer is the method
+  // call's output array or the async write's DataValue; addresses are
+  // disjoint, so retiring by address from both registries is safe.
+  ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>)>? _asyncCancelDispatcher;
+
+  /// Installs [_asyncCancelDispatcher] into the server config (idempotent).
+  void _ensureAsyncCancelDispatcher() {
+    if (_asyncCancelDispatcher != null) return;
+    _asyncCancelDispatcher =
+        ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>)>.isolateLocal((
+          ffi.Pointer<raw.UA_Server> server,
+          ffi.Pointer<ffi.Void> out,
+        ) {
+          // Retire the operation: its output memory is freed by open62541
+          // right after this callback, so a handler completing later must
+          // not touch it (the completion finds no entry and drops).
+          _inFlightMethodCalls.remove(out.address);
+          _inFlightWrites.remove(out.address);
+        });
+    _config.ref.asyncOperationCancelCallback = _asyncCancelDispatcher!.nativeFunction;
+  }
+
+  /// The deadline open62541 gives an async operation (a parked method call)
+  /// before cancelling it with `Bad_Timeout` — `Duration.zero` means
+  /// unlimited. Defaults to 2 minutes (`UA_ServerConfig_setMinimal`).
+  Duration get asyncOperationTimeout => Duration(milliseconds: _config.ref.asyncOperationTimeout.round());
+  set asyncOperationTimeout(Duration timeout) {
+    _config.ref.asyncOperationTimeout = timeout.inMilliseconds.toDouble();
+  }
 
   /// Releases the UTF-8 identifier buffer that [NodeId.toRaw] allocates (via
   /// `ua_malloc`) for a **string** NodeId. Numeric NodeIds own no heap memory,
@@ -380,6 +533,9 @@ class Server {
   /// data-source variable node on this server. See [addDataSourceVariableNode].
   void _ensureDataSourceDispatchers() {
     if (_dsReadDispatcher != null) return;
+    // Async writes park as async operations; the cancel hook retires them
+    // on timeout/shutdown (see [_asyncCancelDispatcher]).
+    _ensureAsyncCancelDispatcher();
 
     // Read: invoked by the server (inside runIterate, on this isolate) whenever
     // a client reads the node's value. It looks up the per-node [onRead], asks
@@ -494,13 +650,44 @@ class Server {
         } else {
           dyn = variantToValue(variant);
         }
-        handler(dyn);
-        return raw.UA_STATUSCODE_GOOD;
+        // The value is fully decoded into [dyn] above — nothing touches the
+        // native DataValue after this point except as the async operation's
+        // identity pointer.
+        final Future<void> writeFuture;
+        try {
+          writeFuture = handler(dyn);
+        } on UaStatusException catch (e) {
+          // A non-async handler that throws before returning a future.
+          return e.statusCode;
+        } catch (_) {
+          return raw.UA_STATUSCODE_BADINTERNALERROR;
+        }
+
+        // Park the write as an open62541 async operation (mirrors the method
+        // dispatcher): the DataValue pointer handed to this callback is the
+        // operation's identity — open62541 keeps it stable until the result
+        // is set or the operation is cancelled, in which case
+        // [_asyncCancelDispatcher] retires the entry so a late completion
+        // never calls in with a dangling pointer.
+        final key = value.address;
+        _inFlightWrites[key] = value;
+        writeFuture.then(
+          (_) {
+            if (_inFlightWrites.remove(key) == null) return;
+            raw.UA_Server_setAsyncWriteResult(_server, value, raw.UA_STATUSCODE_GOOD);
+          },
+          onError: (Object e) {
+            if (_inFlightWrites.remove(key) == null) return;
+            // Typed rejection: [onWrite] completed with a UaStatusException to
+            // answer the client with a specific status code (e.g.
+            // Bad_NotWritable or Bad_UserAccessDenied) instead of the generic
+            // Bad_InternalError that any other error maps to.
+            final status = e is UaStatusException ? e.statusCode : raw.UA_STATUSCODE_BADINTERNALERROR;
+            raw.UA_Server_setAsyncWriteResult(_server, value, status);
+          },
+        );
+        return raw.UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY;
       } on UaStatusException catch (e) {
-        // Typed rejection: [onWrite] threw a UaStatusException to answer the
-        // client with a specific status code (e.g. Bad_NotWritable or
-        // Bad_UserAccessDenied) instead of the generic Bad_InternalError that
-        // any other throw maps to.
         return e.statusCode;
       } catch (_) {
         return raw.UA_STATUSCODE_BADINTERNALERROR;
@@ -555,18 +742,24 @@ class Server {
   ///   of [onRead] / [onReadValue] (they are mutually exclusive; [onRead] is
   ///   equivalent to an [onReadValue] that always reports Good and no source
   ///   timestamp).
-  /// * [onWrite] (optional) receives the [DynamicValue] a client wrote. Passing
-  ///   `null` makes the node read-only: the node is created without the Write
-  ///   access bit, so client writes are rejected with `BadNotWritable`. When
-  ///   [onWrite] throws a [UaStatusException], the client receives exactly that
-  ///   status code (e.g. `UA_STATUSCODE_BADNOTWRITABLE` for a gate-denied
-  ///   write); any other throw fails the write with `BadInternalError`. `void`
-  ///   return semantics (throw-for-bad) are used rather than an `int` status
-  ///   code to keep the surface pure-Dart and mirror [onRead]'s throw
-  ///   behaviour. [onRead]/[onReadValue] honor [UaStatusException] the same
-  ///   way (the read fails with the thrown code and no value; to serve a value
-  ///   WITH a Bad status, return a [DataSourceValue] from [onReadValue]
-  ///   instead).
+  /// * [onWrite] (optional) receives the [DynamicValue] a client wrote. It is
+  ///   **async**: the client's write is parked as an open62541 async
+  ///   operation and stays in flight — without blocking the server's iterate
+  ///   loop — until the returned future completes, so the answer can carry
+  ///   the REAL downstream outcome (e.g. a device write's result) instead of
+  ///   an optimistic Good. Completing normally answers `Good`; completing
+  ///   with a [UaStatusException] answers exactly that status code (e.g.
+  ///   `UA_STATUSCODE_BADNOTWRITABLE` for a gate-denied write); any other
+  ///   error answers `BadInternalError`. Future-of-void semantics
+  ///   (throw-for-bad) keep the surface pure-Dart and mirror [onRead]'s
+  ///   throw behaviour. A write not completed within
+  ///   [asyncOperationTimeout] is cancelled with `Bad_Timeout` (a later
+  ///   completion is dropped). Passing `null` makes the node read-only: the
+  ///   node is created without the Write access bit, so client writes are
+  ///   rejected with `BadNotWritable`. [onRead]/[onReadValue] honor
+  ///   [UaStatusException] the same way (the read fails with the thrown code
+  ///   and no value; to serve a value WITH a Bad status, return a
+  ///   [DataSourceValue] from [onReadValue] instead).
   /// * [accessLevel] defaults to read + (write iff [onWrite] != null). Pass a
   ///   value to override (e.g. to expose a writable node whose backing store is
   ///   currently read-only).
@@ -593,7 +786,7 @@ class Server {
     NodeId nodeId, {
     DynamicValue Function()? onRead,
     DataSourceValue Function()? onReadValue,
-    void Function(DynamicValue value)? onWrite,
+    Future<void> Function(DynamicValue value)? onWrite,
     required String browseName,
     NodeId? parentNodeId,
     NodeId? parentReferenceNodeId,
@@ -677,6 +870,75 @@ class Server {
     }
     if (typeId != null) {
       _dataSourceTypeIds[nodeId] = typeId;
+    }
+  }
+
+  /// Replaces the value source of an **existing** variable node with live Dart
+  /// callbacks — the same mechanism as [addDataSourceVariableNode], but
+  /// without creating a node.
+  ///
+  /// This is how server-managed NS0 variables that open62541 pins internally
+  /// can be taken over. The canonical use case is the redundancy surface:
+  /// open62541 1.5 serves `Server/ServiceLevel` (`ns=0;i=2267`) from an
+  /// internal callback that always reports 255, and stores a fixed `None` in
+  /// `Server/ServerRedundancy/RedundancySupport` (`ns=0;i=3709`); neither is
+  /// client- or [write]-writable. Attaching a callback value source replaces
+  /// the internal source outright (open62541 installs its own ServiceLevel
+  /// callback through this very API at startup), so reads reflect whatever
+  /// [onRead]/[onReadValue] returns:
+  ///
+  /// ```dart
+  /// server.setVariableValueSource(
+  ///   NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVICELEVEL),
+  ///   onRead: () => DynamicValue(value: serviceLevel, typeId: NodeId.byte),
+  /// );
+  /// ```
+  ///
+  /// Callback semantics are identical to [addDataSourceVariableNode]: provide
+  /// exactly one of [onRead] / [onReadValue]; [onWrite] (optional) receives
+  /// client writes — for an existing node the client also needs the node's
+  /// access level to permit writing, which NS0 server variables typically do
+  /// not. Passing `null` leaves the node without a write callback (client
+  /// writes fail with `BadWriteNotSupported`). Index-range reads/writes are
+  /// rejected with `BadIndexRangeInvalid`.
+  ///
+  /// The node's *stored* value (if any) is no longer served, and
+  /// [write]/[read] on this server no longer touch it either — the callbacks
+  /// take over completely until the node is deleted. Calling this again for
+  /// the same node replaces the handlers. Throws if [nodeId] does not exist
+  /// or is not a variable node.
+  void setVariableValueSource(
+    NodeId nodeId, {
+    DynamicValue Function()? onRead,
+    DataSourceValue Function()? onReadValue,
+    Future<void> Function(DynamicValue value)? onWrite,
+  }) {
+    if ((onRead == null) == (onReadValue == null)) {
+      throw ArgumentError('Provide exactly one of onRead / onReadValue');
+    }
+    _ensureDataSourceDispatchers();
+
+    // Passed by value; the server copies the function pointers (the
+    // NativeCallables are server fields, closed in [delete]).
+    final source = ua_calloc<raw.UA_CallbackValueSource>();
+    source.ref.read = _dsReadDispatcher!.nativeFunction;
+    source.ref.write = onWrite != null ? _dsWriteDispatcher!.nativeFunction : ffi.nullptr;
+    final nodeIdRaw = nodeId.toRaw();
+    final status = raw.UA_Server_setVariableNode_callbackValueSource(_server, nodeIdRaw, source.ref);
+    _freeRawNodeId(nodeIdRaw);
+    ua_calloc.free(source);
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to set variable value source ${statusCodeToString(status)}, nodeId: $nodeId';
+    }
+
+    // Register handlers only after the native call succeeded, mirroring
+    // [addDataSourceVariableNode]: a failed set must not disturb an existing
+    // registration for this node.
+    _dataSourceReads[nodeId] = onReadValue ?? (() => DataSourceValue(value: onRead!()));
+    if (onWrite != null) {
+      _dataSourceWrites[nodeId] = onWrite;
+    } else {
+      _dataSourceWrites.remove(nodeId);
     }
   }
 
@@ -784,20 +1046,134 @@ class Server {
     raw.UA_DataTypeAttributes_delete(attr);
   }
 
+  /// Resolves the identity of the session behind a native callback's
+  /// `sessionId` argument. Must be called from within the callback (while the
+  /// session is guaranteed alive and the server is locked for this thread):
+  /// `UA_Server_getSessionAttribute` returns *shallow* variants into
+  /// session-owned memory, which this method fully copies into Dart values
+  /// before returning.
+  MethodSessionInfo _resolveSessionInfo(ffi.Pointer<raw.UA_NodeId> sessionIdPtr) {
+    final sessionId = NodeId.fromRaw(sessionIdPtr.ref);
+
+    // An empty UA_String can carry a null data pointer; treat it as ''.
+    String uaStr(raw.UA_String s) => s.length == 0 ? '' : s.value;
+
+    // Reads one always-defined session attribute (shallow variant, decoded
+    // and copied to Dart inside [decode]). Returns null if the session is
+    // unknown (e.g. the internal admin session) or the type does not match.
+    T? readAttr<T>(String name, T? Function(raw.UA_Variant) decode) {
+      final chars = name.toNativeUtf8(allocator: ua_malloc).cast<ffi.Char>();
+      final variant = raw.UA_Variant_new();
+      T? result;
+      final status = raw.UA_Server_getSessionAttribute(_server, sessionIdPtr, raw.UA_QUALIFIEDNAME(0, chars), variant);
+      if (status == raw.UA_STATUSCODE_GOOD) {
+        result = decode(variant.ref);
+      }
+      // The shallow get marks the variant's storage NODELETE, so this frees
+      // only the variant itself, not the session-owned attribute data.
+      raw.UA_Variant_delete(variant);
+      ua_malloc.free(chars);
+      return result;
+    }
+
+    String? decodeString(raw.UA_Variant v) => (v.type == getTypeByIndex(raw.UA_TYPES_STRING) && v.data != ffi.nullptr)
+        ? uaStr(v.data.cast<raw.UA_String>().ref)
+        : null;
+
+    final sessionName = readAttr('sessionName', decodeString);
+    final clientUserId = readAttr('clientUserId', decodeString);
+    String? applicationUri;
+    String? applicationName;
+    readAttr('clientDescription', (v) {
+      if (v.type == getTypeByIndex(raw.UA_TYPES_APPLICATIONDESCRIPTION) && v.data != ffi.nullptr) {
+        final desc = v.data.cast<raw.UA_ApplicationDescription>().ref;
+        applicationUri = uaStr(desc.applicationUri);
+        applicationName = uaStr(desc.applicationName.text);
+      }
+      return null;
+    });
+
+    // The activation token *type* is not part of the session attributes; it is
+    // recorded (as `authenticationMechanism`) in the per-session security
+    // diagnostics, served by the NS0 SessionSecurityDiagnosticsArray node
+    // (UA_ENABLE_DIAGNOSTICS is on in this package's native build).
+    SessionIdentity? identity;
+    final diagVariant = raw.UA_Variant_new();
+    final diagStatus = raw.UA_Server_readValue(
+      _server,
+      NodeId.fromNumeric(
+        0,
+        raw.UA_NS0ID_SERVER_SERVERDIAGNOSTICS_SESSIONSDIAGNOSTICSSUMMARY_SESSIONSECURITYDIAGNOSTICSARRAY,
+      ).toRaw(),
+      diagVariant,
+    );
+    if (diagStatus == raw.UA_STATUSCODE_GOOD &&
+        diagVariant.ref.type == getTypeByIndex(raw.UA_TYPES_SESSIONSECURITYDIAGNOSTICSDATATYPE)) {
+      final entries = diagVariant.ref.data.cast<raw.UA_SessionSecurityDiagnosticsDataType>();
+      for (var i = 0; i < diagVariant.ref.arrayLength; i++) {
+        final entry = (entries + i).ref;
+        if (NodeId.fromRaw(entry.sessionId) != sessionId) continue;
+        final userId = clientUserId ?? uaStr(entry.clientUserIdOfSession);
+        identity = switch (uaStr(entry.authenticationMechanism)) {
+          'Anonymous' => const AnonymousSessionIdentity(),
+          'UserName' => UsernameSessionIdentity(userId),
+          'Certificate' => CertificateSessionIdentity(userId),
+          // 'IssuedToken' (and anything unknown): open62541 records no
+          // usable identity for it.
+          _ => null,
+        };
+        break;
+      }
+    }
+    raw.UA_Variant_delete(diagVariant);
+
+    // Fallback when the diagnostics array is unavailable but the session
+    // exists: an empty clientUserId means anonymous, a non-empty one means a
+    // username token (open62541 fills it from the UserNameIdentityToken; an
+    // X509 subject name would be misattributed here, but certificate tokens
+    // are not reachable without diagnostics being disabled AND a session PKI
+    // configured).
+    if (identity == null && clientUserId != null) {
+      identity = clientUserId.isEmpty ? const AnonymousSessionIdentity() : UsernameSessionIdentity(clientUserId);
+    }
+
+    return MethodSessionInfo(
+      sessionId: sessionId,
+      sessionName: sessionName,
+      applicationUri: applicationUri,
+      applicationName: applicationName,
+      identity: identity,
+    );
+  }
+
   /// Adds a callable method node to the server's address space.
   ///
   /// When a client calls the method (see `ClientApi.call`), open62541 invokes
-  /// [callback] synchronously on this isolate from within [runIterate]. The
-  /// request's input variants are marshalled into a list of [DynamicValue]s and
-  /// passed to [callback]; the [DynamicValue]s it returns are marshalled back
-  /// into the method's output variants. Because the callback runs inside the
-  /// server's single-threaded iterate step it must be synchronous — it cannot
-  /// `await`.
+  /// the handler from within [runIterate]: the request's input variants are
+  /// marshalled into a list of [DynamicValue]s and passed to [callback]
+  /// together with a [MethodSessionInfo] describing the calling session
+  /// (session id, session name, client application description and activation
+  /// identity — captured at invocation time, so it stays valid even if the
+  /// session closes while the handler runs).
+  ///
+  /// [callback] is **async**: the call is parked as an open62541 async
+  /// operation (`UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY`) and the client's
+  /// request stays in flight — without blocking the server's iterate loop —
+  /// until the returned future completes; the resolved [DynamicValue]s are
+  /// then marshalled into the method's output variants and the response is
+  /// sent on a following [runIterate]. Multiple calls (same or different
+  /// methods) can be in flight concurrently. Keep pumping [runIterate] while
+  /// handlers are pending, and note the operation deadline: a call that is
+  /// not completed within [Server.asyncOperationTimeout] (default 2 minutes)
+  /// is cancelled by open62541 and the caller receives `Bad_Timeout` — a
+  /// handler completing after that is silently dropped. On [delete]/shutdown,
+  /// unfinished calls are likewise dropped.
   ///
   /// Each returned [DynamicValue] must carry a [DynamicValue.typeId] so it can
   /// be encoded (e.g. `DynamicValue(value: 42, typeId: NodeId.int32)`). If the
-  /// callback throws, the caller receives a `Bad` status
-  /// (`UA_STATUSCODE_BADINTERNALERROR`) and the isolate is not disturbed.
+  /// future completes with a [UaStatusException], the caller receives exactly
+  /// that status code; any other error yields `Bad_InternalError`. The
+  /// isolate is never disturbed.
   ///
   /// Required parameters:
   /// * [methodNodeId] - The unique identifier for the new method node.
@@ -813,7 +1189,7 @@ class Server {
   ///   string identifier; required if [methodNodeId] is numeric).
   void addMethodNode(
     NodeId methodNodeId, {
-    required List<DynamicValue> Function(List<DynamicValue> inputs) callback,
+    required Future<List<DynamicValue>> Function(List<DynamicValue> inputs, MethodSessionInfo session) callback,
     List<Argument> inputArguments = const [],
     List<Argument> outputArguments = const [],
     NodeId? parentNodeId,
@@ -828,6 +1204,10 @@ class Server {
       }
       browseName = methodNodeId.string;
     }
+
+    // Async method calls need the cancel hook so a timed-out/cancelled call
+    // retires its in-flight entry (see [_asyncCancelDispatcher]).
+    _ensureAsyncCancelDispatcher();
 
     // Method attributes. calloc zero-initializes; open62541's high-level
     // addMethodNode uses the struct directly (no attribute-mask filtering), so
@@ -876,17 +1256,53 @@ class Server {
               inputs.add(variantToValue(input[i]));
             }
 
-            final results = callback(inputs);
+            // Session info is captured NOW — the session can be gone by the
+            // time the handler's future completes.
+            final session = _resolveSessionInfo(sessionId);
 
-            // Marshal each result into the corresponding output variant. Deep
-            // copy into open62541-owned memory, then free our temporary.
-            for (var i = 0; i < results.length && i < outputSize; i++) {
-              final variantPtr = valueToVariant(results[i]);
-              raw.UA_Variant_copy(variantPtr, output + i);
-              raw.UA_Variant_delete(variantPtr);
+            final Future<List<DynamicValue>> resultsFuture;
+            try {
+              resultsFuture = callback(inputs, session);
+            } on UaStatusException catch (e) {
+              // A non-async handler that throws before returning a future.
+              return e.statusCode;
+            } catch (_) {
+              return raw.UA_STATUSCODE_BADINTERNALERROR;
             }
 
-            return raw.UA_STATUSCODE_GOOD;
+            // Park the call as an open62541 async operation. The output-array
+            // pointer is the operation's identity; it stays valid until the
+            // result is set or the operation is cancelled (timeout/shutdown —
+            // see [_asyncCancelDispatcher], which retires the entry so a late
+            // completion never touches the freed array).
+            final key = output.address;
+            _inFlightMethodCalls[key] = (output: output, outputSize: outputSize);
+            resultsFuture.then(
+              (results) {
+                final call = _inFlightMethodCalls.remove(key);
+                if (call == null) return; // cancelled, or server torn down
+                var status = raw.UA_STATUSCODE_GOOD;
+                try {
+                  // Marshal each result into the corresponding output variant.
+                  // Deep copy into open62541-owned memory, free our temporary.
+                  for (var i = 0; i < results.length && i < call.outputSize; i++) {
+                    final variantPtr = valueToVariant(results[i]);
+                    raw.UA_Variant_copy(variantPtr, call.output + i);
+                    raw.UA_Variant_delete(variantPtr);
+                  }
+                } catch (_) {
+                  status = raw.UA_STATUSCODE_BADINTERNALERROR;
+                }
+                raw.UA_Server_setAsyncCallMethodResult(_server, call.output, status);
+              },
+              onError: (Object e) {
+                final call = _inFlightMethodCalls.remove(key);
+                if (call == null) return;
+                final status = e is UaStatusException ? e.statusCode : raw.UA_STATUSCODE_BADINTERNALERROR;
+                raw.UA_Server_setAsyncCallMethodResult(_server, call.output, status);
+              },
+            );
+            return raw.UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY;
           } catch (_) {
             // Never let a Dart exception unwind into native code; report a Bad
             // status to the caller instead.
@@ -2245,6 +2661,15 @@ class Server {
       callback.close();
     }
     _methodCallbacks.clear();
+    // Async method-call plumbing. UA_Server_delete already cancelled every
+    // pending async operation (invoking _asyncCancelDispatcher per entry
+    // while it was still open); clear defensively so a handler future that
+    // completes after this point finds nothing and never calls into the
+    // freed server.
+    _inFlightMethodCalls.clear();
+    _inFlightWrites.clear();
+    _asyncCancelDispatcher?.close();
+    _asyncCancelDispatcher = null;
     if (ret != 0) {
       throw "Failed to delete server ${statusCodeToString(ret)}";
     }

@@ -183,6 +183,34 @@ class ClientConfig {
     _clientConfig.ref.securityPolicyUri.set(uri);
   }
 
+  /// The `applicationUri` of the ApplicationDescription this client presents
+  /// in CreateSession. Set it **before** connecting. On the server it
+  /// surfaces as `MethodSessionInfo.applicationUri`. Note: when connecting
+  /// with a certificate, open62541 overwrites this with the URI embedded in
+  /// the certificate.
+  String get applicationUri => _clientConfig.ref.clientDescription.applicationUri.value;
+  set applicationUri(String uri) {
+    _clientConfig.ref.clientDescription.applicationUri.set(uri);
+  }
+
+  /// The text of the `applicationName` LocalizedText this client presents in
+  /// CreateSession (the locale is left as configured, "en" by default). Set
+  /// it **before** connecting. On the server it surfaces as
+  /// `MethodSessionInfo.applicationName`.
+  String get applicationName => _clientConfig.ref.clientDescription.applicationName.text.value;
+  set applicationName(String name) {
+    _clientConfig.ref.clientDescription.applicationName.text.set(name);
+  }
+
+  /// The client-defined session name sent in CreateSession. Set it **before**
+  /// connecting. On the server it surfaces as
+  /// `MethodSessionInfo.sessionName`. When unset open62541 generates one from
+  /// the application URI.
+  String get sessionName => _clientConfig.ref.sessionName.value;
+  set sessionName(String name) {
+    _clientConfig.ref.sessionName.set(name);
+  }
+
   int get outstandingPublishRequests => _clientConfig.ref.outStandingPublishRequests;
 
   Future<void> close() async {
@@ -303,8 +331,15 @@ class Client implements ClientApi {
     }
 
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
-    _clientConfig = ClientConfig(config);
     _client = raw.UA_Client_newWithConfig(config);
+    // UA_Client_newWithConfig *copies* the config struct into the client
+    // (`client->config = *config`), so wrap the client's live copy — writes
+    // through [ClientConfig]'s setters (and its callback registrations) must
+    // land in the config the client actually reads, not in the stale
+    // temporary. The temporary only carried pointers now owned by the
+    // client's copy, so free just the struct itself.
+    _clientConfig = ClientConfig(raw.UA_Client_getConfig(_client));
+    ua_calloc.free(config);
   }
 
   ClientConfig get config => _clientConfig;
@@ -1943,11 +1978,43 @@ class Client implements ClientApi {
             if (results.outputArgumentsSize == 0) {
               completer.complete([]);
             } else {
-              final result = <DynamicValue>[];
+              // Deep-copy every output variant SYNCHRONOUSLY before the first
+              // await: open62541 frees the whole CallResponse the moment this
+              // native callback returns, and this closure is async — after an
+              // await it resumes with `results` pointing at freed memory.
+              // (This was the "only the first output argument reaches the
+              // caller" bug: output[0] of a simple type decoded in the
+              // synchronous prefix, every later output read garbage.)
+              final copies = <ffi.Pointer<raw.UA_Variant>>[];
               for (var i = 0; i < results.outputArgumentsSize; i++) {
-                result.add(await _variantToValueAutoSchema(results.outputArguments[i]));
+                final copy = raw.UA_Variant_new();
+                final copyStatus = raw.UA_Variant_copy(results.outputArguments + i, copy);
+                if (copyStatus != raw.UA_STATUSCODE_GOOD) {
+                  for (final c in copies) {
+                    raw.UA_Variant_delete(c);
+                  }
+                  raw.UA_Variant_delete(copy);
+                  return completer.completeError(
+                    "Failed to copy output argument $i of call to $objectId $methodId: "
+                    "${statusCodeToString(copyStatus)}",
+                    StackTrace.current,
+                  );
+                }
+                copies.add(copy);
               }
-              completer.complete(result);
+              try {
+                final result = <DynamicValue>[];
+                for (final copy in copies) {
+                  // May await (schema fetch for custom structs) — safe now,
+                  // we own the copies.
+                  result.add(await _variantToValueAutoSchema(copy.ref));
+                }
+                completer.complete(result);
+              } finally {
+                for (final c in copies) {
+                  raw.UA_Variant_delete(c);
+                }
+              }
             }
           } catch (e) {
             _safeErr("Error calling callback: $e");
@@ -1971,8 +2038,13 @@ class Client implements ClientApi {
       ffi.nullptr,
     );
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
+      callbackInner.close();
       throw 'Unable to call method: $statusCode ${statusCodeToString(statusCode)}';
     }
+    // The native callback fires exactly once per call (response, error or
+    // cancel). Release its trampoline afterwards — leaking one per call kept
+    // the isolate (and any embedding process, e.g. a CLI) alive forever.
+    completer.future.whenComplete(callbackInner.close).ignore();
     return completer.future;
   }
 
