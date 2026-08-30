@@ -14,6 +14,11 @@ including subscriptions, custom types and encrypted (mbedTLS) connections.
   (`SignAndEncrypt`).
 - **Server**: expose scalar, array and structure (custom type) variable nodes,
   data-type nodes, and monitor variables via streams.
+- **PubSub** (OPC UA Part 14, UDP + UADP): publish variable nodes via
+  PublishedDataSets / WriterGroups / DataSetWriters, and subscribe with
+  ReaderGroups / DataSetReaders that map received fields into local variable
+  nodes (both sides configured on `Server`, per the OPC UA PubSub model).
+  Received values can be observed with `Server.onValueChanged`.
 - **Encryption** via mbedTLS.
 - **`DynamicValue`** for ergonomic access to OPC UA values, including structures
   and arrays.
@@ -95,6 +100,42 @@ More examples are in the [`example/`](example/) directory: a minimal client
 > client/server event loop must be driven periodically by calling `runIterate`
 > as shown above.
 
+### PubSub (UDP multicast)
+
+Both PubSub roles are configured on a `Server` (per OPC UA Part 14 the
+subscriber also lives on a server instance). Publisher:
+
+```dart
+final connection = server.addPubSubConnection(
+  name: 'UADP Connection',
+  url: 'opc.udp://224.0.0.22:4840/',
+  publisherId: PubSubPublisherId.uint16(2234),
+);
+final pds = server.addPublishedDataSet(name: 'Demo PDS');
+server.addDataSetField(pds, name: 'Counter', publishedVariable: counterNodeId);
+final group = server.addWriterGroup(connection,
+    name: 'WG', writerGroupId: 100, publishingInterval: Duration(milliseconds: 100));
+server.addDataSetWriter(group, pds, name: 'DSW', dataSetWriterId: 62541);
+server.enableAllPubSubComponents();
+```
+
+Subscriber (on another — or the same — server):
+
+```dart
+final connection = server.addPubSubConnection(name: 'Sub', url: 'opc.udp://224.0.0.22:4840/');
+final readerGroup = server.addReaderGroup(connection, name: 'RG');
+final reader = server.addDataSetReader(readerGroup,
+    name: 'DSR',
+    publisherId: PubSubPublisherId.uint16(2234),
+    writerGroupId: 100,
+    dataSetWriterId: 62541,
+    dataSetName: 'Demo PDS',
+    fields: [DataSetFieldMeta(name: 'Counter', dataType: NodeId.int32)]);
+server.setDataSetReaderTargetVariables(reader, [targetNodeId]);
+server.onValueChanged(targetNodeId).listen((v) => print('received: ${v.value}'));
+server.enableAllPubSubComponents();
+```
+
 ## Development
 
 The sections below are only relevant if you are hacking on the package itself
@@ -149,6 +190,10 @@ struct size is unchanged) so the generator does not drop the surrounding members
   per-subscription diagnostic detail (client identity, publish rates, queue
   overflows, ...) exists in the NS0 diagnostics nodes but is not surfaced as a
   typed Dart API.
+- PubSub: only the UDP + UADP transport is enabled (no MQTT/raw Ethernet), and
+  message security (SKS / PubSub security policies), delta frames and
+  DataSetMetaData ConfigurationVersion handling are not exposed. Dataset fields
+  on the subscriber side must use builtin namespace-0 data types.
 
 ## License
 

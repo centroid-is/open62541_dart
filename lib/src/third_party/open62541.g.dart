@@ -538,6 +538,48 @@ external int UA_ServerConfig_setMinimal(
 );
 
 @ffi.Native<
+  UA_DataSetFieldResult Function(
+    ffi.Pointer<UA_Server>,
+    UA_NodeId,
+    ffi.Pointer<UA_DataSetFieldConfig>,
+    ffi.Pointer<UA_NodeId>,
+  )
+>()
+external UA_DataSetFieldResult UA_Server_addDataSetField(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId publishedDataSet,
+  ffi.Pointer<UA_DataSetFieldConfig> fieldConfig,
+  ffi.Pointer<UA_NodeId> fieldId,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_DataSetReaderConfig>, ffi.Pointer<UA_NodeId>)
+>()
+external int UA_Server_addDataSetReader(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId readerGroupId,
+  ffi.Pointer<UA_DataSetReaderConfig> config,
+  ffi.Pointer<UA_NodeId> dsrId,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Server>,
+    UA_NodeId,
+    UA_NodeId,
+    ffi.Pointer<UA_DataSetWriterConfig>,
+    ffi.Pointer<UA_NodeId>,
+  )
+>()
+external int UA_Server_addDataSetWriter(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId writerGroup,
+  UA_NodeId dataSet,
+  ffi.Pointer<UA_DataSetWriterConfig> dataSetWriterConfig,
+  ffi.Pointer<UA_NodeId> dswId,
+);
+
+@ffi.Native<
   UA_StatusCode Function(
     ffi.Pointer<UA_Server>,
     UA_NodeId,
@@ -721,6 +763,38 @@ external int UA_Server_addObjectNode(
   ffi.Pointer<UA_NodeId> outNewNodeId,
 );
 
+@ffi.Native<
+  UA_StatusCode Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_PubSubConnectionConfig>, ffi.Pointer<UA_NodeId>)
+>()
+external int UA_Server_addPubSubConnection(
+  ffi.Pointer<UA_Server> server,
+  ffi.Pointer<UA_PubSubConnectionConfig> connectionConfig,
+  ffi.Pointer<UA_NodeId> connectionId,
+);
+
+@ffi.Native<
+  UA_AddPublishedDataSetResult Function(
+    ffi.Pointer<UA_Server>,
+    ffi.Pointer<UA_PublishedDataSetConfig>,
+    ffi.Pointer<UA_NodeId>,
+  )
+>()
+external UA_AddPublishedDataSetResult UA_Server_addPublishedDataSet(
+  ffi.Pointer<UA_Server> server,
+  ffi.Pointer<UA_PublishedDataSetConfig> pdsConfig,
+  ffi.Pointer<UA_NodeId> pdsId,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_ReaderGroupConfig>, ffi.Pointer<UA_NodeId>)
+>()
+external int UA_Server_addReaderGroup(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId connectionId,
+  ffi.Pointer<UA_ReaderGroupConfig> config,
+  ffi.Pointer<UA_NodeId> rgId,
+);
+
 /// Reference Management
 /// ~~~~~~~~~~~~~~~~~~~~
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_NodeId, UA_ExpandedNodeId, ffi.Bool)>()
@@ -787,6 +861,16 @@ external int UA_Server_addVariableTypeNode(
   ffi.Pointer<UA_NodeId> outNewNodeId,
 );
 
+@ffi.Native<
+  UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_WriterGroupConfig>, ffi.Pointer<UA_NodeId>)
+>()
+external int UA_Server_addWriterGroup(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId connection,
+  ffi.Pointer<UA_WriterGroupConfig> writerGroupConfig,
+  ffi.Pointer<UA_NodeId> wgId,
+);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>)>()
 external int UA_Server_delete(ffi.Pointer<UA_Server> server);
 
@@ -805,6 +889,71 @@ external int UA_Server_deleteReference(
   bool deleteBidirectional,
 );
 
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_Server>)>()
+external void UA_Server_disableAllPubSubComponents(ffi.Pointer<UA_Server> server);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_disableDataSetReader(ffi.Pointer<UA_Server> server, UA_NodeId dsrId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_disableDataSetWriter(ffi.Pointer<UA_Server> server, UA_NodeId dswId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_disablePubSubConnection(ffi.Pointer<UA_Server> server, UA_NodeId connectionId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_disableReaderGroup(ffi.Pointer<UA_Server> server, UA_NodeId rgId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_disableWriterGroup(ffi.Pointer<UA_Server> server, UA_NodeId wgId);
+
+/// The datasets are static "configuration containers". The other
+/// PubSubComponents are active and have a state machine governing their runtime
+/// behavior and state transitions. The state machine API (in C and in the
+/// information model) exposes only ``_enable`` and ``_disable`` methods for the
+/// different PubSubComponents. Their actual state is more detailed and emerges
+/// from the internal behavior. This ``UA_PubSubState`` defines five possible
+/// states, part 14 contains a diagram for the possible state transitions:
+///
+/// - DISABLED
+/// - PAUSED
+/// - OPERATIONAL
+/// - ERROR
+/// - PREOPERATIONAL
+///
+/// In open62541 we classify all PubSubStates as either *enabled* or *disabled*.
+/// The disabled states are DISABLED and ERROR. These need to be manually enabled
+/// to trigger a state change. All other states are enabled and "want to become
+/// OPERATIONAL". The state machine triggers internally to automatically reach
+/// the OPERATIONAL state when the external conditions allow it. The
+/// PREOPERATIONAL state indicates that necessary measures to become OPERATIONAL
+/// have been taken, but the OPERATIONAL state has not yet been achieved. For
+/// example, a ReaderGroup only becomes OPERATIONAL, once the first message for
+/// it has been received.
+///
+/// Notably, the state machines of the PubSubComponents are cascading. That is,
+/// the state depends on the state of the parent component. For example, an
+/// OPERATIONAL WriterGroup becomes PAUSED when its parent PubSubConnection goes
+/// to DISABLED. The PAUSED WriterGroup automatically returns to OPERATIONAL once
+/// the parent PubSubConnection becomes OPERATIONAL again.
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>)>()
+external int UA_Server_enableAllPubSubComponents(ffi.Pointer<UA_Server> server);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_enableDataSetReader(ffi.Pointer<UA_Server> server, UA_NodeId dsrId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_enableDataSetWriter(ffi.Pointer<UA_Server> server, UA_NodeId dswId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_enablePubSubConnection(ffi.Pointer<UA_Server> server, UA_NodeId connectionId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_enableReaderGroup(ffi.Pointer<UA_Server> server, UA_NodeId rgId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_enableWriterGroup(ffi.Pointer<UA_Server> server, UA_NodeId wgId);
+
 /// Utility Functions
 /// -----------------
 @ffi.Native<ffi.Pointer<UA_DataType> Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_NodeId>)>()
@@ -813,6 +962,20 @@ external ffi.Pointer<UA_DataType> UA_Server_findDataType(ffi.Pointer<UA_Server> 
 @ffi.Native<ffi.Pointer<UA_ServerConfig> Function(ffi.Pointer<UA_Server>)>()
 external ffi.Pointer<UA_ServerConfig> UA_Server_getConfig(ffi.Pointer<UA_Server> server);
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<ffi.UnsignedInt>)>()
+external int UA_Server_getDataSetReaderState(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId dsrId,
+  ffi.Pointer<ffi.UnsignedInt> state,
+);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<ffi.UnsignedInt>)>()
+external int UA_Server_getDataSetWriterState(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId dswId,
+  ffi.Pointer<ffi.UnsignedInt> state,
+);
+
 @ffi.Native<ffi.UnsignedInt Function(ffi.Pointer<UA_Server>)>(symbol: 'UA_Server_getLifecycleState')
 external int _UA_Server_getLifecycleState(ffi.Pointer<UA_Server> server);
 
@@ -820,14 +983,49 @@ UA_LifecycleState UA_Server_getLifecycleState(ffi.Pointer<UA_Server> server) {
   return UA_LifecycleState.fromValue(_UA_Server_getLifecycleState(server));
 }
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<ffi.UnsignedInt>)>()
+external int UA_Server_getReaderGroupState(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId rgId,
+  ffi.Pointer<ffi.UnsignedInt> state,
+);
+
 @ffi.Native<UA_ServerStatistics Function(ffi.Pointer<UA_Server>)>()
 external UA_ServerStatistics UA_Server_getStatistics(ffi.Pointer<UA_Server> server);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<ffi.UnsignedInt>)>()
+external int UA_Server_getWriterGroupState(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId wgId,
+  ffi.Pointer<ffi.UnsignedInt> state,
+);
 
 @ffi.Native<ffi.Pointer<UA_Server> Function(ffi.Pointer<UA_ServerConfig>)>()
 external ffi.Pointer<UA_Server> UA_Server_newWithConfig(ffi.Pointer<UA_ServerConfig> config);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_Variant>)>()
 external int UA_Server_readValue(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_Variant> out);
+
+@ffi.Native<UA_DataSetFieldResult Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external UA_DataSetFieldResult UA_Server_removeDataSetField(ffi.Pointer<UA_Server> server, UA_NodeId dsfId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_removeDataSetReader(ffi.Pointer<UA_Server> server, UA_NodeId dsrId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_removeDataSetWriter(ffi.Pointer<UA_Server> server, UA_NodeId dswId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_removePubSubConnection(ffi.Pointer<UA_Server> server, UA_NodeId connectionId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_removePublishedDataSet(ffi.Pointer<UA_Server> server, UA_NodeId pdsId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_removeReaderGroup(ffi.Pointer<UA_Server> server, UA_NodeId rgId);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_removeWriterGroup(ffi.Pointer<UA_Server> server, UA_NodeId wgId);
 
 @ffi.Native<UA_UInt16 Function(ffi.Pointer<UA_Server>, ffi.Bool)>()
 external int UA_Server_run_iterate(ffi.Pointer<UA_Server> server, bool waitInternal);
@@ -838,12 +1036,38 @@ external int UA_Server_run_shutdown(ffi.Pointer<UA_Server> server);
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>)>()
 external int UA_Server_run_startup(ffi.Pointer<UA_Server> server);
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Size, ffi.Pointer<UA_FieldTargetDataType>)>()
+external int UA_Server_setDataSetReaderTargetVariables(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId dsrId,
+  int targetVariablesSize,
+  ffi.Pointer<UA_FieldTargetDataType> targetVariables,
+);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_CallbackValueSource)>()
 external int UA_Server_setVariableNode_callbackValueSource(
   ffi.Pointer<UA_Server> server,
   UA_NodeId nodeId,
   UA_CallbackValueSource evs,
 );
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Server>,
+    UA_NodeId,
+    ffi.Pointer<UA_DataValue>,
+    ffi.Pointer<UA_ValueSourceNotifications>,
+  )
+>()
+external int UA_Server_setVariableNode_internalValueSource(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId nodeId,
+  ffi.Pointer<UA_DataValue> value,
+  ffi.Pointer<UA_ValueSourceNotifications> notifications,
+);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
+external int UA_Server_triggerWriterGroupPublish(ffi.Pointer<UA_Server> server, UA_NodeId wgId);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_LocalizedText)>()
 external int UA_Server_writeDescription(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_LocalizedText description);
@@ -1357,6 +1581,18 @@ final class UA_AccessControl extends ffi.Struct {
 }
 
 final class UA_AddNodesItem extends ffi.Opaque {}
+
+final class UA_AddPublishedDataSetResult extends ffi.Struct {
+  @UA_StatusCode()
+  external int addResult;
+
+  @ffi.Size()
+  external int fieldAddResultsSize;
+
+  external ffi.Pointer<UA_StatusCode> fieldAddResults;
+
+  external UA_ConfigurationVersionDataType configurationVersion;
+}
 
 final class UA_AddReferencesItem extends ffi.Opaque {}
 
@@ -2131,6 +2367,22 @@ final class UA_ClientConfig extends ffi.Struct {
   external bool externalEventLoop;
 }
 
+final class UA_ConfigurationVersionDataType extends ffi.Struct {
+  @UA_UInt32()
+  external int majorVersion;
+
+  @UA_UInt32()
+  external int minorVersion;
+
+  static ffi.Pointer<UA_ConfigurationVersionDataType> $allocate(
+    ffi.Allocator $allocator, {
+    required int majorVersion,
+    required int minorVersion,
+  }) => $allocator<UA_ConfigurationVersionDataType>()
+    ..ref.majorVersion = majorVersion
+    ..ref.minorVersion = minorVersion;
+}
+
 /// Binary Connection Config Parameters
 /// -----------------------------------
 final class UA_ConnectionConfig extends ffi.Struct {
@@ -2197,6 +2449,23 @@ enum UA_ConnectionState {
     _ => throw ArgumentError('Unknown value for UA_ConnectionState: $value'),
   };
 }
+
+final class UA_ContentFilter extends ffi.Struct {
+  @ffi.Size()
+  external int elementsSize;
+
+  external ffi.Pointer<UA_ContentFilterElement> elements;
+
+  static ffi.Pointer<UA_ContentFilter> $allocate(
+    ffi.Allocator $allocator, {
+    required int elementsSize,
+    required ffi.Pointer<UA_ContentFilterElement> elements,
+  }) => $allocator<UA_ContentFilter>()
+    ..ref.elementsSize = elementsSize
+    ..ref.elements = elements;
+}
+
+final class UA_ContentFilterElement extends ffi.Opaque {}
 
 final class UA_CreateMonitoredItemsRequest extends ffi.Struct {
   external UA_RequestHeader requestHeader;
@@ -2286,6 +2555,23 @@ enum UA_DataChangeTrigger {
   };
 }
 
+final class UA_DataSetFieldConfig extends ffi.Struct {
+  @ffi.UnsignedInt()
+  external int dataSetFieldTypeAsInt;
+
+  UA_DataSetFieldType get dataSetFieldType => UA_DataSetFieldType.fromValue(dataSetFieldTypeAsInt);
+  set dataSetFieldType(UA_DataSetFieldType value) => dataSetFieldTypeAsInt = value.value;
+
+  external UnnamedUnion$2 field;
+}
+
+final class UA_DataSetFieldResult extends ffi.Struct {
+  @UA_StatusCode()
+  external int result;
+
+  external UA_ConfigurationVersionDataType configurationVersion;
+}
+
 enum UA_DataSetFieldType {
   UA_PUBSUB_DATASETFIELD_VARIABLE(0),
   UA_PUBSUB_DATASETFIELD_EVENT(1);
@@ -2336,6 +2622,41 @@ enum UA_DataSetMessageType {
   }
 }
 
+final class UA_DataSetMetaDataType extends ffi.Struct {
+  @ffi.Size()
+  external int namespacesSize;
+
+  external ffi.Pointer<UA_String> namespaces;
+
+  @ffi.Size()
+  external int structureDataTypesSize;
+
+  external ffi.Pointer<UA_StructureDescription> structureDataTypes;
+
+  @ffi.Size()
+  external int enumDataTypesSize;
+
+  external ffi.Pointer<UA_EnumDescription> enumDataTypes;
+
+  @ffi.Size()
+  external int simpleDataTypesSize;
+
+  external ffi.Pointer<UA_SimpleTypeDescription> simpleDataTypes;
+
+  external UA_String name;
+
+  external UA_LocalizedText description;
+
+  @ffi.Size()
+  external int fieldsSize;
+
+  external ffi.Pointer<UA_FieldMetaData> fields;
+
+  external UA_Guid dataSetClassId;
+
+  external UA_ConfigurationVersionDataType configurationVersion;
+}
+
 enum UA_DataSetOrderingType {
   UA_DATASETORDERINGTYPE_UNDEFINED(0),
   UA_DATASETORDERINGTYPE_ASCENDINGWRITERID(1),
@@ -2352,6 +2673,137 @@ enum UA_DataSetOrderingType {
     2147483647 => __UA_DATASETORDERINGTYPE_FORCE32BIT,
     _ => throw ArgumentError('Unknown value for UA_DataSetOrderingType: $value'),
   };
+}
+
+/// DataSetReader
+/// -------------
+/// DataSetReader can receive NetworkMessages with the DataSetMessage
+/// of interest sent by the Publisher. DataSetReaders represent
+/// the configuration necessary to receive and process DataSetMessages
+/// on the Subscriber side. DataSetReader must be linked with a
+/// SubscribedDataSet and be contained within a ReaderGroup.
+final class UA_DataSetReaderConfig extends ffi.Struct {
+  external UA_String name;
+
+  external ffi.Pointer<ffi.Void> context;
+
+  @ffi.Bool()
+  external bool enabled;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      UA_StatusCode Function(
+        ffi.Pointer<UA_Server> server,
+        UA_NodeId componentId,
+        ffi.Pointer<ffi.Void> componentContext,
+        ffi.Pointer<ffi.UnsignedInt> state,
+        ffi.UnsignedInt targetState,
+      )
+    >
+  >
+  customStateMachine;
+
+  external UA_PublisherId publisherId;
+
+  @UA_UInt16()
+  external int writerGroupId;
+
+  @UA_UInt16()
+  external int dataSetWriterId;
+
+  external UA_DataSetMetaDataType dataSetMetaData;
+
+  @UA_UInt32()
+  external int dataSetFieldContentMask;
+
+  @UA_Double()
+  external double messageReceiveTimeout;
+
+  external UA_ExtensionObject messageSettings;
+
+  external UA_ExtensionObject transportSettings;
+
+  @ffi.UnsignedInt()
+  external int subscribedDataSetTypeAsInt;
+
+  UA_SubscribedDataSetType get subscribedDataSetType => UA_SubscribedDataSetType.fromValue(subscribedDataSetTypeAsInt);
+  set subscribedDataSetType(UA_SubscribedDataSetType value) => subscribedDataSetTypeAsInt = value.value;
+
+  external UnnamedUnion$4 subscribedDataSet;
+
+  external UA_String linkedStandaloneSubscribedDataSetName;
+}
+
+/// DataSetField
+/// ------------
+/// The description of published variables is named DataSetField. Each
+/// DataSetField contains the selection of one information model node. The
+/// DataSetField has additional parameters for the publishing, sampling and error
+/// handling process.
+final class UA_DataSetVariableConfig extends ffi.Struct {
+  external UA_ConfigurationVersionDataType configurationVersion;
+
+  external UA_String fieldNameAlias;
+
+  @ffi.Bool()
+  external bool promotedField;
+
+  external UA_PublishedVariableDataType publishParameters;
+
+  @UA_UInt32()
+  external int maxStringLength;
+
+  external UA_LocalizedText description;
+
+  external UA_Guid dataSetFieldId;
+}
+
+/// .. _dsw:
+///
+/// DataSetWriter
+/// -------------
+/// The DataSetWriters are the glue between the WriterGroups and the
+/// PublishedDataSets. The DataSetWriter contain configuration parameters and
+/// flags which influence the creation of DataSet messages. These messages are
+/// encapsulated inside the network message. The DataSetWriter must be linked
+/// with an existing PublishedDataSet and be contained within a WriterGroup.
+final class UA_DataSetWriterConfig extends ffi.Struct {
+  external UA_String name;
+
+  external ffi.Pointer<ffi.Void> context;
+
+  @ffi.Bool()
+  external bool enabled;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      UA_StatusCode Function(
+        ffi.Pointer<UA_Server> server,
+        UA_NodeId componentId,
+        ffi.Pointer<ffi.Void> componentContext,
+        ffi.Pointer<ffi.UnsignedInt> state,
+        ffi.UnsignedInt targetState,
+      )
+    >
+  >
+  customStateMachine;
+
+  @UA_UInt16()
+  external int dataSetWriterId;
+
+  @UA_UInt32()
+  external int dataSetFieldContentMask;
+
+  @UA_UInt32()
+  external int keyFrameCount;
+
+  external UA_ExtensionObject messageSettings;
+
+  external UA_ExtensionObject transportSettings;
+
+  external UA_String dataSetName;
+
+  external UA_KeyValueMap dataSetWriterProperties;
 }
 
 /// .. _variant:
@@ -2770,6 +3222,8 @@ final class UA_EnumDefinition extends ffi.Struct {
     ..ref.fields = fields;
 }
 
+final class UA_EnumDescription extends ffi.Opaque {}
+
 final class UA_EnumField extends ffi.Struct {
   @UA_Int64()
   external int value;
@@ -2957,6 +3411,59 @@ enum UA_FieldEncoding {
     3 => UA_FIELDENCODING_UNKNOWN,
     _ => throw ArgumentError('Unknown value for UA_FieldEncoding: $value'),
   };
+}
+
+final class UA_FieldMetaData extends ffi.Struct {
+  external UA_String name;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt16()
+  external int fieldFlags;
+
+  @UA_Byte()
+  external int builtInType;
+
+  external UA_NodeId dataType;
+
+  @UA_Int32()
+  external int valueRank;
+
+  @ffi.Size()
+  external int arrayDimensionsSize;
+
+  external ffi.Pointer<UA_UInt32> arrayDimensions;
+
+  @UA_UInt32()
+  external int maxStringLength;
+
+  external UA_Guid dataSetFieldId;
+
+  @ffi.Size()
+  external int propertiesSize;
+
+  external ffi.Pointer<UA_KeyValuePair> properties;
+}
+
+final class UA_FieldTargetDataType extends ffi.Struct {
+  external UA_Guid dataSetFieldId;
+
+  external UA_String receiverIndexRange;
+
+  external UA_NodeId targetNodeId;
+
+  @UA_UInt32()
+  external int attributeId;
+
+  external UA_String writeIndexRange;
+
+  @ffi.UnsignedInt()
+  external int overrideValueHandlingAsInt;
+
+  UA_OverrideValueHandling get overrideValueHandling => UA_OverrideValueHandling.fromValue(overrideValueHandlingAsInt);
+  set overrideValueHandling(UA_OverrideValueHandling value) => overrideValueHandlingAsInt = value.value;
+
+  external UA_Variant overrideValue;
 }
 
 enum UA_FilterOperator {
@@ -54859,6 +55366,12 @@ enum UA_NegotiationStatus {
   };
 }
 
+final class UA_NetworkAddressUrlDataType extends ffi.Struct {
+  external UA_String networkInterface;
+
+  external UA_String url;
+}
+
 /// Network Message
 /// ~~~~~~~~~~~~~~~
 enum UA_NetworkMessageType {
@@ -55287,6 +55800,44 @@ final class UA_PubSubConfiguration extends ffi.Struct {
     ..ref.securityPolicies = securityPolicies;
 }
 
+/// PubSubConnection
+/// ----------------
+/// PubSubConnections are the abstraction between the concrete transport protocol
+/// and the PubSub functionality. It is possible to create multiple
+/// PubSubConnections with (possibly) different transport protocols at
+/// runtime.
+final class UA_PubSubConnectionConfig extends ffi.Struct {
+  external UA_String name;
+
+  external ffi.Pointer<ffi.Void> context;
+
+  @ffi.Bool()
+  external bool enabled;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      UA_StatusCode Function(
+        ffi.Pointer<UA_Server> server,
+        UA_NodeId componentId,
+        ffi.Pointer<ffi.Void> componentContext,
+        ffi.Pointer<ffi.UnsignedInt> state,
+        ffi.UnsignedInt targetState,
+      )
+    >
+  >
+  customStateMachine;
+
+  external UA_PublisherId publisherId;
+
+  external UA_String transportProfileUri;
+
+  external UA_Variant address;
+
+  external UA_KeyValueMap connectionProperties;
+
+  external UA_Variant connectionTransportSettings;
+}
+
 enum UA_PubSubDiagnosticsCounterClassification {
   UA_PUBSUBDIAGNOSTICSCOUNTERCLASSIFICATION_INFORMATION(0),
   UA_PUBSUBDIAGNOSTICSCOUNTERCLASSIFICATION_ERROR(1),
@@ -55395,6 +55946,29 @@ enum UA_PubSubState {
   };
 }
 
+final class UA_PublishedDataItemsTemplateConfig extends ffi.Struct {
+  external UA_DataSetMetaDataType metaData;
+
+  @ffi.Size()
+  external int variablesToAddSize;
+
+  external ffi.Pointer<UA_PublishedVariableDataType> variablesToAdd;
+}
+
+final class UA_PublishedDataSetConfig extends ffi.Struct {
+  external UA_String name;
+
+  @ffi.UnsignedInt()
+  external int publishedDataSetTypeAsInt;
+
+  UA_PublishedDataSetType get publishedDataSetType => UA_PublishedDataSetType.fromValue(publishedDataSetTypeAsInt);
+  set publishedDataSetType(UA_PublishedDataSetType value) => publishedDataSetTypeAsInt = value.value;
+
+  external UnnamedUnion$5 config;
+
+  external ffi.Pointer<ffi.Void> context;
+}
+
 /// PublishedDataSet
 /// ----------------
 /// The PublishedDataSets (PDS) are containers for the published information. The
@@ -55419,6 +55993,60 @@ enum UA_PublishedDataSetType {
     3 => UA_PUBSUB_DATASET_PUBLISHEDEVENTS_TEMPLATE,
     _ => throw ArgumentError('Unknown value for UA_PublishedDataSetType: $value'),
   };
+}
+
+final class UA_PublishedEventConfig extends ffi.Struct {
+  external UA_NodeId eventNotfier;
+
+  external UA_ContentFilter filter;
+}
+
+final class UA_PublishedEventTemplateConfig extends ffi.Struct {
+  external UA_DataSetMetaDataType metaData;
+
+  external UA_NodeId eventNotfier;
+
+  @ffi.Size()
+  external int selectedFieldsSize;
+
+  external ffi.Pointer<UA_SimpleAttributeOperand> selectedFields;
+
+  external UA_ContentFilter filter;
+}
+
+final class UA_PublishedVariableDataType extends ffi.Struct {
+  external UA_NodeId publishedVariable;
+
+  @UA_UInt32()
+  external int attributeId;
+
+  @UA_Double()
+  external double samplingIntervalHint;
+
+  @UA_UInt32()
+  external int deadbandType;
+
+  @UA_Double()
+  external double deadbandValue;
+
+  external UA_String indexRange;
+
+  external UA_Variant substituteValue;
+
+  @ffi.Size()
+  external int metaDataPropertiesSize;
+
+  external ffi.Pointer<UA_QualifiedName> metaDataProperties;
+}
+
+final class UA_PublisherId extends ffi.Struct {
+  @ffi.UnsignedInt()
+  external int idTypeAsInt;
+
+  UA_PublisherIdType get idType => UA_PublisherIdType.fromValue(idTypeAsInt);
+  set idType(UA_PublisherIdType value) => idTypeAsInt = value.value;
+
+  external UnnamedUnion$3 id;
 }
 
 /// .. _pubsub:
@@ -55600,6 +56228,57 @@ final class UA_ReadValueId extends ffi.Struct {
   external UA_String indexRange;
 
   external UA_QualifiedName dataEncoding;
+}
+
+/// ReaderGroup
+/// -----------
+/// ReaderGroups contain a list of DataSetReaders. All ReaderGroups are
+/// created within a PubSubConnection and automatically deleted if the connection
+/// is removed. All network message related filters are only available in the
+/// DataSetReader.
+///
+/// The RT-levels go along with different requirements. The below listed levels
+/// can be configured for a ReaderGroup.
+final class UA_ReaderGroupConfig extends ffi.Struct {
+  external UA_String name;
+
+  external ffi.Pointer<ffi.Void> context;
+
+  @ffi.Bool()
+  external bool enabled;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      UA_StatusCode Function(
+        ffi.Pointer<UA_Server> server,
+        UA_NodeId componentId,
+        ffi.Pointer<ffi.Void> componentContext,
+        ffi.Pointer<ffi.UnsignedInt> state,
+        ffi.UnsignedInt targetState,
+      )
+    >
+  >
+  customStateMachine;
+
+  external UA_KeyValueMap groupProperties;
+
+  @ffi.UnsignedInt()
+  external int encodingMimeTypeAsInt;
+
+  UA_PubSubEncodingType get encodingMimeType => UA_PubSubEncodingType.fromValue(encodingMimeTypeAsInt);
+  set encodingMimeType(UA_PubSubEncodingType value) => encodingMimeTypeAsInt = value.value;
+
+  external UA_ExtensionObject transportSettings;
+
+  @ffi.UnsignedInt()
+  external int securityModeAsInt;
+
+  UA_MessageSecurityMode get securityMode => UA_MessageSecurityMode.fromValue(securityModeAsInt);
+  set securityMode(UA_MessageSecurityMode value) => securityModeAsInt = value.value;
+
+  external ffi.Pointer<UA_PubSubSecurityPolicy> securityPolicy;
+
+  external UA_String securityGroupId;
 }
 
 enum UA_RedundancySupport {
@@ -56840,6 +57519,10 @@ enum UA_ShutdownReason {
   };
 }
 
+final class UA_SimpleAttributeOperand extends ffi.Opaque {}
+
+final class UA_SimpleTypeDescription extends ffi.Opaque {}
+
 final class UA_StatusChangeNotification extends ffi.Opaque {}
 
 /// .. _statuscode:
@@ -56896,6 +57579,8 @@ final class UA_StructureDefinition extends ffi.Struct {
 
   external ffi.Pointer<UA_StructureField> fields;
 }
+
+final class UA_StructureDescription extends ffi.Opaque {}
 
 final class UA_StructureField extends ffi.Struct {
   external UA_String name;
@@ -57843,6 +58528,21 @@ const int UA_TYPES_XMLELEMENT = 15;
 
 const int UA_TYPES_XVTYPE = 351;
 
+final class UA_TargetVariablesDataType extends ffi.Struct {
+  @ffi.Size()
+  external int targetVariablesSize;
+
+  external ffi.Pointer<UA_FieldTargetDataType> targetVariables;
+
+  static ffi.Pointer<UA_TargetVariablesDataType> $allocate(
+    ffi.Allocator $allocator, {
+    required int targetVariablesSize,
+    required ffi.Pointer<UA_FieldTargetDataType> targetVariables,
+  }) => $allocator<UA_TargetVariablesDataType>()
+    ..ref.targetVariablesSize = targetVariablesSize
+    ..ref.targetVariables = targetVariables;
+}
+
 /// EventLoop Plugin API
 /// ====================
 /// An OPC UA-enabled application can have several clients and servers. And
@@ -58052,6 +58752,30 @@ enum UA_TsnTalkerStatus {
   };
 }
 
+const int UA_UADPNETWORKMESSAGECONTENTMASK_DATASETCLASSID = 512;
+
+const int UA_UADPNETWORKMESSAGECONTENTMASK_GROUPHEADER = 2;
+
+const int UA_UADPNETWORKMESSAGECONTENTMASK_GROUPVERSION = 8;
+
+const int UA_UADPNETWORKMESSAGECONTENTMASK_NETWORKMESSAGENUMBER = 16;
+
+const int UA_UADPNETWORKMESSAGECONTENTMASK_NONE = 0;
+
+const int UA_UADPNETWORKMESSAGECONTENTMASK_PAYLOADHEADER = 64;
+
+const int UA_UADPNETWORKMESSAGECONTENTMASK_PICOSECONDS = 256;
+
+const int UA_UADPNETWORKMESSAGECONTENTMASK_PROMOTEDFIELDS = 1024;
+
+const int UA_UADPNETWORKMESSAGECONTENTMASK_PUBLISHERID = 1;
+
+const int UA_UADPNETWORKMESSAGECONTENTMASK_SEQUENCENUMBER = 32;
+
+const int UA_UADPNETWORKMESSAGECONTENTMASK_TIMESTAMP = 128;
+
+const int UA_UADPNETWORKMESSAGECONTENTMASK_WRITERGROUPID = 4;
+
 /// UInt16
 /// ^^^^^^
 /// An integer value between 0 and 65 535.
@@ -58084,6 +58808,44 @@ final class UA_UInt32Range extends ffi.Struct {
 /// An integer value between 0 and 18 446 744 073 709 551 615.
 typedef UA_UInt64 = ffi.Uint64;
 typedef DartUA_UInt64 = int;
+
+final class UA_UadpWriterGroupMessageDataType extends ffi.Struct {
+  @UA_UInt32()
+  external int groupVersion;
+
+  @ffi.UnsignedInt()
+  external int dataSetOrderingAsInt;
+
+  UA_DataSetOrderingType get dataSetOrdering => UA_DataSetOrderingType.fromValue(dataSetOrderingAsInt);
+  set dataSetOrdering(UA_DataSetOrderingType value) => dataSetOrderingAsInt = value.value;
+
+  @UA_UInt32()
+  external int networkMessageContentMask;
+
+  @UA_Double()
+  external double samplingOffset;
+
+  @ffi.Size()
+  external int publishingOffsetSize;
+
+  external ffi.Pointer<UA_Double> publishingOffset;
+
+  static ffi.Pointer<UA_UadpWriterGroupMessageDataType> $allocate(
+    ffi.Allocator $allocator, {
+    required int groupVersion,
+    required UA_DataSetOrderingType dataSetOrdering,
+    required int networkMessageContentMask,
+    required double samplingOffset,
+    required int publishingOffsetSize,
+    required ffi.Pointer<UA_Double> publishingOffset,
+  }) => $allocator<UA_UadpWriterGroupMessageDataType>()
+    ..ref.groupVersion = groupVersion
+    ..ref.dataSetOrdering = dataSetOrdering
+    ..ref.networkMessageContentMask = networkMessageContentMask
+    ..ref.samplingOffset = samplingOffset
+    ..ref.publishingOffsetSize = publishingOffsetSize
+    ..ref.publishingOffset = publishingOffset;
+}
 
 final class UA_UpdateDataDetails extends ffi.Opaque {}
 
@@ -58400,6 +59162,65 @@ final class UA_WriteResponse extends ffi.Struct {
   external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
 }
 
+final class UA_WriterGroupConfig extends ffi.Struct {
+  external UA_String name;
+
+  external ffi.Pointer<ffi.Void> context;
+
+  @ffi.Bool()
+  external bool enabled;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      UA_StatusCode Function(
+        ffi.Pointer<UA_Server> server,
+        UA_NodeId componentId,
+        ffi.Pointer<ffi.Void> componentContext,
+        ffi.Pointer<ffi.UnsignedInt> state,
+        ffi.UnsignedInt targetState,
+      )
+    >
+  >
+  customStateMachine;
+
+  @UA_UInt16()
+  external int writerGroupId;
+
+  @UA_Double()
+  external double publishingInterval;
+
+  @UA_Double()
+  external double keepAliveTime;
+
+  @UA_Byte()
+  external int priority;
+
+  external UA_ExtensionObject transportSettings;
+
+  external UA_ExtensionObject messageSettings;
+
+  external UA_KeyValueMap groupProperties;
+
+  @ffi.UnsignedInt()
+  external int encodingMimeTypeAsInt;
+
+  UA_PubSubEncodingType get encodingMimeType => UA_PubSubEncodingType.fromValue(encodingMimeTypeAsInt);
+  set encodingMimeType(UA_PubSubEncodingType value) => encodingMimeTypeAsInt = value.value;
+
+  @UA_UInt16()
+  external int maxEncapsulatedDataSetMessageCount;
+
+  @ffi.UnsignedInt()
+  external int securityModeAsInt;
+
+  UA_MessageSecurityMode get securityMode => UA_MessageSecurityMode.fromValue(securityModeAsInt);
+  set securityMode(UA_MessageSecurityMode value) => securityModeAsInt = value.value;
+
+  external ffi.Pointer<UA_PubSubSecurityPolicy> securityPolicy;
+
+  external UA_String securityGroupId;
+}
+
 final class UnnamedStruct extends ffi.Struct {
   external UA_NodeId typeId;
 
@@ -58435,6 +59256,38 @@ final class UnnamedUnion$1 extends ffi.Union {
   external UnnamedStruct encoded;
 
   external UnnamedStruct$1 decoded;
+}
+
+final class UnnamedUnion$2 extends ffi.Union {
+  external UA_DataSetVariableConfig variable;
+}
+
+final class UnnamedUnion$3 extends ffi.Union {
+  @UA_Byte()
+  external int byte;
+
+  @UA_UInt16()
+  external int uint16;
+
+  @UA_UInt32()
+  external int uint32;
+
+  @UA_UInt64()
+  external int uint64;
+
+  external UA_String string;
+}
+
+final class UnnamedUnion$4 extends ffi.Union {
+  external UA_TargetVariablesDataType target;
+}
+
+final class UnnamedUnion$5 extends ffi.Union {
+  external UA_PublishedDataItemsTemplateConfig itemsTemplate;
+
+  external UA_PublishedEventConfig event;
+
+  external UA_PublishedEventTemplateConfig eventTemplate;
 }
 
 enum idtype_t {

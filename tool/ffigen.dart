@@ -85,6 +85,44 @@ Future<void> main() async {
       'UA_Server_run_iterate',
       'UA_Server_run_shutdown',
       'UA_Server_delete',
+      // UA_Server_setVariableNode_valueCallback is a macro over this one:
+      'UA_Server_setVariableNode_internalValueSource',
+
+      // PubSub (publisher side)
+      'UA_Server_addPubSubConnection',
+      'UA_Server_removePubSubConnection',
+      'UA_Server_addPublishedDataSet',
+      'UA_Server_removePublishedDataSet',
+      'UA_Server_addDataSetField',
+      'UA_Server_removeDataSetField',
+      'UA_Server_addWriterGroup',
+      'UA_Server_removeWriterGroup',
+      'UA_Server_addDataSetWriter',
+      'UA_Server_removeDataSetWriter',
+      'UA_Server_triggerWriterGroupPublish',
+      // PubSub (subscriber side)
+      'UA_Server_addReaderGroup',
+      'UA_Server_removeReaderGroup',
+      'UA_Server_addDataSetReader',
+      'UA_Server_removeDataSetReader',
+      'UA_Server_setDataSetReaderTargetVariables',
+      // PubSub component state machine
+      'UA_Server_enableAllPubSubComponents',
+      'UA_Server_disableAllPubSubComponents',
+      'UA_Server_enablePubSubConnection',
+      'UA_Server_disablePubSubConnection',
+      'UA_Server_enableWriterGroup',
+      'UA_Server_disableWriterGroup',
+      'UA_Server_enableDataSetWriter',
+      'UA_Server_disableDataSetWriter',
+      'UA_Server_enableReaderGroup',
+      'UA_Server_disableReaderGroup',
+      'UA_Server_enableDataSetReader',
+      'UA_Server_disableDataSetReader',
+      'UA_Server_getWriterGroupState',
+      'UA_Server_getDataSetWriterState',
+      'UA_Server_getReaderGroupState',
+      'UA_Server_getDataSetReaderState',
 
       // Statistics / diagnostics
       'UA_Server_getStatistics',
@@ -151,6 +189,7 @@ Future<void> main() async {
           decl.originalName.startsWith('UA_STATUSCODE_') ||
           decl.originalName.startsWith('UA_TYPES_') ||
           decl.originalName.startsWith('UA_VALUERANK_') ||
+          decl.originalName.startsWith('UA_UADPNETWORKMESSAGECONTENTMASK_') ||
           decl.originalName.startsWith('UA_NS0ID_')) {
         return true;
       }
@@ -212,6 +251,25 @@ Future<void> main() async {
       'UA_SessionStatistics',
       'UA_ServerDiagnosticsSummaryDataType',
       'UA_SubscriptionDiagnosticsDataType',
+      // PubSub structs
+      'UA_PublisherId',
+      'UA_PubSubConnectionConfig',
+      'UA_NetworkAddressUrlDataType',
+      'UA_PublishedDataSetConfig',
+      'UA_AddPublishedDataSetResult',
+      'UA_DataSetFieldConfig',
+      'UA_DataSetFieldResult',
+      'UA_PublishedVariableDataType',
+      'UA_WriterGroupConfig',
+      'UA_DataSetWriterConfig',
+      'UA_UadpWriterGroupMessageDataType',
+      'UA_ReaderGroupConfig',
+      'UA_DataSetReaderConfig',
+      'UA_DataSetMetaDataType',
+      'UA_FieldMetaData',
+      'UA_TargetVariablesDataType',
+      'UA_FieldTargetDataType',
+      'UA_ValueCallback',
     }),
     typedefs: Typedefs.includeSet({
       'UA_Byte',

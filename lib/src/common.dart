@@ -38,8 +38,9 @@ ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType) {
 }
 
 /// Resolves a `UA_TYPES` entry by its raw `UA_TYPES_*` index constant (e.g.
-/// `raw.UA_TYPES_SERVERDIAGNOSTICSSUMMARYDATATYPE`). Used for types that are
-/// not part of the curated [UaTypes] enum, such as the diagnostics data types.
+/// `raw.UA_TYPES_NETWORKADDRESSURLDATATYPE`). Used for types that are not part
+/// of the curated [UaTypes] enum, such as the PubSub configuration and the
+/// diagnostics data types.
 ffi.Pointer<raw.UA_DataType> getTypeByIndex(int type) {
   if (type < 0 || type > raw.UA_TYPES_COUNT) {
     throw 'Type out of boundary $type';

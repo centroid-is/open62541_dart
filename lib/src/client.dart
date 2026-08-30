@@ -17,6 +17,21 @@ import 'types/create_type.dart';
 import 'types/opcua_serializer.dart';
 import 'ua_allocation.dart';
 
+// Safe error log for the worker isolate. On a detached GUI launch (release)
+// BOTH stdout and stderr have invalid handles, and a write to either throws
+// asynchronously ('handle is invalid') -> with Isolate.spawn's default
+// errorsAreFatal that uncaught throw KILLS the worker, taking a whole OPC UA
+// server offline. So never touch the std streams here: append to the app's log
+// file if one is configured, else drop the line.
+final String? _logFilePath = Platform.environment['OPEN62541_LOG_FILE'];
+void _safeErr(Object? m) {
+  final p = _logFilePath;
+  if (p == null || p.isEmpty) return;
+  try {
+    File(p).writeAsStringSync('$m\n', mode: FileMode.append, flush: true);
+  } catch (_) {}
+}
+
 typedef NodeClass = raw.UA_NodeClass;
 
 typedef BrowseResultMask = raw.UA_BrowseResultMask;
@@ -1320,7 +1335,15 @@ class Client implements ClientApi {
     // notification with clienthandle N") — the "stale keys" orphan bug.
     bool cancelledInFlight = false;
     ffi.Pointer<ffi.Uint32> localRequestId = ffi.nullptr;
-    Map<int, Tuple2<NodeId, AttributeId>> monIdToNodeAndAttribute = {};
+    // Item identity must exist BEFORE the create request is sent: the server may
+    // put a PublishResponse carrying the initial values on the wire before the
+    // CreateMonitoredItemsResponse is processed, and open62541 dispatches those
+    // early notifications with monitoredItemId still 0 (the id is only assigned
+    // once the create response arrives). A monId-keyed map cannot identify them,
+    // so each item instead carries its request-order index as its monitored-item
+    // context — an opaque pointer open62541 stores at request time and hands
+    // back to every data callback — and this list resolves index -> item.
+    final List<Tuple2<NodeId, AttributeId>> itemOrder = [];
 
     // Track config stream subscriptions so we can cancel them on close
     StreamSubscription? inactivitySub, deletedSub, stateSub;
@@ -1387,17 +1410,17 @@ class Client implements ClientApi {
               ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse> response,
             ) {
               if (response == ffi.nullptr) {
-                stderr.write(
+                _safeErr(
                   "Error deleting monitored item, nullptr provided connection propably already closed. Client cleanup.",
                 );
               } else if (response.ref.resultsSize == 0) {
-                stderr.write(
+                _safeErr(
                   "Error deleting monitored item, no results provided, connection propably already closed. Client cleanup.",
                 );
               } else {
                 for (var i = 0; i < response.ref.resultsSize; i++) {
                   if (response.ref.results[i] != raw.UA_STATUSCODE_GOOD) {
-                    stderr.write(
+                    _safeErr(
                       "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}",
                     );
                   }
@@ -1448,6 +1471,7 @@ class Client implements ClientApi {
           monRequest[index].requestedParameters.samplingInterval = samplingInterval.inMicroseconds / 1000.0;
           monRequest[index].requestedParameters.discardOldest = discardOldest;
           monRequest[index].requestedParameters.queueSize = queueSize;
+          itemOrder.add(Tuple2(entry.key, attribute));
           index++;
         }
       }
@@ -1459,7 +1483,10 @@ class Client implements ClientApi {
       createRequest.ref.itemsToCreateSize = nodeCount;
 
       Map<NodeId, DynamicValue> latestValues = {};
-      Set<int> seenMonIds = {};
+      // Request-order indexes for which a notification has been processed, and
+      // the subset of indexes the server actually created an item for.
+      Set<int> seenIndexes = {};
+      Set<int> createdIndexes = {};
 
       // Assign our monitor callback pointer, This one stays alive for the duration of the stream
       monitorCallback =
@@ -1482,7 +1509,7 @@ class Client implements ClientApi {
           ) async {
             // Don't process the data if we are closed
             if (controller.isClosed) {
-              stderr.writeln("Stream closed, data still sent from monitored item $monId");
+              _safeErr("Stream closed, data still sent from monitored item $monId");
               return;
             }
             if (value == ffi.nullptr) {
@@ -1497,11 +1524,19 @@ class Client implements ClientApi {
               controller.addError(UaStatusException(value.ref.status));
               return;
             }
+            // Identify the item by its request-time context (request-order index
+            // biased by 1 so it is never a NULL pointer). monId is unusable
+            // here: it is 0 for notifications the server delivered before the
+            // create response was processed.
+            final index = monContext.address - 1;
+            if (index < 0 || index >= itemOrder.length) {
+              stderr.write("Monitored item callback with unknown context (index $index, monId $monId)");
+              return;
+            }
+            final item = itemOrder[index];
             try {
-              //TODO: Find the stuff we used to create the request
-              final temp = monIdToNodeAndAttribute[monId]!;
-              final nodeId = temp.item1;
-              final attributeId = temp.item2;
+              final nodeId = item.item1;
+              final attributeId = item.item2;
 
               var reference = latestValues[nodeId] ?? DynamicValue();
               final ref = value.ref.value;
@@ -1548,22 +1583,22 @@ class Client implements ClientApi {
                   throw 'Unhandled attribute id $attributeId';
               }
 
-              // Update the seenmonIds after processing
-              seenMonIds.add(monId);
+              // Update the seen indexes after processing
+              seenIndexes.add(index);
 
               latestValues[nodeId] = reference;
               if (controller.isClosed) {
                 return; // While processing the data the controller might have been closed
               }
               try {
-                if (seenMonIds.length == nodeCount - descriptionFailureCount) {
+                if (seenIndexes.length >= nodeCount - descriptionFailureCount) {
                   controller.add(latestValues);
                 }
               } catch (e) {
-                stderr.write("Error adding data: $e");
+                _safeErr("Error adding data: $e");
               }
             } catch (e) {
-              stderr.write("Error converting data for: ${monIdToNodeAndAttribute[monId]} to type $DynamicValue: $e");
+              _safeErr("Error converting data for: $item to type $DynamicValue: $e");
             }
           });
 
@@ -1707,7 +1742,7 @@ class Client implements ClientApi {
               for (var attribute in nodes[node]!) {
                 if (response.ref.results[index].statusCode == raw.UA_STATUSCODE_GOOD) {
                   monIds.add(response.ref.results[index].monitoredItemId);
-                  monIdToNodeAndAttribute[response.ref.results[index].monitoredItemId] = Tuple2(node, attribute);
+                  createdIndexes.add(index);
                 } else {
                   // Allow for the description attribute to be missing
                   if (response.ref.results[index].statusCode != raw.UA_STATUSCODE_BADATTRIBUTEIDINVALID &&
@@ -1728,23 +1763,34 @@ class Client implements ClientApi {
               return;
             }
 
-            // Backfill initial notifications that may have been dropped by a race
-            // condition in open62541: the server can send Publish responses with
-            // initial data change notifications before the CreateMonitoredItems
-            // response is processed, causing the C library to drop them because
-            // the monitored item isn't registered in the subscription tree yet.
-            // Static attributes (DATATYPE, DISPLAYNAME, DESCRIPTION) are only sent
-            // once, so if the initial notification is lost, the seenMonIds gate
-            // will never be satisfied and the stream will never emit.
+            // The initial notifications can have arrived before this response
+            // (that is the race the context-based identity exists for). If items
+            // failed with the tolerated description-attribute error, the gate in
+            // the data callback compared against the wrong expected count while
+            // descriptionFailureCount was still 0 — re-check it now, because the
+            // already-delivered static attributes are never notified again.
+            if (descriptionFailureCount > 0 &&
+                seenIndexes.length >= nodeCount - descriptionFailureCount &&
+                !controller.isClosed) {
+              controller.add(latestValues);
+            }
+
+            // Backfill initial notifications a server never published. With
+            // item identity carried in the monitored-item context the
+            // early-notification race no longer loses values, so this only
+            // triggers for servers that genuinely fail to send an initial
+            // notification for a created item; without it the seenIndexes gate
+            // would never be satisfied and the stream would never emit.
             Future.delayed(const Duration(seconds: 1), () async {
               if (controller.isClosed || _client == ffi.nullptr) return;
               final expectedCount = nodeCount - descriptionFailureCount;
-              if (seenMonIds.length >= expectedCount) return;
+              if (seenIndexes.length >= expectedCount) return;
 
               final missingAttrs = <NodeId, List<AttributeId>>{};
-              for (final entry in monIdToNodeAndAttribute.entries) {
-                if (!seenMonIds.contains(entry.key)) {
-                  missingAttrs.putIfAbsent(entry.value.item1, () => []).add(entry.value.item2);
+              for (final index in createdIndexes) {
+                if (!seenIndexes.contains(index)) {
+                  final item = itemOrder[index];
+                  missingAttrs.putIfAbsent(item.item1, () => []).add(item.item2);
                 }
               }
               if (missingAttrs.isEmpty) return;
@@ -1752,7 +1798,7 @@ class Client implements ClientApi {
               try {
                 final results = await readAttribute(missingAttrs);
                 if (controller.isClosed) return;
-                if (seenMonIds.length >= expectedCount) return;
+                if (seenIndexes.length >= expectedCount) return;
                 for (final entry in results.entries) {
                   final existing = latestValues[entry.key] ?? DynamicValue();
                   existing.description ??= entry.value.description;
@@ -1763,28 +1809,35 @@ class Client implements ClientApi {
                   existing.extObjEncodingId ??= entry.value.extObjEncodingId;
                   latestValues[entry.key] = existing;
                 }
-                for (final monId in monIdToNodeAndAttribute.keys) {
-                  seenMonIds.add(monId);
-                }
-                if (!controller.isClosed && seenMonIds.length >= expectedCount) {
+                seenIndexes.addAll(createdIndexes);
+                if (!controller.isClosed && seenIndexes.length >= expectedCount) {
                   controller.add(latestValues);
                 }
               } catch (e) {
-                stderr.writeln('Failed to backfill dropped initial notifications: $e');
+                _safeErr('Failed to backfill dropped initial notifications: $e');
               }
             });
           });
       localRequestId = ua_calloc<ffi.Uint32>();
+      // Per-item contexts: the request-order index biased by 1 so no entry is a
+      // NULL pointer. open62541 never dereferences these — it copies each entry
+      // into its monitored item during the call below and hands it back verbatim
+      // to the data callback, so the array itself can be freed right after.
+      final contexts = ua_calloc<ffi.Pointer<ffi.Void>>(nodeCount);
+      for (var i = 0; i < nodeCount; i++) {
+        contexts[i] = ffi.Pointer.fromAddress(i + 1);
+      }
       final statusCode = raw.UA_Client_MonitoredItems_createDataChanges_async(
         _client,
         createRequest.ref,
-        ffi.nullptr,
+        contexts,
         callbacks,
         ffi.nullptr,
         createCallback.nativeFunction,
         ffi.nullptr,
         localRequestId,
       );
+      ua_calloc.free(contexts);
       if (statusCode != raw.UA_STATUSCODE_GOOD) {
         raw.UA_CreateMonitoredItemsRequest_delete(createRequest);
         ua_calloc.free(callbacks);
@@ -1898,7 +1951,7 @@ class Client implements ClientApi {
               completer.complete(result);
             }
           } catch (e) {
-            stderr.write("Error calling callback: $e");
+            _safeErr("Error calling callback: $e");
             completer.completeError(e, StackTrace.current);
           } finally {
             // cleanup input arguments
