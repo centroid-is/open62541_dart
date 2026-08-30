@@ -4,6 +4,26 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## 1.5.7+3
+
+- **Data-source reads carry a status code + source timestamp.**
+  `Server.addDataSourceVariableNode` gained `onReadValue`, a richer alternative
+  to `onRead` (provide exactly one): it returns a `DataSourceValue`
+  (`value` + `statusCode` + optional `sourceTimestamp`), letting a proxy serve
+  e.g. its last-known value with `Bad_NoCommunication` while the backing
+  device is down instead of silently reporting stale data as Good (a Bad
+  status still carries the value, as OPC UA allows). On the client,
+  `Client.readValue(nodeId)` (also on `ClientApi`/`ClientIsolate`) returns a
+  `DataValue` — decoded value, operation `statusCode`
+  (`isGood`/`isUncertain`/`isBad`), `sourceTimestamp` and `serverTimestamp` —
+  and does NOT throw on a non-Good operation status; `Client.read`/
+  `readAttribute` keep their existing throw-on-non-Good behavior. Monitored
+  items already surfaced a non-Good notification as a stream *error* event
+  (the notification's value/timestamps are not delivered on the data stream);
+  that behavior is unchanged and now documented — the error carries the
+  decoded status. Also exported: `statusCodeToString` and the
+  `UA_STATUSCODE_BADNOCOMMUNICATION` / `BADNOTWRITABLE` / `BADUSERACCESSDENIED`
+  / `BADINTERNALERROR` constants.
 ## 1.5.7+2
 
 - Bounded-send fix (native build hook): patch open62541's TCP send path so a

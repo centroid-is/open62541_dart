@@ -30,6 +30,30 @@ class Argument {
   final LocalizedText? description;
 }
 
+/// The complete read result of a data-source variable node: the [value] plus
+/// the OPC UA operation [statusCode] and an optional [sourceTimestamp].
+///
+/// Returned by the `onReadValue` callback of
+/// [Server.addDataSourceVariableNode] so a data source can serve OPC UA
+/// quality alongside the value. Per OPC UA a Bad status may still carry a
+/// value (e.g. last-known value + `Bad_NoCommunication` while the underlying
+/// device is unreachable) — the dispatcher forwards both to the client.
+class DataSourceValue {
+  DataSourceValue({required this.value, this.statusCode = raw.UA_STATUSCODE_GOOD, this.sourceTimestamp});
+
+  /// The value served to the client (sent even when [statusCode] is Bad).
+  final DynamicValue value;
+
+  /// The OPC UA status of this read (e.g. `UA_STATUSCODE_BADNOCOMMUNICATION`).
+  /// Defaults to Good. Reported to the client as the DataValue's status.
+  final int statusCode;
+
+  /// The source timestamp of the value (when the underlying value was
+  /// produced/sampled). When `null` open62541 stamps the current time. The
+  /// server only sends it when the client requested source timestamps.
+  final DateTime? sourceTimestamp;
+}
+
 class Server {
   Server({LogLevel? logLevel, int? port}) {
     final config = ua_calloc<raw.UA_ServerConfig>();
@@ -84,7 +108,7 @@ class Server {
     )
   >?
   _dsWriteDispatcher;
-  final Map<NodeId, DynamicValue Function()> _dataSourceReads = {};
+  final Map<NodeId, DataSourceValue Function()> _dataSourceReads = {};
   final Map<NodeId, void Function(DynamicValue)> _dataSourceWrites = {};
 
   // The declared DataType of each data-source node whose `typeId` was given.
@@ -303,8 +327,8 @@ class Server {
         }
         // onRead is synchronous and may throw; a throw surfaces to the client
         // as a Bad status rather than crashing the isolate.
-        final dyn = handler();
-        srcVar = valueToVariant(dyn);
+        final dsv = handler();
+        srcVar = valueToVariant(dsv.value);
         // UA_Variant is the first member of UA_DataValue, so a UA_DataValue*
         // cast to UA_Variant* points at the inline `value` field. Deep-copy the
         // freshly built variant into it (the server owns/frees it afterwards).
@@ -314,6 +338,24 @@ class Server {
         }
         // Flag hasValue (bit 0 of the UA_DataValue bitfield byte).
         value.ref.substitute = value.ref.substitute | 0x01;
+        // Operation status: OPC UA allows a Bad/Uncertain status to still
+        // carry a value (last-known + Bad_NoCommunication is the canonical
+        // HMI case), so the value copied above is kept either way. hasStatus
+        // (bit 1) is only flagged for a non-Good code — an omitted status
+        // means Good on the wire.
+        if (dsv.statusCode != raw.UA_STATUSCODE_GOOD) {
+          value.ref.status = dsv.statusCode;
+          value.ref.substitute = value.ref.substitute | 0x02;
+        }
+        // Source timestamp (hasSourceTimestamp is bit 2). Set unconditionally
+        // when provided: open62541's read service strips source timestamps
+        // the request did not ask for, and stamps "now" when the source did
+        // not provide one — so this only ever *adds* fidelity.
+        final sourceTimestamp = dsv.sourceTimestamp;
+        if (sourceTimestamp != null) {
+          value.ref.sourceTimestamp = dateTimeToUaDateTime(sourceTimestamp);
+          value.ref.substitute = value.ref.substitute | 0x04;
+        }
         return raw.UA_STATUSCODE_GOOD;
       } catch (_) {
         return raw.UA_STATUSCODE_BADINTERNALERROR;
@@ -411,7 +453,16 @@ class Server {
   /// * [onRead] is **synchronous** and returns the current value. It fires
   ///   inside the server's `runIterate` on the calling isolate, so it cannot
   ///   `await`. If it throws, the client read fails with a Bad status
-  ///   (`BadInternalError`) — the isolate is never crashed.
+  ///   (`BadInternalError`, or the thrown [UaStatusException]'s code) — the
+  ///   isolate is never crashed.
+  /// * [onReadValue] is the richer alternative to [onRead]: it returns a
+  ///   [DataSourceValue] carrying the value **plus** an OPC UA status code and
+  ///   an optional source timestamp, so a proxy can serve e.g. the last-known
+  ///   value with `Bad_NoCommunication` while the backing device is down
+  ///   instead of silently reporting stale data as Good. Provide exactly one
+  ///   of [onRead] / [onReadValue] (they are mutually exclusive; [onRead] is
+  ///   equivalent to an [onReadValue] that always reports Good and no source
+  ///   timestamp).
   /// * [onWrite] (optional) receives the [DynamicValue] a client wrote. Passing
   ///   `null` makes the node read-only: the node is created without the Write
   ///   access bit, so client writes are rejected with `BadNotWritable`. When
@@ -442,7 +493,8 @@ class Server {
   /// full value instead of the requested slice.
   void addDataSourceVariableNode(
     NodeId nodeId, {
-    required DynamicValue Function() onRead,
+    DynamicValue Function()? onRead,
+    DataSourceValue Function()? onReadValue,
     void Function(DynamicValue value)? onWrite,
     required String browseName,
     NodeId? parentNodeId,
@@ -451,6 +503,9 @@ class Server {
     NodeId? typeId,
     AccessLevelMask? accessLevel,
   }) {
+    if ((onRead == null) == (onReadValue == null)) {
+      throw ArgumentError('Provide exactly one of onRead / onReadValue');
+    }
     _ensureDataSourceDispatchers();
 
     final effectiveAccess = accessLevel ?? AccessLevelMask(read: true, write: onWrite != null);
@@ -518,7 +573,7 @@ class Server {
     //    entries earlier (and removing them again on failure) would let a failed
     //    duplicate add - e.g. BadNodeIdExists for a NodeId that already has a
     //    data source - wipe the EXISTING node's live handlers and schema.
-    _dataSourceReads[nodeId] = onRead;
+    _dataSourceReads[nodeId] = onReadValue ?? (() => DataSourceValue(value: onRead!()));
     if (onWrite != null) {
       _dataSourceWrites[nodeId] = onWrite;
     }

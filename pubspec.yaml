@@ -2,7 +2,7 @@ name: open62541
 description: >-
   Dart FFI bindings to the open62541 OPC UA stack. Provides client and server
   APIs for OPC UA over TCP, with subscriptions, custom types and mbedTLS encryption.
-version: 1.5.7+2
+version: 1.5.7+3
 repository: https://github.com/centroid-is/open62541_dart
 homepage: https://github.com/centroid-is/open62541_dart
 issue_tracker: https://github.com/centroid-is/open62541_dart/issues

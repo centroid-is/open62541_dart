@@ -139,6 +139,11 @@ struct size is unchanged) so the generator does not drop the surrounding members
   (v1.5.x), so they do not surface from a remote server. For an in-process Dart
   `Server` + `Client`, descriptions are restored from the locally registered
   schema.
+- Monitored-item notifications do not surface per-notification status codes or
+  timestamps on the value stream: a notification with a non-Good status is
+  delivered as an *error* event on the stream (carrying the status), and its
+  value/timestamps are dropped. Use `Client.readValue` to observe a node's
+  value together with its status code and source/server timestamps.
 
 ## License
 

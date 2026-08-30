@@ -34,6 +34,11 @@ class ReadMessage extends IsolateMessage {
   const ReadMessage(super.requestId, this.nodeId);
 }
 
+class ReadValueMessage extends IsolateMessage {
+  final NodeId nodeId;
+  const ReadValueMessage(super.requestId, this.nodeId);
+}
+
 class WriteMessage extends IsolateMessage {
   final NodeId nodeId;
   final DynamicValue value;
@@ -334,6 +339,24 @@ class ClientIsolate implements ClientApi {
     _pendingRequests[id] = completer;
 
     _sendPort.send(ReadMessage(id, nodeId));
+
+    try {
+      return await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
+  /// Read the Value attribute with its status code and timestamps
+  @override
+  Future<DataValue> readValue(NodeId nodeId) async {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final completer = Completer<DataValue>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(ReadValueMessage(id, nodeId));
 
     try {
       return await completer.future;
@@ -895,6 +918,9 @@ void _isolateEntryPoint(_IsolateData data) {
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is ReadMessage) {
         final result = await client.read(message.nodeId);
+        sendPort.send(IsolateResponse.success(message.requestId, result));
+      } else if (message is ReadValueMessage) {
+        final result = await client.readValue(message.nodeId);
         sendPort.send(IsolateResponse.success(message.requestId, result));
       } else if (message is WriteMessage) {
         await client.write(message.nodeId, message.value);

@@ -20,6 +20,13 @@ abstract class ClientApi {
   /// Reads the value, display name, description, and data type of [nodeId].
   Future<DynamicValue> read(NodeId nodeId);
 
+  /// Reads the Value attribute of [nodeId] as a full [DataValue]: the decoded
+  /// value plus the operation's OPC UA status code and source/server
+  /// timestamps. A non-Good operation status is returned (not thrown), so
+  /// callers can observe quality (e.g. `Bad_NoCommunication`) alongside a
+  /// last-known value.
+  Future<DataValue> readValue(NodeId nodeId);
+
   /// Reads multiple attributes from multiple nodes in a single service call.
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes);
 

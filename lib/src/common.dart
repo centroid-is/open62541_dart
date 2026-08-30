@@ -14,6 +14,25 @@ String statusCodeToString(int statusCode) {
   return raw.UA_StatusCode_name(statusCode).cast<Utf8>().toDartString();
 }
 
+/// `UA_DateTime` ticks (100 ns intervals since 1601-01-01 UTC) at the Unix
+/// epoch (1970-01-01 UTC). Mirrors open62541's `UA_DATETIME_UNIX_EPOCH`.
+const int uaDateTimeUnixEpoch = 11644473600 * 10 * 1000 * 1000;
+
+/// Converts a Dart [DateTime] to a raw `UA_DateTime` (100 ns ticks since
+/// 1601-01-01 UTC). Sub-microsecond precision is not representable in Dart, so
+/// the result is always a multiple of 10 ticks.
+int dateTimeToUaDateTime(DateTime dateTime) {
+  return dateTime.toUtc().microsecondsSinceEpoch * 10 + uaDateTimeUnixEpoch;
+}
+
+/// Converts a raw `UA_DateTime` (100 ns ticks since 1601-01-01 UTC) to a UTC
+/// Dart [DateTime], truncating the sub-microsecond part. Returns `null` for
+/// the OPC UA null timestamp (0).
+DateTime? uaDateTimeToDateTime(int uaDateTime) {
+  if (uaDateTime == 0) return null;
+  return DateTime.fromMicrosecondsSinceEpoch((uaDateTime - uaDateTimeUnixEpoch) ~/ 10, isUtc: true);
+}
+
 ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType) {
   int type = uaType.value;
   if (type < 0 || type > raw.UA_TYPES_COUNT) {
