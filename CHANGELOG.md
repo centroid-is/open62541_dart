@@ -4,6 +4,25 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## Unreleased
+
+- **`Server.write` surfaces the native status code**: it now throws a
+  `UaStatusException` when the write is not Good (e.g. `Bad_NodeIdUnknown`,
+  `Bad_TypeMismatch`). Previously the status was silently discarded and
+  callers had to verify by reading back. Callers that deliberately probed
+  with best-effort writes should wrap the call in try/catch.
+- **A bare `ClientIsolate.connect()` no longer deadlocks**: the worker
+  isolate pumps its own iterate loop for the duration of the handshake, so
+  `connect()` completes without `keepConnected`/`runIterate` running. It
+  also gained a `timeout` parameter (default 30 s): an unreachable endpoint
+  now fails with `UaStatusException(Bad_Timeout)` instead of waiting
+  forever. After activation the pump stops — session traffic still needs
+  `keepConnected` (preferred) or a `runIterate` loop.
+- **`UaStatusException` survives the `ClientIsolate` boundary**: worker-side
+  errors of that type now cross to the caller as typed exceptions with their
+  status code intact (`on UaStatusException catch (e) => e.statusCode`);
+  every other error type still arrives as the stringified fallback.
+
 ## 1.5.7+3
 
 - **Dependency prune:** dropped `tuple` (the `Tuple2<NodeId, AttributeId>`
