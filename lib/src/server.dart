@@ -785,6 +785,75 @@ class Server {
     }
   }
 
+  /// Replaces the value source of an **existing** variable node with live Dart
+  /// callbacks — the same mechanism as [addDataSourceVariableNode], but
+  /// without creating a node.
+  ///
+  /// This is how server-managed NS0 variables that open62541 pins internally
+  /// can be taken over. The canonical use case is the redundancy surface:
+  /// open62541 1.5 serves `Server/ServiceLevel` (`ns=0;i=2267`) from an
+  /// internal callback that always reports 255, and stores a fixed `None` in
+  /// `Server/ServerRedundancy/RedundancySupport` (`ns=0;i=3709`); neither is
+  /// client- or [write]-writable. Attaching a callback value source replaces
+  /// the internal source outright (open62541 installs its own ServiceLevel
+  /// callback through this very API at startup), so reads reflect whatever
+  /// [onRead]/[onReadValue] returns:
+  ///
+  /// ```dart
+  /// server.setVariableValueSource(
+  ///   NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVICELEVEL),
+  ///   onRead: () => DynamicValue(value: serviceLevel, typeId: NodeId.byte),
+  /// );
+  /// ```
+  ///
+  /// Callback semantics are identical to [addDataSourceVariableNode]: provide
+  /// exactly one of [onRead] / [onReadValue]; [onWrite] (optional) receives
+  /// client writes — for an existing node the client also needs the node's
+  /// access level to permit writing, which NS0 server variables typically do
+  /// not. Passing `null` leaves the node without a write callback (client
+  /// writes fail with `BadWriteNotSupported`). Index-range reads/writes are
+  /// rejected with `BadIndexRangeInvalid`.
+  ///
+  /// The node's *stored* value (if any) is no longer served, and
+  /// [write]/[read] on this server no longer touch it either — the callbacks
+  /// take over completely until the node is deleted. Calling this again for
+  /// the same node replaces the handlers. Throws if [nodeId] does not exist
+  /// or is not a variable node.
+  void setVariableValueSource(
+    NodeId nodeId, {
+    DynamicValue Function()? onRead,
+    DataSourceValue Function()? onReadValue,
+    void Function(DynamicValue value)? onWrite,
+  }) {
+    if ((onRead == null) == (onReadValue == null)) {
+      throw ArgumentError('Provide exactly one of onRead / onReadValue');
+    }
+    _ensureDataSourceDispatchers();
+
+    // Passed by value; the server copies the function pointers (the
+    // NativeCallables are server fields, closed in [delete]).
+    final source = ua_calloc<raw.UA_CallbackValueSource>();
+    source.ref.read = _dsReadDispatcher!.nativeFunction;
+    source.ref.write = onWrite != null ? _dsWriteDispatcher!.nativeFunction : ffi.nullptr;
+    final nodeIdRaw = nodeId.toRaw();
+    final status = raw.UA_Server_setVariableNode_callbackValueSource(_server, nodeIdRaw, source.ref);
+    _freeRawNodeId(nodeIdRaw);
+    ua_calloc.free(source);
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to set variable value source ${statusCodeToString(status)}, nodeId: $nodeId';
+    }
+
+    // Register handlers only after the native call succeeded, mirroring
+    // [addDataSourceVariableNode]: a failed set must not disturb an existing
+    // registration for this node.
+    _dataSourceReads[nodeId] = onReadValue ?? (() => DataSourceValue(value: onRead!()));
+    if (onWrite != null) {
+      _dataSourceWrites[nodeId] = onWrite;
+    } else {
+      _dataSourceWrites.remove(nodeId);
+    }
+  }
+
   void addVariableTypeNode(
     DynamicValue schema,
     NodeId variableTypeId,

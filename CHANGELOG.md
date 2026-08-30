@@ -19,6 +19,17 @@ changes that ship the same native library version.
   token's subject DN), resolved from open62541's session attributes and the
   NS0 SessionSecurityDiagnosticsArray. Update existing handlers by adding the
   second parameter: `callback: (inputs, session) { ... }`.
+- **`Server.setVariableValueSource` — take over existing (incl. NS0) variable
+  nodes.** Replaces the value source of an existing variable node with live
+  Dart callbacks (`onRead`/`onReadValue` + optional `onWrite`), the same
+  mechanism as `addDataSourceVariableNode` but without creating a node. This
+  unlocks the NS0 redundancy surface open62541 1.5 otherwise pins:
+  `Server/ServiceLevel` (`ns=0;i=2267`, internally fixed at 255) and
+  `Server/ServerRedundancy/RedundancySupport` (`ns=0;i=3709`, stored `None`)
+  now serve whatever the callback returns. The standard `ServerUriArray`
+  property (`ns=0;i=11314`, deleted from NS0 by open62541 at startup) can be
+  re-added with `addVariableNode` under ServerRedundancy (`i=2296`,
+  HasProperty/PropertyType) — see `test/ns0_value_source_test.dart`.
 - `ClientConfig` gained `applicationUri`, `applicationName` and `sessionName`
   getters/setters (set before connecting) so a client can declare the
   ApplicationDescription and session name the server observes.
