@@ -34,7 +34,7 @@ void main() {
           Argument(name: 'b', dataType: NodeId.int32),
         ],
         outputArguments: [Argument(name: 'sum', dataType: NodeId.int32)],
-        callback: (inputs, session) {
+        callback: (inputs, session) async {
           final sum = inputs[0].asInt + inputs[1].asInt;
           return [DynamicValue(value: sum, typeId: NodeId.int32)];
         },
@@ -56,7 +56,7 @@ void main() {
         browseName: 'upper',
         inputArguments: [Argument(name: 'text', dataType: NodeId.uastring)],
         outputArguments: [Argument(name: 'upper', dataType: NodeId.uastring)],
-        callback: (inputs, session) {
+        callback: (inputs, session) async {
           return [DynamicValue(value: inputs[0].asString.toUpperCase(), typeId: NodeId.uastring)];
         },
       );
@@ -76,7 +76,7 @@ void main() {
         browseName: 'boom',
         inputArguments: [Argument(name: 'a', dataType: NodeId.int32)],
         outputArguments: [Argument(name: 'out', dataType: NodeId.int32)],
-        callback: (inputs, session) {
+        callback: (inputs, session) async {
           throw StateError('boom');
         },
       );
@@ -92,7 +92,7 @@ void main() {
         okId,
         browseName: 'ok',
         outputArguments: [Argument(name: 'out', dataType: NodeId.int32)],
-        callback: (inputs, session) => [DynamicValue(value: 7, typeId: NodeId.int32)],
+        callback: (inputs, session) async => [DynamicValue(value: 7, typeId: NodeId.int32)],
       );
       final ok = await client.call(NodeId.objectsFolder, okId, const []);
       expect(ok.first.asInt, 7);
@@ -122,7 +122,7 @@ void main() {
         methodId,
         browseName: 'whoami',
         outputArguments: [Argument(name: 'out', dataType: NodeId.int32)],
-        callback: (inputs, session) {
+        callback: (inputs, session) async {
           captured = session;
           return [DynamicValue(value: 1, typeId: NodeId.int32)];
         },
@@ -155,7 +155,7 @@ void main() {
         methodId,
         browseName: 'temp',
         outputArguments: [Argument(name: 'out', dataType: NodeId.int32)],
-        callback: (inputs, session) => [DynamicValue(value: 1, typeId: NodeId.int32)],
+        callback: (inputs, session) async => [DynamicValue(value: 1, typeId: NodeId.int32)],
       );
 
       // Callable before deletion.

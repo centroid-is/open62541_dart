@@ -1059,6 +1059,41 @@ external int UA_Server_run_shutdown(ffi.Pointer<UA_Server> server);
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>)>()
 external int UA_Server_run_startup(ffi.Pointer<UA_Server> server);
 
+/// .. _async-operations:
+///
+/// Async Operations
+/// ----------------
+/// Some operations can take time, such as reading a sensor that needs to warm up
+/// first. In order not to block the server, a long-running operation can be
+/// handled asynchronously and the result returned at a later time. The core idea
+/// is that a userland callback can return
+/// UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY as the statuscode to signal that it
+/// wishes to complete the operation later.
+///
+/// Currently, async operations are supported for the services
+///
+/// - Read
+/// - Write
+/// - Call
+///
+/// with the caveat that read/write need a CallbackValueSource registered for the
+/// variable. Values that are stored directly in a VariableNode are written and
+/// read immediately.
+///
+/// Note that an async operation can be cancelled (e.g. after a timeout period or
+/// if the caller cannot wait for the result). This is signaled in the configured
+/// ``asyncOperationCancelCallback``. The provided memory locations to store the
+/// operation output are then no longer valid.
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_Variant>, UA_StatusCode)>()
+external int UA_Server_setAsyncCallMethodResult(
+  ffi.Pointer<UA_Server> server,
+  ffi.Pointer<UA_Variant> output,
+  int result,
+);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_DataValue>, UA_StatusCode)>()
+external int UA_Server_setAsyncWriteResult(ffi.Pointer<UA_Server> server, ffi.Pointer<UA_DataValue> value, int result);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Size, ffi.Pointer<UA_FieldTargetDataType>)>()
 external int UA_Server_setDataSetReaderTargetVariables(
   ffi.Pointer<UA_Server> server,

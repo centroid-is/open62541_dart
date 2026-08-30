@@ -315,6 +315,44 @@ class Server {
   // ([delete]). Keyed by the method node's NodeId.
   final Map<NodeId, ffi.NativeCallable> _methodCallbacks = {};
 
+  // In-flight async method calls, keyed by the address of the call's native
+  // output array (open62541 uses that pointer as the async operation's
+  // identity). An entry is retired exactly once — by the handler's future
+  // completing, by [_asyncCancelDispatcher] (operation timeout / server
+  // shutdown), or by [delete] — and only the retiring party may touch the
+  // output array, which open62541 frees on cancel.
+  final Map<int, ({ffi.Pointer<raw.UA_Variant> output, int outputSize})> _inFlightMethodCalls = {};
+
+  // The server-wide async-operation cancel hook (one per server, installed
+  // lazily by [addMethodNode], closed in [delete]). open62541 calls it when
+  // an async operation is cancelled — deadline exceeded ([asyncOperationTimeout])
+  // or server shutdown — after which the operation's output array is freed.
+  ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>)>? _asyncCancelDispatcher;
+
+  /// Installs [_asyncCancelDispatcher] into the server config (idempotent).
+  void _ensureAsyncCancelDispatcher() {
+    if (_asyncCancelDispatcher != null) return;
+    _asyncCancelDispatcher =
+        ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>)>.isolateLocal((
+          ffi.Pointer<raw.UA_Server> server,
+          ffi.Pointer<ffi.Void> out,
+        ) {
+          // Retire the call: its output memory is freed by open62541 right
+          // after this callback, so a handler completing later must not
+          // marshal into it (the completion finds no entry and drops).
+          _inFlightMethodCalls.remove(out.address);
+        });
+    _config.ref.asyncOperationCancelCallback = _asyncCancelDispatcher!.nativeFunction;
+  }
+
+  /// The deadline open62541 gives an async operation (a parked method call)
+  /// before cancelling it with `Bad_Timeout` — `Duration.zero` means
+  /// unlimited. Defaults to 2 minutes (`UA_ServerConfig_setMinimal`).
+  Duration get asyncOperationTimeout => Duration(milliseconds: _config.ref.asyncOperationTimeout.round());
+  set asyncOperationTimeout(Duration timeout) {
+    _config.ref.asyncOperationTimeout = timeout.inMilliseconds.toDouble();
+  }
+
   /// Releases the UTF-8 identifier buffer that [NodeId.toRaw] allocates (via
   /// `ua_malloc`) for a **string** NodeId. Numeric NodeIds own no heap memory,
   /// so this is a no-op for them.
@@ -1061,19 +1099,31 @@ class Server {
   /// Adds a callable method node to the server's address space.
   ///
   /// When a client calls the method (see `ClientApi.call`), open62541 invokes
-  /// [callback] synchronously on this isolate from within [runIterate]. The
-  /// request's input variants are marshalled into a list of [DynamicValue]s
-  /// and passed to [callback] together with a [MethodSessionInfo] describing
-  /// the calling session (session id, session name, client application
-  /// description and activation identity); the [DynamicValue]s it returns are
-  /// marshalled back into the method's output variants. Because the callback
-  /// runs inside the server's single-threaded iterate step it must be
-  /// synchronous — it cannot `await`.
+  /// the handler from within [runIterate]: the request's input variants are
+  /// marshalled into a list of [DynamicValue]s and passed to [callback]
+  /// together with a [MethodSessionInfo] describing the calling session
+  /// (session id, session name, client application description and activation
+  /// identity — captured at invocation time, so it stays valid even if the
+  /// session closes while the handler runs).
+  ///
+  /// [callback] is **async**: the call is parked as an open62541 async
+  /// operation (`UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY`) and the client's
+  /// request stays in flight — without blocking the server's iterate loop —
+  /// until the returned future completes; the resolved [DynamicValue]s are
+  /// then marshalled into the method's output variants and the response is
+  /// sent on a following [runIterate]. Multiple calls (same or different
+  /// methods) can be in flight concurrently. Keep pumping [runIterate] while
+  /// handlers are pending, and note the operation deadline: a call that is
+  /// not completed within [Server.asyncOperationTimeout] (default 2 minutes)
+  /// is cancelled by open62541 and the caller receives `Bad_Timeout` — a
+  /// handler completing after that is silently dropped. On [delete]/shutdown,
+  /// unfinished calls are likewise dropped.
   ///
   /// Each returned [DynamicValue] must carry a [DynamicValue.typeId] so it can
   /// be encoded (e.g. `DynamicValue(value: 42, typeId: NodeId.int32)`). If the
-  /// callback throws, the caller receives a `Bad` status
-  /// (`UA_STATUSCODE_BADINTERNALERROR`) and the isolate is not disturbed.
+  /// future completes with a [UaStatusException], the caller receives exactly
+  /// that status code; any other error yields `Bad_InternalError`. The
+  /// isolate is never disturbed.
   ///
   /// Required parameters:
   /// * [methodNodeId] - The unique identifier for the new method node.
@@ -1089,7 +1139,7 @@ class Server {
   ///   string identifier; required if [methodNodeId] is numeric).
   void addMethodNode(
     NodeId methodNodeId, {
-    required List<DynamicValue> Function(List<DynamicValue> inputs, MethodSessionInfo session) callback,
+    required Future<List<DynamicValue>> Function(List<DynamicValue> inputs, MethodSessionInfo session) callback,
     List<Argument> inputArguments = const [],
     List<Argument> outputArguments = const [],
     NodeId? parentNodeId,
@@ -1104,6 +1154,10 @@ class Server {
       }
       browseName = methodNodeId.string;
     }
+
+    // Async method calls need the cancel hook so a timed-out/cancelled call
+    // retires its in-flight entry (see [_asyncCancelDispatcher]).
+    _ensureAsyncCancelDispatcher();
 
     // Method attributes. calloc zero-initializes; open62541's high-level
     // addMethodNode uses the struct directly (no attribute-mask filtering), so
@@ -1152,17 +1206,53 @@ class Server {
               inputs.add(variantToValue(input[i]));
             }
 
-            final results = callback(inputs, _resolveSessionInfo(sessionId));
+            // Session info is captured NOW — the session can be gone by the
+            // time the handler's future completes.
+            final session = _resolveSessionInfo(sessionId);
 
-            // Marshal each result into the corresponding output variant. Deep
-            // copy into open62541-owned memory, then free our temporary.
-            for (var i = 0; i < results.length && i < outputSize; i++) {
-              final variantPtr = valueToVariant(results[i]);
-              raw.UA_Variant_copy(variantPtr, output + i);
-              raw.UA_Variant_delete(variantPtr);
+            final Future<List<DynamicValue>> resultsFuture;
+            try {
+              resultsFuture = callback(inputs, session);
+            } on UaStatusException catch (e) {
+              // A non-async handler that throws before returning a future.
+              return e.statusCode;
+            } catch (_) {
+              return raw.UA_STATUSCODE_BADINTERNALERROR;
             }
 
-            return raw.UA_STATUSCODE_GOOD;
+            // Park the call as an open62541 async operation. The output-array
+            // pointer is the operation's identity; it stays valid until the
+            // result is set or the operation is cancelled (timeout/shutdown —
+            // see [_asyncCancelDispatcher], which retires the entry so a late
+            // completion never touches the freed array).
+            final key = output.address;
+            _inFlightMethodCalls[key] = (output: output, outputSize: outputSize);
+            resultsFuture.then(
+              (results) {
+                final call = _inFlightMethodCalls.remove(key);
+                if (call == null) return; // cancelled, or server torn down
+                var status = raw.UA_STATUSCODE_GOOD;
+                try {
+                  // Marshal each result into the corresponding output variant.
+                  // Deep copy into open62541-owned memory, free our temporary.
+                  for (var i = 0; i < results.length && i < call.outputSize; i++) {
+                    final variantPtr = valueToVariant(results[i]);
+                    raw.UA_Variant_copy(variantPtr, call.output + i);
+                    raw.UA_Variant_delete(variantPtr);
+                  }
+                } catch (_) {
+                  status = raw.UA_STATUSCODE_BADINTERNALERROR;
+                }
+                raw.UA_Server_setAsyncCallMethodResult(_server, call.output, status);
+              },
+              onError: (Object e) {
+                final call = _inFlightMethodCalls.remove(key);
+                if (call == null) return;
+                final status = e is UaStatusException ? e.statusCode : raw.UA_STATUSCODE_BADINTERNALERROR;
+                raw.UA_Server_setAsyncCallMethodResult(_server, call.output, status);
+              },
+            );
+            return raw.UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY;
           } catch (_) {
             // Never let a Dart exception unwind into native code; report a Bad
             // status to the caller instead.
@@ -2511,6 +2601,14 @@ class Server {
       callback.close();
     }
     _methodCallbacks.clear();
+    // Async method-call plumbing. UA_Server_delete already cancelled every
+    // pending async operation (invoking _asyncCancelDispatcher per entry
+    // while it was still open); clear defensively so a handler future that
+    // completes after this point finds nothing and never calls into the
+    // freed server.
+    _inFlightMethodCalls.clear();
+    _asyncCancelDispatcher?.close();
+    _asyncCancelDispatcher = null;
     if (ret != 0) {
       throw "Failed to delete server ${statusCodeToString(ret)}";
     }

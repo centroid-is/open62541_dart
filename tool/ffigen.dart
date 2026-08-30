@@ -131,6 +131,10 @@ Future<void> main() async {
       // Session introspection (method-callback session identity)
       'UA_Server_getSessionAttribute',
 
+      // Async operations (method calls now; async data-source writes later)
+      'UA_Server_setAsyncCallMethodResult',
+      'UA_Server_setAsyncWriteResult',
+
       'UA_DataTypeAttributes_new',
       'UA_DataTypeAttributes_delete',
 

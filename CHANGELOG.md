@@ -6,6 +6,30 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **BREAKING: method callbacks are async.** `Server.addMethodNode`'s
+  `callback` now returns `Future<List<DynamicValue>>`. The call is parked as
+  an open62541 async operation (`GoodCompletesAsynchronously`) and the
+  client's request stays in flight — without blocking the server's iterate
+  loop — until the future completes; the response goes out on a following
+  `runIterate`. Multiple calls can be in flight concurrently. A
+  `UaStatusException` completes the call with exactly that status; any other
+  error yields `Bad_InternalError`. Calls not completed within
+  `Server.asyncOperationTimeout` (new getter/setter, default 2 minutes) are
+  cancelled with `Bad_Timeout`, and unfinished calls are dropped on shutdown.
+  The sync path is removed (async is the API): migrate handlers by adding
+  `async` — `callback: (inputs, session) async { ... }`.
+- **Fixed: only the first method output argument reached the caller.**
+  `Client.call`'s response callback is async, and open62541 frees the
+  `UA_CallResponse` the moment the native callback returns (at the first
+  `await`) — outputs beyond index 0 were read from freed memory. The client
+  now deep-copies every output variant synchronously before decoding, so
+  multi-output methods return all outputs, typed.
+- **Build: the server's AsyncManager now also runs in single-threaded
+  builds** (`hook/build.dart` source patch). open62541 1.5.7 compiles the
+  async-operation service paths unconditionally but only initializes the
+  AsyncManager under `UA_MULTITHREADING >= 100`, so the first parked async
+  operation in this package's `UA_MULTITHREADING=0` build crashed on an
+  uninitialized queue. The threading model is unchanged.
 - **BREAKING: method callbacks receive the calling session's identity.**
   `Server.addMethodNode`'s `callback` signature changed from
   `(List<DynamicValue> inputs)` to
