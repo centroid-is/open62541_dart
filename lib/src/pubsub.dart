@@ -57,7 +57,12 @@ class PubSubPublisherId {
 ///   array.
 /// * [arrayDimensions] - Optional array dimensions for array fields.
 class DataSetFieldMeta {
-  const DataSetFieldMeta({required this.name, required this.dataType, this.valueRank = -1, this.arrayDimensions = const []});
+  const DataSetFieldMeta({
+    required this.name,
+    required this.dataType,
+    this.valueRank = -1,
+    this.arrayDimensions = const [],
+  });
 
   final String name;
   final NodeId dataType;

@@ -37,7 +37,11 @@ void main() {
       publisher.delete();
     });
 
-    Future<void> waitFor(bool Function() condition, String what, {Duration timeout = const Duration(seconds: 20)}) async {
+    Future<void> waitFor(
+      bool Function() condition,
+      String what, {
+      Duration timeout = const Duration(seconds: 20),
+    }) async {
       final deadline = DateTime.now().add(timeout);
       while (!condition()) {
         if (DateTime.now().isAfter(deadline)) {
