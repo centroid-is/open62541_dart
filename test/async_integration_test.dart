@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/common.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
+
 import 'common.dart';
 
 // Tracks whether the direct client event loop should keep running
@@ -46,11 +46,12 @@ void stopDirectClientLoop() {
 void main() async {
   for (final clientType in ['direct', 'isolate']) {
     group('Client type: $clientType', () {
-      int port = Random().nextInt(10000) + 4840;
+      late int port;
       ClientApi? client;
       Server? server;
 
       setUp(() async {
+        port = await freeTcpPort();
         server = setupServer(port);
         client = await createClient(clientType, port);
       });

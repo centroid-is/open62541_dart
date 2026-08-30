@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+
 import 'common.dart';
 
 // A server whose run_iterate pump we control, so we can cleanly simulate a
@@ -45,8 +45,6 @@ class ManagedServer {
     server.delete();
   }
 }
-
-int _randomPort() => Random().nextInt(10000) + 4840;
 
 /// Polls the synchronous client state until the session is ACTIVATED or the
 /// [timeout] elapses. Returns true on activation.
@@ -93,7 +91,7 @@ Future<T> _retry<T>(Future<T> Function() action, Duration timeout) async {
 
 void main() {
   test('client auto-recovers a read after a server crash/restart', () async {
-    final port = _randomPort();
+    final port = await freeTcpPort();
     var srv = ManagedServer.start(port);
     final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
 
@@ -125,7 +123,7 @@ void main() {
   }, timeout: const Timeout(Duration(seconds: 90)));
 
   test('a fresh subscription delivers data after recovery', () async {
-    final port = _randomPort();
+    final port = await freeTcpPort();
     var srv = ManagedServer.start(port);
     final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
 
@@ -171,7 +169,7 @@ void main() {
   test(
     'control: without opt-in the client gives up after a drop',
     () async {
-      final port = _randomPort();
+      final port = await freeTcpPort();
       var srv = ManagedServer.start(port);
       final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
 

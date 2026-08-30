@@ -1,10 +1,10 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
+
 import 'common.dart';
 
 /// Async method callbacks (backlog item 3) and multi-output marshalling
@@ -19,7 +19,7 @@ void main() {
     late Client client;
 
     setUp(() async {
-      port = Random().nextInt(10000) + 4840;
+      port = await freeTcpPort();
       server = setupServer(port);
       client = await setupClient(port);
     });
@@ -165,5 +165,49 @@ void main() {
       expect(info.identity, isA<AnonymousSessionIdentity>());
       expect(info.applicationUri, isNotEmpty);
     });
+  });
+
+  group('Call service faults', () {
+    // Own lifecycle: the test kills the server itself, so no shared tearDown
+    // may shut it down a second time.
+    late Server server;
+    late Client client;
+
+    setUp(() async {
+      final port = await freeTcpPort();
+      server = setupServer(port);
+      client = await setupClient(port);
+    });
+
+    tearDown(() async {
+      await client.delete();
+    });
+
+    test('a call in flight when the server dies surfaces the service status', () async {
+      // Regression for the CI flake signature "No results for call to ...":
+      // when the connection drops, the client answers the pending request with
+      // a synthesized response — serviceResult set, zero results. The handler
+      // used to check resultsSize first and report a misleading "No results";
+      // it must surface the real status as a typed UaStatusException.
+      final methodId = NodeId.fromString(1, 'method.parked');
+      server.addMethodNode(
+        methodId,
+        browseName: 'parked',
+        outputArguments: [Argument(name: 'out', dataType: NodeId.int32)],
+        callback: (inputs, session) async {
+          // Park forever; the server dies before this would ever complete.
+          await Completer<void>().future;
+          return [DynamicValue(value: 0, typeId: NodeId.int32)];
+        },
+      );
+
+      final call = client.call(NodeId.objectsFolder, methodId, const []);
+      // Let the request reach the server and park as an async operation.
+      await Future.delayed(const Duration(milliseconds: 300));
+      server.shutdown();
+      server.delete();
+
+      await expectLater(call, throwsA(isA<UaStatusException>()));
+    }, timeout: const Timeout(Duration(seconds: 30)));
   });
 }

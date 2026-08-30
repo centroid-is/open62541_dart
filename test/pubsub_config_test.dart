@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+
 import 'common.dart';
 
 // Configuration / smoke tests for the PubSub API: building the publisher and
@@ -15,8 +16,8 @@ void main() {
     late int udpPort;
     late Server server;
 
-    setUp(() {
-      port = Random().nextInt(10000) + 4840;
+    setUp(() async {
+      port = await freeTcpPort();
       // Non-default multicast port so parallel test runs cannot clash.
       udpPort = Random().nextInt(10000) + 20000;
       server = setupServer(port);

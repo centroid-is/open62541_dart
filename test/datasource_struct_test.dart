@@ -1,8 +1,7 @@
-import 'dart:math';
-
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+
 import 'common.dart';
 
 /// End-to-end test for exposing a custom OPC UA structured type through a
@@ -43,7 +42,7 @@ void main() {
     late DynamicValue backing;
 
     setUp(() async {
-      port = Random().nextInt(10000) + 4840;
+      port = await freeTcpPort();
       server = setupServer(port);
       client = await setupClient(port);
 

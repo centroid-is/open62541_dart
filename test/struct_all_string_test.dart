@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+
 import 'common.dart';
 
 /// Regression tests for reading custom structs whose members include
@@ -22,7 +22,7 @@ void main() {
     Client? client;
 
     setUp(() async {
-      port = Random().nextInt(10000) + 4840;
+      port = await freeTcpPort();
       server = setupServer(port);
       client = await setupClient(port);
     });

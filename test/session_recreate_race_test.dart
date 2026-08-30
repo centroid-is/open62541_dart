@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+
 import 'common.dart';
 
 // A Dart server that runs its pump on the isolate; kept up for the whole test.
@@ -123,8 +123,6 @@ class _Proxy {
   }
 }
 
-int _randomPort() => Random().nextInt(10000) + 4840;
-
 // Single-step a fresh client through its handshake against [proxyPort]; when the
 // session first reaches [dropAt], sever the connection with [proxy.cut] (server
 // stays up) and then let the client recover on its own. Returns the final
@@ -180,7 +178,7 @@ void main() {
   late _Proxy proxy;
 
   setUp(() async {
-    server = _Server.start(_randomPort());
+    server = _Server.start(await freeTcpPort());
     proxy = await _Proxy.start(server.port);
   });
   tearDown(() async {

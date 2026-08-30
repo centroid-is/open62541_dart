@@ -26,11 +26,11 @@
 library;
 
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+
 import 'common.dart';
 
 // Set to true to reproduce the pre-fix starvation (later clients time out).
@@ -39,13 +39,16 @@ const bool useBlockingDefault = false;
 void main() {
   const serverCount = 3;
 
-  // Pick distinct free-ish ports.
-  final rng = Random();
-  var ports = <int>{};
-  while (ports.length != serverCount) {
-    ports.add(4840 + rng.nextInt(10000));
-  }
-  final serverPorts = ports.toList();
+  final serverPorts = <int>[];
+
+  setUp(() async {
+    // Pick distinct OS-allocated free ports.
+    serverPorts.clear();
+    while (serverPorts.length != serverCount) {
+      final port = await freeTcpPort();
+      if (!serverPorts.contains(port)) serverPorts.add(port);
+    }
+  });
 
   final servers = <Server>[];
   final clients = <Client>[];

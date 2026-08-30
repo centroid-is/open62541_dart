@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+
 import 'common.dart';
 
 // ClientIsolate mirror of auto_reconnect_test.dart. The isolate client is the
@@ -61,8 +61,6 @@ class ManagedServer {
   }
 }
 
-int _randomPort() => Random().nextInt(10000) + 4840;
-
 /// Polls the isolate client state until the session is ACTIVATED or the
 /// [timeout] elapses. Returns true on activation.
 Future<bool> _waitForActivated(ClientIsolate client, Duration timeout) async {
@@ -109,7 +107,7 @@ Future<T> _retry<T>(Future<T> Function() action, Duration timeout) async {
 
 void main() {
   test('isolate client auto-recovers a read after a server crash/restart', () async {
-    final port = _randomPort();
+    final port = await freeTcpPort();
     var srv = ManagedServer.start(port);
     final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
 
@@ -140,7 +138,7 @@ void main() {
   }, timeout: const Timeout(Duration(seconds: 90)));
 
   test('reconnectStream fires and a fresh subscription delivers data after recovery', () async {
-    final port = _randomPort();
+    final port = await freeTcpPort();
     var srv = ManagedServer.start(port);
     final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
 

@@ -1,9 +1,8 @@
-import 'dart:math';
-
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
+
 import 'common.dart';
 
 /// Integration tests for the structural-node / node-management API on [Server]:
@@ -11,7 +10,7 @@ import 'common.dart';
 /// [Server.addReference]. An in-process server builds a small hierarchy that a
 /// client then browses and reads back.
 void main() {
-  final port = Random().nextInt(10000) + 4840;
+  late int port;
   late Server server;
   late Client client;
 
@@ -35,6 +34,7 @@ void main() {
   final looseVar = NodeId.fromString(1, 'loose.var');
 
   setUpAll(() async {
+    port = await freeTcpPort();
     server = setupServer(port);
 
     // Folder under the Objects folder (default parent).

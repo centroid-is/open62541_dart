@@ -1,9 +1,8 @@
-import 'dart:math';
-
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
+
 import 'common.dart';
 
 /// Client/server hygiene (backlog items 10-12): `Server.write` surfaces the
@@ -15,8 +14,8 @@ void main() {
     late int port;
     late Server server;
 
-    setUp(() {
-      port = Random().nextInt(10000) + 4840;
+    setUp(() async {
+      port = await freeTcpPort();
       server = setupServer(port);
     });
 
@@ -49,7 +48,7 @@ void main() {
 
   group('Bare ClientIsolate.connect (item 11)', () {
     test('completes without any external pump (deadlock regression)', () async {
-      final port = Random().nextInt(10000) + 4840;
+      final port = await freeTcpPort();
       final server = setupServer(port);
       final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
       try {
@@ -85,7 +84,7 @@ void main() {
 
   group('Typed errors across the isolate boundary (item 12)', () {
     test('a UaStatusException from a server callback keeps its code', () async {
-      final port = Random().nextInt(10000) + 4840;
+      final port = await freeTcpPort();
       final server = setupServer(port);
       // A read-write node whose write handler refuses with a specific code.
       server.addDataSourceVariableNode(

@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+
 import 'common.dart';
 
 /// Broad regression matrix for the custom-struct (custom-type) **data-source**
@@ -31,7 +31,7 @@ void main() {
     late Client client;
 
     setUp(() async {
-      port = Random().nextInt(10000) + 4840;
+      port = await freeTcpPort();
       server = setupServer(port);
       client = await setupClient(port);
     });

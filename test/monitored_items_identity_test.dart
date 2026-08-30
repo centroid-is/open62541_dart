@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+
 import 'common.dart';
 
 // The data-change dispatch identifies monitored items by their request-time
@@ -22,12 +22,13 @@ import 'common.dart';
 // one request every value must land on the node and attribute that requested
 // it — any off-by-one or scramble in the context mapping fails loudly.
 void main() {
-  final port = Random().nextInt(10000) + 4840;
+  late int port;
   late Server server;
   late Client client;
   bool running = false;
 
   setUp(() async {
+    port = await freeTcpPort();
     server = setupServer(port);
     addBasicVariables(server);
     client = Client();
