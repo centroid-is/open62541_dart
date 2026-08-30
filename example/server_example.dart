@@ -17,7 +17,16 @@ void main() async {
   DynamicValue value = DynamicValue(value: true, typeId: NodeId.boolean, name: "My Variable");
   server.addVariableNode(variableNodeId, value, accessLevel: AccessLevelMask(read: true, write: true));
 
-  final variableSubscription = server.monitorVariable(variableNodeId).listen((event) => print(event));
+  // A data-source variable whose value is produced live from a Dart callback on
+  // every client read (and, optionally, delivered to a callback on write).
+  final liveNodeId = NodeId.fromString(1, "liveCounter");
+  var counter = 0;
+  server.addDataSourceVariableNode(
+    liveNodeId,
+    browseName: "Live Counter",
+    typeId: NodeId.int32,
+    onRead: () => DynamicValue(name: "Live Counter", value: counter++, typeId: NodeId.int32),
+  );
 
   // Try adding a array variable to our server
   final complexVariableNodeId = NodeId.fromString(1, "arrayVariable");
@@ -49,8 +58,6 @@ void main() async {
   final runTime = Duration(minutes: 60);
   print("The server will now run for $runTime");
   await Future.delayed(runTime);
-
-  await variableSubscription.cancel();
 
   server.shutdown();
 

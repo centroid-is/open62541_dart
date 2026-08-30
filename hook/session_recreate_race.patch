@@ -1,0 +1,128 @@
+--- a/src/client/ua_client.c
++++ b/src/client/ua_client.c
+@@ -520,26 +520,37 @@ processMSGResponse(UA_Client *client, UA_UInt32 requestId,
+     retval = UA_decodeBinaryInternal(msg, &offset, response, responseType, &opt);
+ 
+  process:
+     /* Process the received MSG response */
+     if(retval != UA_STATUSCODE_GOOD) {
+         UA_LOG_WARNING(config->logging, UA_LOGCATEGORY_CLIENT,
+                        "Could not decode the response with RequestId %u with status %s",
+                        (unsigned)requestId, UA_StatusCode_name(retval));
+         response->responseHeader.serviceResult = retval;
+     }
+ 
+     /* The Session closed. The current response is processed with the return code.
+-     * The next request first recreates a session. */
+-    if(responseType != &UA_TYPES[UA_TYPES_ACTIVATESESSIONRESPONSE] &&
++     * The next request first recreates a session.
++     *
++     * Only do this while the Session is ACTIVATED. In every other state a new
++     * Session is already being created or activated (or none exists), and a
++     * BadSessionIdInvalid/BadSessionClosed response belongs to a request that
++     * was sent on the previous Session. Tearing the state down here would
++     * cancel the in-flight CreateSession/ActivateSession and, on the next
++     * connect iteration, issue a second CreateSession. That regenerates
++     * clientSessionNonce, so the response to the first CreateSession is
++     * verified against the wrong nonce, fails with BadSecurityChecksFailed,
++     * and the client is left with a fatal connectStatus. */
++    if(client->sessionState == UA_SESSIONSTATE_ACTIVATED &&
++       responseType != &UA_TYPES[UA_TYPES_ACTIVATESESSIONRESPONSE] &&
+        (response->responseHeader.serviceResult == UA_STATUSCODE_BADSESSIONIDINVALID ||
+         response->responseHeader.serviceResult == UA_STATUSCODE_BADSESSIONCLOSED)) {
+         /* Clean up the session information and reset the state */
+         cleanupSession(client);
+ 
+         if(config->noNewSession) {
+             /* Configuration option to not create a new Session. Disconnect the
+              * client. */
+             client->connectStatus = response->responseHeader.serviceResult;
+             UA_LOG_ERROR(config->logging, UA_LOGCATEGORY_CLIENT,
+                          "Session cannot be activated with StatusCode %s. "
+                          "The client is configured not to create a new Session.",
+--- a/src/client/ua_client_connect.c
++++ b/src/client/ua_client_connect.c
+@@ -961,24 +961,48 @@ extractEphemeralKeyFromAddHeader(UA_Client *client, UA_ExtensionObject *ah) {
+     client->serverEphemeralPubKey = ephKey->publicKey;
+     UA_ByteString_init(&ephKey->publicKey);
+ 
+     /* TODO: Validate the signature of the ephemeral key */
+ }
+ 
+ static void
+ responseActivateSession(UA_Client *client, void *userdata,
+                         UA_UInt32 requestId, void *response) {
+     UA_LOCK_ASSERT(&client->clientMutex);
+ 
+     UA_ActivateSessionResponse *ar = (UA_ActivateSessionResponse*)response;
++
++    /* The request was cancelled locally because the SecureChannel closed
++     * before the response arrived (BadSecureChannelClosed comes from
++     * __Client_AsyncService_removeAll on the channel-close path, not from the
++     * server). This is not an activation failure: the Session still exists on
++     * the server -- it was created, only its activation is unconfirmed.
++     *
++     * Set the state to CREATED, not CLOSED, on this "closed" status code on
++     * purpose. CREATED makes connectActivity re-ActivateSession the existing
++     * Session on the reconnected channel -- the same thing open62541 already
++     * does for an ACTIVATED Session, which the CLOSING branch of
++     * __Client_networkCallback demotes to CREATED (not CLOSED) precisely so it
++     * is re-activated rather than recreated. CLOSED would instead discard a
++     * still-valid server-side Session and force a fresh CreateSession, which is
++     * the path whose CreateSession-nonce race the ua_client.c half of this
++     * change fixes -- so keeping the Session and re-activating it is both more
++     * correct and avoids re-entering that path. If the server did discard the
++     * Session during the drop, the retried ActivateSession comes back
++     * BadSessionIdInvalid and the branch below creates a new one. */
++    if(ar->responseHeader.serviceResult == UA_STATUSCODE_BADSECURECHANNELCLOSED) {
++        client->sessionState = UA_SESSIONSTATE_CREATED;
++        return;
++    }
++
+     if(ar->responseHeader.serviceResult != UA_STATUSCODE_GOOD) {
+         /* Activating the Session failed */
+         cleanupSession(client);
+ 
+         /* Configuration option to not create a new Session */
+         if(client->config.noNewSession) {
+             UA_LOG_ERROR(client->config.logging, UA_LOGCATEGORY_CLIENT,
+                          "Session cannot be activated with StatusCode %s. "
+                          "The client is configured not to create a new Session.",
+                          UA_StatusCode_name(ar->responseHeader.serviceResult));
+             setConnectStatus(client, ar->responseHeader.serviceResult);
+             return;
+@@ -1664,24 +1688,34 @@ requestFindServers(UA_Client *client) {
+ 
+     client->findServersHandshake = true;
+     return UA_STATUSCODE_GOOD;
+ }
+ 
+ static void
+ createSessionCallback(UA_Client *client, void *userdata,
+                       UA_UInt32 requestId, void *response) {
+     UA_LOCK_ASSERT(&client->clientMutex);
+ 
+     UA_CreateSessionResponse *csr = (UA_CreateSessionResponse*)response;
+     UA_StatusCode res = csr->responseHeader.serviceResult;
++
++    /* The request was cancelled locally because the SecureChannel closed
++     * before the response arrived. That is not a handshake failure: the
++     * SecureChannel reconnects on its own and the next connect iteration sends
++     * a fresh CreateSession. Do not set the (fatal) connectStatus. */
++    if(res == UA_STATUSCODE_BADSECURECHANNELCLOSED) {
++        client->sessionState = UA_SESSIONSTATE_CLOSED;
++        return;
++    }
++
+     if(res != UA_STATUSCODE_GOOD)
+         goto cleanup;
+ 
+     if(client->channel.securityMode == UA_MESSAGESECURITYMODE_SIGN ||
+        client->channel.securityMode == UA_MESSAGESECURITYMODE_SIGNANDENCRYPT) {
+         /* Verify the session response was created with the same certificate as
+          * the SecureChannel */
+         if(!UA_ByteString_equal(&csr->serverCertificate,
+                                 &client->channel.remoteCertificate)) {
+             res = UA_STATUSCODE_BADCERTIFICATEINVALID;
+             goto cleanup;
+         }
