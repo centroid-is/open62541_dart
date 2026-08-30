@@ -29,7 +29,7 @@ export 'src/third_party/open62541.g.dart'
         UA_OPEN62541_VERSION;
 export 'src/node_id.dart' show NodeId;
 export 'src/server.dart' show Server, Argument, DataSourceValue;
-export 'src/types/errors.dart' show Inactivity, SecureChannelClosed, SubscriptionDeleted;
+export 'src/types/errors.dart' show Inactivity, SecureChannelClosed, SubscriptionDeleted, UaStatusException;
 export 'src/isolate.dart' show ClientIsolate;
 export 'src/client_api.dart' show ClientApi;
 export 'src/types/opcua_serializer.dart' show OpcUaDynamicValueSerializer;

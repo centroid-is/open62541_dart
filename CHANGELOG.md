@@ -24,6 +24,20 @@ changes that ship the same native library version.
   decoded status. Also exported: `statusCodeToString` and the
   `UA_STATUSCODE_BADNOCOMMUNICATION` / `BADNOTWRITABLE` / `BADUSERACCESSDENIED`
   / `BADINTERNALERROR` constants.
+- **Typed status-code rejection for data-source writes.** New
+  `UaStatusException(statusCode)` (exported): a data-source `onWrite` that
+  throws it answers the client with exactly that status code — e.g.
+  `Bad_NotWritable` (0x803B0000) for a gate-denied write or
+  `Bad_UserAccessDenied` (0x801F0000) — instead of the generic
+  `Bad_InternalError` that any other throw still maps to. The read dispatcher
+  honors it symmetrically (`onRead`/`onReadValue` throwing one fails the read
+  with that code and no value). Client side, the code is now extractable:
+  `Client.write` fails with a `UaStatusException` carrying the operation (or
+  service) status instead of a formatted string, and a monitored-item stream's
+  error event for a non-Good notification is a `UaStatusException` too (was a
+  string; `ClientIsolate` still marshals stream/request errors as strings
+  across the isolate boundary, so there the code survives only inside the
+  message text).
 ## 1.5.7+2
 
 - Bounded-send fix (native build hook): patch open62541's TCP send path so a

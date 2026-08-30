@@ -504,14 +504,15 @@ class Client implements ClientApi {
             return; // Request timed out already
           }
           raw.UA_Variant_delete(variant);
+          // Fail with a typed UaStatusException so the exact service/operation
+          // status code is programmatically extractable (e.g. a data-source
+          // node rejecting the write with Bad_NotWritable).
           if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-            completer.completeError(
-              'Failed to write value: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
-            );
+            completer.completeError(UaStatusException(response.ref.responseHeader.serviceResult));
             return;
           }
           if (response.ref.results.value != raw.UA_STATUSCODE_GOOD) {
-            completer.completeError('Failed to write value: ${statusCodeToString(response.ref.results.value)}');
+            completer.completeError(UaStatusException(response.ref.results.value));
             return;
           }
           completer.complete();
@@ -1489,7 +1490,11 @@ class Client implements ClientApi {
               return;
             }
             if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
-              controller.addError('Failed to read value: ${statusCodeToString(value.ref.status)}');
+              // Surface the exact notification status as a typed error so the
+              // code is extractable (e.g. Bad_NoCommunication from a
+              // data-source node whose backing device is down). The
+              // notification's value/timestamps are not delivered.
+              controller.addError(UaStatusException(value.ref.status));
               return;
             }
             try {

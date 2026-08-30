@@ -357,6 +357,10 @@ class Server {
           value.ref.substitute = value.ref.substitute | 0x04;
         }
         return raw.UA_STATUSCODE_GOOD;
+      } on UaStatusException catch (e) {
+        // Typed rejection: the callback chose the exact status code the
+        // client receives (mirrors the write dispatcher below).
+        return e.statusCode;
       } catch (_) {
         return raw.UA_STATUSCODE_BADINTERNALERROR;
       } finally {
@@ -410,6 +414,12 @@ class Server {
         }
         handler(dyn);
         return raw.UA_STATUSCODE_GOOD;
+      } on UaStatusException catch (e) {
+        // Typed rejection: [onWrite] threw a UaStatusException to answer the
+        // client with a specific status code (e.g. Bad_NotWritable or
+        // Bad_UserAccessDenied) instead of the generic Bad_InternalError that
+        // any other throw maps to.
+        return e.statusCode;
       } catch (_) {
         return raw.UA_STATUSCODE_BADINTERNALERROR;
       }
@@ -466,9 +476,15 @@ class Server {
   /// * [onWrite] (optional) receives the [DynamicValue] a client wrote. Passing
   ///   `null` makes the node read-only: the node is created without the Write
   ///   access bit, so client writes are rejected with `BadNotWritable`. When
-  ///   [onWrite] throws, the write fails with `BadInternalError`. `void` return
-  ///   semantics (throw-for-bad) are used rather than an `int` status code to
-  ///   keep the surface pure-Dart and mirror [onRead]'s throw behaviour.
+  ///   [onWrite] throws a [UaStatusException], the client receives exactly that
+  ///   status code (e.g. `UA_STATUSCODE_BADNOTWRITABLE` for a gate-denied
+  ///   write); any other throw fails the write with `BadInternalError`. `void`
+  ///   return semantics (throw-for-bad) are used rather than an `int` status
+  ///   code to keep the surface pure-Dart and mirror [onRead]'s throw
+  ///   behaviour. [onRead]/[onReadValue] honor [UaStatusException] the same
+  ///   way (the read fails with the thrown code and no value; to serve a value
+  ///   WITH a Bad status, return a [DataSourceValue] from [onReadValue]
+  ///   instead).
   /// * [accessLevel] defaults to read + (write iff [onWrite] != null). Pass a
   ///   value to override (e.g. to expose a writable node whose backing store is
   ///   currently read-only).
