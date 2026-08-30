@@ -183,6 +183,34 @@ class ClientConfig {
     _clientConfig.ref.securityPolicyUri.set(uri);
   }
 
+  /// The `applicationUri` of the ApplicationDescription this client presents
+  /// in CreateSession. Set it **before** connecting. On the server it
+  /// surfaces as `MethodSessionInfo.applicationUri`. Note: when connecting
+  /// with a certificate, open62541 overwrites this with the URI embedded in
+  /// the certificate.
+  String get applicationUri => _clientConfig.ref.clientDescription.applicationUri.value;
+  set applicationUri(String uri) {
+    _clientConfig.ref.clientDescription.applicationUri.set(uri);
+  }
+
+  /// The text of the `applicationName` LocalizedText this client presents in
+  /// CreateSession (the locale is left as configured, "en" by default). Set
+  /// it **before** connecting. On the server it surfaces as
+  /// `MethodSessionInfo.applicationName`.
+  String get applicationName => _clientConfig.ref.clientDescription.applicationName.text.value;
+  set applicationName(String name) {
+    _clientConfig.ref.clientDescription.applicationName.text.set(name);
+  }
+
+  /// The client-defined session name sent in CreateSession. Set it **before**
+  /// connecting. On the server it surfaces as
+  /// `MethodSessionInfo.sessionName`. When unset open62541 generates one from
+  /// the application URI.
+  String get sessionName => _clientConfig.ref.sessionName.value;
+  set sessionName(String name) {
+    _clientConfig.ref.sessionName.set(name);
+  }
+
   int get outstandingPublishRequests => _clientConfig.ref.outStandingPublishRequests;
 
   Future<void> close() async {
@@ -303,8 +331,15 @@ class Client implements ClientApi {
     }
 
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
-    _clientConfig = ClientConfig(config);
     _client = raw.UA_Client_newWithConfig(config);
+    // UA_Client_newWithConfig *copies* the config struct into the client
+    // (`client->config = *config`), so wrap the client's live copy — writes
+    // through [ClientConfig]'s setters (and its callback registrations) must
+    // land in the config the client actually reads, not in the stale
+    // temporary. The temporary only carried pointers now owned by the
+    // client's copy, so free just the struct itself.
+    _clientConfig = ClientConfig(raw.UA_Client_getConfig(_client));
+    ua_calloc.free(config);
   }
 
   ClientConfig get config => _clientConfig;

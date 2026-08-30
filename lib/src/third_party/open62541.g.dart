@@ -380,6 +380,9 @@ external int UA_Client_disconnect(ffi.Pointer<UA_Client> client);
 @ffi.Native<ffi.Pointer<UA_DataType> Function(ffi.Pointer<UA_Client>, ffi.Pointer<UA_NodeId>)>()
 external ffi.Pointer<UA_DataType> UA_Client_findDataType(ffi.Pointer<UA_Client> client, ffi.Pointer<UA_NodeId> typeId);
 
+@ffi.Native<ffi.Pointer<UA_ClientConfig> Function(ffi.Pointer<UA_Client>)>()
+external ffi.Pointer<UA_ClientConfig> UA_Client_getConfig(ffi.Pointer<UA_Client> client);
+
 @ffi.Native<
   ffi.Void Function(
     ffi.Pointer<UA_Client>,
@@ -988,6 +991,26 @@ external int UA_Server_getReaderGroupState(
   ffi.Pointer<UA_Server> server,
   UA_NodeId rgId,
   ffi.Pointer<ffi.UnsignedInt> state,
+);
+
+/// Besides the session context pointer from the AccessControl plugin, a session
+/// carries attributes in a key-value map. Always defined (and read-only) session
+/// attributes are:
+///
+/// - ``0:localeIds`` (``UA_String``): List of preferred languages
+/// - ``0:clientDescription`` (``UA_ApplicationDescription``): Client description
+/// - ``0:sessionName`` (``String``): Client-defined name of the session
+/// - ``0:clientUserId`` (``String``): User identifier used to activate the session
+///
+/// Additional attributes can be set manually with the API below.
+@ffi.Native<
+  UA_StatusCode Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_NodeId>, UA_QualifiedName, ffi.Pointer<UA_Variant>)
+>()
+external int UA_Server_getSessionAttribute(
+  ffi.Pointer<UA_Server> server,
+  ffi.Pointer<UA_NodeId> sessionId,
+  UA_QualifiedName key,
+  ffi.Pointer<UA_Variant> outValue,
 );
 
 @ffi.Native<UA_ServerStatistics Function(ffi.Pointer<UA_Server>)>()
@@ -57429,6 +57452,33 @@ final class UA_ServerStatistics extends ffi.Struct {
   external UA_SecureChannelStatistics scs;
 
   external UA_SessionStatistics ss;
+}
+
+final class UA_SessionSecurityDiagnosticsDataType extends ffi.Struct {
+  external UA_NodeId sessionId;
+
+  external UA_String clientUserIdOfSession;
+
+  @ffi.Size()
+  external int clientUserIdHistorySize;
+
+  external ffi.Pointer<UA_String> clientUserIdHistory;
+
+  external UA_String authenticationMechanism;
+
+  external UA_String encoding;
+
+  external UA_String transportProtocol;
+
+  @ffi.UnsignedInt()
+  external int securityModeAsInt;
+
+  UA_MessageSecurityMode get securityMode => UA_MessageSecurityMode.fromValue(securityModeAsInt);
+  set securityMode(UA_MessageSecurityMode value) => securityModeAsInt = value.value;
+
+  external UA_String securityPolicyUri;
+
+  external UA_ByteString clientCertificate;
 }
 
 enum UA_SessionState {

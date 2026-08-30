@@ -95,6 +95,111 @@ class ServerStatistics {
       'monitoredItems: $currentMonitoredItemCount)';
 }
 
+/// The activation identity of the session that invoked a method callback —
+/// i.e. which OPC UA UserIdentityToken the client presented in
+/// ActivateSession.
+///
+/// Derived server-side from open62541's per-session security diagnostics
+/// (`authenticationMechanism` in the NS0 SessionSecurityDiagnosticsArray,
+/// available because this package's native build enables
+/// `UA_ENABLE_DIAGNOSTICS`) combined with the session's `0:clientUserId`
+/// attribute. The identity is established by open62541's core in
+/// ActivateSession *before* the access-control plugin runs, so it is available
+/// with the default access-control plugin — no custom plugin required.
+sealed class SessionIdentity {
+  const SessionIdentity();
+}
+
+/// The session was activated anonymously (an AnonymousIdentityToken, or an
+/// empty token — which OPC UA interprets as anonymous).
+class AnonymousSessionIdentity extends SessionIdentity {
+  const AnonymousSessionIdentity();
+
+  @override
+  String toString() => 'SessionIdentity.anonymous';
+}
+
+/// The session was activated with a UserNameIdentityToken.
+class UsernameSessionIdentity extends SessionIdentity {
+  const UsernameSessionIdentity(this.username);
+
+  /// The token's userName. open62541 records it as the session's
+  /// `0:clientUserId` attribute during ActivateSession (the password is never
+  /// retained).
+  final String username;
+
+  @override
+  String toString() => 'SessionIdentity.username($username)';
+}
+
+/// The session was activated with an X509IdentityToken (client certificate).
+class CertificateSessionIdentity extends SessionIdentity {
+  const CertificateSessionIdentity(this.subjectName);
+
+  /// The subject distinguished name of the identity certificate. open62541
+  /// extracts it (`UA_CertificateUtils_getSubjectName`) into the session's
+  /// `0:clientUserId` attribute during ActivateSession; the certificate
+  /// thumbprint itself is not exposed through the public 1.5.x API.
+  final String subjectName;
+
+  @override
+  String toString() => 'SessionIdentity.certificate($subjectName)';
+}
+
+/// Identity of the client session that invoked a method callback (see
+/// [Server.addMethodNode]).
+///
+/// All fields other than [sessionId] are looked up live when the method is
+/// called, via `UA_Server_getSessionAttribute` (open62541 keeps
+/// `0:sessionName`, `0:clientDescription` and `0:clientUserId` as always
+/// defined, read-only session attributes) and the NS0
+/// SessionSecurityDiagnosticsArray. They are `null` when the session cannot
+/// be resolved — e.g. a local call through the internal admin session, or a
+/// session that disappeared mid-call.
+class MethodSessionInfo {
+  const MethodSessionInfo({
+    required this.sessionId,
+    this.sessionName,
+    this.applicationUri,
+    this.applicationName,
+    this.identity,
+  });
+
+  /// The server-assigned identifier of the calling session (a Guid NodeId in
+  /// open62541), taken directly from the native method callback's `sessionId`
+  /// argument. The internal admin session (used for local calls) has the
+  /// well-known identifier `g=00000001-0000-0000-0000-000000000000`.
+  final NodeId sessionId;
+
+  /// The client-defined session name (`0:sessionName` session attribute,
+  /// from the CreateSession request), or `null` if the session cannot be
+  /// resolved. open62541 falls back to a generated name (e.g.
+  /// `<application uri>:<counter>`) when the client did not provide one.
+  final String? sessionName;
+
+  /// The `applicationUri` of the client's ApplicationDescription
+  /// (`0:clientDescription` session attribute, from the CreateSession
+  /// request), or `null` if the session cannot be resolved.
+  final String? applicationUri;
+
+  /// The text of the `applicationName` LocalizedText in the client's
+  /// ApplicationDescription (`0:clientDescription` session attribute), or
+  /// `null` if the session cannot be resolved.
+  final String? applicationName;
+
+  /// The activation identity (anonymous / username / certificate), or `null`
+  /// when it cannot be determined — a local admin-session call, a session
+  /// that vanished, or an unsupported token type (e.g. IssuedIdentityToken,
+  /// which open62541 1.5 does not record).
+  final SessionIdentity? identity;
+
+  @override
+  String toString() =>
+      'MethodSessionInfo(sessionId: $sessionId, sessionName: $sessionName, '
+      'applicationUri: $applicationUri, applicationName: $applicationName, '
+      'identity: $identity)';
+}
+
 /// The complete read result of a data-source variable node: the [value] plus
 /// the OPC UA operation [statusCode] and an optional [sourceTimestamp].
 ///
@@ -784,15 +889,117 @@ class Server {
     raw.UA_DataTypeAttributes_delete(attr);
   }
 
+  /// Resolves the identity of the session behind a native callback's
+  /// `sessionId` argument. Must be called from within the callback (while the
+  /// session is guaranteed alive and the server is locked for this thread):
+  /// `UA_Server_getSessionAttribute` returns *shallow* variants into
+  /// session-owned memory, which this method fully copies into Dart values
+  /// before returning.
+  MethodSessionInfo _resolveSessionInfo(ffi.Pointer<raw.UA_NodeId> sessionIdPtr) {
+    final sessionId = NodeId.fromRaw(sessionIdPtr.ref);
+
+    // An empty UA_String can carry a null data pointer; treat it as ''.
+    String uaStr(raw.UA_String s) => s.length == 0 ? '' : s.value;
+
+    // Reads one always-defined session attribute (shallow variant, decoded
+    // and copied to Dart inside [decode]). Returns null if the session is
+    // unknown (e.g. the internal admin session) or the type does not match.
+    T? readAttr<T>(String name, T? Function(raw.UA_Variant) decode) {
+      final chars = name.toNativeUtf8(allocator: ua_malloc).cast<ffi.Char>();
+      final variant = raw.UA_Variant_new();
+      T? result;
+      final status = raw.UA_Server_getSessionAttribute(_server, sessionIdPtr, raw.UA_QUALIFIEDNAME(0, chars), variant);
+      if (status == raw.UA_STATUSCODE_GOOD) {
+        result = decode(variant.ref);
+      }
+      // The shallow get marks the variant's storage NODELETE, so this frees
+      // only the variant itself, not the session-owned attribute data.
+      raw.UA_Variant_delete(variant);
+      ua_malloc.free(chars);
+      return result;
+    }
+
+    String? decodeString(raw.UA_Variant v) => (v.type == getTypeByIndex(raw.UA_TYPES_STRING) && v.data != ffi.nullptr)
+        ? uaStr(v.data.cast<raw.UA_String>().ref)
+        : null;
+
+    final sessionName = readAttr('sessionName', decodeString);
+    final clientUserId = readAttr('clientUserId', decodeString);
+    String? applicationUri;
+    String? applicationName;
+    readAttr('clientDescription', (v) {
+      if (v.type == getTypeByIndex(raw.UA_TYPES_APPLICATIONDESCRIPTION) && v.data != ffi.nullptr) {
+        final desc = v.data.cast<raw.UA_ApplicationDescription>().ref;
+        applicationUri = uaStr(desc.applicationUri);
+        applicationName = uaStr(desc.applicationName.text);
+      }
+      return null;
+    });
+
+    // The activation token *type* is not part of the session attributes; it is
+    // recorded (as `authenticationMechanism`) in the per-session security
+    // diagnostics, served by the NS0 SessionSecurityDiagnosticsArray node
+    // (UA_ENABLE_DIAGNOSTICS is on in this package's native build).
+    SessionIdentity? identity;
+    final diagVariant = raw.UA_Variant_new();
+    final diagStatus = raw.UA_Server_readValue(
+      _server,
+      NodeId.fromNumeric(
+        0,
+        raw.UA_NS0ID_SERVER_SERVERDIAGNOSTICS_SESSIONSDIAGNOSTICSSUMMARY_SESSIONSECURITYDIAGNOSTICSARRAY,
+      ).toRaw(),
+      diagVariant,
+    );
+    if (diagStatus == raw.UA_STATUSCODE_GOOD &&
+        diagVariant.ref.type == getTypeByIndex(raw.UA_TYPES_SESSIONSECURITYDIAGNOSTICSDATATYPE)) {
+      final entries = diagVariant.ref.data.cast<raw.UA_SessionSecurityDiagnosticsDataType>();
+      for (var i = 0; i < diagVariant.ref.arrayLength; i++) {
+        final entry = (entries + i).ref;
+        if (NodeId.fromRaw(entry.sessionId) != sessionId) continue;
+        final userId = clientUserId ?? uaStr(entry.clientUserIdOfSession);
+        identity = switch (uaStr(entry.authenticationMechanism)) {
+          'Anonymous' => const AnonymousSessionIdentity(),
+          'UserName' => UsernameSessionIdentity(userId),
+          'Certificate' => CertificateSessionIdentity(userId),
+          // 'IssuedToken' (and anything unknown): open62541 records no
+          // usable identity for it.
+          _ => null,
+        };
+        break;
+      }
+    }
+    raw.UA_Variant_delete(diagVariant);
+
+    // Fallback when the diagnostics array is unavailable but the session
+    // exists: an empty clientUserId means anonymous, a non-empty one means a
+    // username token (open62541 fills it from the UserNameIdentityToken; an
+    // X509 subject name would be misattributed here, but certificate tokens
+    // are not reachable without diagnostics being disabled AND a session PKI
+    // configured).
+    if (identity == null && clientUserId != null) {
+      identity = clientUserId.isEmpty ? const AnonymousSessionIdentity() : UsernameSessionIdentity(clientUserId);
+    }
+
+    return MethodSessionInfo(
+      sessionId: sessionId,
+      sessionName: sessionName,
+      applicationUri: applicationUri,
+      applicationName: applicationName,
+      identity: identity,
+    );
+  }
+
   /// Adds a callable method node to the server's address space.
   ///
   /// When a client calls the method (see `ClientApi.call`), open62541 invokes
   /// [callback] synchronously on this isolate from within [runIterate]. The
-  /// request's input variants are marshalled into a list of [DynamicValue]s and
-  /// passed to [callback]; the [DynamicValue]s it returns are marshalled back
-  /// into the method's output variants. Because the callback runs inside the
-  /// server's single-threaded iterate step it must be synchronous — it cannot
-  /// `await`.
+  /// request's input variants are marshalled into a list of [DynamicValue]s
+  /// and passed to [callback] together with a [MethodSessionInfo] describing
+  /// the calling session (session id, session name, client application
+  /// description and activation identity); the [DynamicValue]s it returns are
+  /// marshalled back into the method's output variants. Because the callback
+  /// runs inside the server's single-threaded iterate step it must be
+  /// synchronous — it cannot `await`.
   ///
   /// Each returned [DynamicValue] must carry a [DynamicValue.typeId] so it can
   /// be encoded (e.g. `DynamicValue(value: 42, typeId: NodeId.int32)`). If the
@@ -813,7 +1020,7 @@ class Server {
   ///   string identifier; required if [methodNodeId] is numeric).
   void addMethodNode(
     NodeId methodNodeId, {
-    required List<DynamicValue> Function(List<DynamicValue> inputs) callback,
+    required List<DynamicValue> Function(List<DynamicValue> inputs, MethodSessionInfo session) callback,
     List<Argument> inputArguments = const [],
     List<Argument> outputArguments = const [],
     NodeId? parentNodeId,
@@ -876,7 +1083,7 @@ class Server {
               inputs.add(variantToValue(input[i]));
             }
 
-            final results = callback(inputs);
+            final results = callback(inputs, _resolveSessionInfo(sessionId));
 
             // Marshal each result into the corresponding output variant. Deep
             // copy into open62541-owned memory, then free our temporary.

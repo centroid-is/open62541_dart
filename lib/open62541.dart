@@ -37,7 +37,17 @@ export 'src/pubsub.dart'
         DataSetFieldMeta,
         pubSubTransportUdpUadp,
         uadpDefaultNetworkMessageContentMask;
-export 'src/server.dart' show Server, Argument, DataSourceValue, ServerStatistics;
+export 'src/server.dart'
+    show
+        Server,
+        Argument,
+        DataSourceValue,
+        ServerStatistics,
+        MethodSessionInfo,
+        SessionIdentity,
+        AnonymousSessionIdentity,
+        UsernameSessionIdentity,
+        CertificateSessionIdentity;
 export 'src/types/errors.dart' show Inactivity, SecureChannelClosed, SubscriptionDeleted, UaStatusException;
 export 'src/isolate.dart' show ClientIsolate;
 export 'src/client_api.dart' show ClientApi;

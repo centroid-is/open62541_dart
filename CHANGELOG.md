@@ -4,6 +4,31 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## Unreleased
+
+- **BREAKING: method callbacks receive the calling session's identity.**
+  `Server.addMethodNode`'s `callback` signature changed from
+  `(List<DynamicValue> inputs)` to
+  `(List<DynamicValue> inputs, MethodSessionInfo session)`. The new
+  `MethodSessionInfo` carries the calling session's `sessionId` (the Guid
+  NodeId open62541 assigns), `sessionName`, the client's `applicationUri` /
+  `applicationName` (from the session's `0:clientDescription` attribute) and
+  the activation `identity` — a sealed `SessionIdentity` that is
+  `AnonymousSessionIdentity`, `UsernameSessionIdentity` (the
+  UserNameIdentityToken's userName) or `CertificateSessionIdentity` (the X509
+  token's subject DN), resolved from open62541's session attributes and the
+  NS0 SessionSecurityDiagnosticsArray. Update existing handlers by adding the
+  second parameter: `callback: (inputs, session) { ... }`.
+- `ClientConfig` gained `applicationUri`, `applicationName` and `sessionName`
+  getters/setters (set before connecting) so a client can declare the
+  ApplicationDescription and session name the server observes.
+- Fixed `ClientConfig` wrapping a stale config struct: `UA_Client_newWithConfig`
+  *copies* the config into the client, so post-construction writes through the
+  previously wrapped temporary (e.g. the `securityMode` / `securityPolicyUri`
+  setters) never reached the running client — and freed strings the client's
+  copy still pointed at. `ClientConfig` now wraps the client's live config
+  (`UA_Client_getConfig`), and the temporary struct is freed instead of leaked.
+
 ## 1.5.7+3
 
 - **Dependency prune:** dropped `tuple` (the `Tuple2<NodeId, AttributeId>`
