@@ -30,6 +30,70 @@ class Argument {
   final LocalizedText? description;
 }
 
+/// A snapshot of the server's session / secure-channel / subscription
+/// counters. Returned by [Server.statistics].
+///
+/// The secure-channel and session counters come from open62541's
+/// `UA_Server_getStatistics()` (the session layer matches OPC UA Part 5's
+/// ServerDiagnosticsSummaryDataType counters). The subscription and
+/// monitored-item counters come from the NS0 server-diagnostics nodes
+/// (`UA_ENABLE_DIAGNOSTICS`, on in this package's build); they are `null` if
+/// those nodes are unavailable (e.g. a build without diagnostics).
+class ServerStatistics {
+  const ServerStatistics({
+    required this.currentChannelCount,
+    required this.cumulatedChannelCount,
+    required this.rejectedChannelCount,
+    required this.channelTimeoutCount,
+    required this.channelAbortCount,
+    required this.channelPurgeCount,
+    required this.currentSessionCount,
+    required this.cumulatedSessionCount,
+    required this.securityRejectedSessionCount,
+    required this.rejectedSessionCount,
+    required this.sessionTimeoutCount,
+    required this.sessionAbortCount,
+    required this.currentSubscriptionCount,
+    required this.cumulatedSubscriptionCount,
+    required this.currentMonitoredItemCount,
+  });
+
+  // Secure-channel layer.
+  final int currentChannelCount;
+  final int cumulatedChannelCount;
+  final int rejectedChannelCount;
+  final int channelTimeoutCount;
+  final int channelAbortCount;
+  final int channelPurgeCount;
+
+  // Session layer.
+  final int currentSessionCount;
+  final int cumulatedSessionCount;
+  final int securityRejectedSessionCount;
+  final int rejectedSessionCount;
+  final int sessionTimeoutCount;
+  final int sessionAbortCount;
+
+  /// Subscriptions currently alive on the server, or `null` when the NS0
+  /// diagnostics nodes are unavailable.
+  final int? currentSubscriptionCount;
+
+  /// Subscriptions created since server start, or `null` when unavailable.
+  final int? cumulatedSubscriptionCount;
+
+  /// Monitored items currently alive across all subscriptions (the sum of
+  /// each subscription's `monitoredItemCount` from the NS0
+  /// SubscriptionDiagnosticsArray), or `null` when unavailable.
+  final int? currentMonitoredItemCount;
+
+  @override
+  String toString() =>
+      'ServerStatistics(sessions: $currentSessionCount (cumulated $cumulatedSessionCount), '
+      'channels: $currentChannelCount (cumulated $cumulatedChannelCount), '
+      'subscriptions: $currentSubscriptionCount (cumulated $cumulatedSubscriptionCount), '
+      'monitoredItems: $currentMonitoredItemCount)';
+}
+
 /// The complete read result of a data-source variable node: the [value] plus
 /// the OPC UA operation [statusCode] and an optional [sourceTimestamp].
 ///
@@ -1171,6 +1235,77 @@ class Server {
     // writeValue uses the NodeId transiently for a lookup; free ours.
     _freeRawNodeId(variableNodeIdRaw);
     raw.UA_Variant_delete(variant);
+  }
+
+  /// A snapshot of the server's session / secure-channel / subscription
+  /// statistics.
+  ///
+  /// Secure-channel and session counters come from
+  /// `UA_Server_getStatistics()`. Subscription and monitored-item counts are
+  /// read from the NS0 server-diagnostics nodes (ServerDiagnosticsSummary and
+  /// SubscriptionDiagnosticsArray, present because the native build enables
+  /// `UA_ENABLE_DIAGNOSTICS` — open62541 1.5's default); those fields are
+  /// `null` if the nodes cannot be read. Counters are maintained by the
+  /// server itself, so the snapshot is consistent with the last processed
+  /// [runIterate].
+  ServerStatistics get statistics {
+    final stats = raw.UA_Server_getStatistics(_server);
+
+    // Subscription counts: NS0 Server/ServerDiagnostics/ServerDiagnosticsSummary
+    // (i=2275) serves a scalar UA_ServerDiagnosticsSummaryDataType via a
+    // diagnostics value callback.
+    int? currentSubscriptions;
+    int? cumulatedSubscriptions;
+    final summaryVariant = raw.UA_Variant_new();
+    final summaryNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERDIAGNOSTICS_SERVERDIAGNOSTICSSUMMARY).toRaw();
+    final summaryStatus = raw.UA_Server_readValue(_server, summaryNodeId, summaryVariant);
+    if (summaryStatus == raw.UA_STATUSCODE_GOOD &&
+        summaryVariant.ref.type == getTypeByIndex(raw.UA_TYPES_SERVERDIAGNOSTICSSUMMARYDATATYPE) &&
+        summaryVariant.ref.data != ffi.nullptr) {
+      final summary = summaryVariant.ref.data.cast<raw.UA_ServerDiagnosticsSummaryDataType>().ref;
+      currentSubscriptions = summary.currentSubscriptionCount;
+      cumulatedSubscriptions = summary.cumulatedSubscriptionCount;
+    }
+    raw.UA_Variant_delete(summaryVariant);
+
+    // Monitored items: NS0 Server/ServerDiagnostics/SubscriptionDiagnosticsArray
+    // (i=2290) serves one UA_SubscriptionDiagnosticsDataType per live
+    // subscription; the total is the sum of their monitoredItemCount fields.
+    int? currentMonitoredItems;
+    final subsVariant = raw.UA_Variant_new();
+    final subsNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERDIAGNOSTICS_SUBSCRIPTIONDIAGNOSTICSARRAY)
+        .toRaw();
+    final subsStatus = raw.UA_Server_readValue(_server, subsNodeId, subsVariant);
+    if (subsStatus == raw.UA_STATUSCODE_GOOD &&
+        subsVariant.ref.type == getTypeByIndex(raw.UA_TYPES_SUBSCRIPTIONDIAGNOSTICSDATATYPE)) {
+      var total = 0;
+      // An empty array uses open62541's non-null empty-array sentinel for
+      // `data`; arrayLength 0 keeps the loop from touching it either way.
+      final entries = subsVariant.ref.data.cast<raw.UA_SubscriptionDiagnosticsDataType>();
+      for (var i = 0; i < subsVariant.ref.arrayLength; i++) {
+        total += (entries + i).ref.monitoredItemCount;
+      }
+      currentMonitoredItems = total;
+    }
+    raw.UA_Variant_delete(subsVariant);
+
+    return ServerStatistics(
+      currentChannelCount: stats.scs.currentChannelCount,
+      cumulatedChannelCount: stats.scs.cumulatedChannelCount,
+      rejectedChannelCount: stats.scs.rejectedChannelCount,
+      channelTimeoutCount: stats.scs.channelTimeoutCount,
+      channelAbortCount: stats.scs.channelAbortCount,
+      channelPurgeCount: stats.scs.channelPurgeCount,
+      currentSessionCount: stats.ss.currentSessionCount,
+      cumulatedSessionCount: stats.ss.cumulatedSessionCount,
+      securityRejectedSessionCount: stats.ss.securityRejectedSessionCount,
+      rejectedSessionCount: stats.ss.rejectedSessionCount,
+      sessionTimeoutCount: stats.ss.sessionTimeoutCount,
+      sessionAbortCount: stats.ss.sessionAbortCount,
+      currentSubscriptionCount: currentSubscriptions,
+      cumulatedSubscriptionCount: cumulatedSubscriptions,
+      currentMonitoredItemCount: currentMonitoredItems,
+    );
   }
 
   // populate structschema for out type

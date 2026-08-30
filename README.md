@@ -144,6 +144,11 @@ struct size is unchanged) so the generator does not drop the surrounding members
   delivered as an *error* event on the stream (carrying the status), and its
   value/timestamps are dropped. Use `Client.readValue` to observe a node's
   value together with its status code and source/server timestamps.
+- `Server.statistics` exposes aggregate counters only (sessions, secure
+  channels, subscriptions, total monitored items). Per-session and
+  per-subscription diagnostic detail (client identity, publish rates, queue
+  overflows, ...) exists in the NS0 diagnostics nodes but is not surfaced as a
+  typed Dart API.
 
 ## License
 

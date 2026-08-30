@@ -820,6 +820,9 @@ UA_LifecycleState UA_Server_getLifecycleState(ffi.Pointer<UA_Server> server) {
   return UA_LifecycleState.fromValue(_UA_Server_getLifecycleState(server));
 }
 
+@ffi.Native<UA_ServerStatistics Function(ffi.Pointer<UA_Server>)>()
+external UA_ServerStatistics UA_Server_getStatistics(ffi.Pointer<UA_Server> server);
+
 @ffi.Native<ffi.Pointer<UA_Server> Function(ffi.Pointer<UA_ServerConfig>)>()
 external ffi.Pointer<UA_Server> UA_Server_newWithConfig(ffi.Pointer<UA_ServerConfig> config);
 
@@ -56259,6 +56262,42 @@ enum UA_SecureChannelState {
   };
 }
 
+final class UA_SecureChannelStatistics extends ffi.Struct {
+  @ffi.Size()
+  external int currentChannelCount;
+
+  @ffi.Size()
+  external int cumulatedChannelCount;
+
+  @ffi.Size()
+  external int rejectedChannelCount;
+
+  @ffi.Size()
+  external int channelTimeoutCount;
+
+  @ffi.Size()
+  external int channelAbortCount;
+
+  @ffi.Size()
+  external int channelPurgeCount;
+
+  static ffi.Pointer<UA_SecureChannelStatistics> $allocate(
+    ffi.Allocator $allocator, {
+    required int currentChannelCount,
+    required int cumulatedChannelCount,
+    required int rejectedChannelCount,
+    required int channelTimeoutCount,
+    required int channelAbortCount,
+    required int channelPurgeCount,
+  }) => $allocator<UA_SecureChannelStatistics>()
+    ..ref.currentChannelCount = currentChannelCount
+    ..ref.cumulatedChannelCount = cumulatedChannelCount
+    ..ref.rejectedChannelCount = rejectedChannelCount
+    ..ref.channelTimeoutCount = channelTimeoutCount
+    ..ref.channelAbortCount = channelAbortCount
+    ..ref.channelPurgeCount = channelPurgeCount;
+}
+
 final class UA_SecurityPolicy extends ffi.Opaque {}
 
 enum UA_SecurityPolicyType {
@@ -56609,6 +56648,72 @@ final class UA_ServerConfig extends ffi.Struct {
   privateKeyPasswordCallback;
 }
 
+final class UA_ServerDiagnosticsSummaryDataType extends ffi.Struct {
+  @UA_UInt32()
+  external int serverViewCount;
+
+  @UA_UInt32()
+  external int currentSessionCount;
+
+  @UA_UInt32()
+  external int cumulatedSessionCount;
+
+  @UA_UInt32()
+  external int securityRejectedSessionCount;
+
+  @UA_UInt32()
+  external int rejectedSessionCount;
+
+  @UA_UInt32()
+  external int sessionTimeoutCount;
+
+  @UA_UInt32()
+  external int sessionAbortCount;
+
+  @UA_UInt32()
+  external int currentSubscriptionCount;
+
+  @UA_UInt32()
+  external int cumulatedSubscriptionCount;
+
+  @UA_UInt32()
+  external int publishingIntervalCount;
+
+  @UA_UInt32()
+  external int securityRejectedRequestsCount;
+
+  @UA_UInt32()
+  external int rejectedRequestsCount;
+
+  static ffi.Pointer<UA_ServerDiagnosticsSummaryDataType> $allocate(
+    ffi.Allocator $allocator, {
+    required int serverViewCount,
+    required int currentSessionCount,
+    required int cumulatedSessionCount,
+    required int securityRejectedSessionCount,
+    required int rejectedSessionCount,
+    required int sessionTimeoutCount,
+    required int sessionAbortCount,
+    required int currentSubscriptionCount,
+    required int cumulatedSubscriptionCount,
+    required int publishingIntervalCount,
+    required int securityRejectedRequestsCount,
+    required int rejectedRequestsCount,
+  }) => $allocator<UA_ServerDiagnosticsSummaryDataType>()
+    ..ref.serverViewCount = serverViewCount
+    ..ref.currentSessionCount = currentSessionCount
+    ..ref.cumulatedSessionCount = cumulatedSessionCount
+    ..ref.securityRejectedSessionCount = securityRejectedSessionCount
+    ..ref.rejectedSessionCount = rejectedSessionCount
+    ..ref.sessionTimeoutCount = sessionTimeoutCount
+    ..ref.sessionAbortCount = sessionAbortCount
+    ..ref.currentSubscriptionCount = currentSubscriptionCount
+    ..ref.cumulatedSubscriptionCount = cumulatedSubscriptionCount
+    ..ref.publishingIntervalCount = publishingIntervalCount
+    ..ref.securityRejectedRequestsCount = securityRejectedRequestsCount
+    ..ref.rejectedRequestsCount = rejectedRequestsCount;
+}
+
 enum UA_ServerState {
   UA_SERVERSTATE_RUNNING(0),
   UA_SERVERSTATE_FAILED(1),
@@ -56637,6 +56742,16 @@ enum UA_ServerState {
   };
 }
 
+/// Statistics
+/// ----------
+/// Statistic counters keeping track of the current state of the stack. Counters
+/// are structured per OPC UA communication layer.
+final class UA_ServerStatistics extends ffi.Struct {
+  external UA_SecureChannelStatistics scs;
+
+  external UA_SessionStatistics ss;
+}
+
 enum UA_SessionState {
   UA_SESSIONSTATE_CLOSED(0),
   UA_SESSIONSTATE_CREATE_REQUESTED(1),
@@ -56657,6 +56772,42 @@ enum UA_SessionState {
     5 => UA_SESSIONSTATE_CLOSING,
     _ => throw ArgumentError('Unknown value for UA_SessionState: $value'),
   };
+}
+
+final class UA_SessionStatistics extends ffi.Struct {
+  @ffi.Size()
+  external int currentSessionCount;
+
+  @ffi.Size()
+  external int cumulatedSessionCount;
+
+  @ffi.Size()
+  external int securityRejectedSessionCount;
+
+  @ffi.Size()
+  external int rejectedSessionCount;
+
+  @ffi.Size()
+  external int sessionTimeoutCount;
+
+  @ffi.Size()
+  external int sessionAbortCount;
+
+  static ffi.Pointer<UA_SessionStatistics> $allocate(
+    ffi.Allocator $allocator, {
+    required int currentSessionCount,
+    required int cumulatedSessionCount,
+    required int securityRejectedSessionCount,
+    required int rejectedSessionCount,
+    required int sessionTimeoutCount,
+    required int sessionAbortCount,
+  }) => $allocator<UA_SessionStatistics>()
+    ..ref.currentSessionCount = currentSessionCount
+    ..ref.cumulatedSessionCount = cumulatedSessionCount
+    ..ref.securityRejectedSessionCount = securityRejectedSessionCount
+    ..ref.rejectedSessionCount = rejectedSessionCount
+    ..ref.sessionTimeoutCount = sessionTimeoutCount
+    ..ref.sessionAbortCount = sessionAbortCount;
 }
 
 /// Statistic Counters
@@ -56818,6 +56969,100 @@ enum UA_SubscribedDataSetType {
     1 => UA_PUBSUB_SDS_MIRROR,
     _ => throw ArgumentError('Unknown value for UA_SubscribedDataSetType: $value'),
   };
+}
+
+final class UA_SubscriptionDiagnosticsDataType extends ffi.Struct {
+  external UA_NodeId sessionId;
+
+  @UA_UInt32()
+  external int subscriptionId;
+
+  @UA_Byte()
+  external int priority;
+
+  @UA_Double()
+  external double publishingInterval;
+
+  @UA_UInt32()
+  external int maxKeepAliveCount;
+
+  @UA_UInt32()
+  external int maxLifetimeCount;
+
+  @UA_UInt32()
+  external int maxNotificationsPerPublish;
+
+  @ffi.Bool()
+  external bool publishingEnabled;
+
+  @UA_UInt32()
+  external int modifyCount;
+
+  @UA_UInt32()
+  external int enableCount;
+
+  @UA_UInt32()
+  external int disableCount;
+
+  @UA_UInt32()
+  external int republishRequestCount;
+
+  @UA_UInt32()
+  external int republishMessageRequestCount;
+
+  @UA_UInt32()
+  external int republishMessageCount;
+
+  @UA_UInt32()
+  external int transferRequestCount;
+
+  @UA_UInt32()
+  external int transferredToAltClientCount;
+
+  @UA_UInt32()
+  external int transferredToSameClientCount;
+
+  @UA_UInt32()
+  external int publishRequestCount;
+
+  @UA_UInt32()
+  external int dataChangeNotificationsCount;
+
+  @UA_UInt32()
+  external int eventNotificationsCount;
+
+  @UA_UInt32()
+  external int notificationsCount;
+
+  @UA_UInt32()
+  external int latePublishRequestCount;
+
+  @UA_UInt32()
+  external int currentKeepAliveCount;
+
+  @UA_UInt32()
+  external int currentLifetimeCount;
+
+  @UA_UInt32()
+  external int unacknowledgedMessageCount;
+
+  @UA_UInt32()
+  external int discardedMessageCount;
+
+  @UA_UInt32()
+  external int monitoredItemCount;
+
+  @UA_UInt32()
+  external int disabledMonitoredItemCount;
+
+  @UA_UInt32()
+  external int monitoringQueueOverflowCount;
+
+  @UA_UInt32()
+  external int nextSequenceNumber;
+
+  @UA_UInt32()
+  external int eventQueueOverflowCount;
 }
 
 const int UA_TYPES_ACCESSLEVELEXTYPE = 112;

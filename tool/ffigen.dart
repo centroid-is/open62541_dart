@@ -86,6 +86,9 @@ Future<void> main() async {
       'UA_Server_run_shutdown',
       'UA_Server_delete',
 
+      // Statistics / diagnostics
+      'UA_Server_getStatistics',
+
       'UA_DataTypeAttributes_new',
       'UA_DataTypeAttributes_delete',
 
@@ -203,6 +206,12 @@ Future<void> main() async {
       'UA_BrowseDescription',
       'UA_BrowseResult',
       'UA_ReferenceDescription',
+      // Statistics / diagnostics structs
+      'UA_ServerStatistics',
+      'UA_SecureChannelStatistics',
+      'UA_SessionStatistics',
+      'UA_ServerDiagnosticsSummaryDataType',
+      'UA_SubscriptionDiagnosticsDataType',
     }),
     typedefs: Typedefs.includeSet({
       'UA_Byte',

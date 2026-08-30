@@ -38,6 +38,27 @@ changes that ship the same native library version.
   string; `ClientIsolate` still marshals stream/request errors as strings
   across the isolate boundary, so there the code survives only inside the
   message text).
+- **Server session/subscription statistics.** New `Server.statistics` returns
+  a `ServerStatistics` snapshot: the secure-channel counters
+  (`currentChannelCount`, `cumulatedChannelCount`, rejected/timeout/abort/
+  purge) and session counters (`currentSessionCount`,
+  `cumulatedSessionCount`, securityRejected/rejected/timeout/abort) from
+  `UA_Server_getStatistics()`, plus `currentSubscriptionCount`,
+  `cumulatedSubscriptionCount` and `currentMonitoredItemCount` (the sum of
+  the per-subscription `monitoredItemCount`s) read from the NS0
+  server-diagnostics nodes. No native/CMake change was needed:
+  `UA_ENABLE_DIAGNOSTICS` is ON by default in open62541 1.5.7 and was already
+  part of this package's build — the subscription-side fields are typed
+  nullable and come back `null` only on a build without those NS0 nodes.
+  Regenerated the FFI bindings (additive) with `UA_Server_getStatistics` and
+  the `UA_ServerStatistics` / `UA_SecureChannelStatistics` /
+  `UA_SessionStatistics` / `UA_ServerDiagnosticsSummaryDataType` /
+  `UA_SubscriptionDiagnosticsDataType` structs; `test/verify_sizes_test.dart`
+  pins their layouts against the native type table.
+- This release is independent of the in-flight PubSub (OPC UA Part 14) work,
+  which lives on its own branch/PR: nothing here changes the native build
+  flags or ships any PubSub API.
+
 ## 1.5.7+2
 
 - Bounded-send fix (native build hook): patch open62541's TCP send path so a
