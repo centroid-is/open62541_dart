@@ -4,7 +4,7 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## 1.5.7+3
+## Unreleased
 
 - **Data-source reads carry a status code + source timestamp.**
   `Server.addDataSourceVariableNode` gained `onReadValue`, a richer alternative
