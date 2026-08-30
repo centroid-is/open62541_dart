@@ -33,6 +33,10 @@ changes that ship the same native library version.
 - `ClientConfig` gained `applicationUri`, `applicationName` and `sessionName`
   getters/setters (set before connecting) so a client can declare the
   ApplicationDescription and session name the server observes.
+- Fixed a process-lifetime leak in `ClientIsolate`: the worker's error
+  `ReceivePort` was never closed, so a process (e.g. a CLI) that created a
+  `ClientIsolate` never exited after `delete()` — the open port kept the main
+  isolate alive indefinitely. `delete()` now closes it.
 - Fixed `ClientConfig` wrapping a stale config struct: `UA_Client_newWithConfig`
   *copies* the config into the client, so post-construction writes through the
   previously wrapped temporary (e.g. the `securityMode` / `securityPolicyUri`
