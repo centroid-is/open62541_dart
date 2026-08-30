@@ -61,7 +61,7 @@ void main() {
         browseName: 'StructTag',
         typeId: structType,
         onRead: () => backing,
-        onWrite: (value) => backing = value,
+        onWrite: (value) async => backing = value,
       );
     });
 

@@ -6,6 +6,16 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **BREAKING: data-source `onWrite` callbacks are async.**
+  `Server.addDataSourceVariableNode` / `Server.setVariableValueSource` take
+  `Future<void> Function(DynamicValue)` for `onWrite`. The client's write
+  parks as an open62541 async operation and is answered with the handler's
+  awaited outcome — complete normally for `Good`, complete with a
+  `UaStatusException` for that exact code, anything else for
+  `Bad_InternalError` — so a proxy can answer with the REAL downstream
+  (device) result instead of an optimistic Good. Writes not completed within
+  `Server.asyncOperationTimeout` are cancelled with `Bad_Timeout`. Migrate
+  handlers by adding `async`.
 - **BREAKING: method callbacks are async.** `Server.addMethodNode`'s
   `callback` now returns `Future<List<DynamicValue>>`. The call is parked as
   an open62541 async operation (`GoodCompletesAsynchronously`) and the
