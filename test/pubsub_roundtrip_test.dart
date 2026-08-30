@@ -6,10 +6,16 @@ import 'package:open62541/open62541.dart';
 import 'common.dart';
 
 // End-to-end PubSub round trip: a publisher Server publishes variables over
-// UDP multicast on the loopback-reachable group below, and a subscriber Server
-// (PubSub subscribers hang off UA_Server, not UA_Client) receives them into
-// local target variable nodes. Both event loops are pumped from Dart via the
-// runIterate pattern in setupServer.
+// UDP unicast loopback, and a subscriber Server (PubSub subscribers hang off
+// UA_Server, not UA_Client) receives them into local target variable nodes.
+// Both event loops are pumped from Dart via the runIterate pattern in
+// setupServer.
+//
+// Unicast 127.0.0.1 instead of a multicast group: hosted CI runners (GitHub's
+// macOS images in particular) have no route for 224.0.0.0/4, so a multicast
+// publish dies with "No route to host" before a single message is sent. The
+// loopback round trip exercises the identical encode -> UDP -> decode ->
+// target-variable path without depending on the runner's routing table.
 //
 // The test polls with a generous timeout instead of sleeping fixed amounts so
 // it is robust to scheduling jitter.
@@ -23,8 +29,7 @@ void main() {
       final rand = Random();
       publisher = setupServer(rand.nextInt(10000) + 4840);
       subscriber = setupServer(rand.nextInt(10000) + 15000);
-      // Non-default multicast group/port to avoid clashes with other OPC UA
-      // PubSub participants (default is 224.0.0.22:4840).
+      // Random high port so parallel test runs never clash.
       udpPort = rand.nextInt(10000) + 25000;
     });
 
@@ -52,7 +57,9 @@ void main() {
     }
 
     test('scalars and an array arrive and update', () async {
-      final url = 'opc.udp://224.0.0.42:$udpPort/';
+      // The same URL serves both roles: the publisher sends to it, the
+      // subscriber's reader group listens on it.
+      final url = 'opc.udp://127.0.0.1:$udpPort/';
 
       // ---- Publisher side --------------------------------------------------
       final counterId = NodeId.fromString(1, 'pub.counter');
