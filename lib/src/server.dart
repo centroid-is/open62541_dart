@@ -279,7 +279,7 @@ class Server {
   >?
   _dsWriteDispatcher;
   final Map<NodeId, DataSourceValue Function()> _dataSourceReads = {};
-  final Map<NodeId, void Function(DynamicValue)> _dataSourceWrites = {};
+  final Map<NodeId, Future<void> Function(DynamicValue)> _dataSourceWrites = {};
 
   // The declared DataType of each data-source node whose `typeId` was given.
   // The write dispatcher uses it to marshal an incoming custom-struct value with
@@ -323,10 +323,19 @@ class Server {
   // output array, which open62541 frees on cancel.
   final Map<int, ({ffi.Pointer<raw.UA_Variant> output, int outputSize})> _inFlightMethodCalls = {};
 
+  // In-flight async data-source writes, keyed by the address of the native
+  // UA_DataValue open62541 handed the write dispatcher (the async write
+  // operation's identity — see UA_Server_setAsyncWriteResult). Same
+  // retire-exactly-once discipline as [_inFlightMethodCalls].
+  final Map<int, ffi.Pointer<raw.UA_DataValue>> _inFlightWrites = {};
+
   // The server-wide async-operation cancel hook (one per server, installed
-  // lazily by [addMethodNode], closed in [delete]). open62541 calls it when
-  // an async operation is cancelled — deadline exceeded ([asyncOperationTimeout])
-  // or server shutdown — after which the operation's output array is freed.
+  // lazily by [addMethodNode] / the write dispatcher, closed in [delete]).
+  // open62541 calls it when an async operation is cancelled — deadline
+  // exceeded ([asyncOperationTimeout]) or server shutdown — after which the
+  // operation's output memory is freed. The identity pointer is the method
+  // call's output array or the async write's DataValue; addresses are
+  // disjoint, so retiring by address from both registries is safe.
   ffi.NativeCallable<ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.Pointer<ffi.Void>)>? _asyncCancelDispatcher;
 
   /// Installs [_asyncCancelDispatcher] into the server config (idempotent).
@@ -337,10 +346,11 @@ class Server {
           ffi.Pointer<raw.UA_Server> server,
           ffi.Pointer<ffi.Void> out,
         ) {
-          // Retire the call: its output memory is freed by open62541 right
-          // after this callback, so a handler completing later must not
-          // marshal into it (the completion finds no entry and drops).
+          // Retire the operation: its output memory is freed by open62541
+          // right after this callback, so a handler completing later must
+          // not touch it (the completion finds no entry and drops).
           _inFlightMethodCalls.remove(out.address);
+          _inFlightWrites.remove(out.address);
         });
     _config.ref.asyncOperationCancelCallback = _asyncCancelDispatcher!.nativeFunction;
   }
@@ -523,6 +533,9 @@ class Server {
   /// data-source variable node on this server. See [addDataSourceVariableNode].
   void _ensureDataSourceDispatchers() {
     if (_dsReadDispatcher != null) return;
+    // Async writes park as async operations; the cancel hook retires them
+    // on timeout/shutdown (see [_asyncCancelDispatcher]).
+    _ensureAsyncCancelDispatcher();
 
     // Read: invoked by the server (inside runIterate, on this isolate) whenever
     // a client reads the node's value. It looks up the per-node [onRead], asks
@@ -637,13 +650,44 @@ class Server {
         } else {
           dyn = variantToValue(variant);
         }
-        handler(dyn);
-        return raw.UA_STATUSCODE_GOOD;
+        // The value is fully decoded into [dyn] above — nothing touches the
+        // native DataValue after this point except as the async operation's
+        // identity pointer.
+        final Future<void> writeFuture;
+        try {
+          writeFuture = handler(dyn);
+        } on UaStatusException catch (e) {
+          // A non-async handler that throws before returning a future.
+          return e.statusCode;
+        } catch (_) {
+          return raw.UA_STATUSCODE_BADINTERNALERROR;
+        }
+
+        // Park the write as an open62541 async operation (mirrors the method
+        // dispatcher): the DataValue pointer handed to this callback is the
+        // operation's identity — open62541 keeps it stable until the result
+        // is set or the operation is cancelled, in which case
+        // [_asyncCancelDispatcher] retires the entry so a late completion
+        // never calls in with a dangling pointer.
+        final key = value.address;
+        _inFlightWrites[key] = value;
+        writeFuture.then(
+          (_) {
+            if (_inFlightWrites.remove(key) == null) return;
+            raw.UA_Server_setAsyncWriteResult(_server, value, raw.UA_STATUSCODE_GOOD);
+          },
+          onError: (Object e) {
+            if (_inFlightWrites.remove(key) == null) return;
+            // Typed rejection: [onWrite] completed with a UaStatusException to
+            // answer the client with a specific status code (e.g.
+            // Bad_NotWritable or Bad_UserAccessDenied) instead of the generic
+            // Bad_InternalError that any other error maps to.
+            final status = e is UaStatusException ? e.statusCode : raw.UA_STATUSCODE_BADINTERNALERROR;
+            raw.UA_Server_setAsyncWriteResult(_server, value, status);
+          },
+        );
+        return raw.UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY;
       } on UaStatusException catch (e) {
-        // Typed rejection: [onWrite] threw a UaStatusException to answer the
-        // client with a specific status code (e.g. Bad_NotWritable or
-        // Bad_UserAccessDenied) instead of the generic Bad_InternalError that
-        // any other throw maps to.
         return e.statusCode;
       } catch (_) {
         return raw.UA_STATUSCODE_BADINTERNALERROR;
@@ -698,18 +742,24 @@ class Server {
   ///   of [onRead] / [onReadValue] (they are mutually exclusive; [onRead] is
   ///   equivalent to an [onReadValue] that always reports Good and no source
   ///   timestamp).
-  /// * [onWrite] (optional) receives the [DynamicValue] a client wrote. Passing
-  ///   `null` makes the node read-only: the node is created without the Write
-  ///   access bit, so client writes are rejected with `BadNotWritable`. When
-  ///   [onWrite] throws a [UaStatusException], the client receives exactly that
-  ///   status code (e.g. `UA_STATUSCODE_BADNOTWRITABLE` for a gate-denied
-  ///   write); any other throw fails the write with `BadInternalError`. `void`
-  ///   return semantics (throw-for-bad) are used rather than an `int` status
-  ///   code to keep the surface pure-Dart and mirror [onRead]'s throw
-  ///   behaviour. [onRead]/[onReadValue] honor [UaStatusException] the same
-  ///   way (the read fails with the thrown code and no value; to serve a value
-  ///   WITH a Bad status, return a [DataSourceValue] from [onReadValue]
-  ///   instead).
+  /// * [onWrite] (optional) receives the [DynamicValue] a client wrote. It is
+  ///   **async**: the client's write is parked as an open62541 async
+  ///   operation and stays in flight — without blocking the server's iterate
+  ///   loop — until the returned future completes, so the answer can carry
+  ///   the REAL downstream outcome (e.g. a device write's result) instead of
+  ///   an optimistic Good. Completing normally answers `Good`; completing
+  ///   with a [UaStatusException] answers exactly that status code (e.g.
+  ///   `UA_STATUSCODE_BADNOTWRITABLE` for a gate-denied write); any other
+  ///   error answers `BadInternalError`. Future-of-void semantics
+  ///   (throw-for-bad) keep the surface pure-Dart and mirror [onRead]'s
+  ///   throw behaviour. A write not completed within
+  ///   [asyncOperationTimeout] is cancelled with `Bad_Timeout` (a later
+  ///   completion is dropped). Passing `null` makes the node read-only: the
+  ///   node is created without the Write access bit, so client writes are
+  ///   rejected with `BadNotWritable`. [onRead]/[onReadValue] honor
+  ///   [UaStatusException] the same way (the read fails with the thrown code
+  ///   and no value; to serve a value WITH a Bad status, return a
+  ///   [DataSourceValue] from [onReadValue] instead).
   /// * [accessLevel] defaults to read + (write iff [onWrite] != null). Pass a
   ///   value to override (e.g. to expose a writable node whose backing store is
   ///   currently read-only).
@@ -736,7 +786,7 @@ class Server {
     NodeId nodeId, {
     DynamicValue Function()? onRead,
     DataSourceValue Function()? onReadValue,
-    void Function(DynamicValue value)? onWrite,
+    Future<void> Function(DynamicValue value)? onWrite,
     required String browseName,
     NodeId? parentNodeId,
     NodeId? parentReferenceNodeId,
@@ -861,7 +911,7 @@ class Server {
     NodeId nodeId, {
     DynamicValue Function()? onRead,
     DataSourceValue Function()? onReadValue,
-    void Function(DynamicValue value)? onWrite,
+    Future<void> Function(DynamicValue value)? onWrite,
   }) {
     if ((onRead == null) == (onReadValue == null)) {
       throw ArgumentError('Provide exactly one of onRead / onReadValue');
@@ -2607,6 +2657,7 @@ class Server {
     // completes after this point finds nothing and never calls into the
     // freed server.
     _inFlightMethodCalls.clear();
+    _inFlightWrites.clear();
     _asyncCancelDispatcher?.close();
     _asyncCancelDispatcher = null;
     if (ret != 0) {

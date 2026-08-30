@@ -50,7 +50,7 @@ void main() {
         browseName: 'F1Tag',
         typeId: NodeId.int32,
         onRead: () => DynamicValue(value: backing, typeId: NodeId.int32),
-        onWrite: (value) {
+        onWrite: (value) async {
           backing = value.value as int;
           writesSeen.add(backing);
         },
@@ -160,14 +160,14 @@ void main() {
         browseName: 'F3TagA',
         typeId: typeA,
         onRead: makeSchemaA,
-        onWrite: (value) => capturedA = value,
+        onWrite: (value) async => capturedA = value,
       );
       server.addDataSourceVariableNode(
         nodeB,
         browseName: 'F3TagB',
         typeId: typeB,
         onRead: makeSchemaB,
-        onWrite: (value) => capturedB = value,
+        onWrite: (value) async => capturedB = value,
       );
     });
 
@@ -233,7 +233,7 @@ void main() {
         onRead: () => DynamicValue.fromList([
           for (final v in backing) DynamicValue(value: v, typeId: NodeId.int32),
         ], typeId: NodeId.int32),
-        onWrite: (value) {
+        onWrite: (value) async {
           backing = [for (final v in value.asArray) v.value as int];
           writesSeen.add(backing);
         },
@@ -341,7 +341,7 @@ void main() {
         browseName: 'F5Tag',
         typeId: typeId,
         onRead: makeSchema,
-        onWrite: (value) => captured = value,
+        onWrite: (value) async => captured = value,
       );
     });
 

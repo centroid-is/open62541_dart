@@ -38,7 +38,7 @@ void main() {
         onRead: () => DynamicValue(name: 'Gated', value: value, typeId: NodeId.int32),
         // The node advertises Write access (the gate decides per write), but
         // the gate is currently closed.
-        onWrite: (_) => throw const UaStatusException(UA_STATUSCODE_BADNOTWRITABLE),
+        onWrite: (_) async => throw const UaStatusException(UA_STATUSCODE_BADNOTWRITABLE),
       );
 
       await expectLater(
@@ -57,7 +57,7 @@ void main() {
         browseName: 'Denied',
         typeId: NodeId.int32,
         onRead: () => DynamicValue(name: 'Denied', value: 0, typeId: NodeId.int32),
-        onWrite: (_) => throw const UaStatusException(UA_STATUSCODE_BADUSERACCESSDENIED),
+        onWrite: (_) async => throw const UaStatusException(UA_STATUSCODE_BADUSERACCESSDENIED),
       );
 
       await expectLater(
@@ -74,7 +74,7 @@ void main() {
         browseName: 'Internal',
         typeId: NodeId.int32,
         onRead: () => DynamicValue(name: 'Internal', value: 0, typeId: NodeId.int32),
-        onWrite: (_) => throw StateError('boom'),
+        onWrite: (_) async => throw StateError('boom'),
       );
 
       await expectLater(

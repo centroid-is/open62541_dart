@@ -67,7 +67,7 @@ void main() {
         browseName: browseName,
         typeId: typeId,
         onRead: () => backing,
-        onWrite: (value) => backing = value,
+        onWrite: (value) async => backing = value,
       );
 
       // (1) read back the initial value and verify every field.
