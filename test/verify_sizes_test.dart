@@ -15,7 +15,10 @@ void main() {
     // by value from UA_Server_getStatistics; the diagnostics data types are
     // cast straight out of native variant memory, so their Dart layout must
     // match the native one — compare against the native type table's memSize.
-    expect(sizeOf<raw.UA_ServerStatistics>(), sizeOf<raw.UA_SecureChannelStatistics>() + sizeOf<raw.UA_SessionStatistics>());
+    expect(
+      sizeOf<raw.UA_ServerStatistics>(),
+      sizeOf<raw.UA_SecureChannelStatistics>() + sizeOf<raw.UA_SessionStatistics>(),
+    );
     expect(
       sizeOf<raw.UA_ServerDiagnosticsSummaryDataType>(),
       getTypeByIndex(raw.UA_TYPES_SERVERDIAGNOSTICSSUMMARYDATATYPE).ref.memSize,

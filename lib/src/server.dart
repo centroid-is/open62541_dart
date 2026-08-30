@@ -1273,8 +1273,10 @@ class Server {
     // subscription; the total is the sum of their monitoredItemCount fields.
     int? currentMonitoredItems;
     final subsVariant = raw.UA_Variant_new();
-    final subsNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERDIAGNOSTICS_SUBSCRIPTIONDIAGNOSTICSARRAY)
-        .toRaw();
+    final subsNodeId = NodeId.fromNumeric(
+      0,
+      raw.UA_NS0ID_SERVER_SERVERDIAGNOSTICS_SUBSCRIPTIONDIAGNOSTICSARRAY,
+    ).toRaw();
     final subsStatus = raw.UA_Server_readValue(_server, subsNodeId, subsVariant);
     if (subsStatus == raw.UA_STATUSCODE_GOOD &&
         subsVariant.ref.type == getTypeByIndex(raw.UA_TYPES_SUBSCRIPTIONDIAGNOSTICSDATATYPE)) {
