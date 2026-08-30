@@ -15,7 +15,13 @@ String statusCodeToString(int statusCode) {
 }
 
 ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType) {
-  int type = uaType.value;
+  return getTypeByIndex(uaType.value);
+}
+
+/// Resolves a `UA_TYPES` entry by its raw `UA_TYPES_*` index constant (e.g.
+/// `raw.UA_TYPES_NETWORKADDRESSURLDATATYPE`). Used for types that are not part
+/// of the curated [UaTypes] enum, such as the PubSub configuration types.
+ffi.Pointer<raw.UA_DataType> getTypeByIndex(int type) {
   if (type < 0 || type > raw.UA_TYPES_COUNT) {
     throw 'Type out of boundary $type';
   }
