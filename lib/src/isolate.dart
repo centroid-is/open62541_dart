@@ -9,6 +9,26 @@ import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'node_id.dart';
 
+// Guarded stderr: on a detached GUI process (release launch) stderr has an
+// invalid handle, and a raw stderr.write there THROWS FileSystemException
+// ('The handle is invalid'). In an isolate error handler that uncaught throw
+// KILLS the worker isolate -> the whole server goes offline. Never let a log
+// write crash us.
+final String? _logFilePath = Platform.environment['OPEN62541_LOG_FILE'];
+// Safe error log for the worker isolate. On a detached GUI launch (release)
+// BOTH stdout and stderr have invalid handles, and a write to either throws
+// asynchronously ('handle is invalid') -> with the default errorsAreFatal it
+// KILLS the worker, taking a whole OPC UA server offline. So never touch the
+// std streams here: append to the app's log file if one is configured, else
+// drop the line. (errorsAreFatal:false on spawn is the belt to this braces.)
+void _safeErr(Object? m) {
+  final p = _logFilePath;
+  if (p == null || p.isEmpty) return;
+  try {
+    File(p).writeAsStringSync('$m\n', mode: FileMode.append, flush: true);
+  } catch (_) {}
+}
+
 /// Exception thrown when an operation is attempted on a closed [ClientIsolate].
 class ClientIsolateClosedException implements Exception {
   final String message;
@@ -259,6 +279,15 @@ class ClientIsolate implements ClientApi {
     try {
       _receivePort = ReceivePort();
 
+      // Surface uncaught worker-isolate errors. With errorsAreFatal:false an
+      // uncaught error no longer kills the worker; this port receives it so the
+      // failure is recorded instead of vanishing (on a detached GUI process
+      // stderr is a dead handle, so route it through _safeErr to the log file).
+      final errPort = ReceivePort();
+      errPort.listen((e) {
+        _safeErr('ISOLATE ERROR: $e');
+      });
+
       _isolate = await Isolate.spawn(
         _isolateEntryPoint,
         _IsolateData(
@@ -273,6 +302,15 @@ class ClientIsolate implements ClientApi {
           connectivityCheckInterval: connectivityCheckInterval,
           sendPort: _receivePort.sendPort,
         ),
+        // A worker isolate must NOT die on an uncaught error. In particular, a
+        // stderr write on a detached GUI process (release launch) fails
+        // asynchronously with 'handle is invalid' -- a synchronous try/catch
+        // cannot catch it -- and with the default errorsAreFatal:true that one
+        // failed log line KILLS the worker, taking a whole OPC UA server offline
+        // ("lines 1 & 3 offline"). errorsAreFatal:false reports such errors to
+        // onError but keeps the isolate running.
+        errorsAreFatal: false,
+        onError: errPort.sendPort,
       );
 
       _receivePort.listen(_handleMessage);
@@ -927,7 +965,7 @@ void _isolateEntryPoint(_IsolateData data) {
             sendPort.send(StreamDataMessage.success(message.requestId, value));
           },
           onError: (error) {
-            stderr.writeln("[${endpoint ?? 'unknown'}] MonitoredItems stream error: $error");
+            _safeErr("[${endpoint ?? 'unknown'}] MonitoredItems stream error: $error");
             sendPort.send(StreamDataMessage.error(message.requestId, error.toString()));
           },
           onDone: () {
@@ -966,7 +1004,7 @@ void _isolateEntryPoint(_IsolateData data) {
         client.disconnect();
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is DeleteMessage) {
-        stderr.writeln("[${endpoint ?? 'unknown'}] Shutting down isolate (${activeStreams.length} active streams)");
+        _safeErr("[${endpoint ?? 'unknown'}] Shutting down isolate (${activeStreams.length} active streams)");
 
         // Stop the iterate loop and wait for it to fully drain
         iterateRunning = false;
@@ -1001,8 +1039,9 @@ void _isolateEntryPoint(_IsolateData data) {
 
         () async {
           while (iterateRunning) {
-            if (!client.runIterate(message.timeout)) {
-              stderr.writeln("[${endpoint ?? 'unknown'}] runIterate failed, stopping event loop");
+            final ok = client.runIterate(message.timeout);
+            if (!ok) {
+              _safeErr("[${endpoint ?? 'unknown'}] runIterate failed, stopping event loop");
               sendPort.send(IsolateResponse.error(message.requestId, "Iteration failed"));
               break;
             }
@@ -1059,7 +1098,7 @@ void _isolateEntryPoint(_IsolateData data) {
             sendPort.send(StreamDataMessage.success(message.requestId, state));
           },
           onError: (error) {
-            stderr.writeln("[${endpoint ?? 'unknown'}] State stream error: $error");
+            _safeErr("[${endpoint ?? 'unknown'}] State stream error: $error");
             sendPort.send(StreamDataMessage.error(message.requestId, error.toString()));
           },
           onDone: () {
@@ -1073,7 +1112,7 @@ void _isolateEntryPoint(_IsolateData data) {
         sendPort.send(IsolateResponse.success(message.requestId, null));
       }
     } catch (e) {
-      stderr.writeln("[${endpoint ?? 'unknown'}] Error in isolate: $e");
+      _safeErr("[${endpoint ?? 'unknown'}] Error in isolate: $e");
       if (message is IsolateMessage) {
         sendPort.send(IsolateResponse.error(message.requestId, e.toString()));
       }

@@ -17,6 +17,21 @@ import 'types/create_type.dart';
 import 'types/opcua_serializer.dart';
 import 'ua_allocation.dart';
 
+// Safe error log for the worker isolate. On a detached GUI launch (release)
+// BOTH stdout and stderr have invalid handles, and a write to either throws
+// asynchronously ('handle is invalid') -> with Isolate.spawn's default
+// errorsAreFatal that uncaught throw KILLS the worker, taking a whole OPC UA
+// server offline. So never touch the std streams here: append to the app's log
+// file if one is configured, else drop the line.
+final String? _logFilePath = Platform.environment['OPEN62541_LOG_FILE'];
+void _safeErr(Object? m) {
+  final p = _logFilePath;
+  if (p == null || p.isEmpty) return;
+  try {
+    File(p).writeAsStringSync('$m\n', mode: FileMode.append, flush: true);
+  } catch (_) {}
+}
+
 typedef NodeClass = raw.UA_NodeClass;
 
 typedef BrowseResultMask = raw.UA_BrowseResultMask;
@@ -1213,17 +1228,17 @@ class Client implements ClientApi {
               ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse> response,
             ) {
               if (response == ffi.nullptr) {
-                stderr.write(
+                _safeErr(
                   "Error deleting monitored item, nullptr provided connection propably already closed. Client cleanup.",
                 );
               } else if (response.ref.resultsSize == 0) {
-                stderr.write(
+                _safeErr(
                   "Error deleting monitored item, no results provided, connection propably already closed. Client cleanup.",
                 );
               } else {
                 for (var i = 0; i < response.ref.resultsSize; i++) {
                   if (response.ref.results[i] != raw.UA_STATUSCODE_GOOD) {
-                    stderr.write(
+                    _safeErr(
                       "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}",
                     );
                   }
@@ -1308,7 +1323,7 @@ class Client implements ClientApi {
           ) async {
             // Don't process the data if we are closed
             if (controller.isClosed) {
-              stderr.writeln("Stream closed, data still sent from monitored item $monId");
+              _safeErr("Stream closed, data still sent from monitored item $monId");
               return;
             }
             if (value == ffi.nullptr) {
@@ -1382,10 +1397,10 @@ class Client implements ClientApi {
                   controller.add(latestValues);
                 }
               } catch (e) {
-                stderr.write("Error adding data: $e");
+                _safeErr("Error adding data: $e");
               }
             } catch (e) {
-              stderr.write("Error converting data for: ${monIdToNodeAndAttribute[monId]} to type $DynamicValue: $e");
+              _safeErr("Error converting data for: ${monIdToNodeAndAttribute[monId]} to type $DynamicValue: $e");
             }
           });
 
@@ -1547,7 +1562,7 @@ class Client implements ClientApi {
                   controller.add(latestValues);
                 }
               } catch (e) {
-                stderr.writeln('Failed to backfill dropped initial notifications: $e');
+                _safeErr('Failed to backfill dropped initial notifications: $e');
               }
             });
           });
@@ -1675,7 +1690,7 @@ class Client implements ClientApi {
               completer.complete(result);
             }
           } catch (e) {
-            stderr.write("Error calling callback: $e");
+            _safeErr("Error calling callback: $e");
             completer.completeError(e, StackTrace.current);
           } finally {
             // cleanup input arguments
