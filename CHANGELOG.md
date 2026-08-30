@@ -4,8 +4,11 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
+## 1.5.7+3
 
+- **Dependency prune:** dropped `tuple` (the `Tuple2<NodeId, AttributeId>`
+  keys in the client's monitored-items bookkeeping are now Dart 3 records,
+  same structural equality) and the unused `collection` dependency.
 - **Data-source reads carry a status code + source timestamp.**
   `Server.addDataSourceVariableNode` gained `onReadValue`, a richer alternative
   to `onRead` (provide exactly one): it returns a `DataSourceValue`
