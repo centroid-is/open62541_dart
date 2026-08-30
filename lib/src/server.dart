@@ -1663,13 +1663,23 @@ class Server {
     return value;
   }
 
+  /// Writes [value] to the Value attribute of [variableNodeId].
+  ///
+  /// Throws a [UaStatusException] carrying the native status code when the
+  /// write is not Good — e.g. `Bad_NodeIdUnknown` for a missing node or
+  /// `Bad_TypeMismatch` for a value the node's DataType refuses.
+  /// (Historically the status was discarded and callers had to verify by
+  /// reading back.)
   void write(NodeId variableNodeId, DynamicValue value) {
     final variant = valueToVariant(value);
     final variableNodeIdRaw = variableNodeId.toRaw();
-    raw.UA_Server_writeValue(_server, variableNodeIdRaw, variant.ref);
+    final status = raw.UA_Server_writeValue(_server, variableNodeIdRaw, variant.ref);
     // writeValue uses the NodeId transiently for a lookup; free ours.
     _freeRawNodeId(variableNodeIdRaw);
     raw.UA_Variant_delete(variant);
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
   }
 
   /// A snapshot of the server's session / secure-channel / subscription

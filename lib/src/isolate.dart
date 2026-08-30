@@ -8,6 +8,8 @@ import 'client_api.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'node_id.dart';
+import 'third_party/open62541.g.dart' show UA_STATUSCODE_BADTIMEOUT;
+import 'types/errors.dart';
 
 // Guarded stderr: on a detached GUI process (release launch) stderr has an
 // invalid handle, and a raw stderr.write there THROWS FileSystemException
@@ -46,7 +48,8 @@ abstract class IsolateMessage {
 
 class ConnectMessage extends IsolateMessage {
   final String url;
-  const ConnectMessage(super.requestId, this.url);
+  final Duration? timeout;
+  const ConnectMessage(super.requestId, this.url, this.timeout);
 }
 
 class ReadMessage extends IsolateMessage {
@@ -188,18 +191,25 @@ class ReconnectStreamMessage extends IsolateMessage {
 class StreamDataMessage<T> {
   final String streamId;
   final T? data;
-  final String? error;
+
+  /// A [UaStatusException] or a `String` fallback — see [sendableError].
+  final Object? error;
   final bool isError;
 
   const StreamDataMessage.success(this.streamId, this.data) : error = null, isError = false;
   const StreamDataMessage.error(this.streamId, this.error) : data = null, isError = true;
 }
 
-/// Response wrapper for isolate communication
+/// Response wrapper for isolate communication.
+///
+/// [error] is either a [UaStatusException] (typed status codes survive the
+/// isolate boundary — a `UaStatusException` is immutable, closure-free data,
+/// so it ports across `SendPort.send`) or a `String` fallback for any other
+/// error type. Build it with [sendableError].
 class IsolateResponse<T> {
   final String requestId;
   final T? data;
-  final String? error;
+  final Object? error;
   final bool isError;
 
   const IsolateResponse.success(this.requestId, this.data) : error = null, isError = false;
@@ -207,6 +217,13 @@ class IsolateResponse<T> {
 
   bool get isSuccess => !isError;
 }
+
+/// Maps an error to what crosses the isolate boundary: a [UaStatusException]
+/// travels as itself (its status code survives — callers on the main isolate
+/// can `on UaStatusException catch` and read `statusCode`); anything else is
+/// stringified, because arbitrary exception types (native handles, closures)
+/// are not reliably sendable.
+Object sendableError(Object e) => e is UaStatusException ? e : e.toString();
 
 class ClientIsolate implements ClientApi {
   ClientIsolate._({
@@ -353,16 +370,28 @@ class ClientIsolate implements ClientApi {
     }
   }
 
-  /// Connect to an OPC UA server
+  /// Connect to an OPC UA server and wait for session activation.
+  ///
+  /// The worker isolate pumps its own iterate loop while the connect is in
+  /// flight, so a bare `connect()` completes on its own — no [runIterate] /
+  /// [keepConnected] needed to get through the handshake. (Historically the
+  /// handshake progressed only while something pumped, so a bare `connect()`
+  /// deadlocked.) After activation the pump stops: the session still needs
+  /// [keepConnected] (preferred — it owns the pump) or a [runIterate] loop
+  /// to process traffic.
+  ///
+  /// [timeout] bounds the attempt (default 30 s; the underlying open62541
+  /// connect otherwise retries forever): on expiry the connect attempt is
+  /// abandoned and a [UaStatusException] with `Bad_Timeout` is thrown.
   @override
-  Future<void> connect(String url) async {
+  Future<void> connect(String url, {Duration? timeout = const Duration(seconds: 30)}) async {
     if (_isClosed) throw const ClientIsolateClosedException();
 
     final completer = Completer<void>();
     final id = _generateId();
     _pendingRequests[id] = completer;
 
-    _sendPort.send(ConnectMessage(id, url));
+    _sendPort.send(ConnectMessage(id, url, timeout));
 
     try {
       await completer.future;
@@ -957,7 +986,37 @@ void _isolateEntryPoint(_IsolateData data) {
     try {
       if (message is ConnectMessage) {
         endpoint = message.url;
-        await client.connect(message.url);
+        // Pump the client's iterate loop for the duration of the handshake:
+        // open62541's connect state machine only progresses inside
+        // run_iterate, and a bare connect() has no other pump (keepConnected
+        // owns one, but must not be required just to connect). The pump ends
+        // with the connect — session traffic afterwards is the caller's
+        // pump's job.
+        final connectFuture = client.connect(message.url);
+        var connecting = true;
+        connectFuture.whenComplete(() => connecting = false).ignore();
+        unawaited(() async {
+          while (connecting) {
+            client.runIterate(const Duration(milliseconds: 5));
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+        }());
+        if (message.timeout == null) {
+          await connectFuture;
+        } else {
+          await connectFuture.timeout(
+            message.timeout!,
+            onTimeout: () {
+              // Abandon the attempt: stop the state machine so a later
+              // connect/keepConnected starts clean, and answer Bad_Timeout.
+              connecting = false;
+              try {
+                client.disconnect();
+              } catch (_) {}
+              throw const UaStatusException(UA_STATUSCODE_BADTIMEOUT);
+            },
+          );
+        }
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is ReadMessage) {
         final result = await client.read(message.nodeId);
@@ -997,7 +1056,7 @@ void _isolateEntryPoint(_IsolateData data) {
           },
           onError: (error) {
             _safeErr("[${endpoint ?? 'unknown'}] MonitoredItems stream error: $error");
-            sendPort.send(StreamDataMessage.error(message.requestId, error.toString()));
+            sendPort.send(StreamDataMessage.error(message.requestId, sendableError(error as Object)));
           },
           onDone: () {
             activeStreams.remove(message.requestId);
@@ -1099,7 +1158,7 @@ void _isolateEntryPoint(_IsolateData data) {
                 iterateInterval: message.iterateInterval,
               )
               .then((_) => sendPort.send(IsolateResponse.success(message.requestId, null)))
-              .catchError((Object e) => sendPort.send(IsolateResponse.error(message.requestId, e.toString()))),
+              .catchError((Object e) => sendPort.send(IsolateResponse.error(message.requestId, sendableError(e)))),
         );
       } else if (message is StopKeepConnectedMessage) {
         client.stopKeepConnected();
@@ -1110,7 +1169,7 @@ void _isolateEntryPoint(_IsolateData data) {
             sendPort.send(StreamDataMessage<void>.success(message.requestId, null));
           },
           onError: (error) {
-            sendPort.send(StreamDataMessage<void>.error(message.requestId, error.toString()));
+            sendPort.send(StreamDataMessage<void>.error(message.requestId, sendableError(error as Object)));
           },
           onDone: () {
             activeStreams.remove(message.requestId);
@@ -1130,7 +1189,7 @@ void _isolateEntryPoint(_IsolateData data) {
           },
           onError: (error) {
             _safeErr("[${endpoint ?? 'unknown'}] State stream error: $error");
-            sendPort.send(StreamDataMessage.error(message.requestId, error.toString()));
+            sendPort.send(StreamDataMessage.error(message.requestId, sendableError(error as Object)));
           },
           onDone: () {
             activeStreams.remove(message.requestId);
@@ -1145,7 +1204,7 @@ void _isolateEntryPoint(_IsolateData data) {
     } catch (e) {
       _safeErr("[${endpoint ?? 'unknown'}] Error in isolate: $e");
       if (message is IsolateMessage) {
-        sendPort.send(IsolateResponse.error(message.requestId, e.toString()));
+        sendPort.send(IsolateResponse.error(message.requestId, sendableError(e)));
       }
     }
   });
