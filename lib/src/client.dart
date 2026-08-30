@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
-import 'package:tuple/tuple.dart';
 
 import 'package:open62541/src/types/errors.dart';
 import 'client_api.dart';
@@ -1343,7 +1342,7 @@ class Client implements ClientApi {
     // so each item instead carries its request-order index as its monitored-item
     // context — an opaque pointer open62541 stores at request time and hands
     // back to every data callback — and this list resolves index -> item.
-    final List<Tuple2<NodeId, AttributeId>> itemOrder = [];
+    final List<(NodeId, AttributeId)> itemOrder = [];
 
     // Track config stream subscriptions so we can cancel them on close
     StreamSubscription? inactivitySub, deletedSub, stateSub;
@@ -1471,7 +1470,7 @@ class Client implements ClientApi {
           monRequest[index].requestedParameters.samplingInterval = samplingInterval.inMicroseconds / 1000.0;
           monRequest[index].requestedParameters.discardOldest = discardOldest;
           monRequest[index].requestedParameters.queueSize = queueSize;
-          itemOrder.add(Tuple2(entry.key, attribute));
+          itemOrder.add((entry.key, attribute));
           index++;
         }
       }
@@ -1535,8 +1534,8 @@ class Client implements ClientApi {
             }
             final item = itemOrder[index];
             try {
-              final nodeId = item.item1;
-              final attributeId = item.item2;
+              final nodeId = item.$1;
+              final attributeId = item.$2;
 
               var reference = latestValues[nodeId] ?? DynamicValue();
               final ref = value.ref.value;
@@ -1737,7 +1736,7 @@ class Client implements ClientApi {
 
             assert(response.ref.resultsSize == nodeCount);
             int index = 0;
-            Map<Tuple2<NodeId, AttributeId>, int> failures = {};
+            Map<(NodeId, AttributeId), int> failures = {};
             for (var node in nodes.keys) {
               for (var attribute in nodes[node]!) {
                 if (response.ref.results[index].statusCode == raw.UA_STATUSCODE_GOOD) {
@@ -1747,7 +1746,7 @@ class Client implements ClientApi {
                   // Allow for the description attribute to be missing
                   if (response.ref.results[index].statusCode != raw.UA_STATUSCODE_BADATTRIBUTEIDINVALID &&
                       attribute != AttributeId.UA_ATTRIBUTEID_DESCRIPTION) {
-                    failures[Tuple2(node, attribute)] = response.ref.results[index].statusCode;
+                    failures[(node, attribute)] = response.ref.results[index].statusCode;
                   } else {
                     descriptionFailureCount++;
                   }
@@ -1790,7 +1789,7 @@ class Client implements ClientApi {
               for (final index in createdIndexes) {
                 if (!seenIndexes.contains(index)) {
                   final item = itemOrder[index];
-                  missingAttrs.putIfAbsent(item.item1, () => []).add(item.item2);
+                  missingAttrs.putIfAbsent(item.$1, () => []).add(item.$2);
                 }
               }
               if (missingAttrs.isEmpty) return;
