@@ -195,43 +195,6 @@ struct size is unchanged) so the generator does not drop the surrounding members
   DataSetMetaData ConfigurationVersion handling are not exposed. Dataset fields
   on the subscriber side must use builtin namespace-0 data types.
 
-### Outstanding follow-ups
-
-Gaps found while building an aggregator on this library (each verified against
-the vendored 1.5.7 source; roughly in priority order):
-
-- **Method callbacks are synchronous and cannot `await`** — a handler that
-  completes asynchronously must answer immediately (callers end up with
-  "pending"-style contracts). open62541 has async-operation support that could
-  back an async callback variant.
-- **Only the first method output argument reaches the caller** — multi-output
-  methods silently drop outputs 2..n; workaround is a single JSON string.
-- **Session identity is not surfaced to method callbacks** — the native
-  `UA_MethodCallback` already receives the sessionId; the bindings drop it.
-  Blocks per-user audit trails.
-- **Server security / access control is absent** — the server is built with
-  `UA_ServerConfig_setMinimal`: anonymous, SecurityPolicy None, every session
-  has all rights. Server-side certificates, username tokens, and the
-  `UA_AccessControl` hook surface are not exposed.
-- **Client namespace-array snapshot** — a client caches the server's
-  NamespaceArray right after session activation and remaps every outgoing
-  NodeId through it; namespaces added later are unaddressable for that session
-  (reconnect required). ns 0/1 are always identity-mapped.
-- **No DataChangeFilter on monitored items** (deadbands must be applied
-  client-side), and revised sampling/publishing intervals are not surfaced.
-- **`Server.write` discards the native status code**; data-source `onWrite` is
-  synchronous `void`, so a write whose downstream completion is asynchronous
-  cannot answer the in-flight client operation with its real result.
-- **`ClientIsolate` marshals stream errors as strings** — a typed
-  `UaStatusException` thrown in-process loses its status code across the
-  isolate boundary.
-- **A bare `ClientIsolate.connect()` deadlocks** — nothing pumps the isolate's
-  iterate loop unless `keepConnected` is running; either make `connect` pump
-  until the session activates or document `keepConnected` as mandatory.
-- **NS0 `ServiceLevel` / `ServerRedundancy` are not writable** (an internal
-  value callback pins ServiceLevel at 255) — servers implementing redundancy
-  must use vendor nodes.
-
 ## License
 
 MIT. See [LICENSE](LICENSE).
