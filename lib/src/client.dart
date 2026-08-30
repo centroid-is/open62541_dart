@@ -79,6 +79,43 @@ class BrowseTreeItem {
   }
 }
 
+/// A full OPC UA read result: the decoded [value] together with the
+/// operation's [statusCode] and the source/server timestamps.
+///
+/// Returned by [Client.readValue]. Unlike [Client.read] (which throws on any
+/// non-Good status), a [DataValue] surfaces the quality: per OPC UA a Bad
+/// status may still carry a value — e.g. a proxy serving the last-known value
+/// with `Bad_NoCommunication` while its backing device is down.
+class DataValue {
+  const DataValue({required this.value, required this.statusCode, this.sourceTimestamp, this.serverTimestamp});
+
+  /// The decoded value. An empty [DynamicValue] when the server sent none
+  /// (common for Bad statuses without a last-known value).
+  final DynamicValue value;
+
+  /// The operation-level OPC UA status code (`UA_STATUSCODE_GOOD` when the
+  /// server omitted an explicit status).
+  final int statusCode;
+
+  /// When the underlying value was produced/sampled at the source, or `null`
+  /// if the server did not return one.
+  final DateTime? sourceTimestamp;
+
+  /// When the server processed the read, or `null` if not returned.
+  final DateTime? serverTimestamp;
+
+  /// Severity bits (top two bits of the status code): 00 Good, 01 Uncertain,
+  /// 10 Bad.
+  bool get isGood => (statusCode >> 30) == 0x0;
+  bool get isUncertain => (statusCode >> 30) == 0x1;
+  bool get isBad => (statusCode >> 30) == 0x2;
+
+  @override
+  String toString() =>
+      'DataValue(status: 0x${statusCode.toRadixString(16).padLeft(8, '0')}, '
+      'sourceTimestamp: $sourceTimestamp, serverTimestamp: $serverTimestamp, value: ${value.value})';
+}
+
 class ClientState {
   SecureChannelState channelState;
   SessionState sessionState;
@@ -482,14 +519,15 @@ class Client implements ClientApi {
             return; // Request timed out already
           }
           raw.UA_Variant_delete(variant);
+          // Fail with a typed UaStatusException so the exact service/operation
+          // status code is programmatically extractable (e.g. a data-source
+          // node rejecting the write with Bad_NotWritable).
           if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-            completer.completeError(
-              'Failed to write value: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
-            );
+            completer.completeError(UaStatusException(response.ref.responseHeader.serviceResult));
             return;
           }
           if (response.ref.results.value != raw.UA_STATUSCODE_GOOD) {
-            completer.completeError('Failed to write value: ${statusCodeToString(response.ref.results.value)}');
+            completer.completeError(UaStatusException(response.ref.results.value));
             return;
           }
           completer.complete();
@@ -543,6 +581,126 @@ class Client implements ClientApi {
     assert(results.length == 1);
     assert(results.containsKey(nodeId));
     return results[nodeId]!;
+  }
+
+  /// Reads the Value attribute of [nodeId] together with its OPC UA status
+  /// code and source/server timestamps.
+  ///
+  /// Unlike [read] (which throws on any non-Good status), a non-Good
+  /// *operation* status does not throw here: it is returned in
+  /// [DataValue.statusCode] alongside whatever value the server attached (OPC
+  /// UA allows a Bad status to still carry a value — e.g. a data-source proxy
+  /// serving its last-known value with `Bad_NoCommunication`). A failed
+  /// *service* call (broken connection, bad service result) still completes
+  /// with an error.
+  @override
+  Future<DataValue> readValue(NodeId nodeId) {
+    final completer = Completer<DataValue>();
+
+    final readValueId = ua_calloc<raw.UA_ReadValueId>();
+    readValueId.ref.nodeId = nodeId.toRaw();
+    readValueId.ref.attributeId = AttributeId.UA_ATTRIBUTEID_VALUE.value;
+
+    final request = raw.UA_ReadRequest_new();
+    raw.UA_ReadRequest_init(request);
+    request.ref.nodesToRead = readValueId;
+    request.ref.nodesToReadSize = 1;
+    request.ref.timestampsToReturnAsInt = raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH.value;
+
+    final requestIdPtr = ua_calloc<ffi.Uint32>();
+
+    late ffi.NativeCallable<
+      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+    >
+    callback;
+
+    callback =
+        ffi.NativeCallable<
+          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          int requestId,
+          ffi.Pointer<ffi.Void> voidPointer,
+        ) async {
+          callback.close();
+          raw.UA_ReadRequest_delete(request);
+          ua_calloc.free(requestIdPtr);
+
+          if (voidPointer == ffi.nullptr) {
+            completer.completeError('readValue callback received null pointer');
+            return;
+          }
+          final ffi.Pointer<raw.UA_ReadResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
+          if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+            completer.completeError(
+              'Failed to read value: ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
+            );
+            return;
+          }
+          if (response.ref.resultsSize != 1) {
+            completer.completeError(
+              'The connection might be broken, got no response when reading the value of $nodeId',
+            );
+            return;
+          }
+
+          // Steal a deep copy of the DataValue: the decode below crosses async
+          // boundaries and open62541 frees the response when this callback
+          // returns (same technique as readAttribute).
+          final source = ua_calloc<raw.UA_DataValue>();
+          source.ref = response.ref.results[0];
+          final copy = raw.UA_DataValue_new();
+          raw.UA_DataValue_init(copy);
+          raw.UA_DataValue_copy(source, copy);
+          ua_calloc.free(source);
+
+          try {
+            // UA_DataValue flag bits (see the header's bitfield, replaced by
+            // the `substitute` byte in the patched bindings): hasValue 0x01,
+            // hasStatus 0x02, hasSourceTimestamp 0x04, hasServerTimestamp 0x08.
+            final flags = copy.ref.substitute;
+            final statusCode = (flags & 0x02) != 0 ? copy.ref.status : raw.UA_STATUSCODE_GOOD;
+            final sourceTimestamp = (flags & 0x04) != 0 ? uaDateTimeToDateTime(copy.ref.sourceTimestamp) : null;
+            final serverTimestamp = (flags & 0x08) != 0 ? uaDateTimeToDateTime(copy.ref.serverTimestamp) : null;
+            DynamicValue value = DynamicValue();
+            if ((flags & 0x01) != 0 && copy.ref.value.data != ffi.nullptr) {
+              value = await _variantToValueAutoSchema(copy.ref.value);
+            }
+            if (!completer.isCompleted) {
+              completer.complete(
+                DataValue(
+                  value: value,
+                  statusCode: statusCode,
+                  sourceTimestamp: sourceTimestamp,
+                  serverTimestamp: serverTimestamp,
+                ),
+              );
+            }
+          } catch (e, st) {
+            if (!completer.isCompleted) completer.completeError(e, st);
+          } finally {
+            raw.UA_DataValue_delete(copy);
+          }
+        });
+
+    final res = raw.UA_Client_AsyncService(
+      _client,
+      request.cast(),
+      getType(UaTypes.readRequest),
+      callback.nativeFunction,
+      getType(UaTypes.readResponse),
+      ffi.nullptr,
+      requestIdPtr,
+    );
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      callback.close();
+      raw.UA_ReadRequest_delete(request);
+      ua_calloc.free(requestIdPtr);
+      completer.completeError('Failed to read value: ${statusCodeToString(res)}');
+    }
+
+    return completer.future;
   }
 
   // Reimplementation of the readAttribute method from open62541
@@ -1359,7 +1517,11 @@ class Client implements ClientApi {
               return;
             }
             if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
-              controller.addError('Failed to read value: ${statusCodeToString(value.ref.status)}');
+              // Surface the exact notification status as a typed error so the
+              // code is extractable (e.g. Bad_NoCommunication from a
+              // data-source node whose backing device is down). The
+              // notification's value/timestamps are not delivered.
+              controller.addError(UaStatusException(value.ref.status));
               return;
             }
             // Identify the item by its request-time context (request-order index

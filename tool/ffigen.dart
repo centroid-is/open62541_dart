@@ -124,6 +124,9 @@ Future<void> main() async {
       'UA_Server_getReaderGroupState',
       'UA_Server_getDataSetReaderState',
 
+      // Statistics / diagnostics
+      'UA_Server_getStatistics',
+
       'UA_DataTypeAttributes_new',
       'UA_DataTypeAttributes_delete',
 
@@ -242,6 +245,12 @@ Future<void> main() async {
       'UA_BrowseDescription',
       'UA_BrowseResult',
       'UA_ReferenceDescription',
+      // Statistics / diagnostics structs
+      'UA_ServerStatistics',
+      'UA_SecureChannelStatistics',
+      'UA_SessionStatistics',
+      'UA_ServerDiagnosticsSummaryDataType',
+      'UA_SubscriptionDiagnosticsDataType',
       // PubSub structs
       'UA_PublisherId',
       'UA_PubSubConnectionConfig',

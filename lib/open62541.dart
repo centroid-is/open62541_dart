@@ -1,7 +1,9 @@
 library;
 
 export 'src/access_level.dart' show AccessLevelMask;
-export 'src/client.dart' show Client, ClientState, BrowseResultItem, BrowseTreeItem, NodeClass, BrowseResultMask;
+export 'src/client.dart'
+    show Client, ClientState, DataValue, BrowseResultItem, BrowseTreeItem, NodeClass, BrowseResultMask;
+export 'src/common.dart' show statusCodeToString;
 export 'src/dynamic_value.dart' show DynamicValue, LocalizedText, EnumField, Schema;
 export 'src/extensions.dart'
     show
@@ -16,6 +18,10 @@ export 'src/extensions.dart'
 export 'src/third_party/open62541.g.dart'
     show
         UA_STATUSCODE_GOOD,
+        UA_STATUSCODE_BADNOCOMMUNICATION,
+        UA_STATUSCODE_BADNOTWRITABLE,
+        UA_STATUSCODE_BADUSERACCESSDENIED,
+        UA_STATUSCODE_BADINTERNALERROR,
         UA_OPEN62541_VER_MAJOR,
         UA_OPEN62541_VER_MINOR,
         UA_OPEN62541_VER_PATCH,
@@ -31,8 +37,8 @@ export 'src/pubsub.dart'
         DataSetFieldMeta,
         pubSubTransportUdpUadp,
         uadpDefaultNetworkMessageContentMask;
-export 'src/server.dart' show Server, Argument;
-export 'src/types/errors.dart' show Inactivity, SecureChannelClosed, SubscriptionDeleted;
+export 'src/server.dart' show Server, Argument, DataSourceValue, ServerStatistics;
+export 'src/types/errors.dart' show Inactivity, SecureChannelClosed, SubscriptionDeleted, UaStatusException;
 export 'src/isolate.dart' show ClientIsolate;
 export 'src/client_api.dart' show ClientApi;
 export 'src/types/opcua_serializer.dart' show OpcUaDynamicValueSerializer;

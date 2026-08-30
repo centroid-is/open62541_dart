@@ -6,6 +6,55 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **Data-source reads carry a status code + source timestamp.**
+  `Server.addDataSourceVariableNode` gained `onReadValue`, a richer alternative
+  to `onRead` (provide exactly one): it returns a `DataSourceValue`
+  (`value` + `statusCode` + optional `sourceTimestamp`), letting a proxy serve
+  e.g. its last-known value with `Bad_NoCommunication` while the backing
+  device is down instead of silently reporting stale data as Good (a Bad
+  status still carries the value, as OPC UA allows). On the client,
+  `Client.readValue(nodeId)` (also on `ClientApi`/`ClientIsolate`) returns a
+  `DataValue` — decoded value, operation `statusCode`
+  (`isGood`/`isUncertain`/`isBad`), `sourceTimestamp` and `serverTimestamp` —
+  and does NOT throw on a non-Good operation status; `Client.read`/
+  `readAttribute` keep their existing throw-on-non-Good behavior. Monitored
+  items already surfaced a non-Good notification as a stream *error* event
+  (the notification's value/timestamps are not delivered on the data stream);
+  that behavior is unchanged and now documented — the error carries the
+  decoded status. Also exported: `statusCodeToString` and the
+  `UA_STATUSCODE_BADNOCOMMUNICATION` / `BADNOTWRITABLE` / `BADUSERACCESSDENIED`
+  / `BADINTERNALERROR` constants.
+- **Typed status-code rejection for data-source writes.** New
+  `UaStatusException(statusCode)` (exported): a data-source `onWrite` that
+  throws it answers the client with exactly that status code — e.g.
+  `Bad_NotWritable` (0x803B0000) for a gate-denied write or
+  `Bad_UserAccessDenied` (0x801F0000) — instead of the generic
+  `Bad_InternalError` that any other throw still maps to. The read dispatcher
+  honors it symmetrically (`onRead`/`onReadValue` throwing one fails the read
+  with that code and no value). Client side, the code is now extractable:
+  `Client.write` fails with a `UaStatusException` carrying the operation (or
+  service) status instead of a formatted string, and a monitored-item stream's
+  error event for a non-Good notification is a `UaStatusException` too (was a
+  string; `ClientIsolate` still marshals stream/request errors as strings
+  across the isolate boundary, so there the code survives only inside the
+  message text).
+- **Server session/subscription statistics.** New `Server.statistics` returns
+  a `ServerStatistics` snapshot: the secure-channel counters
+  (`currentChannelCount`, `cumulatedChannelCount`, rejected/timeout/abort/
+  purge) and session counters (`currentSessionCount`,
+  `cumulatedSessionCount`, securityRejected/rejected/timeout/abort) from
+  `UA_Server_getStatistics()`, plus `currentSubscriptionCount`,
+  `cumulatedSubscriptionCount` and `currentMonitoredItemCount` (the sum of
+  the per-subscription `monitoredItemCount`s) read from the NS0
+  server-diagnostics nodes. No native/CMake change was needed:
+  `UA_ENABLE_DIAGNOSTICS` is ON by default in open62541 1.5.7 and was already
+  part of this package's build — the subscription-side fields are typed
+  nullable and come back `null` only on a build without those NS0 nodes.
+  Regenerated the FFI bindings (additive) with `UA_Server_getStatistics` and
+  the `UA_ServerStatistics` / `UA_SecureChannelStatistics` /
+  `UA_SessionStatistics` / `UA_ServerDiagnosticsSummaryDataType` /
+  `UA_SubscriptionDiagnosticsDataType` structs; `test/verify_sizes_test.dart`
+  pins their layouts against the native type table.
 - **PubSub (OPC UA Part 14) support**, UDP + UADP transport. The native build
   now enables `UA_ENABLE_PUBSUB` and `UA_ENABLE_PUBSUB_INFORMATIONMODEL`
   (bundled open62541 still v1.5.7; MQTT/SKS/raw-Ethernet transports stay off),

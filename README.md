@@ -180,6 +180,16 @@ struct size is unchanged) so the generator does not drop the surrounding members
   (v1.5.x), so they do not surface from a remote server. For an in-process Dart
   `Server` + `Client`, descriptions are restored from the locally registered
   schema.
+- Monitored-item notifications do not surface per-notification status codes or
+  timestamps on the value stream: a notification with a non-Good status is
+  delivered as an *error* event on the stream (carrying the status), and its
+  value/timestamps are dropped. Use `Client.readValue` to observe a node's
+  value together with its status code and source/server timestamps.
+- `Server.statistics` exposes aggregate counters only (sessions, secure
+  channels, subscriptions, total monitored items). Per-session and
+  per-subscription diagnostic detail (client identity, publish rates, queue
+  overflows, ...) exists in the NS0 diagnostics nodes but is not surfaced as a
+  typed Dart API.
 - PubSub: only the UDP + UADP transport is enabled (no MQTT/raw Ethernet), and
   message security (SKS / PubSub security policies), delta frames and
   DataSetMetaData ConfigurationVersion handling are not exposed. Dataset fields

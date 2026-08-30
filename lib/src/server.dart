@@ -31,6 +31,94 @@ class Argument {
   final LocalizedText? description;
 }
 
+/// A snapshot of the server's session / secure-channel / subscription
+/// counters. Returned by [Server.statistics].
+///
+/// The secure-channel and session counters come from open62541's
+/// `UA_Server_getStatistics()` (the session layer matches OPC UA Part 5's
+/// ServerDiagnosticsSummaryDataType counters). The subscription and
+/// monitored-item counters come from the NS0 server-diagnostics nodes
+/// (`UA_ENABLE_DIAGNOSTICS`, on in this package's build); they are `null` if
+/// those nodes are unavailable (e.g. a build without diagnostics).
+class ServerStatistics {
+  const ServerStatistics({
+    required this.currentChannelCount,
+    required this.cumulatedChannelCount,
+    required this.rejectedChannelCount,
+    required this.channelTimeoutCount,
+    required this.channelAbortCount,
+    required this.channelPurgeCount,
+    required this.currentSessionCount,
+    required this.cumulatedSessionCount,
+    required this.securityRejectedSessionCount,
+    required this.rejectedSessionCount,
+    required this.sessionTimeoutCount,
+    required this.sessionAbortCount,
+    required this.currentSubscriptionCount,
+    required this.cumulatedSubscriptionCount,
+    required this.currentMonitoredItemCount,
+  });
+
+  // Secure-channel layer.
+  final int currentChannelCount;
+  final int cumulatedChannelCount;
+  final int rejectedChannelCount;
+  final int channelTimeoutCount;
+  final int channelAbortCount;
+  final int channelPurgeCount;
+
+  // Session layer.
+  final int currentSessionCount;
+  final int cumulatedSessionCount;
+  final int securityRejectedSessionCount;
+  final int rejectedSessionCount;
+  final int sessionTimeoutCount;
+  final int sessionAbortCount;
+
+  /// Subscriptions currently alive on the server, or `null` when the NS0
+  /// diagnostics nodes are unavailable.
+  final int? currentSubscriptionCount;
+
+  /// Subscriptions created since server start, or `null` when unavailable.
+  final int? cumulatedSubscriptionCount;
+
+  /// Monitored items currently alive across all subscriptions (the sum of
+  /// each subscription's `monitoredItemCount` from the NS0
+  /// SubscriptionDiagnosticsArray), or `null` when unavailable.
+  final int? currentMonitoredItemCount;
+
+  @override
+  String toString() =>
+      'ServerStatistics(sessions: $currentSessionCount (cumulated $cumulatedSessionCount), '
+      'channels: $currentChannelCount (cumulated $cumulatedChannelCount), '
+      'subscriptions: $currentSubscriptionCount (cumulated $cumulatedSubscriptionCount), '
+      'monitoredItems: $currentMonitoredItemCount)';
+}
+
+/// The complete read result of a data-source variable node: the [value] plus
+/// the OPC UA operation [statusCode] and an optional [sourceTimestamp].
+///
+/// Returned by the `onReadValue` callback of
+/// [Server.addDataSourceVariableNode] so a data source can serve OPC UA
+/// quality alongside the value. Per OPC UA a Bad status may still carry a
+/// value (e.g. last-known value + `Bad_NoCommunication` while the underlying
+/// device is unreachable) — the dispatcher forwards both to the client.
+class DataSourceValue {
+  DataSourceValue({required this.value, this.statusCode = raw.UA_STATUSCODE_GOOD, this.sourceTimestamp});
+
+  /// The value served to the client (sent even when [statusCode] is Bad).
+  final DynamicValue value;
+
+  /// The OPC UA status of this read (e.g. `UA_STATUSCODE_BADNOCOMMUNICATION`).
+  /// Defaults to Good. Reported to the client as the DataValue's status.
+  final int statusCode;
+
+  /// The source timestamp of the value (when the underlying value was
+  /// produced/sampled). When `null` open62541 stamps the current time. The
+  /// server only sends it when the client requested source timestamps.
+  final DateTime? sourceTimestamp;
+}
+
 class Server {
   Server({LogLevel? logLevel, int? port}) {
     final config = ua_calloc<raw.UA_ServerConfig>();
@@ -85,7 +173,7 @@ class Server {
     )
   >?
   _dsWriteDispatcher;
-  final Map<NodeId, DynamicValue Function()> _dataSourceReads = {};
+  final Map<NodeId, DataSourceValue Function()> _dataSourceReads = {};
   final Map<NodeId, void Function(DynamicValue)> _dataSourceWrites = {};
 
   // The declared DataType of each data-source node whose `typeId` was given.
@@ -321,8 +409,8 @@ class Server {
         }
         // onRead is synchronous and may throw; a throw surfaces to the client
         // as a Bad status rather than crashing the isolate.
-        final dyn = handler();
-        srcVar = valueToVariant(dyn);
+        final dsv = handler();
+        srcVar = valueToVariant(dsv.value);
         // UA_Variant is the first member of UA_DataValue, so a UA_DataValue*
         // cast to UA_Variant* points at the inline `value` field. Deep-copy the
         // freshly built variant into it (the server owns/frees it afterwards).
@@ -332,7 +420,29 @@ class Server {
         }
         // Flag hasValue (bit 0 of the UA_DataValue bitfield byte).
         value.ref.substitute = value.ref.substitute | 0x01;
+        // Operation status: OPC UA allows a Bad/Uncertain status to still
+        // carry a value (last-known + Bad_NoCommunication is the canonical
+        // HMI case), so the value copied above is kept either way. hasStatus
+        // (bit 1) is only flagged for a non-Good code — an omitted status
+        // means Good on the wire.
+        if (dsv.statusCode != raw.UA_STATUSCODE_GOOD) {
+          value.ref.status = dsv.statusCode;
+          value.ref.substitute = value.ref.substitute | 0x02;
+        }
+        // Source timestamp (hasSourceTimestamp is bit 2). Set unconditionally
+        // when provided: open62541's read service strips source timestamps
+        // the request did not ask for, and stamps "now" when the source did
+        // not provide one — so this only ever *adds* fidelity.
+        final sourceTimestamp = dsv.sourceTimestamp;
+        if (sourceTimestamp != null) {
+          value.ref.sourceTimestamp = dateTimeToUaDateTime(sourceTimestamp);
+          value.ref.substitute = value.ref.substitute | 0x04;
+        }
         return raw.UA_STATUSCODE_GOOD;
+      } on UaStatusException catch (e) {
+        // Typed rejection: the callback chose the exact status code the
+        // client receives (mirrors the write dispatcher below).
+        return e.statusCode;
       } catch (_) {
         return raw.UA_STATUSCODE_BADINTERNALERROR;
       } finally {
@@ -386,6 +496,12 @@ class Server {
         }
         handler(dyn);
         return raw.UA_STATUSCODE_GOOD;
+      } on UaStatusException catch (e) {
+        // Typed rejection: [onWrite] threw a UaStatusException to answer the
+        // client with a specific status code (e.g. Bad_NotWritable or
+        // Bad_UserAccessDenied) instead of the generic Bad_InternalError that
+        // any other throw maps to.
+        return e.statusCode;
       } catch (_) {
         return raw.UA_STATUSCODE_BADINTERNALERROR;
       }
@@ -429,13 +545,28 @@ class Server {
   /// * [onRead] is **synchronous** and returns the current value. It fires
   ///   inside the server's `runIterate` on the calling isolate, so it cannot
   ///   `await`. If it throws, the client read fails with a Bad status
-  ///   (`BadInternalError`) — the isolate is never crashed.
+  ///   (`BadInternalError`, or the thrown [UaStatusException]'s code) — the
+  ///   isolate is never crashed.
+  /// * [onReadValue] is the richer alternative to [onRead]: it returns a
+  ///   [DataSourceValue] carrying the value **plus** an OPC UA status code and
+  ///   an optional source timestamp, so a proxy can serve e.g. the last-known
+  ///   value with `Bad_NoCommunication` while the backing device is down
+  ///   instead of silently reporting stale data as Good. Provide exactly one
+  ///   of [onRead] / [onReadValue] (they are mutually exclusive; [onRead] is
+  ///   equivalent to an [onReadValue] that always reports Good and no source
+  ///   timestamp).
   /// * [onWrite] (optional) receives the [DynamicValue] a client wrote. Passing
   ///   `null` makes the node read-only: the node is created without the Write
   ///   access bit, so client writes are rejected with `BadNotWritable`. When
-  ///   [onWrite] throws, the write fails with `BadInternalError`. `void` return
-  ///   semantics (throw-for-bad) are used rather than an `int` status code to
-  ///   keep the surface pure-Dart and mirror [onRead]'s throw behaviour.
+  ///   [onWrite] throws a [UaStatusException], the client receives exactly that
+  ///   status code (e.g. `UA_STATUSCODE_BADNOTWRITABLE` for a gate-denied
+  ///   write); any other throw fails the write with `BadInternalError`. `void`
+  ///   return semantics (throw-for-bad) are used rather than an `int` status
+  ///   code to keep the surface pure-Dart and mirror [onRead]'s throw
+  ///   behaviour. [onRead]/[onReadValue] honor [UaStatusException] the same
+  ///   way (the read fails with the thrown code and no value; to serve a value
+  ///   WITH a Bad status, return a [DataSourceValue] from [onReadValue]
+  ///   instead).
   /// * [accessLevel] defaults to read + (write iff [onWrite] != null). Pass a
   ///   value to override (e.g. to expose a writable node whose backing store is
   ///   currently read-only).
@@ -460,7 +591,8 @@ class Server {
   /// full value instead of the requested slice.
   void addDataSourceVariableNode(
     NodeId nodeId, {
-    required DynamicValue Function() onRead,
+    DynamicValue Function()? onRead,
+    DataSourceValue Function()? onReadValue,
     void Function(DynamicValue value)? onWrite,
     required String browseName,
     NodeId? parentNodeId,
@@ -469,6 +601,9 @@ class Server {
     NodeId? typeId,
     AccessLevelMask? accessLevel,
   }) {
+    if ((onRead == null) == (onReadValue == null)) {
+      throw ArgumentError('Provide exactly one of onRead / onReadValue');
+    }
     _ensureDataSourceDispatchers();
 
     final effectiveAccess = accessLevel ?? AccessLevelMask(read: true, write: onWrite != null);
@@ -536,7 +671,7 @@ class Server {
     //    entries earlier (and removing them again on failure) would let a failed
     //    duplicate add - e.g. BadNodeIdExists for a NodeId that already has a
     //    data source - wipe the EXISTING node's live handlers and schema.
-    _dataSourceReads[nodeId] = onRead;
+    _dataSourceReads[nodeId] = onReadValue ?? (() => DataSourceValue(value: onRead!()));
     if (onWrite != null) {
       _dataSourceWrites[nodeId] = onWrite;
     }
@@ -1119,6 +1254,79 @@ class Server {
     // writeValue uses the NodeId transiently for a lookup; free ours.
     _freeRawNodeId(variableNodeIdRaw);
     raw.UA_Variant_delete(variant);
+  }
+
+  /// A snapshot of the server's session / secure-channel / subscription
+  /// statistics.
+  ///
+  /// Secure-channel and session counters come from
+  /// `UA_Server_getStatistics()`. Subscription and monitored-item counts are
+  /// read from the NS0 server-diagnostics nodes (ServerDiagnosticsSummary and
+  /// SubscriptionDiagnosticsArray, present because the native build enables
+  /// `UA_ENABLE_DIAGNOSTICS` — open62541 1.5's default); those fields are
+  /// `null` if the nodes cannot be read. Counters are maintained by the
+  /// server itself, so the snapshot is consistent with the last processed
+  /// [runIterate].
+  ServerStatistics get statistics {
+    final stats = raw.UA_Server_getStatistics(_server);
+
+    // Subscription counts: NS0 Server/ServerDiagnostics/ServerDiagnosticsSummary
+    // (i=2275) serves a scalar UA_ServerDiagnosticsSummaryDataType via a
+    // diagnostics value callback.
+    int? currentSubscriptions;
+    int? cumulatedSubscriptions;
+    final summaryVariant = raw.UA_Variant_new();
+    final summaryNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERDIAGNOSTICS_SERVERDIAGNOSTICSSUMMARY).toRaw();
+    final summaryStatus = raw.UA_Server_readValue(_server, summaryNodeId, summaryVariant);
+    if (summaryStatus == raw.UA_STATUSCODE_GOOD &&
+        summaryVariant.ref.type == getTypeByIndex(raw.UA_TYPES_SERVERDIAGNOSTICSSUMMARYDATATYPE) &&
+        summaryVariant.ref.data != ffi.nullptr) {
+      final summary = summaryVariant.ref.data.cast<raw.UA_ServerDiagnosticsSummaryDataType>().ref;
+      currentSubscriptions = summary.currentSubscriptionCount;
+      cumulatedSubscriptions = summary.cumulatedSubscriptionCount;
+    }
+    raw.UA_Variant_delete(summaryVariant);
+
+    // Monitored items: NS0 Server/ServerDiagnostics/SubscriptionDiagnosticsArray
+    // (i=2290) serves one UA_SubscriptionDiagnosticsDataType per live
+    // subscription; the total is the sum of their monitoredItemCount fields.
+    int? currentMonitoredItems;
+    final subsVariant = raw.UA_Variant_new();
+    final subsNodeId = NodeId.fromNumeric(
+      0,
+      raw.UA_NS0ID_SERVER_SERVERDIAGNOSTICS_SUBSCRIPTIONDIAGNOSTICSARRAY,
+    ).toRaw();
+    final subsStatus = raw.UA_Server_readValue(_server, subsNodeId, subsVariant);
+    if (subsStatus == raw.UA_STATUSCODE_GOOD &&
+        subsVariant.ref.type == getTypeByIndex(raw.UA_TYPES_SUBSCRIPTIONDIAGNOSTICSDATATYPE)) {
+      var total = 0;
+      // An empty array uses open62541's non-null empty-array sentinel for
+      // `data`; arrayLength 0 keeps the loop from touching it either way.
+      final entries = subsVariant.ref.data.cast<raw.UA_SubscriptionDiagnosticsDataType>();
+      for (var i = 0; i < subsVariant.ref.arrayLength; i++) {
+        total += (entries + i).ref.monitoredItemCount;
+      }
+      currentMonitoredItems = total;
+    }
+    raw.UA_Variant_delete(subsVariant);
+
+    return ServerStatistics(
+      currentChannelCount: stats.scs.currentChannelCount,
+      cumulatedChannelCount: stats.scs.cumulatedChannelCount,
+      rejectedChannelCount: stats.scs.rejectedChannelCount,
+      channelTimeoutCount: stats.scs.channelTimeoutCount,
+      channelAbortCount: stats.scs.channelAbortCount,
+      channelPurgeCount: stats.scs.channelPurgeCount,
+      currentSessionCount: stats.ss.currentSessionCount,
+      cumulatedSessionCount: stats.ss.cumulatedSessionCount,
+      securityRejectedSessionCount: stats.ss.securityRejectedSessionCount,
+      rejectedSessionCount: stats.ss.rejectedSessionCount,
+      sessionTimeoutCount: stats.ss.sessionTimeoutCount,
+      sessionAbortCount: stats.ss.sessionAbortCount,
+      currentSubscriptionCount: currentSubscriptions,
+      cumulatedSubscriptionCount: cumulatedSubscriptions,
+      currentMonitoredItemCount: currentMonitoredItems,
+    );
   }
 
   // populate structschema for out type
