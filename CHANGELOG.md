@@ -4,6 +4,48 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## Unreleased
+
+- **PubSub (OPC UA Part 14) support**, UDP + UADP transport. The native build
+  now enables `UA_ENABLE_PUBSUB` and `UA_ENABLE_PUBSUB_INFORMATIONMODEL`
+  (bundled open62541 still v1.5.7; MQTT/SKS/raw-Ethernet transports stay off),
+  and `Server` gained an idiomatic PubSub API. Publisher side:
+  `addPubSubConnection` (UDP multicast/unicast URL + `PubSubPublisherId`),
+  `addPublishedDataSet`, `addDataSetField` (publishes an existing variable
+  node), `addWriterGroup` (publishing interval; UADP message settings default
+  to sending PublisherId/GroupHeader/WriterGroupId/PayloadHeader so readers can
+  match) and `addDataSetWriter`. Subscriber side (which in OPC UA also hangs
+  off the *server*): `addReaderGroup`, `addDataSetReader` (matches
+  publisherId/writerGroupId/dataSetWriterId and carries the DataSetMetaData
+  built from `DataSetFieldMeta` entries) and `setDataSetReaderTargetVariables`
+  (maps received fields positionally into local variable nodes). Components
+  are created disabled; `enableAllPubSubComponents` /
+  `disableAllPubSubComponents` drive the Part 14 state machine and the
+  per-component states are readable via `writerGroupState` /
+  `dataSetWriterState` / `readerGroupState` / `dataSetReaderState`
+  (`PubSubState`). `triggerWriterGroupPublish` publishes on demand.
+- `Server.onValueChanged(nodeId)`: a broadcast stream of every value written to
+  a variable node (client writes, `Server.write`, and PubSub DataSetReader
+  deliveries into target variables), backed by open62541's after-write value
+  notification — the idiomatic way to consume received PubSub values.
+- `NodeId` now supports GUID identifiers (`NodeId.fromGuid`, `isGuid()`,
+  `guid`, `ns=X;g=...` formatting). Needed because open62541 identifies
+  DataSetFields by GUID NodeIds; previously `NodeId.fromRaw` threw on any
+  GUID-typed id.
+- Regenerated the FFI bindings with the PubSub API surface
+  (`UA_Server_addPubSubConnection`, `UA_Server_addPublishedDataSet`,
+  `UA_Server_addDataSetField`, `UA_Server_addWriterGroup`,
+  `UA_Server_addDataSetWriter`, `UA_Server_addReaderGroup`,
+  `UA_Server_addDataSetReader`, `UA_Server_setDataSetReaderTargetVariables`,
+  enable/disable/state functions, and the PubSub config structs).
+  `test/verify_sizes_test.dart` pins the grown `UA_ServerConfig` (now embeds
+  `UA_PubSubConfiguration`) and the PubSub config struct layouts;
+  `UA_ClientConfig` is unchanged.
+- Not yet exposed: delta frames (`keyFrameCount` is plumbed but open62541's
+  `enableDeltaFrames` server option is left off), metadata
+  ConfigurationVersion handling, PubSub message security (SKS/security
+  policies), MQTT/Ethernet transports, and standalone SubscribedDataSets.
+
 ## 1.5.7+2
 
 - Bounded-send fix (native build hook): patch open62541's TCP send path so a

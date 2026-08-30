@@ -23,6 +23,14 @@ export 'src/third_party/open62541.g.dart'
         UA_OPEN62541_VER_COMMIT,
         UA_OPEN62541_VERSION;
 export 'src/node_id.dart' show NodeId;
+export 'src/pubsub.dart'
+    show
+        PubSubPublisherId,
+        PubSubPublisherIdType,
+        PubSubState,
+        DataSetFieldMeta,
+        pubSubTransportUdpUadp,
+        uadpDefaultNetworkMessageContentMask;
 export 'src/server.dart' show Server, Argument;
 export 'src/types/errors.dart' show Inactivity, SecureChannelClosed, SubscriptionDeleted;
 export 'src/isolate.dart' show ClientIsolate;

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ffi' as ffi;
 
 import 'package:ffi/ffi.dart';
@@ -96,6 +97,23 @@ class Server {
   // the node's NodeId; scalar nodes are present too but resolve to a payload
   // type and take the plain (schema-less) decode path.
   final Map<NodeId, NodeId> _dataSourceTypeIds = {};
+
+  // Value-change notification plumbing backing [onValueChanged]: a single
+  // shared onWrite dispatcher (created lazily, closed in [delete]) routes to
+  // the per-node broadcast StreamControllers, keyed by NodeId.
+  ffi.NativeCallable<
+    ffi.Void Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NumericRange>,
+      ffi.Pointer<raw.UA_DataValue>,
+    )
+  >?
+  _valueChangeDispatcher;
+  final Map<NodeId, StreamController<DynamicValue>> _valueChangeControllers = {};
 
   // Keeps the native callbacks backing method nodes alive for as long as the
   // node (and the server) exists. A `NativeCallable` must not be garbage
@@ -957,6 +975,7 @@ class Server {
     _dataSourceReads.remove(nodeId);
     _dataSourceWrites.remove(nodeId);
     _dataSourceTypeIds.remove(nodeId);
+    _valueChangeControllers.remove(nodeId)?.close();
   }
 
   /// Adds a reference between two nodes.
@@ -1250,6 +1269,621 @@ class Server {
     return ret;
   }
 
+  // ---- PubSub (OPC UA Part 14) ---------------------------------------------
+  //
+  // PubSub components hang off the *server* on both sides: the publisher
+  // (PubSubConnection -> WriterGroup -> DataSetWriter, fed by a
+  // PublishedDataSet) and the subscriber (PubSubConnection -> ReaderGroup ->
+  // DataSetReader, writing into local target variable nodes). All components
+  // are created disabled; call [enableAllPubSubComponents] once the topology is
+  // complete. The PubSub state machines are driven from [runIterate], so the
+  // usual iterate loop must keep running for messages to be sent/received.
+
+  /// Fills the native tagged-union [dst] from [id]. A string id allocates the
+  /// identifier bytes; release them with [_clearRawPublisherId] after the
+  /// config has been deep-copied by open62541.
+  void _fillRawPublisherId(raw.UA_PublisherId dst, PubSubPublisherId id) {
+    switch (id.type) {
+      case PubSubPublisherIdType.byte:
+        dst.idTypeAsInt = raw.UA_PublisherIdType.UA_PUBLISHERIDTYPE_BYTE.value;
+        dst.id.byte = id.numeric!;
+      case PubSubPublisherIdType.uint16:
+        dst.idTypeAsInt = raw.UA_PublisherIdType.UA_PUBLISHERIDTYPE_UINT16.value;
+        dst.id.uint16 = id.numeric!;
+      case PubSubPublisherIdType.uint32:
+        dst.idTypeAsInt = raw.UA_PublisherIdType.UA_PUBLISHERIDTYPE_UINT32.value;
+        dst.id.uint32 = id.numeric!;
+      case PubSubPublisherIdType.uint64:
+        dst.idTypeAsInt = raw.UA_PublisherIdType.UA_PUBLISHERIDTYPE_UINT64.value;
+        dst.id.uint64 = id.numeric!;
+      case PubSubPublisherIdType.string:
+        dst.idTypeAsInt = raw.UA_PublisherIdType.UA_PUBLISHERIDTYPE_STRING.value;
+        dst.id.string.set(id.string!);
+    }
+  }
+
+  void _clearRawPublisherId(raw.UA_PublisherId dst, PubSubPublisherId id) {
+    if (id.type == PubSubPublisherIdType.string) {
+      dst.id.string.free();
+    }
+  }
+
+  /// Converts the component NodeId open62541 wrote into [out] to a [NodeId]
+  /// and releases the native copy.
+  NodeId _takeOutNodeId(ffi.Pointer<raw.UA_NodeId> out) {
+    final nodeId = out.ref.toNodeId();
+    _freeRawNodeId(out.ref);
+    ua_calloc.free(out);
+    return nodeId;
+  }
+
+  /// Adds a PubSubConnection - the binding between a transport (UDP + UADP by
+  /// default) and the PubSub machinery. Both WriterGroups (publisher side) and
+  /// ReaderGroups (subscriber side) are created below a connection.
+  ///
+  /// Required parameters:
+  /// * [name] - Component name (shown in the information model / logs).
+  /// * [url] - The network address URL, e.g. `opc.udp://224.0.0.22:4840/` for
+  ///   UDP multicast.
+  ///
+  /// Optional parameters:
+  /// * [publisherId] - The PublisherId stamped into outgoing NetworkMessages
+  ///   and matched by DataSetReaders (defaults to `PubSubPublisherId.byte(1)`,
+  ///   mirroring open62541's default id type).
+  /// * [networkInterface] - The local interface to bind (name or IP address).
+  /// * [transportProfileUri] - The transport profile (defaults to UDP UADP,
+  ///   [pubSubTransportUdpUadp]).
+  ///
+  /// Returns the NodeId identifying the new connection; pass it to
+  /// [addWriterGroup] / [addReaderGroup]. The connection starts disabled - see
+  /// [enableAllPubSubComponents].
+  ///
+  /// Throws an exception if the server rejects the connection configuration.
+  NodeId addPubSubConnection({
+    required String name,
+    required String url,
+    PubSubPublisherId publisherId = const PubSubPublisherId.byte(1),
+    String? networkInterface,
+    String transportProfileUri = pubSubTransportUdpUadp,
+  }) {
+    final config = ua_calloc<raw.UA_PubSubConnectionConfig>();
+    config.ref.name.set(name);
+    config.ref.transportProfileUri.set(transportProfileUri);
+    _fillRawPublisherId(config.ref.publisherId, publisherId);
+
+    // The address is a variant holding a scalar UA_NetworkAddressUrlDataType.
+    final address = ua_calloc<raw.UA_NetworkAddressUrlDataType>();
+    address.ref.url.set(url);
+    if (networkInterface != null) {
+      address.ref.networkInterface.set(networkInterface);
+    }
+    config.ref.address.type = getTypeByIndex(raw.UA_TYPES_NETWORKADDRESSURLDATATYPE);
+    config.ref.address.data = address.cast();
+
+    final out = ua_calloc<raw.UA_NodeId>();
+    final code = raw.UA_Server_addPubSubConnection(_server, config, out);
+
+    // open62541 deep-copied the whole config; release our copies.
+    address.ref.url.free();
+    address.ref.networkInterface.free();
+    ua_calloc.free(address);
+    config.ref.name.free();
+    config.ref.transportProfileUri.free();
+    _clearRawPublisherId(config.ref.publisherId, publisherId);
+    ua_calloc.free(config);
+
+    final nodeId = _takeOutNodeId(out);
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add PubSub connection ${statusCodeToString(code)}';
+    }
+    return nodeId;
+  }
+
+  /// Adds an (initially empty) PublishedDataSet - the container that collects
+  /// the published fields. Add fields with [addDataSetField] and link the set
+  /// to a WriterGroup with [addDataSetWriter].
+  ///
+  /// Returns the NodeId identifying the new PublishedDataSet.
+  ///
+  /// Throws an exception if the server rejects the configuration.
+  NodeId addPublishedDataSet({required String name}) {
+    final config = ua_calloc<raw.UA_PublishedDataSetConfig>();
+    config.ref.name.set(name);
+    config.ref.publishedDataSetTypeAsInt = raw.UA_PublishedDataSetType.UA_PUBSUB_DATASET_PUBLISHEDITEMS.value;
+
+    final out = ua_calloc<raw.UA_NodeId>();
+    final result = raw.UA_Server_addPublishedDataSet(_server, config, out);
+
+    config.ref.name.free();
+    ua_calloc.free(config);
+    // The by-value result owns an (empty for PUBLISHEDITEMS) field-result
+    // array allocated by open62541's malloc; release it if present. Guard the
+    // empty-array sentinel (0x1), which must never be freed.
+    if (result.fieldAddResults != ffi.nullptr && result.fieldAddResults.address != 0x1) {
+      ua_malloc.free(result.fieldAddResults);
+    }
+
+    final nodeId = _takeOutNodeId(out);
+    if (result.addResult != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add PublishedDataSet ${statusCodeToString(result.addResult)}';
+    }
+    return nodeId;
+  }
+
+  /// Adds a DataSetField to the PublishedDataSet [publishedDataSet]: the value
+  /// of the existing variable node [publishedVariable] is sampled and published
+  /// as one field of every DataSetMessage.
+  ///
+  /// The field ORDER is significant: a DataSetReader decodes the message
+  /// positionally against its DataSetMetaData, so add fields in the same order
+  /// as the subscriber's [DataSetFieldMeta] list (see [addDataSetReader]).
+  ///
+  /// Required parameters:
+  /// * [publishedDataSet] - The PublishedDataSet (from [addPublishedDataSet]).
+  /// * [name] - The field name alias.
+  /// * [publishedVariable] - The variable node whose Value attribute is
+  ///   published.
+  ///
+  /// Returns the NodeId identifying the new DataSetField.
+  ///
+  /// Throws an exception if the server rejects the field (e.g. the variable
+  /// node does not exist).
+  NodeId addDataSetField(NodeId publishedDataSet, {required String name, required NodeId publishedVariable}) {
+    final config = ua_calloc<raw.UA_DataSetFieldConfig>();
+    config.ref.dataSetFieldTypeAsInt = raw.UA_DataSetFieldType.UA_PUBSUB_DATASETFIELD_VARIABLE.value;
+    config.ref.field.variable.fieldNameAlias.set(name);
+    config.ref.field.variable.promotedField = false;
+    config.ref.field.variable.publishParameters.publishedVariable = publishedVariable.toRaw();
+    config.ref.field.variable.publishParameters.attributeId = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE.value;
+
+    final pdsRaw = publishedDataSet.toRaw();
+    final out = ua_calloc<raw.UA_NodeId>();
+    final result = raw.UA_Server_addDataSetField(_server, pdsRaw, config, out);
+
+    _freeRawNodeId(pdsRaw);
+    config.ref.field.variable.fieldNameAlias.free();
+    _freeRawNodeId(config.ref.field.variable.publishParameters.publishedVariable);
+    ua_calloc.free(config);
+
+    final nodeId = _takeOutNodeId(out);
+    if (result.result != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add DataSetField ${statusCodeToString(result.result)}, variable: $publishedVariable';
+    }
+    return nodeId;
+  }
+
+  /// Adds a WriterGroup below the PubSubConnection [connection]. The
+  /// WriterGroup produces one NetworkMessage per [publishingInterval],
+  /// containing the DataSetMessages of its DataSetWriters.
+  ///
+  /// The group's UADP message settings default to sending the PublisherId,
+  /// GroupHeader/WriterGroupId and PayloadHeader
+  /// ([uadpDefaultNetworkMessageContentMask]) so that a subscriber can match
+  /// messages on (publisherId, writerGroupId, dataSetWriterId).
+  ///
+  /// Required parameters:
+  /// * [connection] - The PubSubConnection (from [addPubSubConnection]).
+  /// * [name] - Component name.
+  /// * [writerGroupId] - The group id stamped into the NetworkMessages; a
+  ///   matching DataSetReader must be configured with the same id.
+  ///
+  /// Optional parameters:
+  /// * [publishingInterval] - The publish cycle (defaults to 100 ms).
+  /// * [keepAliveTime] - Interval for keep-alive messages when nothing was
+  ///   published (defaults to open62541's default when omitted).
+  ///
+  /// Returns the NodeId identifying the new WriterGroup.
+  ///
+  /// Throws an exception if the server rejects the configuration.
+  NodeId addWriterGroup(
+    NodeId connection, {
+    required String name,
+    required int writerGroupId,
+    Duration publishingInterval = const Duration(milliseconds: 100),
+    Duration? keepAliveTime,
+  }) {
+    final config = ua_calloc<raw.UA_WriterGroupConfig>();
+    config.ref.name.set(name);
+    config.ref.writerGroupId = writerGroupId;
+    config.ref.publishingInterval = publishingInterval.inMicroseconds / 1000.0;
+    if (keepAliveTime != null) {
+      config.ref.keepAliveTime = keepAliveTime.inMicroseconds / 1000.0;
+    }
+    config.ref.encodingMimeTypeAsInt = raw.UA_PubSubEncodingType.UA_PUBSUB_ENCODING_UADP.value;
+
+    // UADP message settings: a decoded ExtensionObject holding a
+    // UA_UadpWriterGroupMessageDataType. Deep-copied with the config, so the
+    // temporary is freed right after the call.
+    final message = ua_calloc<raw.UA_UadpWriterGroupMessageDataType>();
+    message.ref.networkMessageContentMask = uadpDefaultNetworkMessageContentMask;
+    config.ref.messageSettings.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_DECODED.value;
+    config.ref.messageSettings.content.decoded.type = getTypeByIndex(raw.UA_TYPES_UADPWRITERGROUPMESSAGEDATATYPE);
+    config.ref.messageSettings.content.decoded.data = message.cast();
+
+    final connectionRaw = connection.toRaw();
+    final out = ua_calloc<raw.UA_NodeId>();
+    final code = raw.UA_Server_addWriterGroup(_server, connectionRaw, config, out);
+
+    _freeRawNodeId(connectionRaw);
+    ua_calloc.free(message);
+    config.ref.name.free();
+    ua_calloc.free(config);
+
+    final nodeId = _takeOutNodeId(out);
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add WriterGroup ${statusCodeToString(code)}';
+    }
+    return nodeId;
+  }
+
+  /// Adds a DataSetWriter below [writerGroup], linking it to
+  /// [publishedDataSet]. The writer serializes the dataset's fields into a
+  /// DataSetMessage inside the group's NetworkMessage.
+  ///
+  /// Required parameters:
+  /// * [writerGroup] - The WriterGroup (from [addWriterGroup]).
+  /// * [publishedDataSet] - The PublishedDataSet (from [addPublishedDataSet]).
+  /// * [name] - Component name.
+  /// * [dataSetWriterId] - The writer id stamped into the messages; a matching
+  ///   DataSetReader must be configured with the same id.
+  ///
+  /// Optional parameters:
+  /// * [keyFrameCount] - Every n-th message is a key frame carrying all fields
+  ///   (defaults to 10). Delta frames are only produced when the server-wide
+  ///   `enableDeltaFrames` PubSub option is on; open62541's default (off)
+  ///   makes every message a key frame regardless.
+  ///
+  /// Returns the NodeId identifying the new DataSetWriter.
+  ///
+  /// Throws an exception if the server rejects the configuration.
+  NodeId addDataSetWriter(
+    NodeId writerGroup,
+    NodeId publishedDataSet, {
+    required String name,
+    required int dataSetWriterId,
+    int keyFrameCount = 10,
+  }) {
+    final config = ua_calloc<raw.UA_DataSetWriterConfig>();
+    config.ref.name.set(name);
+    config.ref.dataSetWriterId = dataSetWriterId;
+    config.ref.keyFrameCount = keyFrameCount;
+
+    final writerGroupRaw = writerGroup.toRaw();
+    final pdsRaw = publishedDataSet.toRaw();
+    final out = ua_calloc<raw.UA_NodeId>();
+    final code = raw.UA_Server_addDataSetWriter(_server, writerGroupRaw, pdsRaw, config, out);
+
+    _freeRawNodeId(writerGroupRaw);
+    _freeRawNodeId(pdsRaw);
+    config.ref.name.free();
+    ua_calloc.free(config);
+
+    final nodeId = _takeOutNodeId(out);
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add DataSetWriter ${statusCodeToString(code)}';
+    }
+    return nodeId;
+  }
+
+  /// Adds a ReaderGroup below the PubSubConnection [connection]. A ReaderGroup
+  /// collects DataSetReaders (the PubSub *subscriber* side, which in OPC UA
+  /// lives on a server instance - see [addDataSetReader]).
+  ///
+  /// Returns the NodeId identifying the new ReaderGroup.
+  ///
+  /// Throws an exception if the server rejects the configuration.
+  NodeId addReaderGroup(NodeId connection, {required String name}) {
+    final config = ua_calloc<raw.UA_ReaderGroupConfig>();
+    config.ref.name.set(name);
+
+    final connectionRaw = connection.toRaw();
+    final out = ua_calloc<raw.UA_NodeId>();
+    final code = raw.UA_Server_addReaderGroup(_server, connectionRaw, config, out);
+
+    _freeRawNodeId(connectionRaw);
+    config.ref.name.free();
+    ua_calloc.free(config);
+
+    final nodeId = _takeOutNodeId(out);
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add ReaderGroup ${statusCodeToString(code)}';
+    }
+    return nodeId;
+  }
+
+  /// Adds a DataSetReader below [readerGroup]. The reader processes incoming
+  /// NetworkMessages whose identifiers match ([publisherId], [writerGroupId],
+  /// [dataSetWriterId]) and decodes the DataSetMessage against the
+  /// DataSetMetaData described by [fields].
+  ///
+  /// [fields] must list the published fields in the SAME ORDER as the
+  /// publisher added them (see [addDataSetField]); each entry gives the field
+  /// name and its builtin data type. After adding the reader, map the decoded
+  /// fields into local variable nodes with [setDataSetReaderTargetVariables] -
+  /// without target variables the received values are dropped.
+  ///
+  /// Optional parameters:
+  /// * [messageReceiveTimeout] - When set, the reader reports an error state
+  ///   if no matching message arrives within this interval.
+  ///
+  /// Returns the NodeId identifying the new DataSetReader.
+  ///
+  /// Throws an exception if the server rejects the configuration, or if a
+  /// field's data type is not a builtin namespace-0 type.
+  NodeId addDataSetReader(
+    NodeId readerGroup, {
+    required String name,
+    required PubSubPublisherId publisherId,
+    required int writerGroupId,
+    required int dataSetWriterId,
+    required String dataSetName,
+    required List<DataSetFieldMeta> fields,
+    Duration? messageReceiveTimeout,
+  }) {
+    final config = ua_calloc<raw.UA_DataSetReaderConfig>();
+    config.ref.name.set(name);
+    _fillRawPublisherId(config.ref.publisherId, publisherId);
+    config.ref.writerGroupId = writerGroupId;
+    config.ref.dataSetWriterId = dataSetWriterId;
+    if (messageReceiveTimeout != null) {
+      config.ref.messageReceiveTimeout = messageReceiveTimeout.inMicroseconds / 1000.0;
+    }
+
+    // DataSetMetaData: name + ordered field list. The builtInType byte of a
+    // field equals the numeric ns=0 NodeId of its builtin data type (Part 14
+    // uses the same numbering, e.g. Int32 = 6).
+    config.ref.dataSetMetaData.name.set(dataSetName);
+    final fieldArray = ua_calloc<raw.UA_FieldMetaData>(fields.length);
+    for (var i = 0; i < fields.length; i++) {
+      final field = fields[i];
+      if (!field.dataType.isNumeric() || field.dataType.namespace != 0) {
+        // Roll back what was allocated so far before throwing.
+        for (var j = 0; j < i; j++) {
+          (fieldArray + j).ref.name.free();
+          if ((fieldArray + j).ref.arrayDimensions != ffi.nullptr) {
+            ua_calloc.free((fieldArray + j).ref.arrayDimensions);
+          }
+        }
+        ua_calloc.free(fieldArray);
+        config.ref.dataSetMetaData.name.free();
+        config.ref.name.free();
+        _clearRawPublisherId(config.ref.publisherId, publisherId);
+        ua_calloc.free(config);
+        throw 'DataSetFieldMeta "${field.name}" must use a builtin namespace-0 data type, got: ${field.dataType}';
+      }
+      (fieldArray + i).ref.name.set(field.name);
+      (fieldArray + i).ref.builtInType = field.dataType.numeric;
+      (fieldArray + i).ref.dataType = field.dataType.toRaw();
+      (fieldArray + i).ref.valueRank = field.valueRank;
+      if (field.arrayDimensions.isNotEmpty) {
+        final dims = ua_calloc<ffi.Uint32>(field.arrayDimensions.length);
+        dims.asTypedList(field.arrayDimensions.length).setRange(0, field.arrayDimensions.length, field.arrayDimensions);
+        (fieldArray + i).ref.arrayDimensions = dims;
+        (fieldArray + i).ref.arrayDimensionsSize = field.arrayDimensions.length;
+      }
+    }
+    config.ref.dataSetMetaData.fieldsSize = fields.length;
+    config.ref.dataSetMetaData.fields = fieldArray;
+
+    final readerGroupRaw = readerGroup.toRaw();
+    final out = ua_calloc<raw.UA_NodeId>();
+    final code = raw.UA_Server_addDataSetReader(_server, readerGroupRaw, config, out);
+
+    // open62541 deep-copied the config (including the metadata field array).
+    _freeRawNodeId(readerGroupRaw);
+    for (var i = 0; i < fields.length; i++) {
+      (fieldArray + i).ref.name.free();
+      if ((fieldArray + i).ref.arrayDimensions != ffi.nullptr) {
+        ua_calloc.free((fieldArray + i).ref.arrayDimensions);
+      }
+    }
+    ua_calloc.free(fieldArray);
+    config.ref.dataSetMetaData.name.free();
+    config.ref.name.free();
+    _clearRawPublisherId(config.ref.publisherId, publisherId);
+    ua_calloc.free(config);
+
+    final nodeId = _takeOutNodeId(out);
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to add DataSetReader ${statusCodeToString(code)}';
+    }
+    return nodeId;
+  }
+
+  /// Maps the fields decoded by [dataSetReader] into local variable nodes:
+  /// field `i` of every received DataSetMessage is written to the Value
+  /// attribute of `targetNodeIds[i]`. The target nodes must already exist
+  /// (e.g. created with [addVariableNode]) and their length/order must match
+  /// the reader's [DataSetFieldMeta] list.
+  ///
+  /// The DataSetReader must still be disabled (targets cannot be replaced on a
+  /// live reader), so call this before [enableAllPubSubComponents].
+  ///
+  /// Received values can then be observed via [read], a regular client
+  /// subscription, or [onValueChanged].
+  ///
+  /// Throws an exception if the server rejects the mapping.
+  void setDataSetReaderTargetVariables(NodeId dataSetReader, List<NodeId> targetNodeIds) {
+    final targets = ua_calloc<raw.UA_FieldTargetDataType>(targetNodeIds.length);
+    for (var i = 0; i < targetNodeIds.length; i++) {
+      (targets + i).ref.attributeId = raw.UA_AttributeId.UA_ATTRIBUTEID_VALUE.value;
+      (targets + i).ref.targetNodeId = targetNodeIds[i].toRaw();
+    }
+
+    final readerRaw = dataSetReader.toRaw();
+    final code = raw.UA_Server_setDataSetReaderTargetVariables(_server, readerRaw, targetNodeIds.length, targets);
+
+    // open62541 deep-copied the target array; release our copies.
+    _freeRawNodeId(readerRaw);
+    for (var i = 0; i < targetNodeIds.length; i++) {
+      _freeRawNodeId((targets + i).ref.targetNodeId);
+    }
+    ua_calloc.free(targets);
+
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to set DataSetReader target variables ${statusCodeToString(code)}';
+    }
+  }
+
+  /// Enables every PubSub component on this server (connections, writer/reader
+  /// groups, dataset writers/readers). Components are created disabled, so
+  /// call this once the PubSub topology is fully configured. The components
+  /// then converge to [PubSubState.operational] on their own (driven from
+  /// [runIterate]).
+  ///
+  /// Throws an exception if any component fails to enable (the underlying call
+  /// returns the ORed status codes of the individual components).
+  void enableAllPubSubComponents() {
+    final code = raw.UA_Server_enableAllPubSubComponents(_server);
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to enable PubSub components ${statusCodeToString(code)}';
+    }
+  }
+
+  /// Disables every PubSub component on this server. Readers are disabled
+  /// before writers so a loopback configuration cannot time out.
+  void disableAllPubSubComponents() {
+    raw.UA_Server_disableAllPubSubComponents(_server);
+  }
+
+  /// Immediately publishes the [writerGroup]'s NetworkMessage, independent of
+  /// its publishing interval. Useful for tests and on-demand publishing.
+  ///
+  /// Throws an exception if the server rejects the trigger (e.g. the group is
+  /// not operational).
+  void triggerWriterGroupPublish(NodeId writerGroup) {
+    final writerGroupRaw = writerGroup.toRaw();
+    final code = raw.UA_Server_triggerWriterGroupPublish(_server, writerGroupRaw);
+    _freeRawNodeId(writerGroupRaw);
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to trigger WriterGroup publish ${statusCodeToString(code)}';
+    }
+  }
+
+  PubSubState _pubSubState(
+    NodeId componentId,
+    int Function(ffi.Pointer<raw.UA_Server>, raw.UA_NodeId, ffi.Pointer<ffi.UnsignedInt>) getState,
+    String what,
+  ) {
+    final componentRaw = componentId.toRaw();
+    final state = ua_calloc<ffi.UnsignedInt>();
+    final code = getState(_server, componentRaw, state);
+    _freeRawNodeId(componentRaw);
+    final value = state.value;
+    ua_calloc.free(state);
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to get $what state ${statusCodeToString(code)}, nodeId: $componentId';
+    }
+    return PubSubState.fromRaw(value);
+  }
+
+  /// The current [PubSubState] of the WriterGroup [writerGroup].
+  PubSubState writerGroupState(NodeId writerGroup) =>
+      _pubSubState(writerGroup, raw.UA_Server_getWriterGroupState, 'WriterGroup');
+
+  /// The current [PubSubState] of the DataSetWriter [dataSetWriter].
+  PubSubState dataSetWriterState(NodeId dataSetWriter) =>
+      _pubSubState(dataSetWriter, raw.UA_Server_getDataSetWriterState, 'DataSetWriter');
+
+  /// The current [PubSubState] of the ReaderGroup [readerGroup].
+  PubSubState readerGroupState(NodeId readerGroup) =>
+      _pubSubState(readerGroup, raw.UA_Server_getReaderGroupState, 'ReaderGroup');
+
+  /// The current [PubSubState] of the DataSetReader [dataSetReader].
+  PubSubState dataSetReaderState(NodeId dataSetReader) =>
+      _pubSubState(dataSetReader, raw.UA_Server_getDataSetReaderState, 'DataSetReader');
+
+  /// Lazily creates the shared onWrite notification dispatcher backing
+  /// [onValueChanged].
+  void _ensureValueChangeDispatcher() {
+    if (_valueChangeDispatcher != null) return;
+
+    void onWriteCb(
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionContext,
+      ffi.Pointer<raw.UA_NodeId> nodeId,
+      ffi.Pointer<ffi.Void> nodeContext,
+      ffi.Pointer<raw.UA_NumericRange> range,
+      ffi.Pointer<raw.UA_DataValue> data,
+    ) {
+      try {
+        final controller = _valueChangeControllers[nodeId.ref.toNodeId()];
+        if (controller == null || controller.isClosed) return;
+        // UA_Variant is the first member of UA_DataValue, so a UA_DataValue*
+        // cast to UA_Variant* points at the inline `value` field (same
+        // aliasing as the data-source dispatchers).
+        final variant = data.cast<raw.UA_Variant>().ref;
+        if (variant.data == ffi.nullptr) return;
+        controller.add(variantToValue(variant));
+      } catch (_) {
+        // Never let a Dart exception unwind into native code.
+      }
+    }
+
+    _valueChangeDispatcher =
+        ffi.NativeCallable<
+          ffi.Void Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_NumericRange>,
+            ffi.Pointer<raw.UA_DataValue>,
+          )
+        >.isolateLocal(onWriteCb);
+  }
+
+  /// A broadcast stream of the values written to the variable node [nodeId].
+  ///
+  /// Emits on every write to the node's Value attribute - client writes,
+  /// [write] calls and, notably, values delivered by a PubSub DataSetReader
+  /// into one of its target variables (see [setDataSetReaderTargetVariables]),
+  /// making this the idiomatic way to consume received PubSub values:
+  ///
+  /// ```dart
+  /// server.setDataSetReaderTargetVariables(reader, [targetNodeId]);
+  /// server.onValueChanged(targetNodeId).listen((v) => print(v.value));
+  /// ```
+  ///
+  /// The stream is backed by open62541's value-source notification (an
+  /// after-write callback attached to the node), which fires inside
+  /// [runIterate] on this isolate. The node must already exist. Repeated calls
+  /// for the same node return the same broadcast stream. The notification and
+  /// stream are released when the node is deleted ([deleteNode]) or the server
+  /// is torn down ([delete]).
+  ///
+  /// Do NOT use this on a node created with [addDataSourceVariableNode]:
+  /// attaching the notification switches the node to an *internal* value
+  /// source, silently detaching its callback value source. Data-source nodes
+  /// already deliver writes to their `onWrite` handler.
+  ///
+  /// Throws an exception if the notification cannot be attached (e.g. the node
+  /// does not exist or is not a variable node).
+  Stream<DynamicValue> onValueChanged(NodeId nodeId) {
+    final existing = _valueChangeControllers[nodeId];
+    if (existing != null) return existing.stream;
+
+    _ensureValueChangeDispatcher();
+
+    final notifications = ua_calloc<raw.UA_ValueSourceNotifications>();
+    notifications.ref.onWrite = _valueChangeDispatcher!.nativeFunction;
+    final nodeIdRaw = nodeId.toRaw();
+    // Keeps the node's internal value source, only attaching the notification
+    // callbacks (the struct is copied by value into the node).
+    final code = raw.UA_Server_setVariableNode_internalValueSource(_server, nodeIdRaw, ffi.nullptr, notifications);
+    _freeRawNodeId(nodeIdRaw);
+    ua_calloc.free(notifications);
+    if (code != raw.UA_STATUSCODE_GOOD) {
+      throw 'Failed to attach value-change notification ${statusCodeToString(code)}, nodeId: $nodeId';
+    }
+
+    final controller = StreamController<DynamicValue>.broadcast();
+    _valueChangeControllers[nodeId] = controller;
+    return controller.stream;
+  }
+
   /// Runs a single iteration of the server's main loop.
   ///
   /// This method processes any pending network messages and handles outstanding
@@ -1381,6 +2015,13 @@ class Server {
     _dataSourceReads.clear();
     _dataSourceWrites.clear();
     _dataSourceTypeIds.clear();
+    // Value-change notification dispatcher and streams:
+    _valueChangeDispatcher?.close();
+    _valueChangeDispatcher = null;
+    for (final controller in _valueChangeControllers.values) {
+      controller.close();
+    }
+    _valueChangeControllers.clear();
     // Per-method-node callbacks:
     for (final callback in _methodCallbacks.values) {
       callback.close();

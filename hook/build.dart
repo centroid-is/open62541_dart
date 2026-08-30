@@ -608,6 +608,12 @@ Future<void> main(List<String> args) async {
         'UA_MULTITHREADING': '0',
         'UA_LOGLEVEL': '100',
         'UA_ENABLE_AMALGAMATION': 'ON',
+        // OPC UA PubSub (Part 14). The base flag includes the UDP (UADP)
+        // transport in 1.5.x; the information-model flag additionally surfaces
+        // the PubSub configuration in the server's address space. MQTT, SKS
+        // and raw-Ethernet transports stay off.
+        'UA_ENABLE_PUBSUB': 'ON',
+        'UA_ENABLE_PUBSUB_INFORMATIONMODEL': 'ON',
         'MBEDTLS_INCLUDE_DIRS': mbedtlsInstall.resolve('include/').toFilePath(),
         'MBEDTLS_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedtls$libSuffix').toFilePath(),
         'MBEDX509_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedx509$libSuffix').toFilePath(),

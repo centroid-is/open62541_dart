@@ -7,10 +7,11 @@ import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
 class NodeId {
-  NodeId._internal(this._namespaceIndex, {dynamic id})
+  NodeId._internal(this._namespaceIndex, {dynamic id, String? guid})
     : _stringId = id is String ? id : null,
-      _numericId = id is int ? id : null {
-    if (_stringId == null && _numericId == null) {
+      _numericId = id is int ? id : null,
+      _guidId = guid {
+    if (_stringId == null && _numericId == null && _guidId == null) {
       throw 'NodeId is not initialized or unimplemented';
     }
   }
@@ -20,6 +21,8 @@ class NodeId {
       return NodeId.fromString(other.namespace, other.string);
     } else if (other.isNumeric()) {
       return NodeId.fromNumeric(other.namespace, other.numeric);
+    } else if (other.isGuid()) {
+      return NodeId.fromGuid(other.namespace, other.guid);
     } else {
       throw 'NodeId is not initialized or unimplemented';
     }
@@ -35,6 +38,14 @@ class NodeId {
       return NodeId._internal(nodeId.namespaceIndex, id: str);
     } else if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
       return NodeId._internal(nodeId.namespaceIndex, id: nodeId.identifier.numeric);
+    } else if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_GUID) {
+      final g = nodeId.identifier.guid;
+      String hex(int value, int width) => value.toRadixString(16).padLeft(width, '0');
+      final tail = [for (var i = 2; i < 8; i++) hex(g.data4[i], 2)].join();
+      final guid =
+          '${hex(g.data1, 8)}-${hex(g.data2, 4)}-${hex(g.data3, 4)}-'
+          '${hex(g.data4[0], 2)}${hex(g.data4[1], 2)}-$tail';
+      return NodeId._internal(nodeId.namespaceIndex, guid: guid);
     } else {
       throw 'NodeId todo implement';
     }
@@ -47,6 +58,19 @@ class NodeId {
   factory NodeId.fromString(int nsIndex, String chars) {
     return NodeId._internal(nsIndex, id: chars);
   }
+
+  /// Creates a GUID NodeId from its canonical textual form, e.g.
+  /// `NodeId.fromGuid(1, '09087e75-8e5e-499b-954f-f2a9603db28a')`.
+  factory NodeId.fromGuid(int nsIndex, String guid) {
+    if (!_guidPattern.hasMatch(guid)) {
+      throw 'Invalid GUID "$guid" (expected 8-4-4-4-12 hexadecimal groups)';
+    }
+    return NodeId._internal(nsIndex, guid: guid.toLowerCase());
+  }
+
+  static final RegExp _guidPattern = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
 
   // Handy methods for namespace 0 types
   static NodeId get nullId {
@@ -162,6 +186,22 @@ class NodeId {
       return raw.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: ua_malloc).cast());
     } else if (_numericId != null) {
       return raw.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
+    } else if (_guidId != null) {
+      // No UA_NODEID_GUID helper is exported (it is a C macro); build the
+      // struct directly. A GUID identifier is inline, so - like a numeric
+      // NodeId - the result owns no heap memory.
+      final nodeId = Struct.create<raw.UA_NodeId>();
+      nodeId.namespaceIndex = _namespaceIndex;
+      nodeId.identifierTypeAsInt = raw.UA_NodeIdType.UA_NODEIDTYPE_GUID.value;
+      final parts = _guidId!.split('-');
+      nodeId.identifier.guid.data1 = int.parse(parts[0], radix: 16);
+      nodeId.identifier.guid.data2 = int.parse(parts[1], radix: 16);
+      nodeId.identifier.guid.data3 = int.parse(parts[2], radix: 16);
+      final tail = parts[3] + parts[4];
+      for (var i = 0; i < 8; i++) {
+        nodeId.identifier.guid.data4[i] = int.parse(tail.substring(i * 2, i * 2 + 2), radix: 16);
+      }
+      return nodeId;
     } else {
       throw 'NodeId is not initialized or unimplemented';
     }
@@ -176,7 +216,10 @@ class NodeId {
   int get namespace => _namespaceIndex;
   int get numeric => _numericId!;
   String get string => _stringId!;
-  // GUID
+
+  /// The canonical lowercase textual form of a GUID identifier
+  /// (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`).
+  String get guid => _guidId!;
   // String get byteString => _byteStringId!;
 
   bool isNumeric() {
@@ -187,9 +230,9 @@ class NodeId {
     return _stringId != null;
   }
 
-  // bool isGuid() {
-  //   return _nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_GUID;
-  // }
+  bool isGuid() {
+    return _guidId != null;
+  }
 
   // bool isByteString() {
   //   return _nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_BYTESTRING;
@@ -201,6 +244,8 @@ class NodeId {
       return "ns=$namespace;s=$_stringId";
     } else if (_numericId != null) {
       return "ns=$namespace;i=$_numericId";
+    } else if (_guidId != null) {
+      return "ns=$namespace;g=$_guidId";
     } else {
       return 'NodeId(TODO)';
     }
@@ -209,16 +254,20 @@ class NodeId {
   @override
   bool operator ==(Object other) {
     if (other is NodeId) {
-      return _namespaceIndex == other._namespaceIndex && _stringId == other._stringId && _numericId == other._numericId;
+      return _namespaceIndex == other._namespaceIndex &&
+          _stringId == other._stringId &&
+          _numericId == other._numericId &&
+          _guidId == other._guidId;
     }
     return false;
   }
 
   @override
-  int get hashCode => _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode;
+  int get hashCode => _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode ^ _guidId.hashCode;
 
   String? _stringId;
   int? _numericId;
+  String? _guidId;
   // String? _byteStringId;
   int _namespaceIndex;
 }

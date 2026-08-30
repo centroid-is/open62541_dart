@@ -337,6 +337,16 @@ extension UA_NodeIdExtension on raw.UA_NodeId {
     } else if (nodeId.isString()) {
       identifierTypeAsInt = raw.UA_NodeIdType.UA_NODEIDTYPE_STRING.value;
       identifier.string.set(nodeId.string);
+    } else if (nodeId.isGuid()) {
+      // A GUID identifier is inline (no heap); copy it via toRaw().
+      final tmp = nodeId.toRaw();
+      identifierTypeAsInt = raw.UA_NodeIdType.UA_NODEIDTYPE_GUID.value;
+      identifier.guid.data1 = tmp.identifier.guid.data1;
+      identifier.guid.data2 = tmp.identifier.guid.data2;
+      identifier.guid.data3 = tmp.identifier.guid.data3;
+      for (var i = 0; i < 8; i++) {
+        identifier.guid.data4[i] = tmp.identifier.guid.data4[i];
+      }
     } else {
       throw ArgumentError('Invalid NodeId type: $nodeId');
     }
