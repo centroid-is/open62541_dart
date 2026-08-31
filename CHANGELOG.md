@@ -6,6 +6,15 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **`Client.call` (and `readAttribute` / monitored-item creation) surface the
+  real service status.** The async response handlers checked `resultsSize`
+  before `responseHeader.serviceResult`, so an infrastructure failure (session
+  torn down, secure channel closed, timeout) — which legitimately answers with
+  zero results — was reported as a misleading `"No results"` error. The
+  service-level status is now checked first and failures complete with a typed
+  `UaStatusException` carrying the exact status code. The `"No results"` /
+  `"multiple results"` errors remain for genuinely Good-but-malformed
+  responses.
 - **BREAKING: data-source `onWrite` callbacks are async.**
   `Server.addDataSourceVariableNode` / `Server.setVariableValueSource` take
   `Future<void> Function(DynamicValue)` for `onWrite`. The client's write

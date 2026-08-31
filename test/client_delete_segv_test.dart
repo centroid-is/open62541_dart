@@ -37,19 +37,18 @@
 //       delivered into the active streams — either way this test FAILS.
 
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'common.dart' show freeTcpPort;
 
 final intNodeId = NodeId.fromString(1, "the.int");
 final int2NodeId = NodeId.fromString(1, "the.int2");
 final int3NodeId = NodeId.fromString(1, "the.int3");
 
 void main() {
-  final rng = Random();
-  final serverPort = 17840 + rng.nextInt(1000);
+  late int serverPort;
 
   late Server server;
   late Client client;
@@ -58,6 +57,7 @@ void main() {
   Timer? churnTimer;
 
   Future<void> setup() async {
+    serverPort = await freeTcpPort();
     server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
     server.start();
 

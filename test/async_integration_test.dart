@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
@@ -46,11 +45,12 @@ void stopDirectClientLoop() {
 void main() async {
   for (final clientType in ['direct', 'isolate']) {
     group('Client type: $clientType', () {
-      int port = Random().nextInt(10000) + 4840;
+      late int port;
       ClientApi? client;
       Server? server;
 
       setUp(() async {
+        port = await freeTcpPort();
         server = setupServer(port);
         client = await createClient(clientType, port);
       });

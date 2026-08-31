@@ -24,11 +24,11 @@ library;
 
 import 'dart:async';
 import 'dart:isolate';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'common.dart' show freeTcpPort;
 
 final sampledNodeId = NodeId.fromString(1, 'the.sampled');
 
@@ -72,7 +72,7 @@ void serverMain(List<Object?> args) {
 
 void main() {
   test('cancelling a mid-flight CreateMonitoredItems deletes the item on the server', () async {
-    final port = 24840 + Random().nextInt(1000);
+    final port = await freeTcpPort();
 
     final fromServer = ReceivePort();
     final controlReady = Completer<SendPort>();

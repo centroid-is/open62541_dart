@@ -8,17 +8,16 @@
 // gets BadNoSubscription, and the C layer fires deleteCallback.
 
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'common.dart' show freeTcpPort;
 
 final intNodeId = NodeId.fromString(1, "the.int");
 
 void main() {
-  final rng = Random();
-  final serverPort = 14840 + rng.nextInt(1000);
+  late int serverPort;
 
   late Server server;
   late Client client;
@@ -26,6 +25,7 @@ void main() {
   Timer? clientTimer;
 
   setUp(() async {
+    serverPort = await freeTcpPort();
     server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_WARNING);
     server.start();
 

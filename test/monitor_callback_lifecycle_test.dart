@@ -10,17 +10,16 @@
 //    called monitorCallback.close() and ua_calloc.free(callbacks) twice.
 
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'common.dart' show freeTcpPort;
 
 final intNodeId = NodeId.fromString(1, "the.int");
 
 void main() {
-  final rng = Random();
-  final serverPort = 16840 + rng.nextInt(1000);
+  late int serverPort;
 
   late Server server;
   late Client client;
@@ -29,6 +28,7 @@ void main() {
   var serverShutdown = false;
 
   setUp(() async {
+    serverPort = await freeTcpPort();
     serverShutdown = false;
     server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_WARNING);
     server.start();

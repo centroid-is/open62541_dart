@@ -5,17 +5,17 @@
 // instead of corrupting native memory (the original report was a double free).
 
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'package:open62541/src/third_party/open62541.g.dart' as raw;
+import 'common.dart' show freeTcpPort;
 
 final intNodeId = NodeId.fromString(1, "the.int");
 
 void main() {
-  final rng = Random();
-  final serverPort = 14840 + rng.nextInt(1000);
+  late int serverPort;
 
   late Server server;
   late Client client;
@@ -23,6 +23,7 @@ void main() {
   Timer? clientTimer;
 
   setUp(() async {
+    serverPort = await freeTcpPort();
     server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_WARNING);
     server.start();
 
@@ -67,6 +68,12 @@ void main() {
       onTimeout: () => fail('Expected an error for a non-existent subscription'),
     );
     print('Got expected error: $error');
+
+    // Whether refused client-side at initiation or faulted by the server
+    // (zero results), the error must carry the real status code — not a
+    // generic "No results" message.
+    expect(error, isA<UaStatusException>());
+    expect((error as UaStatusException).statusCode, raw.UA_STATUSCODE_BADSUBSCRIPTIONIDINVALID);
 
     await sub.cancel();
 

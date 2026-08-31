@@ -790,6 +790,16 @@ class Client implements ClientApi {
             return;
           }
           ffi.Pointer<raw.UA_ReadResponse> response = ffi.Pointer.fromAddress(voidPointer.address);
+
+          // Check the service-level status FIRST: a failed service (session
+          // torn down, secure channel closed, request timeout, ...) answers
+          // with zero results, and reporting that as a generic "no response"
+          // masks the real failure status.
+          if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+            completer.completeError(UaStatusException(response.ref.responseHeader.serviceResult), StackTrace.current);
+            return;
+          }
+
           List<ffi.Pointer<raw.UA_DataValue>> pointers = [];
 
           // Steal the data_value pointer from open62541 so they don't delete it
@@ -1757,14 +1767,15 @@ class Client implements ClientApi {
               controller.addError('ffi pointer is null');
               cleanup();
               return;
-            } else if (response.ref.resultsSize == 0) {
-              controller.addError('No results for create monitored item');
+            } else if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+              // Service-level status FIRST: a failed service answers with zero
+              // results, and checking resultsSize first used to mask the real
+              // failure as a misleading "No results" error.
+              controller.addError(UaStatusException(response.ref.responseHeader.serviceResult));
               cleanup();
               return;
-            } else if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-              controller.addError(
-                'Unable to create monitored item: ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
-              );
+            } else if (response.ref.resultsSize == 0) {
+              controller.addError('No results for create monitored item');
               cleanup();
               return;
             }
@@ -1877,7 +1888,10 @@ class Client implements ClientApi {
         ua_calloc.free(callbacks);
         monitorCallback.close();
         createCallback.close();
-        controller.addError('Unable to create monitored item: $statusCode ${statusCodeToString(statusCode)}');
+        // Typed, like the async response path: the exact status code (e.g.
+        // BadSubscriptionIdInvalid, refused client-side before anything is
+        // sent) stays programmatically extractable.
+        controller.addError(UaStatusException(statusCode));
         // Don't invoke the real onCancel — resources are already freed above.
         _activeMonitoredStreams.remove(controller);
         controller.onCancel = () {};
@@ -1953,6 +1967,13 @@ class Client implements ClientApi {
         ) async {
           try {
             final ref = cr.ref;
+            // Check the service-level status FIRST: a failed service (session
+            // torn down, secure channel closed, request timeout, ...) answers
+            // with zero results, and checking resultsSize first used to mask
+            // the real failure as a misleading "No results" error.
+            if (ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+              return completer.completeError(UaStatusException(ref.responseHeader.serviceResult), StackTrace.current);
+            }
             if (ref.resultsSize == 0) {
               return completer.completeError("No results for call to $objectId $methodId", StackTrace.current);
             }
@@ -1966,12 +1987,6 @@ class Client implements ClientApi {
             if (results.statusCode != raw.UA_STATUSCODE_GOOD) {
               return completer.completeError(
                 "Results error on call to $objectId $methodId failed with ${statusCodeToString(results.statusCode)}",
-                StackTrace.current,
-              );
-            }
-            if (ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-              return completer.completeError(
-                "Header error on call to $objectId $methodId failed with ${statusCodeToString(ref.responseHeader.serviceResult)}",
                 StackTrace.current,
               );
             }

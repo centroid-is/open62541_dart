@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
@@ -19,7 +17,7 @@ void main() {
     late Client client;
 
     setUp(() async {
-      port = Random().nextInt(10000) + 4840;
+      port = await freeTcpPort();
       server = setupServer(port);
       client = await setupClient(port);
     });

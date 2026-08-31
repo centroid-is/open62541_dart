@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
-import 'dart:math';
 
 import 'package:ffi/ffi.dart';
 import 'package:test/test.dart';
@@ -39,7 +38,7 @@ void main() {
     final writesSeen = <int>[];
 
     setUp(() async {
-      port = Random().nextInt(10000) + 4840;
+      port = await freeTcpPort();
       server = setupServer(port);
       client = await setupClient(port);
 
@@ -92,7 +91,7 @@ void main() {
 
   group('F2: delete() invalidates the server handle', () {
     test('runIterate returns false after delete()', () async {
-      final port = Random().nextInt(10000) + 4840;
+      final port = await freeTcpPort();
       final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
       server.start();
       expect(server.runIterate(), isTrue);
@@ -141,7 +140,7 @@ void main() {
     DynamicValue? capturedB;
 
     setUp(() async {
-      port = Random().nextInt(10000) + 4840;
+      port = await freeTcpPort();
       server = setupServer(port);
       client = await setupClient(port);
 
@@ -220,7 +219,7 @@ void main() {
     final writesSeen = <List<int>>[];
 
     setUp(() async {
-      port = Random().nextInt(10000) + 4840;
+      port = await freeTcpPort();
       server = setupServer(port);
 
       backing = [10, 20, 30, 40];
@@ -328,7 +327,7 @@ void main() {
     DynamicValue? captured;
 
     setUp(() async {
-      port = Random().nextInt(10000) + 4840;
+      port = await freeTcpPort();
       server = setupServer(port);
       client = await setupClient(port);
 

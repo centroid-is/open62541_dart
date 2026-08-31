@@ -9,10 +9,7 @@ import 'common.dart';
 void main() async {
   final serverCount = 2;
   final clientPerServer = 1;
-  var serverPorts = List.generate(serverCount, (index) => Random().nextInt(10000) + 4840);
-  while (serverPorts.toSet().length != serverCount) {
-    serverPorts = List.generate(serverCount, (index) => Random().nextInt(10000) + 4840);
-  }
+  final serverPorts = <int>[];
 
   LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR;
 
@@ -20,6 +17,11 @@ void main() async {
 
   setUp(() async {
     print("Setup starting");
+    serverPorts.clear();
+    while (serverPorts.length != serverCount) {
+      final port = await freeTcpPort();
+      if (!serverPorts.contains(port)) serverPorts.add(port);
+    }
     for (var port in serverPorts) {
       final server = setupServer(port, logLevel: logLevel);
       serversAndClients[server] = await Future.wait(

@@ -1,4 +1,27 @@
+import 'dart:io';
+
 import 'package:open62541/open62541.dart';
+
+/// Returns a TCP port that is free right now, allocated by the OS.
+///
+/// `dart test` runs suite files in PARALLEL, so tests that picked ports with
+/// `Random().nextInt(10000) + 4840` could collide across concurrently running
+/// suites: two servers racing to bind the same port, or worse, a client
+/// connecting to another suite's server that then tears down mid-session
+/// (broken pipe -> service faults with zero results). Binding port 0 lets the
+/// OS hand out a port from its ephemeral range, which both avoids
+/// suite-vs-suite collisions and stays clear of 4840-14839, where local
+/// Docker rigs commonly publish OPC UA ports.
+///
+/// The tiny window between closing the probe socket and the server binding
+/// the port is safe in practice: the OS does not reuse an ephemeral port it
+/// just handed out while other ports remain available.
+Future<int> freeTcpPort() async {
+  final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+  final port = socket.port;
+  await socket.close();
+  return port;
+}
 
 final boolNodeId = NodeId.fromString(1, "the.bool");
 final intNodeId = NodeId.fromString(1, "the.int");

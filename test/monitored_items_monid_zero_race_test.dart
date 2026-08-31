@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:test/test.dart';
@@ -181,7 +180,7 @@ class _ReorderProxy {
 }
 
 void main() {
-  final serverPort = Random().nextInt(10000) + 4840;
+  late int serverPort;
   const nodeCount = 6;
   late Server server;
   late _ReorderProxy proxy;
@@ -189,6 +188,7 @@ void main() {
   bool running = false;
 
   setUp(() async {
+    serverPort = await freeTcpPort();
     server = setupServer(serverPort);
     for (var i = 0; i < nodeCount; i++) {
       server.addVariableNode(
