@@ -1,7 +1,6 @@
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import 'common.dart';
 
 /// Polls [predicate] against a fresh [Server.statistics] snapshot until it

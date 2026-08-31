@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import 'common.dart';
 
 // ClientIsolate mirror of auto_reconnect_test.dart. The isolate client is the

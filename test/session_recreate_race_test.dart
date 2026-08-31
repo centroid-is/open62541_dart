@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import 'common.dart';
 
 // A Dart server that runs its pump on the isolate; kept up for the whole test.

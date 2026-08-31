@@ -1,7 +1,6 @@
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import 'common.dart';
 
 /// End-to-end test for exposing a custom OPC UA structured type through a

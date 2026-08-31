@@ -4,7 +4,6 @@ import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
-
 import 'common.dart';
 
 /// Async method callbacks (backlog item 3) and multi-output marshalling

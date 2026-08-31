@@ -9,7 +9,6 @@ import 'package:open62541/src/common.dart' show getType, valueToVariant, variant
 import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'package:open62541/src/ua_allocation.dart';
-
 import 'common.dart';
 
 /// Regression tests pinning the review findings on [Server] (PR #87).

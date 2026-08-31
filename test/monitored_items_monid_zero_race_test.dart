@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import 'common.dart';
 
 // Reproduces the monId==0 race that motivated identifying monitored items by

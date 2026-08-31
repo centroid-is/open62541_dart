@@ -14,7 +14,6 @@ import 'dart:async';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import 'common.dart' show freeTcpPort;
 
 final intNodeId = NodeId.fromString(1, "the.int");

@@ -30,7 +30,6 @@ import 'dart:async';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import 'common.dart';
 
 // Set to true to reproduce the pre-fix starvation (later clients time out).

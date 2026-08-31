@@ -28,7 +28,6 @@ import 'dart:isolate';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import 'common.dart' show freeTcpPort;
 
 final sampledNodeId = NodeId.fromString(1, 'the.sampled');

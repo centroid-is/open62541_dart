@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import 'common.dart';
 
 // A server whose run_iterate pump we control, so we can cleanly simulate a

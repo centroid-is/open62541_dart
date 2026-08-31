@@ -6,7 +6,6 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'package:open62541/src/types/errors.dart';
-
 import 'client_api.dart';
 import 'common.dart';
 import 'dynamic_value.dart';

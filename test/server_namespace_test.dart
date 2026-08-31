@@ -1,7 +1,6 @@
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import 'common.dart';
 
 /// Tests for [Server.addNamespace]: registering an application namespace and

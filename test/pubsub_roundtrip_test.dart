@@ -3,7 +3,6 @@ import 'dart:math';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import 'common.dart';
 
 // End-to-end PubSub round trip: a publisher Server publishes variables over
