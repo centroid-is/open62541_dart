@@ -102,6 +102,16 @@ changes that ship the same native library version.
   errors of that type now cross to the caller as typed exceptions with their
   status code intact (`on UaStatusException catch (e) => e.statusCode`);
   every other error type still arrives as the stringified fallback.
+- **Example: redundant METAR servers with ServiceLevel failover.**
+  `example/metar_redundant_server.dart` publishes live BIRK (Reykjavík
+  Airport) weather as a custom structured type on a data-source node
+  (`onReadValue` — real status codes and source timestamps, last-known value
+  served with `Bad_NoCommunication` when the feed is down), and advertises a
+  hot-redundant set on the standard NS0 nodes (`ServiceLevel`,
+  `RedundancySupport`, `ServerUriArray`) via `Server.setVariableValueSource`.
+  `example/metar_redundant_client.dart` is a Part 4 non-transparent redundant
+  client that ranks servers by ServiceLevel, discovers its peers from
+  `ServerUriArray` and fails over. See `example/README.md`.
 
 ## 1.5.7+3
 
