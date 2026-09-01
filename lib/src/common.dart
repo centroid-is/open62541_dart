@@ -25,14 +25,6 @@ int dateTimeToUaDateTime(DateTime dateTime) {
   return dateTime.toUtc().microsecondsSinceEpoch * 10 + uaDateTimeUnixEpoch;
 }
 
-/// Converts a raw `UA_DateTime` (100 ns ticks since 1601-01-01 UTC) to a UTC
-/// Dart [DateTime], truncating the sub-microsecond part. Returns `null` for
-/// the OPC UA null timestamp (0).
-DateTime? uaDateTimeToDateTime(int uaDateTime) {
-  if (uaDateTime == 0) return null;
-  return DateTime.fromMicrosecondsSinceEpoch((uaDateTime - uaDateTimeUnixEpoch) ~/ 10, isUtc: true);
-}
-
 ffi.Pointer<raw.UA_DataType> getType(UaTypes uaType) {
   return getTypeByIndex(uaType.value);
 }

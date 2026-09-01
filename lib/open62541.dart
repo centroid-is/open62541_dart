@@ -4,7 +4,7 @@ export 'src/access_level.dart' show AccessLevelMask;
 export 'src/client.dart'
     show Client, ClientState, DataValue, BrowseResultItem, BrowseTreeItem, NodeClass, BrowseResultMask;
 export 'src/common.dart' show statusCodeToString;
-export 'src/dynamic_value.dart' show DynamicValue, LocalizedText, EnumField, Schema;
+export 'src/dynamic_value.dart' show DynamicValue, LocalizedText, EnumField, Schema, uaDateTimeToDateTime;
 export 'src/extensions.dart'
     show
         UaTypes,

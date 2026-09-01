@@ -99,6 +99,7 @@ class MonitoredItemsMessage extends IsolateMessage {
   final Duration samplingInterval;
   final bool discardOldest;
   final int queueSize;
+  final bool deliverBadStatus;
 
   const MonitoredItemsMessage(
     super.requestId,
@@ -108,6 +109,7 @@ class MonitoredItemsMessage extends IsolateMessage {
     this.samplingInterval = const Duration(milliseconds: 100),
     this.discardOldest = true,
     this.queueSize = 1,
+    this.deliverBadStatus = false,
   });
 }
 
@@ -516,6 +518,7 @@ class ClientIsolate implements ClientApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
+    bool deliverBadStatus = false,
   }) {
     final controller = StreamController<DynamicValue>();
     final stream = monitoredItems(
@@ -532,6 +535,7 @@ class ClientIsolate implements ClientApi {
       samplingInterval: samplingInterval,
       discardOldest: discardOldest,
       queueSize: queueSize,
+      deliverBadStatus: deliverBadStatus,
     );
     final subscription = stream.listen((event) => controller.add(event.values.first));
     subscription.onError((error) => controller.addError(error));
@@ -553,6 +557,7 @@ class ClientIsolate implements ClientApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
+    bool deliverBadStatus = false,
   }) {
     if (_isClosed) throw const ClientIsolateClosedException();
 
@@ -569,6 +574,7 @@ class ClientIsolate implements ClientApi {
         samplingInterval: samplingInterval,
         discardOldest: discardOldest,
         queueSize: queueSize,
+        deliverBadStatus: deliverBadStatus,
       ),
     );
 
@@ -1048,6 +1054,7 @@ void _isolateEntryPoint(_IsolateData data) {
           samplingInterval: message.samplingInterval,
           discardOldest: message.discardOldest,
           queueSize: message.queueSize,
+          deliverBadStatus: message.deliverBadStatus,
         );
 
         final subscription = stream.listen(

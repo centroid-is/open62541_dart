@@ -1330,6 +1330,7 @@ class Client implements ClientApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
+    bool deliverBadStatus = false,
   }) {
     StreamController<Map<NodeId, DynamicValue>> controller = StreamController<Map<NodeId, DynamicValue>>();
 
@@ -1560,12 +1561,30 @@ class Client implements ClientApi {
               controller.addError('Failed to read value, nullptr provided');
               return;
             }
-            if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
+// The packed UA_DataValue flag byte. ffigen does not emit the C
+            // bitfield members individually — the generated struct ends with a
+            // single `@UA_Byte() external int substitute`, which IS their
+            // storage unit. Bit positions follow the declaration order in
+            // `include/open62541/types.h`; measured against the in-process
+            // server, and pinned in test/monitor_quality_test.dart's header.
+            const hasValueFlag = 0x01;
+            const hasSourceTimestampFlag = 0x04;
+            // Read out of the C struct NOW, into Dart locals. The VALUE branch
+            // below crosses an async boundary, and this callback "returns" into
+            // open62541 at that point — after which `value` points at memory
+            // the stack has reclaimed. Every field of it must be captured on
+            // this side of the first await or it is read as garbage.
+            final flags = value.ref.substitute;
+            final sampleStatus = value.ref.status;
+            final sampleSourceTicks = value.ref.sourceTimestamp;
+            final isBadSample = sampleStatus != raw.UA_STATUSCODE_GOOD;
+
+            if (isBadSample && !deliverBadStatus) {
               // Surface the exact notification status as a typed error so the
               // code is extractable (e.g. Bad_NoCommunication from a
               // data-source node whose backing device is down). The
               // notification's value/timestamps are not delivered.
-              controller.addError(UaStatusException(value.ref.status));
+              controller.addError(UaStatusException(sampleStatus));
               return;
             }
             // Identify the item by its request-time context (request-order index
@@ -1585,46 +1604,78 @@ class Client implements ClientApi {
               var reference = latestValues[nodeId] ?? DynamicValue();
               final ref = value.ref.value;
 
-              switch (attributeId) {
-                case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
-                  final description = ref.data.cast<raw.UA_LocalizedText>();
-                  reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
-                case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
-                  final displayName = ref.data.cast<raw.UA_LocalizedText>();
-                  reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
-                case AttributeId.UA_ATTRIBUTEID_DATATYPE:
-                  final dataType = ref.data.cast<raw.UA_NodeId>();
-                  reference.typeId = dataType.ref.toNodeId();
-                case AttributeId.UA_ATTRIBUTEID_VALUE:
-                  // Steal the variant pointer from open62541 so they don't delete it
-                  // if we don't do this, the variant will be freed on a flutter async
-                  // boundary. f.e. while we fetch the structure of a schema.
-                  // because the callback we are currently in "returns" before completing.
-                  final source = ua_calloc<raw.UA_Variant>();
-                  source.ref = value.ref.value;
-                  final variant = raw.UA_Variant_new();
-                  raw.UA_Variant_copy(source, variant);
-                  ua_calloc.free(source);
-                  final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
-                  // Now that we have crossed an async boundary, we need to fetch a new reference. It might have been updated
-                  // with a description or other fields while we processed data.
-                  reference = latestValues[nodeId] ?? reference;
+              // A sample the server marked Bad arrives with hasValue CLEAR:
+              // there is no payload to decode, and entering the switch would
+              // dereference an empty variant. Its QUALITY is still news, so it
+              // falls through to the shared emit below with the code attached.
+              // Reachable only under [deliverBadStatus] — the default path
+              // returned above, exactly as it always has.
+              final hasNothingToDecode = isBadSample && (flags & hasValueFlag) == 0;
 
-                  // Update the values of the fields
-                  reference.value = data.value;
-                  reference.typeId = reference.typeId ?? data.typeId;
-                  reference.enumFields = data.enumFields;
-                  raw.UA_Variant_delete(variant);
-                case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
-                  final temporary = OpcUaDynamicValueSerializer.fromDataTypeDefinition(
-                    reference.typeId ?? ref.type.ref.typeId.toNodeId(),
-                    ref,
-                  );
-                  reference.value = temporary.value;
-                  reference.typeId = reference.typeId ?? temporary.typeId;
-                  reference.enumFields = reference.enumFields ?? temporary.enumFields;
-                default:
-                  throw 'Unhandled attribute id $attributeId';
+              if (!hasNothingToDecode) {
+                switch (attributeId) {
+                  case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
+                    final description = ref.data.cast<raw.UA_LocalizedText>();
+                    reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
+                  case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
+                    final displayName = ref.data.cast<raw.UA_LocalizedText>();
+                    reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
+                  case AttributeId.UA_ATTRIBUTEID_DATATYPE:
+                    final dataType = ref.data.cast<raw.UA_NodeId>();
+                    reference.typeId = dataType.ref.toNodeId();
+                  case AttributeId.UA_ATTRIBUTEID_VALUE:
+                    // Steal the variant pointer from open62541 so they don't delete it
+                    // if we don't do this, the variant will be freed on a flutter async
+                    // boundary. f.e. while we fetch the structure of a schema.
+                    // because the callback we are currently in "returns" before completing.
+                    final source = ua_calloc<raw.UA_Variant>();
+                    source.ref = value.ref.value;
+                    final variant = raw.UA_Variant_new();
+                    raw.UA_Variant_copy(source, variant);
+                    ua_calloc.free(source);
+                    final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
+                    // Now that we have crossed an async boundary, we need to fetch a new reference. It might have been updated
+                    // with a description or other fields while we processed data.
+                    reference = latestValues[nodeId] ?? reference;
+
+                    // Update the values of the fields
+                    reference.value = data.value;
+                    reference.typeId = reference.typeId ?? data.typeId;
+                    reference.enumFields = data.enumFields;
+                    raw.UA_Variant_delete(variant);
+                  case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
+                    final temporary = OpcUaDynamicValueSerializer.fromDataTypeDefinition(
+                      reference.typeId ?? ref.type.ref.typeId.toNodeId(),
+                      ref,
+                    );
+                    reference.value = temporary.value;
+                    reference.typeId = reference.typeId ?? temporary.typeId;
+                    reference.enumFields = reference.enumFields ?? temporary.enumFields;
+                  default:
+                    throw 'Unhandled attribute id $attributeId';
+                }
+              }
+
+              // Quality and source time belong to the VALUE attribute and to
+              // nothing else. The other three attributes of the same logical
+              // key arrive as their own notifications, with their own status
+              // and with hasSourceTimestamp clear (measured) — letting them
+              // write here would clobber a Bad code with the Good of a
+              // DisplayName read, and a real timestamp with the year 1601.
+              //
+              // Applied AFTER the switch on purpose: the VALUE branch crosses
+              // an async boundary and re-fetches `reference`, so anything set
+              // before it would be written to an object that is then replaced.
+              if (attributeId == AttributeId.UA_ATTRIBUTEID_VALUE) {
+                // An ABSENT status is Good (OPC UA Part 4) and the field reads
+                // 0, so the raw value is recorded unconditionally: 0 here is
+                // the server's positive claim that the reading is trustworthy,
+                // which is a different fact from null (never came from a
+                // server at all).
+                reference.statusCode = sampleStatus;
+                if ((flags & hasSourceTimestampFlag) != 0) {
+                  reference.sourceTimestamp = uaDateTimeToDateTime(sampleSourceTicks);
+                }
               }
 
               // Update the seen indexes after processing
@@ -1909,6 +1960,7 @@ class Client implements ClientApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
+    bool deliverBadStatus = false,
   }) {
     final controller = StreamController<DynamicValue>();
     final stream = monitoredItems(
@@ -1925,6 +1977,7 @@ class Client implements ClientApi {
       samplingInterval: samplingInterval,
       discardOldest: discardOldest,
       queueSize: queueSize,
+      deliverBadStatus: deliverBadStatus,
     );
     final subscription = stream.listen((event) => controller.add(event.values.first));
     subscription.onError((error) => controller.addError(error));

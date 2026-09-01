@@ -120,9 +120,14 @@ void main() {
             'the Unix epoch sits 11644473600 s after the FILETIME epoch; a '
             'wrong constant here reads as "the value is 369 years stale"',
       );
+      // A tick value MEASURED off this server on 2026-09-01. Asserted to the
+      // microsecond, which is DateTime's own resolution: a 100 ns tick has a
+      // sub-microsecond tail that Dart cannot hold, and rounding it away in the
+      // helper to make a coarser expectation pass would throw away real
+      // precision to flatter the test.
       expect(
         uaDateTimeToDateTime(134327675499800940),
-        DateTime.fromMillisecondsSinceEpoch(1788293949980, isUtc: true),
+        DateTime.fromMicrosecondsSinceEpoch(1788293949980094, isUtc: true),
         reason:
             'a tick value MEASURED off this server on 2026-09-01 must land '
             'in 2026, not in 1601 and not in 2395',
@@ -222,8 +227,8 @@ void main() {
             'overshot, and every freshness check downstream would read fresh '
             'forever',
       );
-
-      await sub.drain<void>().timeout(Duration(seconds: 5), onTimeout: () {});
+      // No teardown of `sub` here: firstWhere cancels the underlying
+      // subscription when it completes, and this stream is single-subscription.
     });
 
     test('deliverBadStatus: false drops a Bad sample and says so, exactly as before', () async {
