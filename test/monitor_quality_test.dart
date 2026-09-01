@@ -269,6 +269,56 @@ void main() {
       );
     });
 
+    // Added after mutation testing: flipping monitoredItems' OWN default to
+    // true survived the suite, because monitor() forwards the flag explicitly
+    // and every case above went through monitor(). ClientWrapper in the app
+    // reaches this method too, so an unpinned default here is threat T-08-01
+    // with no tripwire — a one-word edit that changes what every panel on the
+    // plant receives.
+    test('monitoredItems has the same default, and it is pinned separately', () async {
+      final subId = await client.subscriptionCreate();
+
+      final errors = <Object>[];
+      final delivered = <Map<NodeId, DynamicValue>>[];
+      final gotError = Completer<void>();
+      final sub = client
+          .monitoredItems({
+            refusingNodeId: [
+              AttributeId.UA_ATTRIBUTEID_DATATYPE,
+              AttributeId.UA_ATTRIBUTEID_VALUE,
+              AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+              AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
+            ],
+          }, subId)
+          .listen(
+            delivered.add,
+            onError: (Object e) {
+              errors.add(e);
+              if (!gotError.isCompleted) gotError.complete();
+            },
+          );
+
+      await gotError.future.timeout(Duration(seconds: 10));
+      await Future<void>.delayed(Duration(milliseconds: 500));
+      await sub.cancel();
+
+      expect(
+        errors.first,
+        legacyBadStatusMessage,
+        reason:
+            'this is the entry point ClientWrapper uses; its default must '
+            'drop a Bad sample exactly as monitor() does, or the app starts '
+            'receiving values it has never been written to interpret',
+      );
+      expect(
+        delivered.expand((m) => m.values).where((v) => v.statusCode != null),
+        isEmpty,
+        reason:
+            'anti-vacuity for the arm above: an error arriving is only half '
+            'the promise — nothing may ALSO arrive as a value',
+      );
+    });
+
     test('deliverBadStatus: true delivers the Bad sample with the server\'s own code', () async {
       final subId = await client.subscriptionCreate();
 
