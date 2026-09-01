@@ -39,6 +39,10 @@ abstract class ClientApi {
   ///
   /// Returns a stream that emits the latest value whenever it changes.
   /// Requires a [subscriptionId] from [subscriptionCreate].
+  ///
+  /// Emitted values carry [DynamicValue.statusCode] and
+  /// [DynamicValue.sourceTimestamp] as the server sent them. See
+  /// [deliverBadStatus] for what happens to a sample the server marked Bad.
   Stream<DynamicValue> monitor(
     NodeId nodeId,
     int subscriptionId, {
@@ -46,6 +50,7 @@ abstract class ClientApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
+    bool deliverBadStatus = false,
   });
 
   /// Monitors multiple nodes and attributes for data changes.
@@ -53,6 +58,25 @@ abstract class ClientApi {
   /// Returns a stream that emits a map of node values whenever any
   /// monitored value changes. Requires a [subscriptionId] from
   /// [subscriptionCreate].
+  ///
+  /// [deliverBadStatus] decides what a sample the server marked Bad becomes,
+  /// and defaults to **false** — the behaviour this binding has had for years.
+  ///
+  /// - `false`: the sample is DROPPED and its status is added to the stream as
+  ///   an error string (`'Failed to read value: <name>'`). Applications built
+  ///   on this binding treat a Bad reading as a failure of the read, which is
+  ///   the right call for a screen that would otherwise show a stale number as
+  ///   if it were live.
+  /// - `true`: the sample is DELIVERED as a value whose
+  ///   [DynamicValue.statusCode] is the server's own numeric StatusCode. A
+  ///   gateway that maps upstream status onto a published quality needs the
+  ///   code, not English: "BadOutOfRange" and "BadCommunicationError" are
+  ///   different instructions to an operator, and both are lost in a String.
+  ///   Note that such a sample carries no payload — the value is whatever was
+  ///   last known — because a Bad DataValue arrives with `hasValue` clear.
+  ///
+  /// The default stays false so that adding this parameter cannot change what
+  /// any existing caller receives.
   Stream<Map<NodeId, DynamicValue>> monitoredItems(
     ReadAttributeParam nodes,
     int subscriptionId, {
@@ -60,6 +84,7 @@ abstract class ClientApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
+    bool deliverBadStatus = false,
   });
 
   /// Browses the references of a node.

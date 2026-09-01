@@ -45,6 +45,27 @@ class EnumField {
 
 typedef Schema = Map<NodeId, DynamicValue>;
 
+/// The number of 100 ns ticks between the OPC UA / Windows FILETIME epoch
+/// (1601-01-01T00:00:00Z) and the Unix epoch (1970-01-01T00:00:00Z).
+///
+/// `UA_DATETIME_UNIX_EPOCH` in open62541 is a C macro, so it is not emitted
+/// into the generated bindings and has to be restated here.
+const int _uaDateTimeUnixEpochTicks = 11644473600 * 10000000;
+
+/// Converts an OPC UA `UA_DateTime` — 100 ns ticks since 1601-01-01T00:00:00Z —
+/// into a UTC [DateTime].
+///
+/// Dart's [DateTime] resolves to microseconds, so the sub-microsecond tail of a
+/// tick value is truncated. That is lossless for anything a PLC produces.
+///
+/// A tick value of 0 is a genuine instant (the epoch itself) rather than a
+/// sentinel: callers that need "the server sent no timestamp" must consult the
+/// `hasSourceTimestamp` flag instead, because reading an absent field as a real
+/// instant is how a value ends up dated to the year 1601.
+DateTime uaDateTimeToDateTime(int ticks) {
+  return DateTime.fromMicrosecondsSinceEpoch((ticks - _uaDateTimeUnixEpochTicks) ~/ 10, isUtc: true);
+}
+
 class DynamicValue {
   dynamic value;
   NodeId? typeId;
@@ -54,6 +75,26 @@ class DynamicValue {
   LocalizedText? displayName;
   Map<int, EnumField>? enumFields;
   bool isOptional = false;
+
+  /// The numeric OPC UA `StatusCode` the server attached to this value, or null
+  /// if the value did not come from a server (hand-built, decoded from a
+  /// schema, read back from a write).
+  ///
+  /// `0` is `UA_STATUSCODE_GOOD` and is a positive claim: the server said the
+  /// reading is trustworthy. Null is the absence of any claim. A consumer that
+  /// maps this onto its own quality vocabulary must keep the two apart —
+  /// "healthy" and "never asked" are different facts, and only one of them
+  /// justifies putting a number on an operator's screen.
+  int? statusCode;
+
+  /// The instant the SOURCE (the PLC, not this process) says the value was
+  /// produced, or null when the server sent no source timestamp.
+  ///
+  /// Null is deliberate and load-bearing: a consumer that needs an instant must
+  /// substitute its own arrival time knowingly, and record that it did. Filling
+  /// this in from the clock here would turn "I don't know how old this is" into
+  /// a freshness promise nobody made.
+  DateTime? sourceTimestamp;
 
   factory DynamicValue.fromMap(LinkedHashMap<String, dynamic> entries, {String? name}) {
     DynamicValue v = DynamicValue(name: name);
@@ -107,6 +148,12 @@ class DynamicValue {
     }
     v.name = other.name;
     v.isOptional = other.isOptional;
+    // Quality and source time travel with the value. A copy that dropped them
+    // would silently upgrade a Bad reading to "no claim" — and every consumer
+    // downstream reads "no claim" as "not from a server", which is the one
+    // thing it is not.
+    v.statusCode = other.statusCode;
+    v.sourceTimestamp = other.sourceTimestamp;
     return v;
   }
   DynamicValue({this.value, this.description, this.typeId, this.displayName, this.name});
