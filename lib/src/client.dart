@@ -414,6 +414,29 @@ class Client implements ClientApi {
   /// Existing `connect()` / `runIterate()` semantics are unchanged; recovery is
   /// entirely opt-in via this method.
   ///
+  /// ## Pumping without blocking the owning isolate
+  ///
+  /// By default the pump calls `runIterate(iterateInterval)`, which BLOCKS the
+  /// isolate inside open62541's `select()` for up to [iterateInterval]. That is
+  /// why a [Client] has historically needed an isolate of its own — a 10 ms
+  /// blocking pump followed by a 10 ms sleep leaves the isolate unavailable
+  /// roughly half the time, which is fatal on a UI or fan-in isolate.
+  ///
+  /// Pass `nonBlocking: true` to poll instead: the pump calls
+  /// `runIterate(Duration.zero)`, which processes due timers and drains ready
+  /// sockets with a zero-timeout `select()` and returns immediately, then
+  /// yields for [iterateInterval] like any other timer. The client can then
+  /// live directly on the isolate that consumes its data — no [ClientIsolate],
+  /// no port hop, no copy, values materialised straight onto the owning heap.
+  ///
+  /// With `nonBlocking: true`, [iterateInterval] is a POLL CADENCE rather than
+  /// a blocking timeout, so it also sets the floor on notification latency;
+  /// 1 ms is a reasonable default for a fan-in and costs a fraction of a
+  /// percent of a core per idle client. See `tool/bench_pump.dart`.
+  ///
+  /// The default stays `false` so existing callers keep their exact current
+  /// behaviour.
+  ///
   /// Usage:
   /// ```dart
   /// final client = Client();
@@ -424,17 +447,26 @@ class Client implements ClientApi {
   ///   client.monitor(myNode, sub).listen(handleValue);
   /// });
   /// ```
+  ///
+  /// Several clients merged on one isolate, none of them blocking it:
+  /// ```dart
+  /// for (final url in urls) {
+  ///   final c = Client();
+  ///   await c.keepConnected(url, nonBlocking: true, iterateInterval: const Duration(milliseconds: 1));
+  /// }
+  /// ```
   Future<void> keepConnected(
     String url, {
     Duration retryInterval = const Duration(milliseconds: 500),
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
+    bool nonBlocking = false,
   }) {
     // Restart cleanly if already supervising.
     _keepConnected = false;
     final firstActivation = Completer<void>();
     _keepConnected = true;
-    _startPump(iterateInterval);
+    _startPump(iterateInterval, nonBlocking);
     _superviseConnection(url, retryInterval, maxBackoff, firstActivation);
     return firstActivation.future;
   }
@@ -446,13 +478,14 @@ class Client implements ClientApi {
     _keepConnected = false;
   }
 
-  void _startPump(Duration iterateInterval) {
+  void _startPump(Duration iterateInterval, bool nonBlocking) {
+    final timeout = nonBlocking ? Duration.zero : iterateInterval;
     () async {
       while (_keepConnected && _client != ffi.nullptr) {
         // Deliberately ignore the return value: unlike a typical drive loop we
         // must NOT stop pumping when the status goes non-GOOD, otherwise the
         // event loop dies and the client can never recover.
-        runIterate(iterateInterval);
+        runIterate(timeout);
         await Future.delayed(iterateInterval);
       }
     }();
@@ -510,6 +543,25 @@ class Client implements ClientApi {
     }
   }
 
+  /// Drives one turn of open62541's event loop: due timers fire, ready sockets
+  /// are drained, and the resulting callbacks (monitored-item notifications,
+  /// service responses) run to completion BEFORE this returns — synchronously,
+  /// on the calling isolate, onto the calling isolate's heap.
+  ///
+  /// [iterate] is a timeout, not a duration to spend: it is the longest the
+  /// underlying `select()` will wait for a socket to become ready. Any non-zero
+  /// value therefore BLOCKS the calling isolate for up to that long.
+  ///
+  /// [Duration.zero] makes it a NON-BLOCKING POLL. `UA_EventLoopPOSIX_run`
+  /// clamps its listen timeout to the remaining budget, so a zero timeout
+  /// reaches `select()` with a zero `timeval`: timers still fire and ready
+  /// sockets are still drained, but nothing waits. This is what lets a client
+  /// share an isolate with a UI or with other clients — see [keepConnected]'s
+  /// `nonBlocking` argument, which owns such a loop for you.
+  ///
+  /// Returns whether the client's status is still GOOD. Note that a supervising
+  /// loop must NOT stop on `false`: once the event loop stops being pumped the
+  /// client can never recover. [keepConnected] handles that.
   bool runIterate(Duration iterate) {
     if (_client != ffi.nullptr) {
       // Get the client state
