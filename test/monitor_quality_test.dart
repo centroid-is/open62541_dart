@@ -55,10 +55,12 @@ final refusingNodeId = NodeId.fromString(1, "the.refusing");
 /// `UA_STATUSCODE_BADINTERNALERROR`.
 const badInternalError = 0x80020000;
 
-/// The exact text the binding has put on the error channel for two years. The
-/// app parses nothing out of it, but it is what operators see in logs, and the
-/// opt-in flag must not move it.
-const legacyBadStatusMessage = 'Failed to read value: BadInternalError';
+/// What the default path puts on the error channel: since 1.5.7+3 a typed
+/// [UaStatusException] carrying the exact notification status (for two years
+/// before that it was an English string). The opt-in flag must not move it —
+/// a caller that never asked for qualities keeps getting the typed error.
+final legacyBadStatusMatcher = isA<UaStatusException>()
+    .having((e) => e.statusCode, 'statusCode', badInternalError);
 
 void main() {
   final port = 23840 + Random().nextInt(1000);
@@ -254,11 +256,12 @@ void main() {
 
       expect(
         errors.first,
-        legacyBadStatusMessage,
+        legacyBadStatusMatcher,
         reason:
-            'the app has treated a Bad sample as an error for two years; '
-            'the default must be byte-identical or this branch changes '
-            'production behaviour on every plant',
+            'a Bad sample on the default path is an error, and since 1.5.7+3 '
+            'a TYPED one — the default must keep both the shape and the exact '
+            'status code or this branch changes production behaviour on every '
+            'plant',
       );
       expect(
         values.where((v) => v.statusCode != null),
@@ -304,7 +307,7 @@ void main() {
 
       expect(
         errors.first,
-        legacyBadStatusMessage,
+        legacyBadStatusMatcher,
         reason:
             'this is the entry point ClientWrapper uses; its default must '
             'drop a Bad sample exactly as monitor() does, or the app starts '
