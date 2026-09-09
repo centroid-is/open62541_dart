@@ -26,7 +26,7 @@ void main() {
 
     // Raw round trip preserves every byte of the GUID.
     final rawId = a.toRaw();
-    expect(NodeId.fromRaw(rawId), a);
+    expect(NodeIdFfi.fromRaw(rawId), a);
 
     expect(() => NodeId.fromGuid(1, 'not-a-guid'), throwsA(anything));
   });
