@@ -732,6 +732,15 @@ Future<ProcessResult?> _tryRun(String executable, List<String> arguments, String
 Future<void> main(List<String> args) async {
   final version = "v1.5.9";
   await build(args, (input, output) async {
+    // A web build asks for no code assets, and there is nothing this hook could
+    // usefully produce for one: dart2js has no C library to link. Without this
+    // guard the hook still runs and dies in `_targetKey`, because
+    // `input.config.code` throws rather than answering when code assets were
+    // not requested — so `flutter build web` fails on a package the web code
+    // never calls into. The pure-Dart half of this package
+    // (`open62541_types.dart`) is exactly what such a build imports.
+    if (!input.config.buildCodeAssets) return;
+
     final extractedFiles = await download(input.outputDirectoryShared, version);
     await _applyPatches(extractedFiles, input.packageRoot);
 
