@@ -12,6 +12,7 @@
 // test pins — it needs no VM-service introspection, only Isolate.onExit.
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
 
 import 'package:test/test.dart';
@@ -42,6 +43,28 @@ Future<void> rejectedWriteThenReturn((int, SendPort) args) async {
   pump.cancel();
   await client.delete();
   report.send(rejection is UaStatusException ? rejection.statusCode : rejection.toString());
+}
+
+/// Holds [port] so that no other suite can bind it.
+///
+/// **Why a test that kills its server has to do this.** `dart test` runs suites
+/// in parallel and `freeTcpPort()` hands out a port by binding :0 and letting
+/// it go, so a port this suite releases can be handed straight to another
+/// suite's server. The client below is still alive and still reconnecting at
+/// the address it was given — it would connect into that server and open a
+/// session there, and the suite that owns it would see a session it never
+/// created. `server_statistics_test` asserts exact session counts and is the
+/// one that catches it, from the other side, as a timeout on
+/// `currentSessionCount == 1` with an extra session in the snapshot.
+///
+/// Accepted connections are destroyed at once: the point is only to keep the
+/// port occupied, and a socket that accepts and says nothing leaves the
+/// client's channel exactly as dead as a closed port does.
+Future<ServerSocket> holdPort(int port) async {
+  final held = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
+  held.listen((socket) => socket.destroy());
+  addTearDown(() => held.close());
+  return held;
 }
 
 void main() {
@@ -87,6 +110,7 @@ void main() {
     // Drop the server; wait until the client has noticed the channel is gone.
     server.shutdown();
     server.delete();
+    await holdPort(port);
     await Future.delayed(Duration(milliseconds: 500));
     server = setupServer(await freeTcpPort()); // for tearDown
 
