@@ -171,7 +171,9 @@ void main() {
     final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
 
     final values = <DynamicValue>[];
-    final sub = client.monitor(intNodeId, subscriptionId, samplingInterval: Duration(milliseconds: 50)).listen(values.add);
+    final sub = client
+        .monitor(intNodeId, subscriptionId, samplingInterval: Duration(milliseconds: 50))
+        .listen(values.add);
     await Future.delayed(Duration(milliseconds: 500));
     expect(values, isNotEmpty, reason: 'should have received the initial value');
     expect(client.config.hasStreamListeners, isTrue, reason: 'a live item holds its listeners');
@@ -186,9 +188,11 @@ void main() {
     // Pause the pump so the create request cannot be answered before the
     // cancel is issued.
     stopClientPump();
-    final sub = client.monitoredItems({
-      intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
-    }, subscriptionId).listen((_) {}, onError: (_) {});
+    final sub = client
+        .monitoredItems({
+          intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+        }, subscriptionId)
+        .listen((_) {}, onError: (_) {});
     unawaited(sub.cancel());
     startClientPump();
 
@@ -202,9 +206,11 @@ void main() {
     final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
 
     final values = <Map<NodeId, DynamicValue>>[];
-    final sub = client.monitoredItems({
-      intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
-    }, subscriptionId).listen(values.add, onError: (_) {});
+    final sub = client
+        .monitoredItems({
+          intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+        }, subscriptionId)
+        .listen(values.add, onError: (_) {});
     await Future.delayed(Duration(milliseconds: 500));
     expect(values, isNotEmpty);
 
