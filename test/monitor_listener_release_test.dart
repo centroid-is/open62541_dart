@@ -19,6 +19,7 @@
 // for an unrelated event to arrive.
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
 
 import 'package:test/test.dart';
@@ -220,6 +221,12 @@ void main() {
     server.shutdown();
     server.delete();
     serverShutdown = true;
+    // Keep the port, so the client still reconnecting at this address
+    // cannot wander into another suite's server and open a session there
+    // -- `dart test` runs suites in parallel and `freeTcpPort()` recycles.
+    final held = await ServerSocket.bind(InternetAddress.loopbackIPv4, serverPort);
+    held.listen((socket) => socket.destroy());
+    addTearDown(() => held.close());
     await Future.delayed(Duration(milliseconds: 500));
 
     // A cancel that cannot reach the server must still finish (the caller
