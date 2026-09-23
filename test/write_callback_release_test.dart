@@ -94,10 +94,9 @@ void main() {
     // invokes the callback. write() used to ignore that status: the future
     // never completed and the callback (and variant) leaked.
     await expectLater(
-      client.write(gatedNodeId, DynamicValue(value: 1, typeId: NodeId.int32)).timeout(
-        Duration(seconds: 3),
-        onTimeout: () => fail('write() never completed on a dead connection'),
-      ),
+      client
+          .write(gatedNodeId, DynamicValue(value: 1, typeId: NodeId.int32))
+          .timeout(Duration(seconds: 3), onTimeout: () => fail('write() never completed on a dead connection')),
       throwsA(isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', UA_STATUSCODE_BADSERVERNOTCONNECTED)),
     );
     await client.delete();
