@@ -136,55 +136,59 @@ void main() {
     await srv.stop();
   }, timeout: const Timeout(Duration(seconds: 90)));
 
-  test('reconnectStream fires and a fresh subscription delivers data after recovery', () async {
-    final port = await freeTcpPort();
-    var srv = ManagedServer.start(port);
-    final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+  test(
+    'reconnectStream fires and a fresh subscription delivers data after recovery',
+    () async {
+      final port = await freeTcpPort();
+      var srv = ManagedServer.start(port);
+      final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
 
-    final reconnected = Completer<void>();
-    final reconnectSub = client.reconnectStream.listen((_) {
-      if (!reconnected.isCompleted) reconnected.complete();
-    });
+      final reconnected = Completer<void>();
+      final reconnectSub = client.reconnectStream.listen((_) {
+        if (!reconnected.isCompleted) reconnected.complete();
+      });
 
-    await client.keepConnected('opc.tcp://localhost:$port').timeout(const Duration(seconds: 20));
+      await client.keepConnected('opc.tcp://localhost:$port').timeout(const Duration(seconds: 20));
 
-    // A subscription/monitored item works before the drop.
-    final sub1 = await client.subscriptionCreate(requestedPublishingInterval: const Duration(milliseconds: 20));
-    final firstBefore = Completer<DynamicValue>();
-    final before = client.monitor(intNodeId, sub1, samplingInterval: const Duration(milliseconds: 20)).listen((v) {
-      if (!firstBefore.isCompleted) firstBefore.complete(v);
-    }, onError: (_) {});
-    expect((await firstBefore.future.timeout(const Duration(seconds: 10))).value, 1);
-    await before.cancel();
+      // A subscription/monitored item works before the drop.
+      final sub1 = await client.subscriptionCreate(requestedPublishingInterval: const Duration(milliseconds: 20));
+      final firstBefore = Completer<DynamicValue>();
+      final before = client.monitor(intNodeId, sub1, samplingInterval: const Duration(milliseconds: 20)).listen((v) {
+        if (!firstBefore.isCompleted) firstBefore.complete(v);
+      }, onError: (_) {});
+      expect((await firstBefore.future.timeout(const Duration(seconds: 10))).value, 1);
+      await before.cancel();
 
-    // Crash + restart.
-    await srv.crash();
-    await Future.delayed(const Duration(milliseconds: 500));
-    srv = ManagedServer.start(port);
+      // Crash + restart.
+      await srv.crash();
+      await Future.delayed(const Duration(milliseconds: 500));
+      srv = ManagedServer.start(port);
 
-    final recovered = await _waitForActivated(client, const Duration(seconds: 20));
-    expect(recovered, isTrue);
+      final recovered = await _waitForActivated(client, const Duration(seconds: 20));
+      expect(recovered, isTrue);
 
-    // The recovery must be announced — this is what applications hook to
-    // re-create their subscriptions.
-    await reconnected.future.timeout(const Duration(seconds: 10));
+      // The recovery must be announced — this is what applications hook to
+      // re-create their subscriptions.
+      await reconnected.future.timeout(const Duration(seconds: 10));
 
-    // open62541 clears client-side subscriptions on a drop, so the old
-    // subscription is gone — create a NEW one and confirm data flows again.
-    final sub2 = await _retry(
-      () => client.subscriptionCreate(requestedPublishingInterval: const Duration(milliseconds: 20)),
-      const Duration(seconds: 10),
-    );
-    final firstAfter = Completer<DynamicValue>();
-    final after = client.monitor(intNodeId, sub2, samplingInterval: const Duration(milliseconds: 20)).listen((v) {
-      if (!firstAfter.isCompleted) firstAfter.complete(v);
-    }, onError: (_) {});
-    expect((await firstAfter.future.timeout(const Duration(seconds: 15))).value, 1);
-    await after.cancel();
+      // open62541 clears client-side subscriptions on a drop, so the old
+      // subscription is gone — create a NEW one and confirm data flows again.
+      final sub2 = await _retry(
+        () => client.subscriptionCreate(requestedPublishingInterval: const Duration(milliseconds: 20)),
+        const Duration(seconds: 10),
+      );
+      final firstAfter = Completer<DynamicValue>();
+      final after = client.monitor(intNodeId, sub2, samplingInterval: const Duration(milliseconds: 20)).listen((v) {
+        if (!firstAfter.isCompleted) firstAfter.complete(v);
+      }, onError: (_) {});
+      expect((await firstAfter.future.timeout(const Duration(seconds: 15))).value, 1);
+      await after.cancel();
 
-    await reconnectSub.cancel();
-    await client.stopKeepConnected();
-    await client.delete();
-    await srv.stop();
-  }, timeout: const Timeout(Duration(seconds: 90)));
+      await reconnectSub.cancel();
+      await client.stopKeepConnected();
+      await client.delete();
+      await srv.stop();
+    },
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
 }

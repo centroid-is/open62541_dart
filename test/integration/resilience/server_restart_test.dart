@@ -118,45 +118,49 @@ void main() {
 
     // Restart WITH downtime: the client must not "recover" before the server is
     // actually back, and must recover once it returns.
-    test('restart with downtime: reconnect only succeeds after the server returns', () async {
-      final rc = await ResilientClient.connect(server.endpoint);
-      try {
-        final tempId = await tankVar(rc.client, 1, 'Temperature');
-        await rc.client.read(tempId);
-
-        // Arm a drop detector, then take the server down and keep it down.
-        final dropped = rc.stateStream.firstWhere((s) => !isActivated(s));
-        await server.stop();
-
-        // Wait until the client has actually observed the drop. (Immediately
-        // after stop() the C client still reports the stale ACTIVATED session,
-        // which would make connect()'s awaitConnect() short-circuit.)
-        await dropped.timeout(const Duration(seconds: 15));
-        expect(isActivated(await rc.currentState()), isFalse);
-
-        // While it is down, a connect attempt must fail (not hang, not falsely
-        // succeed).
-        var connectedWhileDown = false;
+    test(
+      'restart with downtime: reconnect only succeeds after the server returns',
+      () async {
+        final rc = await ResilientClient.connect(server.endpoint);
         try {
-          await rc.client.connect(server.endpoint).timeout(const Duration(seconds: 3));
-          connectedWhileDown = true;
-        } catch (_) {
-          connectedWhileDown = false;
+          final tempId = await tankVar(rc.client, 1, 'Temperature');
+          await rc.client.read(tempId);
+
+          // Arm a drop detector, then take the server down and keep it down.
+          final dropped = rc.stateStream.firstWhere((s) => !isActivated(s));
+          await server.stop();
+
+          // Wait until the client has actually observed the drop. (Immediately
+          // after stop() the C client still reports the stale ACTIVATED session,
+          // which would make connect()'s awaitConnect() short-circuit.)
+          await dropped.timeout(const Duration(seconds: 15));
+          expect(isActivated(await rc.currentState()), isFalse);
+
+          // While it is down, a connect attempt must fail (not hang, not falsely
+          // succeed).
+          var connectedWhileDown = false;
+          try {
+            await rc.client.connect(server.endpoint).timeout(const Duration(seconds: 3));
+            connectedWhileDown = true;
+          } catch (_) {
+            connectedWhileDown = false;
+          }
+          expect(connectedWhileDown, isFalse, reason: 'must not connect while the server is down');
+          expect(isActivated(await rc.currentState()), isFalse);
+
+          // Real downtime, then bring it back.
+          await Future<void>.delayed(const Duration(seconds: 3));
+          await server.start();
+
+          await rc.reconnect(server.endpoint, timeout: const Duration(seconds: 25));
+          expect(isActivated(await rc.currentState()), isTrue);
+          expect((await rc.client.read(tempId)).asDouble, allOf(greaterThan(0), lessThan(100)));
+        } finally {
+          await rc.dispose();
         }
-        expect(connectedWhileDown, isFalse, reason: 'must not connect while the server is down');
-        expect(isActivated(await rc.currentState()), isFalse);
-
-        // Real downtime, then bring it back.
-        await Future<void>.delayed(const Duration(seconds: 3));
-        await server.start();
-
-        await rc.reconnect(server.endpoint, timeout: const Duration(seconds: 25));
-        expect(isActivated(await rc.currentState()), isTrue);
-        expect((await rc.client.read(tempId)).asDouble, allOf(greaterThan(0), lessThan(100)));
-      } finally {
-        await rc.dispose();
-      }
-    }, timeout: const Timeout(Duration(seconds: 120)));
+      },
+      timeout: const Timeout(Duration(seconds: 120)),
+    );
 
     // Repeated crash/restart cycles: the client must stay stable and recover
     // every time (no leaks/crashes/hangs across iterations).

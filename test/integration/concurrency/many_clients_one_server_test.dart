@@ -43,55 +43,59 @@ void main() {
     };
 
     for (final entry in fleets.entries) {
-      test('${entry.key} fleet: concurrent write/read/subscribe, no cross-talk', () async {
-        List<DrivenClient> clients = const [];
-        try {
-          clients = await connectFleet(server.endpoint, clientCount, kinds: entry.value);
+      test(
+        '${entry.key} fleet: concurrent write/read/subscribe, no cross-talk',
+        () async {
+          List<DrivenClient> clients = const [];
+          try {
+            clients = await connectFleet(server.endpoint, clientCount, kinds: entry.value);
 
-          // Each client owns a distinct tank. It writes a distinct setpoint,
-          // reads it back, and subscribes to that tank's live Temperature.
-          final work = <Future<void>>[];
-          for (var i = 0; i < clientCount; i++) {
-            final tank = i + 1;
-            final wantSetpoint = 11.0 + i; // distinct per client
-            final client = clients[i].client;
-            work.add(() async {
-              final setId = await tankVar(client, tank, 'TempSetpoint');
-              final tempId = await tankVar(client, tank, 'Temperature');
+            // Each client owns a distinct tank. It writes a distinct setpoint,
+            // reads it back, and subscribes to that tank's live Temperature.
+            final work = <Future<void>>[];
+            for (var i = 0; i < clientCount; i++) {
+              final tank = i + 1;
+              final wantSetpoint = 11.0 + i; // distinct per client
+              final client = clients[i].client;
+              work.add(() async {
+                final setId = await tankVar(client, tank, 'TempSetpoint');
+                final tempId = await tankVar(client, tank, 'Temperature');
 
-              await client.write(setId, DynamicValue(value: wantSetpoint, typeId: NodeId.double));
+                await client.write(setId, DynamicValue(value: wantSetpoint, typeId: NodeId.double));
 
-              // Subscribe to this tank's live temperature and collect a few.
-              final subId = await client.subscriptionCreate(
-                requestedPublishingInterval: const Duration(milliseconds: 100),
-              );
-              final seen = <double>[];
-              final gotOne = Completer<void>();
-              final sub = client.monitor(tempId, subId, samplingInterval: const Duration(milliseconds: 100)).listen((
-                v,
-              ) {
-                seen.add(v.asDouble);
-                if (!gotOne.isCompleted) gotOne.complete();
-              });
+                // Subscribe to this tank's live temperature and collect a few.
+                final subId = await client.subscriptionCreate(
+                  requestedPublishingInterval: const Duration(milliseconds: 100),
+                );
+                final seen = <double>[];
+                final gotOne = Completer<void>();
+                final sub = client.monitor(tempId, subId, samplingInterval: const Duration(milliseconds: 100)).listen((
+                  v,
+                ) {
+                  seen.add(v.asDouble);
+                  if (!gotOne.isCompleted) gotOne.complete();
+                });
 
-              // Read the setpoint back: must equal exactly what THIS client wrote.
-              final readBack = await client.read(setId);
-              expect(readBack.asDouble, closeTo(wantSetpoint, 1e-9), reason: 'client $i cross-talk on setpoint');
+                // Read the setpoint back: must equal exactly what THIS client wrote.
+                final readBack = await client.read(setId);
+                expect(readBack.asDouble, closeTo(wantSetpoint, 1e-9), reason: 'client $i cross-talk on setpoint');
 
-              await gotOne.future.timeout(const Duration(seconds: 20));
-              await sub.cancel();
+                await gotOne.future.timeout(const Duration(seconds: 20));
+                await sub.cancel();
 
-              expect(seen, isNotEmpty, reason: 'client $i saw no subscription updates');
-              for (final t in seen) {
-                expect(t, allOf(greaterThan(0), lessThan(100)), reason: 'client $i implausible temp $t');
-              }
-            }());
+                expect(seen, isNotEmpty, reason: 'client $i saw no subscription updates');
+                for (final t in seen) {
+                  expect(t, allOf(greaterThan(0), lessThan(100)), reason: 'client $i implausible temp $t');
+                }
+              }());
+            }
+            await Future.wait(work);
+          } finally {
+            await disposeFleet(clients);
           }
-          await Future.wait(work);
-        } finally {
-          await disposeFleet(clients);
-        }
-      }, timeout: const Timeout(Duration(seconds: 120)));
+        },
+        timeout: const Timeout(Duration(seconds: 120)),
+      );
     }
   }, skip: asyncuaAvailable() ? false : 'run test/integration/setup_local.sh first');
 

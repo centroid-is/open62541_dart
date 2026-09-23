@@ -66,52 +66,56 @@ void main() {
       }, timeout: const Timeout(Duration(seconds: 180)));
     }
 
-    test('40x subscription + monitored-item create/destroy churn (persistent client)', () async {
-      final dc = await connectClient(server.endpoint);
-      try {
-        final tempId = await tankVar(dc.client, 1, 'Temperature');
-        const cycles = 40;
-        var ok = 0;
-        final failures = <String>[];
+    test(
+      '40x subscription + monitored-item create/destroy churn (persistent client)',
+      () async {
+        final dc = await connectClient(server.endpoint);
+        try {
+          final tempId = await tankVar(dc.client, 1, 'Temperature');
+          const cycles = 40;
+          var ok = 0;
+          final failures = <String>[];
 
-        for (var i = 0; i < cycles; i++) {
-          StreamSubscription<Map<NodeId, DynamicValue>>? sub;
-          try {
-            final subId = await dc.client.subscriptionCreate(
-              requestedPublishingInterval: const Duration(milliseconds: 50),
-            );
-            final firstData = Completer<void>();
-            final errs = <Object>[];
-            final stream = dc.client.monitoredItems(
-              valueParam([tempId]),
-              subId,
-              samplingInterval: const Duration(milliseconds: 50),
-            );
-            sub = stream.listen((_) {
-              if (!firstData.isCompleted) firstData.complete();
-            }, onError: errs.add);
-            await firstData.future.timeout(
-              const Duration(seconds: 10),
-              onTimeout: () => throw StateError('no data on cycle $i'),
-            );
-            if (errs.isNotEmpty) throw StateError('stream errors on cycle $i: $errs');
-            ok++;
-          } catch (e) {
-            failures.add('cycle $i: $e');
-          } finally {
-            await sub?.cancel();
+          for (var i = 0; i < cycles; i++) {
+            StreamSubscription<Map<NodeId, DynamicValue>>? sub;
+            try {
+              final subId = await dc.client.subscriptionCreate(
+                requestedPublishingInterval: const Duration(milliseconds: 50),
+              );
+              final firstData = Completer<void>();
+              final errs = <Object>[];
+              final stream = dc.client.monitoredItems(
+                valueParam([tempId]),
+                subId,
+                samplingInterval: const Duration(milliseconds: 50),
+              );
+              sub = stream.listen((_) {
+                if (!firstData.isCompleted) firstData.complete();
+              }, onError: errs.add);
+              await firstData.future.timeout(
+                const Duration(seconds: 10),
+                onTimeout: () => throw StateError('no data on cycle $i'),
+              );
+              if (errs.isNotEmpty) throw StateError('stream errors on cycle $i: $errs');
+              ok++;
+            } catch (e) {
+              failures.add('cycle $i: $e');
+            } finally {
+              await sub?.cancel();
+            }
           }
+
+          expect(failures, isEmpty, reason: 'sub/monitor churn failures: $failures');
+          expect(ok, cycles);
+
+          // The connection is still usable after all that churn.
+          final v = await dc.client.read(tempId).timeout(const Duration(seconds: 10));
+          expect(v.asDouble, allOf(greaterThan(0), lessThan(100)));
+        } finally {
+          await dc.dispose();
         }
-
-        expect(failures, isEmpty, reason: 'sub/monitor churn failures: $failures');
-        expect(ok, cycles);
-
-        // The connection is still usable after all that churn.
-        final v = await dc.client.read(tempId).timeout(const Duration(seconds: 10));
-        expect(v.asDouble, allOf(greaterThan(0), lessThan(100)));
-      } finally {
-        await dc.dispose();
-      }
-    }, timeout: const Timeout(Duration(seconds: 180)));
+      },
+      timeout: const Timeout(Duration(seconds: 180)),
+    );
   }, skip: asyncuaAvailable() ? false : 'run test/integration/setup_local.sh first');
 }

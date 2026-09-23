@@ -207,55 +207,59 @@ void main() {
     server.delete();
   });
 
-  test('first emission arrives from the reordered notification, before the create-response is released', () async {
-    final nodes = {for (var i = 0; i < nodeCount; i++) NodeId.fromString(1, "race.int$i"): 100 + i};
-    final c = Client();
-    client = c;
-    running = true;
+  test(
+    'first emission arrives from the reordered notification, before the create-response is released',
     () async {
-      while (running && c.runIterate(const Duration(milliseconds: 10))) {
-        await Future.delayed(const Duration(milliseconds: 5));
+      final nodes = {for (var i = 0; i < nodeCount; i++) NodeId.fromString(1, "race.int$i"): 100 + i};
+      final c = Client();
+      client = c;
+      running = true;
+      () async {
+        while (running && c.runIterate(const Duration(milliseconds: 10))) {
+          await Future.delayed(const Duration(milliseconds: 5));
+        }
+      }();
+      await c.connect("opc.tcp://127.0.0.1:${proxy.port}");
+      final subscription = await c.subscriptionCreate(requestedPublishingInterval: const Duration(milliseconds: 10));
+      final first = Completer<Map<NodeId, DynamicValue>>();
+      final sw = Stopwatch()..start();
+      final sub = c
+          .monitoredItems(
+            {
+              for (final n in nodes.keys) n: [AttributeId.UA_ATTRIBUTEID_VALUE],
+            },
+            subscription,
+            samplingInterval: const Duration(milliseconds: 10),
+          )
+          .listen((values) {
+            if (!first.isCompleted) first.complete(values);
+          });
+      // The context-based code delivers this value from the reordered notification
+      // (~100 ms). The pre-fix monId-keyed code drops it at monId==0 (throwing
+      // "Error converting data for: null") and only recovers it via the
+      // create-response backfill, which cannot run until the held
+      // CreateMonitoredItemsResponse is released at 4 s. A 2.5 s bound cleanly
+      // separates the two: it passes on the fix and times out on the old code.
+      late final Map<NodeId, DynamicValue> values;
+      try {
+        values = await first.future.timeout(const Duration(milliseconds: 2500));
+      } on TimeoutException {
+        fail(
+          'No monitored value arrived within 2.5s while the '
+          'CreateMonitoredItemsResponse was held: the initial notification was '
+          'processed with monId==0 and dropped, instead of being resolved by '
+          'request-order context (elapsed ${sw.elapsedMilliseconds} ms).',
+        );
       }
-    }();
-    await c.connect("opc.tcp://127.0.0.1:${proxy.port}");
-    final subscription = await c.subscriptionCreate(requestedPublishingInterval: const Duration(milliseconds: 10));
-    final first = Completer<Map<NodeId, DynamicValue>>();
-    final sw = Stopwatch()..start();
-    final sub = c
-        .monitoredItems(
-          {
-            for (final n in nodes.keys) n: [AttributeId.UA_ATTRIBUTEID_VALUE],
-          },
-          subscription,
-          samplingInterval: const Duration(milliseconds: 10),
-        )
-        .listen((values) {
-          if (!first.isCompleted) first.complete(values);
-        });
-    // The context-based code delivers this value from the reordered notification
-    // (~100 ms). The pre-fix monId-keyed code drops it at monId==0 (throwing
-    // "Error converting data for: null") and only recovers it via the
-    // create-response backfill, which cannot run until the held
-    // CreateMonitoredItemsResponse is released at 4 s. A 2.5 s bound cleanly
-    // separates the two: it passes on the fix and times out on the old code.
-    late final Map<NodeId, DynamicValue> values;
-    try {
-      values = await first.future.timeout(const Duration(milliseconds: 2500));
-    } on TimeoutException {
-      fail(
-        'No monitored value arrived within 2.5s while the '
-        'CreateMonitoredItemsResponse was held: the initial notification was '
-        'processed with monId==0 and dropped, instead of being resolved by '
-        'request-order context (elapsed ${sw.elapsedMilliseconds} ms).',
-      );
-    }
-    for (final e in nodes.entries) {
-      expect(
-        values[e.key]?.value,
-        e.value,
-        reason: 'value for ${e.key} landed on the wrong item (context<->index off-by-one)',
-      );
-    }
-    await sub.cancel();
-  }, timeout: const Timeout(Duration(seconds: 40)));
+      for (final e in nodes.entries) {
+        expect(
+          values[e.key]?.value,
+          e.value,
+          reason: 'value for ${e.key} landed on the wrong item (context<->index off-by-one)',
+        );
+      }
+      await sub.cancel();
+    },
+    timeout: const Timeout(Duration(seconds: 40)),
+  );
 }

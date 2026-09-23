@@ -80,32 +80,36 @@ void main() {
   });
 
   // ---- asyncua reference servers ------------------------------------------
-  group('1 process -> N asyncua servers: read a live sensor from each', () {
-    test('concurrent reads across servers all succeed and are in range', () async {
-      const serverCount = 2;
-      final servers = <ReferenceServer>[];
-      final clients = <DrivenClient>[];
-      try {
-        for (var i = 0; i < serverCount; i++) {
-          final srv = ReferenceServer.asyncuaFishFarm(port: await freePort(), tanks: 2, updateMs: 200);
-          await srv.start();
-          servers.add(srv);
-          clients.add(await connect1(srv.endpoint));
-        }
+  group(
+    '1 process -> N asyncua servers: read a live sensor from each',
+    () {
+      test('concurrent reads across servers all succeed and are in range', () async {
+        const serverCount = 2;
+        final servers = <ReferenceServer>[];
+        final clients = <DrivenClient>[];
+        try {
+          for (var i = 0; i < serverCount; i++) {
+            final srv = ReferenceServer.asyncuaFishFarm(port: await freePort(), tanks: 2, updateMs: 200);
+            await srv.start();
+            servers.add(srv);
+            clients.add(await connect1(srv.endpoint));
+          }
 
-        final reads = <Future<void>>[];
-        for (var i = 0; i < serverCount; i++) {
-          reads.add(() async {
-            final tempId = await tankVar(clients[i].client, 1, 'Temperature');
-            final v = await clients[i].client.read(tempId);
-            expect(v.asDouble, allOf(greaterThan(0), lessThan(100)), reason: 'server $i temp out of range');
-          }());
+          final reads = <Future<void>>[];
+          for (var i = 0; i < serverCount; i++) {
+            reads.add(() async {
+              final tempId = await tankVar(clients[i].client, 1, 'Temperature');
+              final v = await clients[i].client.read(tempId);
+              expect(v.asDouble, allOf(greaterThan(0), lessThan(100)), reason: 'server $i temp out of range');
+            }());
+          }
+          await Future.wait(reads);
+        } finally {
+          await disposeFleet(clients);
+          await Future.wait(servers.map((s) => s.stop()));
         }
-        await Future.wait(reads);
-      } finally {
-        await disposeFleet(clients);
-        await Future.wait(servers.map((s) => s.stop()));
-      }
-    }, timeout: const Timeout(Duration(seconds: 120)));
-  }, skip: asyncuaAvailable() ? false : 'run test/integration/setup_local.sh first');
+      }, timeout: const Timeout(Duration(seconds: 120)));
+    },
+    skip: asyncuaAvailable() ? false : 'run test/integration/setup_local.sh first',
+  );
 }

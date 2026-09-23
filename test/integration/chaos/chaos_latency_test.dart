@@ -88,58 +88,66 @@ void main() {
       }
     }, timeout: const Timeout(Duration(seconds: 90)));
 
-    test('operation timeout: a too-short read timeout fails cleanly, a generous one succeeds', () async {
-      final dc = await connectClient(proxy.url, connectTimeout: const Duration(seconds: 30));
-      try {
-        final tempId = await tankVar(dc.client, 1, 'Temperature');
-        await dc.client.read(tempId); // warm
+    test(
+      'operation timeout: a too-short read timeout fails cleanly, a generous one succeeds',
+      () async {
+        final dc = await connectClient(proxy.url, connectTimeout: const Duration(seconds: 30));
+        try {
+          final tempId = await tankVar(dc.client, 1, 'Temperature');
+          await dc.client.read(tempId); // warm
 
-        // Heavy latency so a tight per-operation timeout is guaranteed to trip.
-        await proxy.addLatency(latency: const Duration(milliseconds: 800));
+          // Heavy latency so a tight per-operation timeout is guaranteed to trip.
+          await proxy.addLatency(latency: const Duration(milliseconds: 800));
 
-        await expectLater(
-          dc.client.read(tempId).timeout(const Duration(milliseconds: 150)),
-          throwsA(isA<TimeoutException>()),
-          reason: 'a 150ms operation timeout must fire under 800ms latency',
-        );
+          await expectLater(
+            dc.client.read(tempId).timeout(const Duration(milliseconds: 150)),
+            throwsA(isA<TimeoutException>()),
+            reason: 'a 150ms operation timeout must fire under 800ms latency',
+          );
 
-        // Remove the latency; the client is still healthy and reads succeed.
-        await proxy.reset();
-        final v = await dc.client.read(tempId).timeout(const Duration(seconds: 15));
-        expect(
-          v.asDouble,
-          allOf(greaterThan(0), lessThan(100)),
-          reason: 'client must remain usable after an operation timeout',
-        );
-      } finally {
-        await dc.dispose();
-      }
-    }, timeout: const Timeout(Duration(seconds: 90)));
-
-    test('connect timeout: a too-short connectTimeout fails cleanly under heavy latency', () async {
-      // 500ms downstream latency makes the multi-round-trip handshake take a
-      // couple of seconds, so a sub-second connect timeout must trip.
-      await proxy.addLatency(latency: const Duration(milliseconds: 500));
-
-      // Build the client by hand so we can always tear it down even though
-      // connect() never returns a DrivenClient here.
-      final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
-      var running = true;
-      unawaited(() async {
-        while (running && client.runIterate(const Duration(milliseconds: 10))) {
-          await Future<void>.delayed(const Duration(milliseconds: 5));
+          // Remove the latency; the client is still healthy and reads succeed.
+          await proxy.reset();
+          final v = await dc.client.read(tempId).timeout(const Duration(seconds: 15));
+          expect(
+            v.asDouble,
+            allOf(greaterThan(0), lessThan(100)),
+            reason: 'client must remain usable after an operation timeout',
+          );
+        } finally {
+          await dc.dispose();
         }
-      }());
-      try {
-        await expectLater(
-          client.connect(proxy.url).timeout(const Duration(milliseconds: 400)),
-          throwsA(isA<TimeoutException>()),
-          reason: 'a 400ms connect timeout must fire under 500ms latency',
-        );
-      } finally {
-        running = false;
-        await client.delete();
-      }
-    }, timeout: const Timeout(Duration(seconds: 60)));
+      },
+      timeout: const Timeout(Duration(seconds: 90)),
+    );
+
+    test(
+      'connect timeout: a too-short connectTimeout fails cleanly under heavy latency',
+      () async {
+        // 500ms downstream latency makes the multi-round-trip handshake take a
+        // couple of seconds, so a sub-second connect timeout must trip.
+        await proxy.addLatency(latency: const Duration(milliseconds: 500));
+
+        // Build the client by hand so we can always tear it down even though
+        // connect() never returns a DrivenClient here.
+        final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+        var running = true;
+        unawaited(() async {
+          while (running && client.runIterate(const Duration(milliseconds: 10))) {
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+        }());
+        try {
+          await expectLater(
+            client.connect(proxy.url).timeout(const Duration(milliseconds: 400)),
+            throwsA(isA<TimeoutException>()),
+            reason: 'a 400ms connect timeout must fire under 500ms latency',
+          );
+        } finally {
+          running = false;
+          await client.delete();
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
   }, skip: asyncuaAvailable() && toxiproxyAvailable() ? false : 'run test/integration/setup_local.sh first');
 }

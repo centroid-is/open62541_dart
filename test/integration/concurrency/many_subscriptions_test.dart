@@ -25,82 +25,86 @@ import 'concurrency_support.dart';
 
 void main() {
   // ---- asyncua: many live monitored items on one client -------------------
-  group('many monitored items on one asyncua client', () {
-    const tanks = 3;
-    const liveSensors = ['Temperature', 'DissolvedOxygen', 'PH', 'WaterLevel'];
-    late ReferenceServer server;
+  group(
+    'many monitored items on one asyncua client',
+    () {
+      const tanks = 3;
+      const liveSensors = ['Temperature', 'DissolvedOxygen', 'PH', 'WaterLevel'];
+      late ReferenceServer server;
 
-    setUp(() async {
-      server = ReferenceServer.asyncuaFishFarm(port: await freePort(), tanks: tanks, updateMs: 100);
-      await server.start();
-    });
-    tearDown(() async => server.stop());
+      setUp(() async {
+        server = ReferenceServer.asyncuaFishFarm(port: await freePort(), tanks: tanks, updateMs: 100);
+        await server.start();
+      });
+      tearDown(() async => server.stop());
 
-    test('one subscription, many items: every item receives an update', () async {
-      final dc = await connect1(server.endpoint);
-      try {
-        // Resolve every live sensor on every tank (tanks * liveSensors items).
-        final ids = <NodeId>[];
-        for (var t = 1; t <= tanks; t++) {
-          for (final s in liveSensors) {
-            ids.add(await tankVar(dc.client, t, s));
+      test('one subscription, many items: every item receives an update', () async {
+        final dc = await connect1(server.endpoint);
+        try {
+          // Resolve every live sensor on every tank (tanks * liveSensors items).
+          final ids = <NodeId>[];
+          for (var t = 1; t <= tanks; t++) {
+            for (final s in liveSensors) {
+              ids.add(await tankVar(dc.client, t, s));
+            }
           }
-        }
-        expect(ids.length, tanks * liveSensors.length);
+          expect(ids.length, tanks * liveSensors.length);
 
-        final subId = await dc.client.subscriptionCreate(
-          requestedPublishingInterval: const Duration(milliseconds: 100),
-        );
-        final param = {
-          for (final id in ids) id: const [AttributeId.UA_ATTRIBUTEID_VALUE],
-        };
-        final updated = <NodeId>{};
-        final allSeen = Completer<void>();
-        final sub = dc.client.monitoredItems(param, subId, samplingInterval: const Duration(milliseconds: 100)).listen((
-          batch,
-        ) {
-          updated.addAll(batch.keys);
-          if (updated.length >= ids.length && !allSeen.isCompleted) allSeen.complete();
-        });
-        await allSeen.future.timeout(const Duration(seconds: 40));
-        await sub.cancel();
-        expect(updated.length, ids.length, reason: 'not every monitored item reported');
-      } finally {
-        await dc.dispose();
-      }
-    }, timeout: const Timeout(Duration(seconds: 90)));
-
-    test('many separate subscriptions, one item each, all deliver', () async {
-      final dc = await connect1(server.endpoint);
-      try {
-        final ids = <NodeId>[];
-        for (var t = 1; t <= tanks; t++) {
-          ids.add(await tankVar(dc.client, t, 'Temperature'));
-        }
-
-        final waits = <Future<void>>[];
-        final subs = <StreamSubscription<DynamicValue>>[];
-        for (final id in ids) {
           final subId = await dc.client.subscriptionCreate(
             requestedPublishingInterval: const Duration(milliseconds: 100),
           );
-          final got = Completer<void>();
-          subs.add(
-            dc.client.monitor(id, subId, samplingInterval: const Duration(milliseconds: 100)).listen((v) {
-              if (!got.isCompleted) got.complete();
-            }),
-          );
-          waits.add(got.future);
+          final param = {
+            for (final id in ids) id: const [AttributeId.UA_ATTRIBUTEID_VALUE],
+          };
+          final updated = <NodeId>{};
+          final allSeen = Completer<void>();
+          final sub = dc.client
+              .monitoredItems(param, subId, samplingInterval: const Duration(milliseconds: 100))
+              .listen((batch) {
+                updated.addAll(batch.keys);
+                if (updated.length >= ids.length && !allSeen.isCompleted) allSeen.complete();
+              });
+          await allSeen.future.timeout(const Duration(seconds: 40));
+          await sub.cancel();
+          expect(updated.length, ids.length, reason: 'not every monitored item reported');
+        } finally {
+          await dc.dispose();
         }
-        await Future.wait(waits).timeout(const Duration(seconds: 40));
-        for (final s in subs) {
-          await s.cancel();
+      }, timeout: const Timeout(Duration(seconds: 90)));
+
+      test('many separate subscriptions, one item each, all deliver', () async {
+        final dc = await connect1(server.endpoint);
+        try {
+          final ids = <NodeId>[];
+          for (var t = 1; t <= tanks; t++) {
+            ids.add(await tankVar(dc.client, t, 'Temperature'));
+          }
+
+          final waits = <Future<void>>[];
+          final subs = <StreamSubscription<DynamicValue>>[];
+          for (final id in ids) {
+            final subId = await dc.client.subscriptionCreate(
+              requestedPublishingInterval: const Duration(milliseconds: 100),
+            );
+            final got = Completer<void>();
+            subs.add(
+              dc.client.monitor(id, subId, samplingInterval: const Duration(milliseconds: 100)).listen((v) {
+                if (!got.isCompleted) got.complete();
+              }),
+            );
+            waits.add(got.future);
+          }
+          await Future.wait(waits).timeout(const Duration(seconds: 40));
+          for (final s in subs) {
+            await s.cancel();
+          }
+        } finally {
+          await dc.dispose();
         }
-      } finally {
-        await dc.dispose();
-      }
-    }, timeout: const Timeout(Duration(seconds: 90)));
-  }, skip: asyncuaAvailable() ? false : 'run test/integration/setup_local.sh first');
+      }, timeout: const Timeout(Duration(seconds: 90)));
+    },
+    skip: asyncuaAvailable() ? false : 'run test/integration/setup_local.sh first',
+  );
 
   // ---- Dart server: deterministic many-item fan-out -----------------------
   group('many monitored items on one Dart-server client', () {

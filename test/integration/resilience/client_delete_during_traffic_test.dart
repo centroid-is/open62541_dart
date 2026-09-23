@@ -36,24 +36,99 @@ const _deleteBug =
     'cancels active streams before delete (lib/src/isolate.dart:871-877).';
 
 void main() {
-  group('client delete during active traffic (asyncua)', () {
-    late ReferenceServer server;
+  group(
+    'client delete during active traffic (asyncua)',
+    () {
+      late ReferenceServer server;
 
-    setUp(() async {
-      server = ReferenceServer.asyncuaFishFarm(port: await freePort(), tanks: 2, updateMs: 50);
-      await server.start();
-    });
+      setUp(() async {
+        server = ReferenceServer.asyncuaFishFarm(port: await freePort(), tanks: 2, updateMs: 50);
+        await server.start();
+      });
 
-    tearDown(() async {
-      await server.stop();
-    });
+      tearDown(() async {
+        await server.stop();
+      });
 
-    for (final kind in clientTypes) {
-      final bugForDirect = kind == ClientKind.direct ? _deleteBug : null;
+      for (final kind in clientTypes) {
+        final bugForDirect = kind == ClientKind.direct ? _deleteBug : null;
 
-      test(
-        'delete() mid-subscription does not crash [$kind]',
-        () async {
+        test(
+          'delete() mid-subscription does not crash [$kind]',
+          () async {
+            final dc = await connectClient(server.endpoint, kind: kind);
+            final tempId = await tankVar(dc.client, 1, 'Temperature');
+
+            final subId = await dc.client.subscriptionCreate(
+              requestedPublishingInterval: const Duration(milliseconds: 50),
+            );
+            final stream = dc.client.monitor(tempId, subId, samplingInterval: const Duration(milliseconds: 50));
+
+            final values = <double>[];
+            // Deliberately keep the monitored-item stream *active* (do not cancel
+            // it before delete) so the tear-down races with incoming Publish
+            // responses.
+            final sub = stream.listen((v) => values.add(v.asDouble), onError: (_) {});
+
+            // Let publishes flow so responses are genuinely in flight.
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            expect(values, isNotEmpty, reason: 'data should be flowing before delete');
+
+            // Tear the client down without cancelling the stream first.
+            await dc.dispose();
+
+            // Best-effort cancel of the now-orphaned stream must not throw/crash.
+            await sub.cancel();
+
+            // If we reached here the VM did not crash with a use-after-free.
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+            expect(true, isTrue);
+          },
+          timeout: const Timeout(Duration(seconds: 30)),
+          skip: bugForDirect,
+        );
+
+        test(
+          'delete() with multiple monitored items active does not crash [$kind]',
+          () async {
+            final dc = await connectClient(server.endpoint, kind: kind);
+            final tempId = await tankVar(dc.client, 1, 'Temperature');
+            final doId = await tankVar(dc.client, 1, 'DissolvedOxygen');
+            final phId = await tankVar(dc.client, 1, 'PH');
+
+            final subId = await dc.client.subscriptionCreate(
+              requestedPublishingInterval: const Duration(milliseconds: 50),
+            );
+            final stream = dc.client.monitoredItems(
+              {
+                tempId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+                doId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+                phId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+              },
+              subId,
+              samplingInterval: const Duration(milliseconds: 50),
+            );
+
+            var updates = 0;
+            final sub = stream.listen((_) => updates++, onError: (_) {});
+
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            expect(updates, greaterThan(0), reason: 'multi-item stream should deliver before delete');
+
+            // Delete while all three monitored items are live.
+            await dc.dispose();
+            await sub.cancel();
+
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+            expect(true, isTrue);
+          },
+          timeout: const Timeout(Duration(seconds: 30)),
+          skip: bugForDirect,
+        );
+
+        // The SAFE pattern: cancel the monitored-item stream, then delete. This
+        // is the workaround for the bug above and must not crash for either kind.
+        test('safe pattern: cancel stream, then delete() [$kind]', () async {
           final dc = await connectClient(server.endpoint, kind: kind);
           final tempId = await tankVar(dc.client, 1, 'Temperature');
 
@@ -61,111 +136,42 @@ void main() {
             requestedPublishingInterval: const Duration(milliseconds: 50),
           );
           final stream = dc.client.monitor(tempId, subId, samplingInterval: const Duration(milliseconds: 50));
-
           final values = <double>[];
-          // Deliberately keep the monitored-item stream *active* (do not cancel
-          // it before delete) so the tear-down races with incoming Publish
-          // responses.
           final sub = stream.listen((v) => values.add(v.asDouble), onError: (_) {});
 
-          // Let publishes flow so responses are genuinely in flight.
           await Future<void>.delayed(const Duration(milliseconds: 400));
-          expect(values, isNotEmpty, reason: 'data should be flowing before delete');
+          expect(values, isNotEmpty);
 
-          // Tear the client down without cancelling the stream first.
+          // Cancel first, let the native delete settle, then delete.
+          await sub.cancel();
+          await Future<void>.delayed(const Duration(milliseconds: 100));
           await dc.dispose();
 
-          // Best-effort cancel of the now-orphaned stream must not throw/crash.
-          await sub.cancel();
-
-          // If we reached here the VM did not crash with a use-after-free.
           await Future<void>.delayed(const Duration(milliseconds: 200));
           expect(true, isTrue);
-        },
-        timeout: const Timeout(Duration(seconds: 30)),
-        skip: bugForDirect,
-      );
+        }, timeout: const Timeout(Duration(seconds: 30)));
 
-      test(
-        'delete() with multiple monitored items active does not crash [$kind]',
-        () async {
+        test('delete() with in-flight reads does not crash [$kind]', () async {
           final dc = await connectClient(server.endpoint, kind: kind);
           final tempId = await tankVar(dc.client, 1, 'Temperature');
-          final doId = await tankVar(dc.client, 1, 'DissolvedOxygen');
-          final phId = await tankVar(dc.client, 1, 'PH');
 
-          final subId = await dc.client.subscriptionCreate(
-            requestedPublishingInterval: const Duration(milliseconds: 50),
-          );
-          final stream = dc.client.monitoredItems(
-            {
-              tempId: [AttributeId.UA_ATTRIBUTEID_VALUE],
-              doId: [AttributeId.UA_ATTRIBUTEID_VALUE],
-              phId: [AttributeId.UA_ATTRIBUTEID_VALUE],
-            },
-            subId,
-            samplingInterval: const Duration(milliseconds: 50),
-          );
+          // Fire a burst of reads without awaiting, so responses/callbacks are
+          // outstanding when delete() runs. Swallow their (expected) failures.
+          final pending = <Future<void>>[];
+          for (var i = 0; i < 12; i++) {
+            pending.add(dc.client.read(tempId).then((_) {}, onError: (_) {}));
+          }
 
-          var updates = 0;
-          final sub = stream.listen((_) => updates++, onError: (_) {});
-
-          await Future<void>.delayed(const Duration(milliseconds: 400));
-          expect(updates, greaterThan(0), reason: 'multi-item stream should deliver before delete');
-
-          // Delete while all three monitored items are live.
+          // Delete immediately, racing the outstanding read callbacks.
           await dc.dispose();
-          await sub.cancel();
 
+          // Draining the pending futures must not surface an uncaught error.
+          await Future.wait(pending).timeout(const Duration(seconds: 10), onTimeout: () => const []);
           await Future<void>.delayed(const Duration(milliseconds: 200));
           expect(true, isTrue);
-        },
-        timeout: const Timeout(Duration(seconds: 30)),
-        skip: bugForDirect,
-      );
-
-      // The SAFE pattern: cancel the monitored-item stream, then delete. This
-      // is the workaround for the bug above and must not crash for either kind.
-      test('safe pattern: cancel stream, then delete() [$kind]', () async {
-        final dc = await connectClient(server.endpoint, kind: kind);
-        final tempId = await tankVar(dc.client, 1, 'Temperature');
-
-        final subId = await dc.client.subscriptionCreate(requestedPublishingInterval: const Duration(milliseconds: 50));
-        final stream = dc.client.monitor(tempId, subId, samplingInterval: const Duration(milliseconds: 50));
-        final values = <double>[];
-        final sub = stream.listen((v) => values.add(v.asDouble), onError: (_) {});
-
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-        expect(values, isNotEmpty);
-
-        // Cancel first, let the native delete settle, then delete.
-        await sub.cancel();
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        await dc.dispose();
-
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-        expect(true, isTrue);
-      }, timeout: const Timeout(Duration(seconds: 30)));
-
-      test('delete() with in-flight reads does not crash [$kind]', () async {
-        final dc = await connectClient(server.endpoint, kind: kind);
-        final tempId = await tankVar(dc.client, 1, 'Temperature');
-
-        // Fire a burst of reads without awaiting, so responses/callbacks are
-        // outstanding when delete() runs. Swallow their (expected) failures.
-        final pending = <Future<void>>[];
-        for (var i = 0; i < 12; i++) {
-          pending.add(dc.client.read(tempId).then((_) {}, onError: (_) {}));
-        }
-
-        // Delete immediately, racing the outstanding read callbacks.
-        await dc.dispose();
-
-        // Draining the pending futures must not surface an uncaught error.
-        await Future.wait(pending).timeout(const Duration(seconds: 10), onTimeout: () => const []);
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-        expect(true, isTrue);
-      }, timeout: const Timeout(Duration(seconds: 30)));
-    }
-  }, skip: asyncuaAvailable() ? false : 'run test/integration/setup_local.sh first');
+        }, timeout: const Timeout(Duration(seconds: 30)));
+      }
+    },
+    skip: asyncuaAvailable() ? false : 'run test/integration/setup_local.sh first',
+  );
 }
