@@ -9,6 +9,17 @@ import 'dart:io';
 
 bool debug = false;
 
+/// Running totals of the allocations and frees made through [ua_malloc] and
+/// [ua_calloc] since process start. Diagnostics only: two integer increments
+/// per call, never reset, never read by the package itself. A test that runs a
+/// code path N times and expects `uaAllocCount - uaFreeCount` to come back
+/// unchanged is a leak check that does not depend on RSS or on the platform's
+/// allocator, which is what the extension-object-header leak needed. Memory
+/// open62541 allocates or frees on its own (UA_*_new / UA_*_delete /
+/// UA_*_clear) is not counted -- only these two Dart-side allocators are.
+int uaAllocCount = 0;
+int uaFreeCount = 0;
+
 typedef UaPosixMallocNative = Pointer Function(IntPtr);
 
 @Native<UaPosixMallocNative>(symbol: 'malloc')
@@ -65,6 +76,7 @@ final class UaMallocAllocator implements Allocator {
     if (result.address == 0) {
       throw ArgumentError('Could not allocate $byteCount bytes.');
     }
+    uaAllocCount++;
     return result;
   }
 
@@ -75,6 +87,7 @@ final class UaMallocAllocator implements Allocator {
   /// manner equivalent to [allocate].
   @override
   void free(Pointer pointer) {
+    uaFreeCount++;
     if (Platform.isWindows) {
       winFree(pointer);
     } else {
@@ -149,6 +162,7 @@ final class UaCallocAllocator implements Allocator {
     if (result.address == 0) {
       throw ArgumentError('Could not allocate $byteCount bytes.');
     }
+    uaAllocCount++;
     return result;
   }
 
@@ -158,6 +172,7 @@ final class UaCallocAllocator implements Allocator {
   /// manner equivalent to [allocate].
   @override
   void free(Pointer pointer) {
+    uaFreeCount++;
     if (Platform.isWindows) {
       winFree(pointer);
     } else {

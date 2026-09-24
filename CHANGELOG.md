@@ -6,6 +6,20 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **Fixed a 48-byte native leak per struct-valued variant decoded (and per
+  struct written).** `OpcUaDynamicValueSerializer.deserialize` calloc'd a
+  `UA_ExtensionObject` to read the header of every struct-valued variant --
+  every struct notification, every struct read, and once per element of an
+  array of structs -- and never freed it; `serialize` did the same for every
+  struct written. Both now read/build the header through a `Struct.create`
+  view on the Dart heap, so nothing is allocated natively. On an HMI station
+  subscribing whole machine structs this was ~1.07 M allocations/h, ~70 MB/h
+  of glibc arena growth before fragmentation, against a measured 97-110 MiB/h
+  process leak; present in every published version including 1.5.7+3 and
+  independent of the monitored-item callback leaks fixed in #119. Also new:
+  `uaAllocCount` / `uaFreeCount` in `ua_allocation.dart`, running totals of
+  the package's own native allocations, so a leak on a Dart-side path can be
+  asserted by counting instead of by measuring RSS.
 - **`Client.call` (and `readAttribute` / monitored-item creation) surface the
   real service status.** The async response handlers checked `resultsSize`
   before `responseHeader.serviceResult`, so an infrastructure failure (session

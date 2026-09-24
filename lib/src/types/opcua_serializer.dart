@@ -6,7 +6,6 @@ import 'package:open62541/src/extensions.dart';
 import '../dynamic_value.dart';
 import '../node_id.dart';
 import '../third_party/open62541.g.dart' as raw;
-import '../ua_allocation.dart';
 import 'create_type.dart';
 import 'payloads.dart';
 
@@ -108,15 +107,28 @@ class OpcUaDynamicValueSerializer {
     if (schema.isObject) {
       ByteReader bodyReader = reader;
       if (root) {
+        // The variant's data buffer holds a UA_ExtensionObject header (48
+        // bytes: encoding, typeId, body ByteString) whose `body.data` pointer
+        // points into memory open62541 owns. All we need from the header is
+        // that pointer + length, so read the header through a struct VIEW over
+        // a Dart-heap copy of its bytes (`Struct.create`) instead of
+        // calloc'ing a native UA_ExtensionObject to reinterpret them.
+        //
+        // The calloc this replaces was never freed: 48 bytes leaked per
+        // struct-valued variant decoded, i.e. per struct notification and per
+        // element of an array of structs (this branch is reached once per
+        // element, see the array case below). On a station subscribing whole
+        // machine structs that was ~1.07 M allocations/h, ~70 MB/h before
+        // glibc arena fragmentation, against a measured 97-110 MiB/h leak.
+        // Freeing it after `bodyBytes` is taken would also have been safe
+        // (`bodyBytes` views the body's data, not the header struct), but a
+        // Dart-heap view needs no ownership argument at all: nothing is
+        // allocated natively, so nothing can be leaked.
         final objBytes = reader.read(ffi.sizeOf<raw.UA_ExtensionObject>());
-        ffi.Pointer<raw.UA_ExtensionObject> obj = ua_calloc();
-        obj
-            .cast<ffi.Uint8>()
-            .asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>())
-            .setRange(0, ffi.sizeOf<raw.UA_ExtensionObject>(), objBytes);
+        final obj = ffi.Struct.create<raw.UA_ExtensionObject>(Uint8List.fromList(objBytes));
         // Todo only support encoded byte string for now
-        assert(obj.ref.encoding == raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING);
-        final bodyBytes = obj.ref.content.encoded.body.asTypedList();
+        assert(obj.encoding == raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING);
+        final bodyBytes = obj.content.encoded.body.asTypedList();
         bodyReader = ByteReader(bodyBytes, endian: endian ?? Endian.little);
       }
       final fields = schema.asObject;
@@ -202,18 +214,26 @@ class OpcUaDynamicValueSerializer {
         OpcUaDynamicValueSerializer.serialize(value.value[i], writer, value.value[i], endian, insideStruct, root);
       }
     } else if (value.isObject && root) {
-      ffi.Pointer<raw.UA_ExtensionObject> obj = ua_calloc<raw.UA_ExtensionObject>();
-      obj.ref.content.encoded.typeId.fromNodeId(value.extObjEncodingId ?? value.typeId!);
+      // Build the UA_ExtensionObject header on the Dart heap (a struct view
+      // over `objBytes`) and copy its BYTES into the writer. The header itself
+      // is never handed to open62541 -- the variant gets a copy of these bytes
+      // in its own data buffer -- so a native header would only ever be
+      // scratch space, and the one this replaces was never freed (48 bytes
+      // per struct written; the read side had the same leak, see
+      // `deserialize`). The two things the header points at, the encoded
+      // body and a string typeId's characters, ARE allocated natively
+      // (`fromBytes` / `fromNodeId`) and become the variant's property: it
+      // is the variant's owner who frees them, through UA_Variant_delete /
+      // UA_Variant_clear -> UA_ExtensionObject_clear.
+      final objBytes = Uint8List(ffi.sizeOf<raw.UA_ExtensionObject>());
+      final obj = ffi.Struct.create<raw.UA_ExtensionObject>(objBytes);
+      obj.content.encoded.typeId.fromNodeId(value.extObjEncodingId ?? value.typeId!);
       ByteWriter bodyWriter = ByteWriter();
       _serializeStructBody(value, bodyWriter, endian);
-      obj.ref.content.encoded.body.fromBytes(bodyWriter.toBytes());
+      obj.content.encoded.body.fromBytes(bodyWriter.toBytes());
       // todo support other encodings
-      obj.ref.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
-      // write the extension object to the writer
-      final extObjView = obj.cast<ffi.Uint8>().asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>());
-      // here we have made a view into the ext object on the C heap
-      // I would like to believe that this is freed when the variant is freed
-      writer.write(extObjView);
+      obj.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
+      writer.write(objBytes);
     } else if (value.isObject) {
       _serializeStructBody(value, writer, endian);
     } else {
