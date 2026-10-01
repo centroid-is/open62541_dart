@@ -112,9 +112,12 @@ changes that ship the same native library version.
     `UA_Server_newWithConfig` moves the contents into the server but leaves
     the struct itself to the caller.
   - every node added to a `Server` left a copy of its browse name behind
-    (`addVariableNode`, `addDataSourceVariableNode`, `addVariableTypeNode`).
+    (`addVariableNode`, `addDataSourceVariableNode`, `addVariableTypeNode`,
+    `addMethodNode`).
   - an add that threw left more: `addVariableNode` for a value without a
-    name leaked the attributes and the value (about 300 bytes).
+    name leaked the attributes and the value (about 300 bytes), and
+    `addMethodNode` the attributes and the arguments marshalled so far when
+    an argument could not be marshalled.
 
 ## 1.5.7+3
 

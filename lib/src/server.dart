@@ -1184,29 +1184,16 @@ class Server {
     NodeId? parentReferenceNodeId,
     String? browseName,
   }) {
-    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
-    parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
-    if (browseName == null) {
-      if (!methodNodeId.isString()) {
-        throw 'A browseName must be provided for a method node with a numeric NodeId';
-      }
-      browseName = methodNodeId.string;
+    final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
+    if (browseName == null && !methodNodeId.isString()) {
+      throw 'A browseName must be provided for a method node with a numeric NodeId';
     }
+    final resolvedName = browseName ?? methodNodeId.string;
 
     // Async method calls need the cancel hook so a timed-out/cancelled call
     // retires its in-flight entry (see [_asyncCancelDispatcher]).
     _ensureAsyncCancelDispatcher();
-
-    // Method attributes. calloc zero-initializes; open62541's high-level
-    // addMethodNode uses the struct directly (no attribute-mask filtering), so
-    // we only set the fields we care about.
-    final attr = ua_calloc<raw.UA_MethodAttributes>();
-    attr.ref.displayName.text.set(browseName);
-    attr.ref.executable = true;
-    attr.ref.userExecutable = true;
-
-    final inputArgsPtr = _buildArguments(inputArguments);
-    final outputArgsPtr = _buildArguments(outputArguments);
 
     // The native method callback. isolateLocal: it runs on this isolate,
     // synchronously, from within runIterate.
@@ -1298,37 +1285,41 @@ class Server {
           }
         }, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
 
-    final browse = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
+    // Everything native here is scratch: open62541 deep-copies the attributes,
+    // the argument arrays, the NodeIds and the browse name into the node. The
+    // attributes are passed by value, so the struct is on the Dart heap; it is
+    // zeroed, and open62541's high-level addMethodNode uses it directly (no
+    // attribute-mask filtering), so only the fields we care about are set.
+    // The arena releases the rest however this ends, also when an argument
+    // cannot be marshalled.
+    final int retCode;
+    try {
+      retCode = using((arena) {
+        final attr = ffi.Struct.create<raw.UA_MethodAttributes>();
+        attr.displayName.text.set(resolvedName, allocator: arena);
+        attr.executable = true;
+        attr.userExecutable = true;
 
-    final methodNodeIdRaw = methodNodeId.toRaw();
-    final parentNodeIdRaw = parentNodeId.toRaw();
-    final parentReferenceNodeIdRaw = parentReferenceNodeId.toRaw();
-
-    final retCode = raw.UA_Server_addMethodNode(
-      _server,
-      methodNodeIdRaw,
-      parentNodeIdRaw,
-      parentReferenceNodeIdRaw,
-      browse,
-      attr.ref,
-      nativeCallback.nativeFunction,
-      inputArguments.length,
-      inputArgsPtr,
-      outputArguments.length,
-      outputArgsPtr,
-      ffi.nullptr,
-      ffi.nullptr,
-    );
-
-    // open62541 has deep-copied the attributes, argument arrays and NodeId
-    // arguments into the node; release our copies.
-    _freeRawNodeId(methodNodeIdRaw);
-    _freeRawNodeId(parentNodeIdRaw);
-    _freeRawNodeId(parentReferenceNodeIdRaw);
-    _freeArguments(inputArgsPtr, inputArguments.length);
-    _freeArguments(outputArgsPtr, outputArguments.length);
-    attr.ref.displayName.text.free();
-    ua_calloc.free(attr);
+        return raw.UA_Server_addMethodNode(
+          _server,
+          methodNodeId.toRaw(allocator: arena),
+          resolvedParent.toRaw(allocator: arena),
+          resolvedRef.toRaw(allocator: arena),
+          raw.UA_QUALIFIEDNAME(1, resolvedName.toNativeUtf8(allocator: arena).cast()),
+          attr,
+          nativeCallback.nativeFunction,
+          inputArguments.length,
+          _buildArguments(inputArguments, arena),
+          outputArguments.length,
+          _buildArguments(outputArguments, arena),
+          ffi.nullptr,
+          ffi.nullptr,
+        );
+      }, ua_calloc);
+    } catch (_) {
+      nativeCallback.close();
+      rethrow;
+    }
 
     if (retCode != raw.UA_STATUSCODE_GOOD) {
       nativeCallback.close();
@@ -1339,47 +1330,30 @@ class Server {
     _methodCallbacks[methodNodeId] = nativeCallback;
   }
 
-  /// Allocates and populates a native `UA_Argument` array from [args].
-  /// Returns `nullptr` for an empty list.
-  ffi.Pointer<raw.UA_Argument> _buildArguments(List<Argument> args) {
+  /// Populates a native `UA_Argument` array from [args], allocated in [arena]
+  /// together with everything it points at. Returns `nullptr` for an empty
+  /// list.
+  ffi.Pointer<raw.UA_Argument> _buildArguments(List<Argument> args, Arena arena) {
     if (args.isEmpty) return ffi.nullptr;
-    final ptr = ua_calloc<raw.UA_Argument>(args.length);
+    final ptr = arena<raw.UA_Argument>(args.length);
     for (var i = 0; i < args.length; i++) {
       final a = args[i];
-      (ptr + i).ref.name.set(a.name);
-      (ptr + i).ref.dataType = a.dataType.toRaw();
+      (ptr + i).ref.name.set(a.name, allocator: arena);
+      (ptr + i).ref.dataType = a.dataType.toRaw(allocator: arena);
       (ptr + i).ref.valueRank = a.valueRank;
       final description = a.description;
       if (description != null) {
-        (ptr + i).ref.description.locale.set(description.locale);
-        (ptr + i).ref.description.text.set(description.value);
+        (ptr + i).ref.description.locale.set(description.locale, allocator: arena);
+        (ptr + i).ref.description.text.set(description.value, allocator: arena);
       }
       if (a.arrayDimensions.isNotEmpty) {
-        final dims = ua_calloc<ffi.Uint32>(a.arrayDimensions.length);
+        final dims = arena<ffi.Uint32>(a.arrayDimensions.length);
         dims.asTypedList(a.arrayDimensions.length).setRange(0, a.arrayDimensions.length, a.arrayDimensions);
         (ptr + i).ref.arrayDimensions = dims;
         (ptr + i).ref.arrayDimensionsSize = a.arrayDimensions.length;
       }
     }
     return ptr;
-  }
-
-  /// Frees the strings/arrays allocated by [_buildArguments] and the array
-  /// itself.
-  void _freeArguments(ffi.Pointer<raw.UA_Argument> ptr, int length) {
-    if (ptr == ffi.nullptr) return;
-    for (var i = 0; i < length; i++) {
-      (ptr + i).ref.name.free();
-      // The dataType NodeId's string identifier (if any) was allocated by
-      // NodeId.toRaw(); open62541 has copied it into the node, so free ours.
-      _freeRawNodeId((ptr + i).ref.dataType);
-      (ptr + i).ref.description.locale.free();
-      (ptr + i).ref.description.text.free();
-      if ((ptr + i).ref.arrayDimensions != ffi.nullptr) {
-        ua_calloc.free((ptr + i).ref.arrayDimensions);
-      }
-    }
-    ua_calloc.free(ptr);
   }
 
   /// Adds a generic Object node to the server's address space.

@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
@@ -58,6 +60,21 @@ void main() {
         browseName: browseName,
         typeId: NodeId.int32,
       ),
+      'a method node': () => server.addMethodNode(
+        nodeId,
+        browseName: browseName,
+        inputArguments: [
+          Argument(
+            name: 'in',
+            dataType: NodeId.int32,
+            valueRank: 1,
+            arrayDimensions: [3],
+            description: LocalizedText('An input', 'en-US'),
+          ),
+        ],
+        outputArguments: [Argument(name: 'out', dataType: NodeId.fromString(1, 'leak.test.type'))],
+        callback: (inputs, session) async => inputs,
+      ),
     };
 
     for (final MapEntry(key: kind, value: add) in kinds.entries) {
@@ -94,5 +111,30 @@ void main() {
         throwsA(contains('name must be provided')),
       );
     });
+
+    test('a method node whose arguments cannot be marshalled leaves nothing on the C heap', () async {
+      await expectRefusedAddLeavesNothing(
+        () => server.addMethodNode(
+          nodeId,
+          browseName: browseName,
+          inputArguments: [Argument(name: 'in', dataType: NodeId.fromString(1, 'leak.test.type'))],
+          outputArguments: [Argument(name: 'out', dataType: NodeId.int32, arrayDimensions: _UnreadableList())],
+          callback: (inputs, session) async => inputs,
+        ),
+        throwsStateError,
+      );
+    });
   });
+}
+
+/// A list whose elements cannot be read, to make marshalling it fail.
+class _UnreadableList extends ListBase<int> {
+  @override
+  int length = 1;
+
+  @override
+  int operator [](int index) => throw StateError('unreadable');
+
+  @override
+  void operator []=(int index, int value) {}
 }
