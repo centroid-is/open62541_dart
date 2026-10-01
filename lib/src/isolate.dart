@@ -856,11 +856,13 @@ class ClientIsolate implements ClientApi {
       );
     } finally {
       _pendingRequests.remove(id);
+      // Tear the worker down whatever it answered: if it reported an error
+      // (rethrown to the caller once this block is done) it would otherwise
+      // stay alive, and the two open ports would keep this isolate alive too.
+      _isolate.kill();
+      _receivePort.close();
+      _errPort.close();
     }
-
-    _isolate.kill();
-    _receivePort.close();
-    _errPort.close();
   }
 
   /// Wait for the connection to be fully established

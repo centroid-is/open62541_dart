@@ -4,6 +4,9 @@ import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/isolate.dart' show ClientIsolateClosedException;
+import 'common.dart';
+
+final unknownNodeId = NodeId.fromString(1, "does.not.exist");
 
 void main() {
   group('ClientIsolate cleanup', () {
@@ -107,5 +110,70 @@ void main() {
         expect(error, isA<ClientIsolateClosedException>());
       }
     });
+  });
+
+  // Guards PR #119 review finding 2: delete() returned before killing the
+  // worker and closing its ports whenever the worker answered with an error.
+  group('ClientIsolate cleanup when the worker fails the delete', () {
+    late IsolateWatch watch;
+
+    setUpAll(() async => watch = await IsolateWatch.start());
+    tearDownAll(() => watch.stop());
+
+    test('delete() tears the worker isolate down and still reports the error', () async {
+      final port = await freeTcpPort();
+      final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+      server.start();
+      addBasicVariables(server);
+      final serverTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
+        server.runIterate();
+      });
+      addTearDown(() {
+        serverTimer.cancel();
+        server.shutdown();
+        server.delete();
+      });
+
+      final before = await watch.isolates();
+      final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+      final worker = (await watch.isolates()).difference(before).single;
+      await client.keepConnected('opc.tcp://127.0.0.1:$port');
+      final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
+
+      // The worker answers the delete with an error here through a second,
+      // still open defect: a stream that ends while the worker is cancelling
+      // its streams modifies the map the worker is iterating ("Concurrent
+      // modification during iteration"). Two live streams, and a refused
+      // create that is answered while the first one is being cancelled, hit
+      // it every time. It is the only way to make the worker fail a delete;
+      // if that defect is fixed, this test needs another one.
+      for (final nodeId in [intNodeId, boolNodeId]) {
+        client
+            .monitoredItems({
+              nodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+            }, subscriptionId)
+            .listen((_) {}, onError: (_) {});
+      }
+      await waitForStats(server, (s) => s.currentMonitoredItemCount == 2, reason: 'two live monitored items');
+      client
+          .monitoredItems({
+            unknownNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+          }, subscriptionId)
+          .listen((_) {}, onError: (_) {});
+
+      Object? deleteError;
+      try {
+        await client.delete();
+      } catch (e) {
+        deleteError = e;
+      }
+      expect(deleteError, isNotNull, reason: 'precondition: the worker must answer the delete with an error');
+      await watch.expectGone(
+        worker,
+        reason:
+            'the ClientIsolate worker isolate is still alive after a delete() '
+            'the worker answered with an error ($deleteError)',
+      );
+    }, timeout: Timeout(Duration(seconds: 30)));
   });
 }
