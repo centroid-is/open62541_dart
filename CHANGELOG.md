@@ -124,6 +124,8 @@ changes that ship the same native library version.
     the password behind.
   - every `Client.connect()` left a copy of the endpoint URL behind, as did
     every reconnect attempt of `keepConnected()`.
+  - every `Client.write()` to a node with a string NodeId left a copy of the
+    identifier behind.
 
 ## 1.5.7+3
 

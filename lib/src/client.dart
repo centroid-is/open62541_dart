@@ -527,6 +527,18 @@ class Client implements ClientApi {
 
   @override
   Future<void> write(NodeId nodeId, DynamicValue value) {
+    // open62541 encodes the request before the service call returns, so the
+    // buffer behind a string NodeId is scratch until then, not until the
+    // write completes.
+    final arena = Arena(ua_calloc);
+    try {
+      return _write(nodeId.toRaw(allocator: arena), value);
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  Future<void> _write(raw.UA_NodeId nodeId, DynamicValue value) {
     Completer<void> completer = Completer<void>();
 
     final variant = valueToVariant(value);
@@ -577,7 +589,7 @@ class Client implements ClientApi {
         });
     raw.UA_Client_writeValueAttribute_async(
       _client,
-      nodeId.toRaw(),
+      nodeId,
       variant,
       callback.nativeFunction,
       ffi.nullptr,

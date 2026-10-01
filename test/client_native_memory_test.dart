@@ -74,5 +74,14 @@ void main() {
       await expectNoHeapGrowth(() => client.connect(url), warmUp: 2000, iterations: 1000, rounds: 9);
       expect((await pump(client.read(variableId))).asInt, 0, reason: 'the session must have survived');
     });
+
+    Future<void> expectNoGrowth(Future<void> Function() operation) =>
+        expectNoHeapGrowth(operation, warmUp: 300, iterations: 300, rounds: 9);
+
+    test('writing to a string NodeId leaves nothing on the C heap', () async {
+      var value = 0;
+      await expectNoGrowth(() => pump(client.write(variableId, DynamicValue(value: ++value, typeId: NodeId.int32))));
+      expect(server.read(variableId).asInt, value);
+    });
   });
 }
