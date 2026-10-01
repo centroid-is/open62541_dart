@@ -122,6 +122,13 @@ void main() {
     return array;
   }
 
+  /// A struct whose body cannot be serialised: field `b` has no value.
+  DynamicValue unserialisable() {
+    final v = instance(9);
+    v['b'] = DynamicValue(typeId: NodeId.double);
+    return v;
+  }
+
   final defs = {structId: schema()};
   late final String? unmeasurable = _whyUnmeasurable();
 
@@ -186,6 +193,28 @@ void main() {
       expect(decoded[1]['c'].asString, 'item 1');
 
       expectNoHeapGrowth(() => raw.UA_Variant_delete(valueToVariant(value)));
+    });
+  });
+
+  group('a write that fails leaves nothing on the C heap:', () {
+    void Function() failingWrite(DynamicValue value, Matcher error) {
+      expect(() => valueToVariant(value), error);
+      return () {
+        try {
+          valueToVariant(value);
+        } catch (_) {
+          // Expected, checked above.
+        }
+      };
+    }
+
+    test('a struct whose body cannot be serialised', () {
+      expectNoHeapGrowth(failingWrite(unserialisable(), throwsStateError));
+    });
+
+    test('an array of structs whose last element cannot be serialised', () {
+      final value = arrayOf([instance(0), instance(1), unserialisable()]);
+      expectNoHeapGrowth(failingWrite(value, throwsStateError));
     });
   });
 }

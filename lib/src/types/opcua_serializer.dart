@@ -203,6 +203,41 @@ class OpcUaDynamicValueSerializer {
     bool insideStruct = false,
     bool root = false,
   ]) {
+    if (!root) {
+      _serialize(schema, writer, value, endian, insideStruct, null);
+      return;
+    }
+    // A struct at the root is written as a UA_ExtensionObject whose body and
+    // string typeId are native memory. Everything that can throw runs first, on
+    // Dart memory; the native allocations follow once the whole value is
+    // encoded, so a write that fails leaves nothing behind.
+    final structs = <(NodeId, Uint8List)>[];
+    _serialize(schema, writer, value, endian, insideStruct, structs);
+    for (final (typeId, body) in structs) {
+      // Only the header's bytes are copied into the writer, so it is a view over
+      // Dart memory. The body and the typeId's characters become the variant's:
+      // UA_Variant_delete / UA_Variant_clear frees them.
+      final objBytes = Uint8List(ffi.sizeOf<raw.UA_ExtensionObject>());
+      final obj = ffi.Struct.create<raw.UA_ExtensionObject>(objBytes);
+      // todo support other encodings
+      obj.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
+      obj.content.encoded.typeId.fromNodeId(typeId);
+      obj.content.encoded.body.fromBytes(body);
+      writer.write(objBytes);
+    }
+  }
+
+  /// [rootStructs] is non-null at the root of a variant. A struct found there is
+  /// encoded into it instead of being written, see [serialize].
+  static void _serialize(
+    DynamicValue schema,
+    ByteWriter writer,
+    DynamicValue value,
+    Endian? endian,
+    bool insideStruct,
+    List<(NodeId, Uint8List)>? rootStructs,
+  ) {
+    final root = rootStructs != null;
     if (value.isArray) {
       // Don't encode the array length if we are the root
       if (!root) {
@@ -211,29 +246,13 @@ class OpcUaDynamicValueSerializer {
       for (var i = 0; i < value.value.length; i++) {
         // if array is root and subsequent type is array we should treat that also as root
         // as in not read the subsequent array length
-        OpcUaDynamicValueSerializer.serialize(value.value[i], writer, value.value[i], endian, insideStruct, root);
+        _serialize(value.value[i], writer, value.value[i], endian, insideStruct, rootStructs);
       }
     } else if (value.isObject && root) {
-      // Build the UA_ExtensionObject header on the Dart heap (a struct view
-      // over `objBytes`) and copy its BYTES into the writer. The header itself
-      // is never handed to open62541 -- the variant gets a copy of these bytes
-      // in its own data buffer -- so a native header would only ever be
-      // scratch space, and the one this replaces was never freed (48 bytes
-      // per struct written; the read side had the same leak, see
-      // `deserialize`). The two things the header points at, the encoded
-      // body and a string typeId's characters, ARE allocated natively
-      // (`fromBytes` / `fromNodeId`) and become the variant's property: it
-      // is the variant's owner who frees them, through UA_Variant_delete /
-      // UA_Variant_clear -> UA_ExtensionObject_clear.
-      final objBytes = Uint8List(ffi.sizeOf<raw.UA_ExtensionObject>());
-      final obj = ffi.Struct.create<raw.UA_ExtensionObject>(objBytes);
-      obj.content.encoded.typeId.fromNodeId(value.extObjEncodingId ?? value.typeId!);
-      ByteWriter bodyWriter = ByteWriter();
+      final typeId = value.extObjEncodingId ?? value.typeId!;
+      final bodyWriter = ByteWriter();
       _serializeStructBody(value, bodyWriter, endian);
-      obj.content.encoded.body.fromBytes(bodyWriter.toBytes());
-      // todo support other encodings
-      obj.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
-      writer.write(objBytes);
+      rootStructs.add((typeId, bodyWriter.toBytes()));
     } else if (value.isObject) {
       _serializeStructBody(value, writer, endian);
     } else {
