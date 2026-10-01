@@ -1904,11 +1904,10 @@ class Client implements ClientApi {
               } else {
                 // Some items WERE created and must be deleted again — through
                 // monitorTeardown, deferred because this runs inside the C
-                // stack. Release the listeners and deregister now; the
-                // teardown is ours to run, not the done event's.
+                // stack. Deregister now; the teardown is ours to run, not the
+                // done event's, and it releases the listeners.
                 _activeMonitoredStreams.remove(controller);
                 controller.onCancel = () {};
-                releaseConfigListeners();
                 controller.close();
                 teardownLater();
               }
