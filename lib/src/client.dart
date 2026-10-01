@@ -378,7 +378,9 @@ class Client implements ClientApi {
     if (_client == ffi.nullptr) {
       return raw.UA_STATUSCODE_BADSERVERNOTCONNECTED;
     }
-    return raw.UA_Client_connectAsync(_client, url.toNativeUtf8(allocator: ua_malloc).cast());
+    // open62541 copies the URL into the client config (UA_STRING_ALLOC), so the
+    // C string is scratch for the call.
+    return using((arena) => raw.UA_Client_connectAsync(_client, url.toNativeUtf8(allocator: arena).cast()), ua_calloc);
   }
 
   /// Whether an auto-reconnect supervisor is currently running (see

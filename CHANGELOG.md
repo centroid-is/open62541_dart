@@ -122,6 +122,8 @@ changes that ship the same native library version.
     refused the node (`BadNodeIdExists`, ...).
   - a `Client` created with a `username` left a copy of the username and of
     the password behind.
+  - every `Client.connect()` left a copy of the endpoint URL behind, as did
+    every reconnect attempt of `keepConnected()`.
 
 ## 1.5.7+3
 
