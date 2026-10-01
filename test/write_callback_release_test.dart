@@ -47,18 +47,9 @@ Future<void> rejectedWriteThenReturn((int, SendPort) args) async {
 void main() {
   late int port;
   late Server server;
-  var serverStopped = false;
-
-  void stopServer() {
-    if (serverStopped) return;
-    serverStopped = true;
-    server.shutdown();
-    server.delete();
-  }
 
   setUp(() async {
     port = await freeTcpPort();
-    serverStopped = false;
     server = setupServer(port);
     server.addDataSourceVariableNode(
       gatedNodeId,
@@ -71,7 +62,10 @@ void main() {
     );
   });
 
-  tearDown(stopServer);
+  tearDown(() {
+    server.shutdown();
+    server.delete();
+  });
 
   test('a rejected write releases its native callback: the isolate can exit', () async {
     final report = ReceivePort();
@@ -89,10 +83,18 @@ void main() {
   }, timeout: Timeout(Duration(seconds: 30)));
 
   test('a write on a dead connection fails typed instead of hanging', () async {
-    final client = await setupClient(port);
-    // Drop the server; wait until the client has noticed the channel is gone.
-    stopServer();
-    await holdPort(port);
+    // The client connects through a proxy, so the connection can be cut for
+    // good without stopping the server or giving its port back.
+    final proxy = await TcpProxy.start(port);
+    final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+    final pump = Timer.periodic(Duration(milliseconds: 10), (_) {
+      client.runIterate(Duration(milliseconds: 10));
+    });
+    addTearDown(pump.cancel);
+    await client.connect('opc.tcp://127.0.0.1:${proxy.port}');
+
+    // Cut it; wait until the client has noticed the channel is gone.
+    proxy.cut();
     await waitForChannelDown(client);
 
     // open62541 refuses to send on a closed channel synchronously and never
