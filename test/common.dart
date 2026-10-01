@@ -29,92 +29,95 @@ Future<int> freeTcpPort() async {
   return port;
 }
 
-/// Holds [port] until the end of the current test so that nothing else can
-/// bind it.
+/// A TCP proxy in front of [targetPort], so a test can take a client's
+/// connection away, and with it the secure channel, without stopping the
+/// server. The server keeps the session and its monitored items, and the
+/// client re-activates that session once the proxy lets it through again
+/// ([resume]). Left cut, it is a dead connection: the client keeps trying to
+/// reconnect and gets nowhere.
 ///
-/// **Why a test that kills its server has to do this.** `dart test` runs suites
-/// in parallel and [freeTcpPort] hands out a port by binding :0 and letting
-/// it go, so a port a suite releases can be handed straight to another
-/// suite's server. A client that is still alive and still reconnecting at
-/// the address it was given would connect into that server and open a
-/// session there, and the suite that owns it would see a session it never
-/// created. `server_statistics_test` asserts exact session counts and is the
-/// one that catches it, from the other side, as a timeout on
-/// `currentSessionCount == 1` with an extra session in the snapshot.
-///
-/// Accepted connections are destroyed at once: the point is only to keep the
-/// port occupied, and a socket that accepts and says nothing leaves the
-/// client's channel exactly as dead as a closed port does.
-Future<ServerSocket> holdPort(int port) async {
-  final held = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
-  held.listen((socket) => socket.destroy());
-  addTearDown(() => held.close());
-  return held;
-}
-
-/// A TCP proxy in front of [targetPort], so a test can cut a client's
-/// connection, and with it the secure channel, without stopping the server.
-/// The server then keeps the session and its monitored items, and the client
-/// re-activates that session once the proxy is back ([resume]).
+/// The proxy binds its port once and keeps it until the test ends. While cut
+/// it still accepts, and destroys what it accepts. Giving the port back while
+/// a client is still reconnecting to it would let that client wander into
+/// whatever another suite starts on the recycled port: `dart test` runs
+/// suites in parallel.
 class TcpProxy {
-  TcpProxy._(this.port, this.targetPort);
+  TcpProxy._(this._listener, this.targetPort);
 
-  /// The port clients connect to.
-  final int port;
+  final ServerSocket _listener;
   final int targetPort;
-  ServerSocket? _listener;
   final List<Socket> _sockets = [];
+  bool _cut = false;
   bool _stalled = false;
 
-  /// Starts the proxy. Inside a test it is [cut] when the test ends; a
-  /// scenario that runs outside a test passes [cutOnTearDown] false and cuts
-  /// it itself.
-  static Future<TcpProxy> start(int targetPort, {bool cutOnTearDown = true}) async {
-    final proxy = TcpProxy._(await freeTcpPort(), targetPort);
-    await proxy.resume();
-    if (cutOnTearDown) addTearDown(proxy.cut);
+  /// The port clients connect to, on 127.0.0.1.
+  int get port => _listener.port;
+
+  static Future<TcpProxy> start(int targetPort) async {
+    final proxy = TcpProxy._(await ServerSocket.bind(InternetAddress.anyIPv4, 0), targetPort);
+    proxy._listener.listen(proxy._accept);
+    addTearDown(proxy._close);
     return proxy;
   }
 
-  /// Accepts connections (again) and forwards them to [targetPort].
-  Future<void> resume() async {
-    _stalled = false;
-    final listener = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
-    _listener = listener;
-    listener.listen((client) async {
-      try {
-        final upstream = await Socket.connect(InternetAddress.loopbackIPv4, targetPort);
-        _sockets
-          ..add(client)
-          ..add(upstream);
-        client.listen(
-          (data) => _stalled ? null : upstream.add(data),
-          onDone: upstream.destroy,
-          onError: (_) => upstream.destroy(),
-        );
-        upstream.listen(
-          (data) => _stalled ? null : client.add(data),
-          onDone: client.destroy,
-          onError: (_) => client.destroy(),
-        );
-      } catch (_) {
-        client.destroy();
-      }
-    });
+  Future<void> _accept(Socket client) async {
+    // A destroyed peer makes a later write fail; that error only surfaces on
+    // `done`, and nobody else is listening for it.
+    client.done.ignore();
+    if (_cut) {
+      client.destroy();
+      return;
+    }
+    final Socket upstream;
+    try {
+      upstream = await Socket.connect(InternetAddress.loopbackIPv4, targetPort);
+    } catch (_) {
+      client.destroy();
+      return;
+    }
+    upstream.done.ignore();
+    if (_cut) {
+      client.destroy();
+      upstream.destroy();
+      return;
+    }
+    _sockets
+      ..add(client)
+      ..add(upstream);
+    client.listen(
+      (data) => _stalled ? null : upstream.add(data),
+      onDone: upstream.destroy,
+      onError: (_) => upstream.destroy(),
+    );
+    upstream.listen(
+      (data) => _stalled ? null : client.add(data),
+      onDone: client.destroy,
+      onError: (_) => client.destroy(),
+    );
   }
 
   /// Keeps the open connections but drops everything sent on them from now
   /// on, in both directions: a black-holed link. [cut] then [resume] ends it.
   void stall() => _stalled = true;
 
-  /// Stops accepting and destroys every open connection.
-  Future<void> cut() async {
-    await _listener?.close();
-    _listener = null;
+  /// Destroys every open connection, and every new one as it arrives.
+  void cut() {
+    _cut = true;
     for (final socket in _sockets) {
       socket.destroy();
     }
     _sockets.clear();
+  }
+
+  /// Forwards new connections to [targetPort] again.
+  void resume() {
+    _cut = false;
+    _stalled = false;
+  }
+
+  Future<void> _close() async {
+    cut();
+    await _listener.close();
   }
 }
 
