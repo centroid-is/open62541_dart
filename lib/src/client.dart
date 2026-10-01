@@ -316,11 +316,15 @@ class Client implements ClientApi {
     }
 
     if (username != null) {
-      raw.UA_ClientConfig_setAuthenticationUsername(
-        config,
-        username.toNativeUtf8(allocator: ua_malloc).cast(),
-        password != null ? password.toNativeUtf8(allocator: ua_malloc).cast() : ffi.nullptr,
-      );
+      // open62541 copies both into the identity token (UA_STRING_ALLOC), so
+      // the C strings are scratch for the call.
+      using((arena) {
+        raw.UA_ClientConfig_setAuthenticationUsername(
+          config,
+          username.toNativeUtf8(allocator: arena).cast(),
+          password != null ? password.toNativeUtf8(allocator: arena).cast() : ffi.nullptr,
+        );
+      }, ua_calloc);
       // open62541 drops the plaintext-password UserTokenPolicy on an
       // unencrypted (SecurityPolicy#None) channel, so username auth silently
       // fails there unless this is enabled. Many PLC lab setups (and our

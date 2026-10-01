@@ -120,6 +120,8 @@ changes that ship the same native library version.
     an argument could not be marshalled, and `addObjectNode`,
     `addFolderNode` and `addDataTypeNode` the attributes whenever the server
     refused the node (`BadNodeIdExists`, ...).
+  - a `Client` created with a `username` left a copy of the username and of
+    the password behind.
 
 ## 1.5.7+3
 
