@@ -24,7 +24,7 @@ import 'dart:isolate';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'common.dart' show TcpProxy, freeTcpPort, holdPort;
+import 'common.dart' show TcpProxy, freeTcpPort, holdPort, waitForChannelDown, waitForStats;
 
 final intNodeId = NodeId.fromString(1, "the.int");
 final unknownNodeId = NodeId.fromString(1, "does.not.exist");
@@ -58,30 +58,40 @@ Future<void> refusedRebuildsThenReturn((int, SendPort) args) async {
   report.send(refusals);
 }
 
-/// Runs in its own isolate: monitor a live item, wait for the test to take
-/// the server away, then cancel the stream ([cancelFirst]) or leave it active,
-/// delete the client, report, return. The DeleteMonitoredItems request cannot
-/// be sent any more, so the item's native callback has to stay open past the
-/// teardown; the isolate only exits if deleting the client releases it.
-Future<void> deadConnectionTeardownThenReturn((int, SendPort, bool) args) async {
-  final (port, report, cancelFirst) = args;
+/// What [deadConnectionThenReturn] does once its connection is dead.
+enum DeadConnectionAction { cancelItem, deleteClientWithItemActive, createSubscription }
+
+/// Runs in its own isolate: connect, wait for the test to take the server
+/// away, perform [DeadConnectionAction], delete the client, report, return.
+///
+/// For the two item actions a live item is monitored first. Its
+/// DeleteMonitoredItems request cannot be sent any more, so its native
+/// callback has to stay open past the teardown, and the isolate only exits if
+/// deleting the client releases it. For createSubscription the request is
+/// refused before it is sent, and the isolate only exits if that refusal
+/// releases the two native callbacks the request registered.
+Future<void> deadConnectionThenReturn((int, SendPort, DeadConnectionAction) args) async {
+  final (port, report, action) = args;
   final serverGone = ReceivePort();
   final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
   final pump = Timer.periodic(Duration(milliseconds: 5), (_) {
     client.runIterate(Duration(milliseconds: 5));
   });
   await client.connect('opc.tcp://127.0.0.1:$port');
-  final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
 
-  final firstValue = Completer<void>();
-  final subscription = client
-      .monitoredItems({
-        intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
-      }, subscriptionId)
-      .listen((_) {
-        if (!firstValue.isCompleted) firstValue.complete();
-      }, onError: (_) {});
-  await firstValue.future;
+  StreamSubscription<Map<NodeId, DynamicValue>>? subscription;
+  if (action != DeadConnectionAction.createSubscription) {
+    final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
+    final firstValue = Completer<void>();
+    subscription = client
+        .monitoredItems({
+          intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+        }, subscriptionId)
+        .listen((_) {
+          if (!firstValue.isCompleted) firstValue.complete();
+        }, onError: (_) {});
+    await firstValue.future;
+  }
 
   report.send(serverGone.sendPort);
   await serverGone.first;
@@ -91,7 +101,19 @@ Future<void> deadConnectionTeardownThenReturn((int, SendPort, bool) args) async 
 
   Object? failure;
   try {
-    if (cancelFirst) await subscription.cancel().timeout(Duration(seconds: 3));
+    switch (action) {
+      case DeadConnectionAction.cancelItem:
+        await subscription!.cancel().timeout(Duration(seconds: 3));
+      case DeadConnectionAction.deleteClientWithItemActive:
+        break;
+      case DeadConnectionAction.createSubscription:
+        try {
+          await client.subscriptionCreate().timeout(Duration(seconds: 3));
+          failure = 'subscriptionCreate() completed on a dead connection';
+        } on UaStatusException catch (e) {
+          if (e.statusCode != UA_STATUSCODE_BADSERVERNOTCONNECTED) failure = e;
+        }
+    }
     pump.cancel();
     await client.delete();
   } catch (e) {
@@ -250,7 +272,7 @@ void main() {
     );
   }, timeout: Timeout(Duration(seconds: 45)));
 
-  test('a partial refusal (one node unknown, one fine) releases the listeners', () async {
+  test('a partial refusal (one node unknown, one fine) releases the listeners and deletes the created item', () async {
     final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
 
     final errors = <Object>[];
@@ -266,9 +288,13 @@ void main() {
     expect(errors.single.toString(), contains('BadNodeIdUnknown'));
     expect(client.config.hasStreamListeners, isFalse);
 
-    // The item the server DID create is deleted again in the background; the
-    // client stays healthy.
-    await Future.delayed(Duration(milliseconds: 200));
+    // Guards PR #119 review finding 5: the item the server DID create has to
+    // be deleted again, and nothing checked that it is.
+    await waitForStats(
+      server,
+      (s) => s.currentMonitoredItemCount == 0,
+      reason: 'the item created by the partly refused request to be deleted on the server',
+    );
     expect((await client.read(intNodeId)).value, 42);
   }, timeout: Timeout(Duration(seconds: 30)));
 
@@ -336,44 +362,78 @@ void main() {
     expect(client.config.hasStreamListeners, isFalse);
   }, timeout: Timeout(Duration(seconds: 15)));
 
+  /// Spawns [deadConnectionThenReturn], takes the server away once the
+  /// isolate is ready, and fails with [stillOpen] if the isolate cannot exit.
+  Future<void> expectIsolateExitsAfter(DeadConnectionAction action, {required String stillOpen}) async {
+    final report = ReceivePort();
+    final exited = ReceivePort();
+    final events = StreamIterator(report);
+    await Isolate.spawn(deadConnectionThenReturn, (serverPort, report.sendPort, action), onExit: exited.sendPort);
+
+    expect(await events.moveNext().timeout(Duration(seconds: 20)), isTrue);
+    final serverGone = events.current as SendPort;
+    serverTimer.cancel();
+    server.shutdown();
+    server.delete();
+    serverShutdown = true;
+    await holdPort(serverPort);
+    serverGone.send(null);
+
+    expect(await events.moveNext().timeout(Duration(seconds: 20)), isTrue);
+    expect(events.current, 'ok', reason: 'the isolate must get through its teardown on a dead connection');
+    await events.cancel();
+    await exited.first.timeout(Duration(seconds: 10), onTimeout: () => fail('the isolate never exited: $stillOpen'));
+  }
+
   // Guards PR #119 review finding 4: a teardown that cannot reach the server
   // has to leave the item's native callback open, and nothing closed it
   // afterwards, so the isolate could never exit.
-  for (final cancelFirst in [true, false]) {
-    final how = cancelFirst ? 'cancelled' : 'still active when the client is deleted';
-    test('an item $how on a dead connection releases its native callback with the client: '
-        'the isolate can exit', () async {
-      final report = ReceivePort();
-      final exited = ReceivePort();
-      final events = StreamIterator(report);
-      await Isolate.spawn(deadConnectionTeardownThenReturn, (
-        serverPort,
-        report.sendPort,
-        cancelFirst,
-      ), onExit: exited.sendPort);
+  test('an item cancelled on a dead connection releases its native callback with the client: '
+      'the isolate can exit', () async {
+    await expectIsolateExitsAfter(
+      DeadConnectionAction.cancelItem,
+      stillOpen:
+          'the native callback of an item that could not be deleted on the server '
+          'is still open after Client.delete()',
+    );
+  }, timeout: Timeout(Duration(seconds: 60)));
 
-      // The isolate has a live item: take the server away, then let it go on.
-      expect(await events.moveNext().timeout(Duration(seconds: 20)), isTrue);
-      final serverGone = events.current as SendPort;
-      serverTimer.cancel();
-      server.shutdown();
-      server.delete();
-      serverShutdown = true;
-      await holdPort(serverPort);
-      serverGone.send(null);
+  test('an item still active when the client is deleted on a dead connection releases its native callback: '
+      'the isolate can exit', () async {
+    await expectIsolateExitsAfter(
+      DeadConnectionAction.deleteClientWithItemActive,
+      stillOpen:
+          'the native callback of an item that could not be deleted on the server '
+          'is still open after Client.delete()',
+    );
+  }, timeout: Timeout(Duration(seconds: 60)));
 
-      expect(await events.moveNext().timeout(Duration(seconds: 20)), isTrue);
-      expect(events.current, 'ok', reason: 'cancel() and Client.delete() must complete on a dead connection');
-      await events.cancel();
-      await exited.first.timeout(
-        Duration(seconds: 10),
-        onTimeout: () => fail(
-          'the isolate never exited: the native callback of an item that could not be deleted '
-          'on the server is still open after Client.delete()',
-        ),
-      );
-    }, timeout: Timeout(Duration(seconds: 60)));
-  }
+  // Guards PR #119 review finding 5: no test failed when the check of
+  // UA_Client_Subscriptions_create_async's return code was reverted.
+  test('subscriptionCreate() on a dead connection fails with BadServerNotConnected instead of hanging', () async {
+    serverTimer.cancel();
+    server.shutdown();
+    server.delete();
+    serverShutdown = true;
+    await holdPort(serverPort);
+    await waitForChannelDown(client);
+
+    await expectLater(
+      client.subscriptionCreate().timeout(
+        Duration(seconds: 3),
+        onTimeout: () => fail('subscriptionCreate() never completed on a dead connection'),
+      ),
+      throwsA(isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', UA_STATUSCODE_BADSERVERNOTCONNECTED)),
+    );
+  }, timeout: Timeout(Duration(seconds: 30)));
+
+  test('subscriptionCreate() refused on a dead connection releases its native callbacks: '
+      'the isolate can exit', () async {
+    await expectIsolateExitsAfter(
+      DeadConnectionAction.createSubscription,
+      stillOpen: 'a native callback of the refused subscriptionCreate() is still open after Client.delete()',
+    );
+  }, timeout: Timeout(Duration(seconds: 60)));
 
   // Guards the use-after-free rule at the same spot (PR #119 review finding
   // 3): the item survives on the server when only the channel drops, so its
