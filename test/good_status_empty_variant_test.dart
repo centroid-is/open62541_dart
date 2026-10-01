@@ -52,8 +52,10 @@ import 'common.dart' show freeTcpPort, setupClient;
 final emptyNodeId = NodeId.fromString(1, "the.empty");
 
 void main() {
-  late ffi.Pointer<raw.UA_Server> server;
+  ffi.Pointer<raw.UA_Server> server = ffi.nullptr;
+  var serverStarted = false;
   Timer? serverTimer;
+  Client? client;
 
   Future<int> startRawServer() async {
     final port = await freeTcpPort();
@@ -61,73 +63,93 @@ void main() {
     final config = ua_calloc<raw.UA_ServerConfig>();
     config.ref.logging = raw.UA_Log_Stdout_new(raw.UA_LogLevel.UA_LOGLEVEL_ERROR);
     final cfgStatus = raw.UA_ServerConfig_setMinimal(config, port, ffi.nullptr);
-    expect(cfgStatus, equals(UA_STATUSCODE_GOOD), reason: 'server config must build');
+    if (cfgStatus != UA_STATUSCODE_GOOD) {
+      ua_calloc.free(config);
+      fail('server config must build, got ${statusCodeToString(cfgStatus)}');
+    }
+    // UA_Server_newWithConfig moves the config's content into the server and
+    // zeroes the struct it was handed; the calloc'd shell stays ours to free.
     server = raw.UA_Server_newWithConfig(config);
+    ua_calloc.free(config);
+    expect(server, isNot(ffi.nullptr), reason: 'server must be created');
 
     // The node under test: UA_VariableAttributes_default carries an EMPTY
     // value variant, and no value is ever written — so the server answers
     // Value reads with status Good and an empty variant.
     final attr = raw.UA_VariableAttributes_new();
     attr.ref = raw.UA_VariableAttributes_default;
-    final name = raw.UA_QUALIFIEDNAME(1, "the.empty".toNativeUtf8(allocator: ua_malloc).cast());
+    final namePtr = "the.empty".toNativeUtf8(allocator: ua_malloc);
+    final nodeIdRaw = emptyNodeId.toRaw();
     final addStatus = raw.UA_Server_addVariableNode(
       server,
-      emptyNodeId.toRaw(),
+      nodeIdRaw,
       NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER).toRaw(),
       NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES).toRaw(),
-      name,
+      raw.UA_QUALIFIEDNAME(1, namePtr.cast()),
       NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE).toRaw(),
       attr.ref,
       ffi.nullptr,
       ffi.nullptr,
     );
+    // open62541 deep-copied the NodeId and the browse name; free our copies.
+    ua_malloc.free(nodeIdRaw.identifier.string.data);
+    ua_malloc.free(namePtr);
     raw.UA_VariableAttributes_delete(attr);
     expect(addStatus, equals(UA_STATUSCODE_GOOD), reason: 'valueless variable node must be added');
 
     final startStatus = raw.UA_Server_run_startup(server);
     expect(startStatus, equals(UA_STATUSCODE_GOOD), reason: 'server must start');
+    serverStarted = true;
     serverTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
       raw.UA_Server_run_iterate(server, false);
     });
     return port;
   }
 
-  void stopRawServer() {
+  // Runs whether the test passed or not, so a failed expectation cannot leak
+  // the client, the timer or the native server into the next test. The client
+  // goes first: its delete() tears down any monitored-item stream still
+  // listening and needs the server to answer.
+  tearDown(() async {
+    await client?.delete();
+    client = null;
     serverTimer?.cancel();
     serverTimer = null;
-    raw.UA_Server_run_shutdown(server);
-    raw.UA_Server_delete(server);
-  }
+    if (server != ffi.nullptr) {
+      if (serverStarted) raw.UA_Server_run_shutdown(server);
+      raw.UA_Server_delete(server);
+      server = ffi.nullptr;
+      serverStarted = false;
+    }
+  });
 
   test('readAttribute of a Good empty Value answers "attribute absent", not SIGSEGV', () async {
     final port = await startRawServer();
-    final client = await setupClient(port);
+    client = await setupClient(port);
 
-    final result = await client.readAttribute({
+    // Pre-fix this read killed the process; reaching the expectation at all is
+    // the proof that it no longer does.
+    final result = await client!.readAttribute({
       emptyNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
     });
 
-    // If the VM is still alive, this runs — proving no SIGSEGV.
-    expect(1 + 1, equals(2), reason: 'VM must still be alive after the read');
     // The empty answer is treated like the tolerated BadAttributeIdInvalid
     // path: the attribute is absent from the result.
     expect(result[emptyNodeId]?.isNull ?? true, isTrue, reason: 'an empty Value must decode to no value');
-
-    await client.delete();
-    stopRawServer();
   }, timeout: Timeout(Duration(seconds: 20)));
 
   test('monitoring a Good empty Value delivers a null DynamicValue, not SIGSEGV', () async {
     final port = await startRawServer();
-    final client = await setupClient(port);
+    client = await setupClient(port);
 
-    final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
+    final subscriptionId = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
 
     final values = <DynamicValue>[];
     final errors = <Object>[];
-    final subscription = client
+    final subscription = client!
         .monitor(emptyNodeId, subscriptionId, samplingInterval: Duration(milliseconds: 50))
         .listen(values.add, onError: errors.add);
+    addTearDown(subscription.cancel);
 
     // The initial notification samples the valueless variable: status Good,
     // no payload. Pre-fix that notification killed the process.
@@ -136,13 +158,8 @@ void main() {
       await Future.delayed(Duration(milliseconds: 20));
     }
 
-    expect(2 + 2, equals(4), reason: 'VM must still be alive after the notification');
     expect(errors, isEmpty, reason: 'a Good empty sample is not an error');
     expect(values, isNotEmpty, reason: 'the Good empty sample must still be delivered');
     expect(values.first.isNull, isTrue, reason: 'no payload decodes to a null DynamicValue');
-
-    await subscription.cancel();
-    await client.delete();
-    stopRawServer();
   }, timeout: Timeout(Duration(seconds: 20)));
 }
