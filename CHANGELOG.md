@@ -6,6 +6,20 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **Fixed: a Good answer carrying an empty variant killed the process.** A
+  server may answer an attribute read, a data-change notification or a method
+  output with status Good and an empty variant ("the attribute exists and has
+  no value" — python-asyncua does this for the `DataTypeDefinition` of its
+  base DataType nodes). `Client.readAttribute`, the monitored-item callback
+  and the decode behind `Client.call` dereferenced the empty variant's NULL
+  type/data pointers natively: a SIGSEGV, not a catchable Dart error. An
+  empty **Value** now reads as a null `DynamicValue`: `readAttribute` returns
+  the node with a null value, `read` and `call` return a null `DynamicValue`,
+  and a monitored item emits null — also when a node that had a value goes
+  empty (the previous value is not re-emitted). Any other attribute
+  (`Description`, `DisplayName`, `DataType`, `DataTypeDefinition`) answered
+  Good and empty is treated as absent, like the already tolerated
+  `BadAttributeIdInvalid`.
 - **`Client.call` (and `readAttribute` / monitored-item creation) surface the
   real service status.** The async response handlers checked `resultsSize`
   before `responseHeader.serviceResult`, so an infrastructure failure (session
