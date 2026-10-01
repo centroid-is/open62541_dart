@@ -45,9 +45,10 @@ import 'package:ffi/ffi.dart';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'package:open62541/src/common.dart' show valueToVariant;
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'package:open62541/src/ua_allocation.dart' show ua_calloc, ua_malloc;
-import 'common.dart' show freeTcpPort, setupClient;
+import 'common.dart' show clientTypes, freeTcpPort, setupClientOfType;
 
 final emptyNodeId = NodeId.fromString(1, "the.empty");
 
@@ -55,7 +56,7 @@ void main() {
   ffi.Pointer<raw.UA_Server> server = ffi.nullptr;
   var serverStarted = false;
   Timer? serverTimer;
-  Client? client;
+  ClientApi? client;
 
   Future<int> startRawServer() async {
     final port = await freeTcpPort();
@@ -123,43 +124,82 @@ void main() {
     }
   });
 
-  test('readAttribute of a Good empty Value answers "attribute absent", not SIGSEGV', () async {
-    final port = await startRawServer();
-    client = await setupClient(port);
+  /// Writes [value] to the node under test from the server side; null writes
+  /// an EMPTY variant, which no client-side [DynamicValue] can express.
+  void writeFromServer(int? value) {
+    final variant = value == null
+        ? raw.UA_Variant_new()
+        : valueToVariant(DynamicValue(value: value, typeId: NodeId.int32));
+    final nodeIdRaw = emptyNodeId.toRaw();
+    final status = raw.UA_Server_writeValue(server, nodeIdRaw, variant.ref);
+    ua_malloc.free(nodeIdRaw.identifier.string.data);
+    raw.UA_Variant_delete(variant);
+    expect(status, equals(UA_STATUSCODE_GOOD), reason: 'server-side write of $value must succeed');
+  }
 
-    // Pre-fix this read killed the process; reaching the expectation at all is
-    // the proof that it no longer does.
-    final result = await client!.readAttribute({
-      emptyNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+  for (final clientType in clientTypes) {
+    // Regression tests for PR #118 (Good status with an empty Value) and its
+    // review: the first version only looked at the FIRST notification.
+    group('Good empty Value [$clientType]', () {
+      test('readAttribute of a Good empty Value answers "attribute absent", not SIGSEGV', () async {
+        final port = await startRawServer();
+        client = await setupClientOfType(clientType, 'opc.tcp://127.0.0.1:$port');
+
+        // Pre-fix this read killed the process; reaching the expectation at
+        // all is the proof that it no longer does.
+        final result = await client!.readAttribute({
+          emptyNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+        });
+
+        // The empty answer is treated like the tolerated BadAttributeIdInvalid
+        // path: the attribute is absent from the result.
+        expect(result[emptyNodeId]?.isNull ?? true, isTrue, reason: 'an empty Value must decode to no value');
+      }, timeout: Timeout(Duration(seconds: 30)));
+
+      test('monitor emits null with status Good when the Value goes empty, not the previous value', () async {
+        final port = await startRawServer();
+        client = await setupClientOfType(clientType, 'opc.tcp://127.0.0.1:$port');
+
+        final subscriptionId = await client!.subscriptionCreate(
+          requestedPublishingInterval: Duration(milliseconds: 50),
+        );
+
+        // Snapshots taken at emission time: the direct client re-emits one
+        // mutable DynamicValue, so keeping the objects would compare the last
+        // sample with itself.
+        final samples = <(dynamic, int?)>[];
+        final errors = <Object>[];
+        final subscription = client!
+            .monitor(emptyNodeId, subscriptionId, samplingInterval: Duration(milliseconds: 50))
+            .listen((value) => samples.add((value.value, value.statusCode)), onError: errors.add);
+        addTearDown(subscription.cancel);
+
+        Future<void> untilSamples(int count) async {
+          final start = DateTime.now();
+          while (samples.length < count && errors.isEmpty && DateTime.now().difference(start) < Duration(seconds: 5)) {
+            await Future.delayed(Duration(milliseconds: 20));
+          }
+        }
+
+        // The initial notification samples the valueless variable: status
+        // Good, no payload. Before PR #118 that notification killed the process.
+        await untilSamples(1);
+        writeFromServer(42);
+        await untilSamples(2);
+        writeFromServer(null);
+        await untilSamples(3);
+        writeFromServer(7);
+        await untilSamples(4);
+
+        expect(errors, isEmpty, reason: 'a Good empty sample is not an error');
+        expect(
+          samples,
+          [(null, UA_STATUSCODE_GOOD), (42, UA_STATUSCODE_GOOD), (null, UA_STATUSCODE_GOOD), (7, UA_STATUSCODE_GOOD)],
+          reason:
+              'empty -> 42 -> empty -> 7 on the server must arrive as exactly that; a Good '
+              'empty sample that keeps the previous value reports 42 as current while read() answers null',
+        );
+      }, timeout: Timeout(Duration(seconds: 30)));
     });
-
-    // The empty answer is treated like the tolerated BadAttributeIdInvalid
-    // path: the attribute is absent from the result.
-    expect(result[emptyNodeId]?.isNull ?? true, isTrue, reason: 'an empty Value must decode to no value');
-  }, timeout: Timeout(Duration(seconds: 20)));
-
-  test('monitoring a Good empty Value delivers a null DynamicValue, not SIGSEGV', () async {
-    final port = await startRawServer();
-    client = await setupClient(port);
-
-    final subscriptionId = await client!.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
-
-    final values = <DynamicValue>[];
-    final errors = <Object>[];
-    final subscription = client!
-        .monitor(emptyNodeId, subscriptionId, samplingInterval: Duration(milliseconds: 50))
-        .listen(values.add, onError: errors.add);
-    addTearDown(subscription.cancel);
-
-    // The initial notification samples the valueless variable: status Good,
-    // no payload. Pre-fix that notification killed the process.
-    final start = DateTime.now();
-    while (values.isEmpty && errors.isEmpty && DateTime.now().difference(start) < Duration(seconds: 5)) {
-      await Future.delayed(Duration(milliseconds: 20));
-    }
-
-    expect(errors, isEmpty, reason: 'a Good empty sample is not an error');
-    expect(values, isNotEmpty, reason: 'the Good empty sample must still be delivered');
-    expect(values.first.isNull, isTrue, reason: 'no payload decodes to a null DynamicValue');
-  }, timeout: Timeout(Duration(seconds: 20)));
+  }
 }

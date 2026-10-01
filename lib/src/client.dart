@@ -1630,7 +1630,16 @@ class Client implements ClientApi {
               //    variant. Both leave type == NULL, so both are checked.
               final hasNothingToDecode = (flags & hasValueFlag) == 0 || ref.type == ffi.nullptr;
 
-              if (!hasNothingToDecode) {
+              if (hasNothingToDecode) {
+                // A GOOD sample without a payload says the Value is empty NOW,
+                // so the previously decoded value has to go: left in place it
+                // is re-emitted as current, with status Good, while a read of
+                // the same node answers null. A Bad sample keeps it — that is
+                // the last-known value [deliverBadStatus] documents.
+                if (attributeId == AttributeId.UA_ATTRIBUTEID_VALUE && !isBadSample) {
+                  reference.value = null;
+                }
+              } else {
                 switch (attributeId) {
                   case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
                     final description = ref.data.cast<raw.UA_LocalizedText>();

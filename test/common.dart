@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:open62541/open62541.dart';
@@ -74,4 +75,37 @@ Future<Client> setupClient(int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_F
   });
 
   return client;
+}
+
+/// The two [ClientApi] implementations, for tests that must hold on both.
+const clientTypes = ['direct', 'isolate'];
+
+/// Connects a client of [clientType] (one of [clientTypes]) to [url].
+///
+/// The direct [Client] is pumped by a loop on this isolate that ends when the
+/// client is deleted; [ClientIsolate] pumps itself on its own isolate.
+Future<ClientApi> setupClientOfType(
+  String clientType,
+  String url, {
+  LogLevel logLevel = LogLevel.UA_LOGLEVEL_FATAL,
+}) async {
+  switch (clientType) {
+    case 'isolate':
+      final client = await ClientIsolate.create(logLevel: logLevel);
+      // runIterate fails once the client is deleted (expected in tearDown).
+      unawaited(client.runIterate().catchError((_) {}));
+      await client.connect(url);
+      return client;
+    case 'direct':
+      final client = Client(logLevel: logLevel);
+      () async {
+        while (client.runIterate(Duration(milliseconds: 10))) {
+          await Future.delayed(Duration(milliseconds: 5));
+        }
+      }();
+      await client.connect(url);
+      return client;
+    default:
+      throw ArgumentError('Unknown client type: $clientType');
+  }
 }
