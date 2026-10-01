@@ -6,6 +6,16 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **Fixed: a monitored item torn down on a dead connection kept its native
+  callback open for good.** With the secure channel down, DeleteMonitoredItems
+  cannot be sent. The item's native callback has to stay open at that point:
+  the item survives on the server with its session, and publishes into the
+  callback again once the client has reconnected. It is now closed when
+  `Client.delete()` has freed the native client, so an isolate that cancelled
+  an item (or deleted its client with the stream still active) on a dead
+  connection can exit. Known limitation: the delete is not retried when the
+  session comes back, so the server keeps sampling the cancelled item until
+  the session or the subscription ends.
 - **Fixed: tearing down a `monitoredItems` stream that has no monitored
   item.** When the server refuses every item of a create with a tolerated
   status (`BadAttributeIdInvalid`, e.g. the Value attribute of an Object

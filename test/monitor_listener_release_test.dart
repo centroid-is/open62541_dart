@@ -24,7 +24,7 @@ import 'dart:isolate';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'common.dart' show freeTcpPort, holdPort;
+import 'common.dart' show TcpProxy, freeTcpPort, holdPort;
 
 final intNodeId = NodeId.fromString(1, "the.int");
 final unknownNodeId = NodeId.fromString(1, "does.not.exist");
@@ -56,6 +56,111 @@ Future<void> refusedRebuildsThenReturn((int, SendPort) args) async {
   pump.cancel();
   await client.delete();
   report.send(refusals);
+}
+
+/// Runs in its own isolate: monitor a live item, wait for the test to take
+/// the server away, then cancel the stream ([cancelFirst]) or leave it active,
+/// delete the client, report, return. The DeleteMonitoredItems request cannot
+/// be sent any more, so the item's native callback has to stay open past the
+/// teardown; the isolate only exits if deleting the client releases it.
+Future<void> deadConnectionTeardownThenReturn((int, SendPort, bool) args) async {
+  final (port, report, cancelFirst) = args;
+  final serverGone = ReceivePort();
+  final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+  final pump = Timer.periodic(Duration(milliseconds: 5), (_) {
+    client.runIterate(Duration(milliseconds: 5));
+  });
+  await client.connect('opc.tcp://127.0.0.1:$port');
+  final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
+
+  final firstValue = Completer<void>();
+  final subscription = client
+      .monitoredItems({
+        intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+      }, subscriptionId)
+      .listen((_) {
+        if (!firstValue.isCompleted) firstValue.complete();
+      }, onError: (_) {});
+  await firstValue.future;
+
+  report.send(serverGone.sendPort);
+  await serverGone.first;
+  while (client.state.channelState == SecureChannelState.UA_SECURECHANNELSTATE_OPEN) {
+    await Future.delayed(Duration(milliseconds: 20));
+  }
+
+  Object? failure;
+  try {
+    if (cancelFirst) await subscription.cancel().timeout(Duration(seconds: 3));
+    pump.cancel();
+    await client.delete();
+  } catch (e) {
+    failure = e;
+  }
+  report.send(failure?.toString() ?? 'ok');
+}
+
+/// Runs in its own isolate, connected through the test's TCP proxy: monitor a
+/// live item, cancel it while the test has the channel cut, and after the
+/// reconnect change the value so the item, which the server still has,
+/// publishes again. That notification is dispatched into the cancelled
+/// stream's native callback, so the callback must still be open; deleting the
+/// client then has to release it for the isolate to exit.
+Future<void> channelCutCancelThenReturn((int, SendPort) args) async {
+  final (proxyPort, report) = args;
+  final steps = ReceivePort();
+  final nextStep = StreamIterator(steps);
+  final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+  await client.keepConnected('opc.tcp://127.0.0.1:$proxyPort');
+  final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
+
+  Stream<Map<NodeId, DynamicValue>> monitorTheInt() => client.monitoredItems({
+    intNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+  }, subscriptionId);
+  Future<void> waitFor(bool Function() condition) async {
+    final deadline = DateTime.now().add(Duration(seconds: 20));
+    while (!condition()) {
+      if (DateTime.now().isAfter(deadline)) throw TimeoutException('condition not met');
+      await Future.delayed(Duration(milliseconds: 20));
+    }
+  }
+
+  Object? failure;
+  try {
+    var seen = false;
+    final cancelled = monitorTheInt().listen((_) => seen = true, onError: (_) {});
+    await waitFor(() => seen);
+
+    // The test cuts the channel now.
+    report.send(steps.sendPort);
+    await nextStep.moveNext();
+    await waitFor(() => client.state.channelState != SecureChannelState.UA_SECURECHANNELSTATE_OPEN);
+    await cancelled.cancel().timeout(Duration(seconds: 3));
+
+    // The test restores the proxy now; the client re-activates its session.
+    report.send('cancelled');
+    await nextStep.moveNext();
+    await waitFor(() => client.state.sessionState == SessionState.UA_SESSIONSTATE_ACTIVATED);
+
+    // A second item on the same node shows when a change has been published:
+    // by the time it has seen both writes, the item of the cancelled stream
+    // has published the first one into its callback.
+    int? latest;
+    final witness = monitorTheInt().listen((values) => latest = values[intNodeId]?.value as int?, onError: (_) {});
+    for (final value in [43, 44]) {
+      await client.write(intNodeId, DynamicValue(value: value, typeId: NodeId.int32));
+      await waitFor(() => latest == value);
+    }
+    report.send('published');
+    await nextStep.moveNext();
+
+    await witness.cancel();
+    await client.delete();
+  } catch (e) {
+    failure = e;
+  }
+  await nextStep.cancel();
+  report.send(failure?.toString() ?? 'ok');
 }
 
 void main() {
@@ -230,4 +335,88 @@ void main() {
     await sub.cancel().timeout(Duration(seconds: 3), onTimeout: () => fail('cancel() never completed'));
     expect(client.config.hasStreamListeners, isFalse);
   }, timeout: Timeout(Duration(seconds: 15)));
+
+  // Guards PR #119 review finding 4: a teardown that cannot reach the server
+  // has to leave the item's native callback open, and nothing closed it
+  // afterwards, so the isolate could never exit.
+  for (final cancelFirst in [true, false]) {
+    final how = cancelFirst ? 'cancelled' : 'still active when the client is deleted';
+    test('an item $how on a dead connection releases its native callback with the client: '
+        'the isolate can exit', () async {
+      final report = ReceivePort();
+      final exited = ReceivePort();
+      final events = StreamIterator(report);
+      await Isolate.spawn(deadConnectionTeardownThenReturn, (
+        serverPort,
+        report.sendPort,
+        cancelFirst,
+      ), onExit: exited.sendPort);
+
+      // The isolate has a live item: take the server away, then let it go on.
+      expect(await events.moveNext().timeout(Duration(seconds: 20)), isTrue);
+      final serverGone = events.current as SendPort;
+      serverTimer.cancel();
+      server.shutdown();
+      server.delete();
+      serverShutdown = true;
+      await holdPort(serverPort);
+      serverGone.send(null);
+
+      expect(await events.moveNext().timeout(Duration(seconds: 20)), isTrue);
+      expect(events.current, 'ok', reason: 'cancel() and Client.delete() must complete on a dead connection');
+      await events.cancel();
+      await exited.first.timeout(
+        Duration(seconds: 10),
+        onTimeout: () => fail(
+          'the isolate never exited: the native callback of an item that could not be deleted '
+          'on the server is still open after Client.delete()',
+        ),
+      );
+    }, timeout: Timeout(Duration(seconds: 60)));
+  }
+
+  // Guards the use-after-free rule at the same spot (PR #119 review finding
+  // 3): the item survives on the server when only the channel drops, so its
+  // callback must stay open until the client is deleted. Closing it earlier
+  // aborts the VM with "Callback invoked after it has been deleted".
+  test('an item cancelled while only the channel is down still takes its notifications after the reconnect, '
+      'and is released with the client', () async {
+    final proxy = await TcpProxy.start(serverPort);
+    final report = ReceivePort();
+    final exited = ReceivePort();
+    final events = StreamIterator(report);
+    await Isolate.spawn(channelCutCancelThenReturn, (proxy.port, report.sendPort), onExit: exited.sendPort);
+    Future<Object?> nextEvent() async {
+      expect(await events.moveNext().timeout(Duration(seconds: 30)), isTrue);
+      return events.current;
+    }
+
+    final nextStep = await nextEvent() as SendPort;
+    await proxy.cut();
+    nextStep.send(null);
+
+    expect(await nextEvent(), 'cancelled', reason: 'cancel() must complete while the channel is down');
+    await proxy.resume();
+    nextStep.send(null);
+
+    expect(await nextEvent(), 'published');
+    final stats = server.statistics;
+    expect(stats.cumulatedSessionCount, 2, reason: 'precondition: the isolate client kept its session over the cut');
+    // One item of the cancelled stream, one of the witness stream. If the
+    // delete is ever retried after a reconnect this becomes 1, and this test
+    // no longer exercises the callback of the cancelled stream.
+    expect(
+      stats.currentMonitoredItemCount,
+      2,
+      reason: 'precondition: the cancelled item is still on the server and publishes into its callback',
+    );
+    nextStep.send(null);
+
+    expect(await nextEvent(), 'ok');
+    await events.cancel();
+    await exited.first.timeout(
+      Duration(seconds: 10),
+      onTimeout: () => fail('the isolate never exited: the native callback of the cancelled item is still open'),
+    );
+  }, timeout: Timeout(Duration(seconds: 90)));
 }
