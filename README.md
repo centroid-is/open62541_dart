@@ -100,6 +100,30 @@ More examples are in the [`example/`](example/) directory: a minimal client
 > client/server event loop must be driven periodically by calling `runIterate`
 > as shown above.
 
+### Monitoring with status code and source timestamp
+
+Values from `monitor` / `monitoredItems` carry the status code and source
+timestamp the server attached to the notification:
+
+```dart
+final subscriptionId = await client.subscriptionCreate();
+client.monitor(nodeId, subscriptionId, deliverBadStatus: true).listen((value) {
+  // statusCode 0 is Good. sourceTimestamp is null when the server sent none.
+  print('${value.value} status=${statusCodeToString(value.statusCode!)} at ${value.sourceTimestamp}');
+});
+```
+
+By default (`deliverBadStatus: false`) a notification with a non-Good status
+is dropped and added to the stream as an *error* event, a `UaStatusException`
+carrying the status. With `deliverBadStatus: true` it is delivered as a value
+instead: `statusCode` is the server's code and the value is the one the
+notification carries, or else the last known one. Both fields are null on a
+`DynamicValue` that did not come from a monitored item.
+
+Adding `deliverBadStatus` to the abstract `ClientApi.monitor` /
+`ClientApi.monitoredItems` is a breaking change for classes that implement
+`ClientApi`: their overrides must declare the parameter too.
+
 ### PubSub (UDP multicast)
 
 Both PubSub roles are configured on a `Server` (per OPC UA Part 14 the
@@ -180,11 +204,12 @@ struct size is unchanged) so the generator does not drop the surrounding members
   (v1.5.x), so they do not surface from a remote server. For an in-process Dart
   `Server` + `Client`, descriptions are restored from the locally registered
   schema.
-- Monitored-item notifications do not surface per-notification status codes or
-  timestamps on the value stream: a notification with a non-Good status is
-  delivered as an *error* event on the stream (carrying the status), and its
-  value/timestamps are dropped. Use `Client.readValue` to observe a node's
-  value together with its status code and source/server timestamps.
+- Monitored-item values carry the status code and source timestamp of the
+  Value attribute's notification only; the server timestamp is not surfaced,
+  and `read` / `readAttribute` / `call` leave `DynamicValue.statusCode` and
+  `DynamicValue.sourceTimestamp` null. Use `Client.readValue` for a one-off
+  read of a node's value together with its status code and source/server
+  timestamps.
 - `Server.statistics` exposes aggregate counters only (sessions, secure
   channels, subscriptions, total monitored items). Per-session and
   per-subscription diagnostic detail (client identity, publish rates, queue

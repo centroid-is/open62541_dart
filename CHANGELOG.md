@@ -6,6 +6,27 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **BREAKING (implementers of `ClientApi`): `monitor` / `monitoredItems` take
+  `deliverBadStatus`.** The abstract `ClientApi.monitor` and
+  `ClientApi.monitoredItems` gained the named parameter
+  `bool deliverBadStatus = false`. Callers are unaffected, but a class that
+  implements or extends `ClientApi` (a wrapper, a test fake) fails analysis
+  with `invalid_override` until its two overrides declare the parameter.
+  Migrate by adding `bool deliverBadStatus = false` to both and forwarding it.
+- **Monitored values carry the server's status code and source timestamp.**
+  `DynamicValue` gained `statusCode` (`int?`) and `sourceTimestamp`
+  (`DateTime?`). `monitor` / `monitoredItems` (on `Client` and
+  `ClientIsolate`) fill them from each notification of the Value attribute,
+  and `DynamicValue.from` copies them. Both are null on a value that did not
+  come from a monitored item (`read`, `readAttribute`, `call`, hand-built);
+  `sourceTimestamp` is also null when the notification carries none.
+  With the new `deliverBadStatus: true`, a notification the server marked Bad
+  is delivered as a value with its `statusCode` — and the value it carries, or
+  else the last known one — instead of as a stream error. A Bad notification
+  of any other attribute stays a `UaStatusException` error. The default
+  (`false`) is unchanged: the sample is dropped and reported as a typed
+  `UaStatusException`. `uaDateTimeToDateTime` (raw `UA_DateTime` ticks to a
+  UTC `DateTime?`, null for the null timestamp 0) is now exported.
 - **Fixed: a Good answer carrying an empty variant killed the process.** A
   server may answer an attribute read, a data-change notification or a method
   output with status Good and an empty variant ("the attribute exists and has
