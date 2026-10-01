@@ -47,10 +47,11 @@ import 'dart:async';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'common.dart' show freeTcpPort;
+import 'common.dart' show clientTypes, freeTcpPort, setupClientOfType;
 
 final goodNodeId = NodeId.fromString(1, "the.int");
 final refusingNodeId = NodeId.fromString(1, "the.refusing");
+final tickZeroNodeId = NodeId.fromString(1, "the.tickZero");
 
 /// What the data-source read dispatcher returns when `onRead` throws.
 /// `UA_STATUSCODE_BADINTERNALERROR`.
@@ -87,6 +88,19 @@ void main() {
       onRead: () => throw StateError('this tag is unreadable on purpose'),
     );
 
+    // A node whose source stamps its value with UA_DateTime tick 0: the flag
+    // hasSourceTimestamp is SET on the wire and the field under it is the OPC
+    // UA null timestamp.
+    server.addDataSourceVariableNode(
+      tickZeroNodeId,
+      browseName: "the.tickZero",
+      typeId: NodeId.int32,
+      onReadValue: () => DataSourceValue(
+        value: DynamicValue(value: 7, typeId: NodeId.int32),
+        sourceTimestamp: DateTime.utc(1601, 1, 1),
+      ),
+    );
+
     serverTimer = Timer.periodic(Duration(milliseconds: 10), (_) => server.runIterate());
 
     client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
@@ -105,16 +119,17 @@ void main() {
 
   group('UA_DateTime conversion', () {
     test('a known instant converts, so an off-by-369-years is caught', () {
-      // 1601-01-01T00:00:00Z is tick zero: UA_DateTime counts 100 ns ticks from
-      // the Windows FILETIME epoch, not the Unix one. The two are 11644473600
+      // UA_DateTime counts 100 ns ticks from the Windows FILETIME epoch
+      // (1601-01-01T00:00:00Z), not the Unix one. The two are 11644473600
       // seconds apart, and getting that constant wrong is the classic failure
       // here — invisible without a fixed-value assertion.
       expect(
-        uaDateTimeToDateTime(0),
-        DateTime.utc(1601, 1, 1),
+        uaDateTimeToDateTime(10),
+        DateTime.utc(1601, 1, 1, 0, 0, 0, 0, 1),
         reason:
-            'tick zero is the FILETIME epoch; if this drifts, every plant '
-            'timestamp the gateway publishes is wrong by a constant',
+            'ten ticks are one microsecond past the FILETIME epoch; if this '
+            'drifts, every plant timestamp the gateway publishes is wrong by a '
+            'constant',
       );
       expect(
         uaDateTimeToDateTime(11644473600 * 10000000),
@@ -136,6 +151,65 @@ void main() {
             'in 2026, not in 1601 and not in 2395',
       );
     });
+  });
+
+  // Regression tests for the review of PR #118: the exported helper replaced
+  // one that answered null for tick 0, and Client.readValue silently started
+  // dating such values to the year 1601.
+  group('UA_DateTime tick 0 is the null timestamp', () {
+    test('uaDateTimeToDateTime(0) is null, not 1601-01-01', () {
+      expect(
+        uaDateTimeToDateTime(0),
+        isNull,
+        reason: 'tick 0 is the OPC UA null timestamp ("no time"), not an instant in the year 1601',
+      );
+    });
+
+    for (final clientType in clientTypes) {
+      group('[$clientType]', () {
+        ClientApi? own;
+        // The direct client is the one every test here already has; an
+        // isolate-backed one is connected on demand and deleted afterwards.
+        Future<ClientApi> clientOfType() async =>
+            clientType == 'direct' ? client : own = await setupClientOfType(clientType, "opc.tcp://127.0.0.1:$port");
+
+        tearDown(() async {
+          await own?.delete();
+          own = null;
+        });
+
+        test('readValue reports a source timestamp of tick 0 as null', () async {
+          final api = await clientOfType();
+
+          final dataValue = await api.readValue(tickZeroNodeId);
+
+          expect(dataValue.value.value, 7, reason: 'anti-vacuity: the read must have reached the data source');
+          expect(
+            dataValue.sourceTimestamp,
+            isNull,
+            reason: 'hasSourceTimestamp over tick 0 is "no timestamp", as readValue reported before this branch',
+          );
+        });
+
+        test('a monitored sample with a source timestamp of tick 0 carries a null sourceTimestamp', () async {
+          final api = await clientOfType();
+          final subId = await api.subscriptionCreate();
+
+          final value = await api
+              .monitor(tickZeroNodeId, subId)
+              .firstWhere((v) => v.value != null)
+              .timeout(Duration(seconds: 10));
+
+          expect(value.value, 7, reason: 'anti-vacuity: the sample must have reached the data source');
+          expect(value.statusCode, UA_STATUSCODE_GOOD);
+          expect(
+            value.sourceTimestamp,
+            isNull,
+            reason: 'the monitor path must agree with readValue: tick 0 is no timestamp, not 1601-01-01',
+          );
+        });
+      });
+    }
   });
 
   group('DynamicValue carries quality and source time', () {
