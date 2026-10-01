@@ -28,14 +28,6 @@ Uint8List goodWithoutValue(Uint8List _) => Uint8List.fromList([0x00]);
 /// Status Good with `hasValue` set around a null variant (built-in type 0).
 Uint8List goodWithEmptyVariant(Uint8List _) => Uint8List.fromList([0x01, 0x00]);
 
-/// A sample the server marked Bad: `hasStatus` set, nothing else.
-DataValueRewrite badWithoutValue(int statusCode) {
-  final bytes = ByteData(5)
-    ..setUint8(0, 0x02)
-    ..setUint32(1, statusCode, Endian.little);
-  return (_) => bytes.buffer.asUint8List();
-}
-
 /// The same DataValue with its source timestamp (and picoseconds) removed.
 Uint8List withoutSourceTimestamp(Uint8List dataValue) {
   // Encoding mask: 0x01 value, 0x02 status, 0x04 sourceTimestamp,
