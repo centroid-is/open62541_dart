@@ -6,7 +6,6 @@ import 'package:open62541/src/extensions.dart';
 import '../dynamic_value.dart';
 import '../node_id.dart';
 import '../third_party/open62541.g.dart' as raw;
-import '../ua_allocation.dart';
 import 'create_type.dart';
 import 'payloads.dart';
 
@@ -108,15 +107,14 @@ class OpcUaDynamicValueSerializer {
     if (schema.isObject) {
       ByteReader bodyReader = reader;
       if (root) {
+        // The header is only read here, so view it over a Dart copy of its
+        // bytes rather than a native one that would need freeing. The body it
+        // points at stays where it is, in memory the variant owns.
         final objBytes = reader.read(ffi.sizeOf<raw.UA_ExtensionObject>());
-        ffi.Pointer<raw.UA_ExtensionObject> obj = ua_calloc();
-        obj
-            .cast<ffi.Uint8>()
-            .asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>())
-            .setRange(0, ffi.sizeOf<raw.UA_ExtensionObject>(), objBytes);
+        final obj = ffi.Struct.create<raw.UA_ExtensionObject>(Uint8List.fromList(objBytes));
         // Todo only support encoded byte string for now
-        assert(obj.ref.encoding == raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING);
-        final bodyBytes = obj.ref.content.encoded.body.asTypedList();
+        assert(obj.encoding == raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING);
+        final bodyBytes = obj.content.encoded.body.asTypedList();
         bodyReader = ByteReader(bodyBytes, endian: endian ?? Endian.little);
       }
       final fields = schema.asObject;
@@ -191,6 +189,41 @@ class OpcUaDynamicValueSerializer {
     bool insideStruct = false,
     bool root = false,
   ]) {
+    if (!root) {
+      _serialize(schema, writer, value, endian, insideStruct, null);
+      return;
+    }
+    // A struct at the root is written as a UA_ExtensionObject whose body and
+    // string typeId are native memory. Everything that can throw runs first, on
+    // Dart memory; the native allocations follow once the whole value is
+    // encoded, so a write that fails leaves nothing behind.
+    final structs = <(NodeId, Uint8List)>[];
+    _serialize(schema, writer, value, endian, insideStruct, structs);
+    for (final (typeId, body) in structs) {
+      // Only the header's bytes are copied into the writer, so it is a view over
+      // Dart memory. The body and the typeId's characters become the variant's:
+      // UA_Variant_delete / UA_Variant_clear frees them.
+      final objBytes = Uint8List(ffi.sizeOf<raw.UA_ExtensionObject>());
+      final obj = ffi.Struct.create<raw.UA_ExtensionObject>(objBytes);
+      // todo support other encodings
+      obj.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
+      obj.content.encoded.typeId.fromNodeId(typeId);
+      obj.content.encoded.body.fromBytes(body);
+      writer.write(objBytes);
+    }
+  }
+
+  /// [rootStructs] is non-null at the root of a variant. A struct found there is
+  /// encoded into it instead of being written, see [serialize].
+  static void _serialize(
+    DynamicValue schema,
+    ByteWriter writer,
+    DynamicValue value,
+    Endian? endian,
+    bool insideStruct,
+    List<(NodeId, Uint8List)>? rootStructs,
+  ) {
+    final root = rootStructs != null;
     if (value.isArray) {
       // Don't encode the array length if we are the root
       if (!root) {
@@ -199,21 +232,13 @@ class OpcUaDynamicValueSerializer {
       for (var i = 0; i < value.value.length; i++) {
         // if array is root and subsequent type is array we should treat that also as root
         // as in not read the subsequent array length
-        OpcUaDynamicValueSerializer.serialize(value.value[i], writer, value.value[i], endian, insideStruct, root);
+        _serialize(value.value[i], writer, value.value[i], endian, insideStruct, rootStructs);
       }
     } else if (value.isObject && root) {
-      ffi.Pointer<raw.UA_ExtensionObject> obj = ua_calloc<raw.UA_ExtensionObject>();
-      obj.ref.content.encoded.typeId.fromNodeId(value.extObjEncodingId ?? value.typeId!);
-      ByteWriter bodyWriter = ByteWriter();
+      final typeId = value.extObjEncodingId ?? value.typeId!;
+      final bodyWriter = ByteWriter();
       _serializeStructBody(value, bodyWriter, endian);
-      obj.ref.content.encoded.body.fromBytes(bodyWriter.toBytes());
-      // todo support other encodings
-      obj.ref.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
-      // write the extension object to the writer
-      final extObjView = obj.cast<ffi.Uint8>().asTypedList(ffi.sizeOf<raw.UA_ExtensionObject>());
-      // here we have made a view into the ext object on the C heap
-      // I would like to believe that this is freed when the variant is freed
-      writer.write(extObjView);
+      rootStructs.add((typeId, bodyWriter.toBytes()));
     } else if (value.isObject) {
       _serializeStructBody(value, writer, endian);
     } else {

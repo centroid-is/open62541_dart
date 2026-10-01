@@ -6,6 +6,20 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **Fixed a 48-byte native leak per struct-valued variant decoded (and per
+  struct written).** `OpcUaDynamicValueSerializer.deserialize` calloc'd a
+  `UA_ExtensionObject` to read the header of every struct-valued variant --
+  every struct notification, every struct read, and once per element of an
+  array of structs -- and never freed it; `serialize` did the same for every
+  struct written. Both now read/build the header through a `Struct.create`
+  view on the Dart heap, so the garbage collector owns it. Present in 1.5.7
+  through 1.5.7+3.
+- **A struct write that fails no longer leaks.** When serialising a struct
+  threw part-way (a field without a value, for example), the type id string
+  already allocated for it was never freed, nor were the bodies and type ids
+  of the elements before it in an array of structs. The whole value is now
+  encoded on the Dart heap first, and the native memory the variant takes
+  ownership of is allocated only once nothing can throw any more.
 - **`Client.call` (and `readAttribute` / monitored-item creation) surface the
   real service status.** The async response handlers checked `resultsSize`
   before `responseHeader.serviceResult`, so an infrastructure failure (session
