@@ -60,8 +60,7 @@ const badInternalError = 0x80020000;
 /// [UaStatusException] carrying the exact notification status (for two years
 /// before that it was an English string). The opt-in flag must not move it —
 /// a caller that never asked for qualities keeps getting the typed error.
-final legacyBadStatusMatcher = isA<UaStatusException>()
-    .having((e) => e.statusCode, 'statusCode', badInternalError);
+final legacyBadStatusMatcher = isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', badInternalError);
 
 void main() {
   final port = 23840 + Random().nextInt(1000);
