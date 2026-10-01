@@ -281,6 +281,40 @@ void main() {
     );
   }, timeout: Timeout(Duration(seconds: 45)));
 
+  // Known bug found in the PR #119 review, same on main: the ClientIsolate
+  // worker forwards a monitoredItems stream's data and errors but not its done
+  // event, so after a refused create the caller gets the error and a stream
+  // that never closes.
+  test(
+    'ClientIsolate: a create refused for every node (BadNodeIdUnknown) reports it and closes the stream',
+    () async {
+      final isolateClient = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+      addTearDown(isolateClient.delete);
+      await isolateClient.keepConnected('opc.tcp://127.0.0.1:$serverPort');
+      final subscriptionId = await isolateClient.subscriptionCreate(
+        requestedPublishingInterval: Duration(milliseconds: 50),
+      );
+
+      final errors = <Object>[];
+      final done = Completer<void>();
+      isolateClient
+          .monitoredItems({
+            unknownNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+          }, subscriptionId)
+          .listen((_) {}, onError: errors.add, onDone: done.complete);
+
+      await done.future.timeout(
+        Duration(seconds: 5),
+        onTimeout: () => fail('the stream never closed after the refused create (errors so far: $errors)'),
+      );
+      expect(errors.single.toString(), contains('BadNodeIdUnknown'));
+    },
+    timeout: Timeout(Duration(seconds: 30)),
+    skip:
+        'BUG: the ClientIsolate worker does not forward the done event of a monitoredItems stream, '
+        'so the stream never closes after a refused create',
+  );
+
   test('a partial refusal (one node unknown, one fine) closes the stream and deletes the created item', () async {
     final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
 
