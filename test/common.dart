@@ -141,23 +141,24 @@ Future<void> waitForChannelDown(Client client, {Duration timeout = const Duratio
 /// ClientIsolate does not expose its worker isolate, and a worker that was
 /// never killed is invisible from the outside: it holds an open ReceivePort
 /// and simply stays. The VM service is the one place that lists it, so a
-/// suite that has to prove a worker is gone switches the service on for its
-/// own duration ([start] in setUpAll, [stop] in tearDownAll).
+/// suite that has to prove a worker is gone switches the service on ([start]
+/// in setUpAll, [stop] in tearDownAll).
+///
+/// The service is left on afterwards: `dart test` runs every suite in one
+/// process, so another suite may be using it at that moment.
 class IsolateWatch {
-  IsolateWatch._(this._socket, this._replies, this._disableOnStop);
+  IsolateWatch._(this._socket, this._replies);
 
   final WebSocket _socket;
   final StreamIterator<dynamic> _replies;
-  final bool _disableOnStop;
   late final String _groupId;
 
   static Future<IsolateWatch> start() async {
-    final alreadyOn = (await developer.Service.getInfo()).serverWebSocketUri != null;
     final info = await developer.Service.controlWebServer(enable: true, silenceOutput: true);
     final uri = info.serverWebSocketUri;
     if (uri == null) throw StateError('The VM service is not available, cannot list isolates');
     final socket = await WebSocket.connect(uri.toString());
-    final watch = IsolateWatch._(socket, StreamIterator(socket), !alreadyOn);
+    final watch = IsolateWatch._(socket, StreamIterator(socket));
     final self = await watch._call('getIsolate', {'isolateId': developer.Service.getIsolateId(Isolate.current)});
     watch._groupId = self['isolateGroupId'] as String;
     return watch;
@@ -192,10 +193,7 @@ class IsolateWatch {
     }
   }
 
-  Future<void> stop() async {
-    await _socket.close();
-    if (_disableOnStop) await developer.Service.controlWebServer(enable: false);
-  }
+  Future<void> stop() => _socket.close();
 }
 
 final boolNodeId = NodeId.fromString(1, "the.bool");
