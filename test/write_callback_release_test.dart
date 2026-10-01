@@ -12,7 +12,6 @@
 // test pins — it needs no VM-service introspection, only Isolate.onExit.
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:isolate';
 
 import 'package:test/test.dart';
@@ -45,34 +44,21 @@ Future<void> rejectedWriteThenReturn((int, SendPort) args) async {
   report.send(rejection is UaStatusException ? rejection.statusCode : rejection.toString());
 }
 
-/// Holds [port] so that no other suite can bind it.
-///
-/// **Why a test that kills its server has to do this.** `dart test` runs suites
-/// in parallel and `freeTcpPort()` hands out a port by binding :0 and letting
-/// it go, so a port this suite releases can be handed straight to another
-/// suite's server. The client below is still alive and still reconnecting at
-/// the address it was given — it would connect into that server and open a
-/// session there, and the suite that owns it would see a session it never
-/// created. `server_statistics_test` asserts exact session counts and is the
-/// one that catches it, from the other side, as a timeout on
-/// `currentSessionCount == 1` with an extra session in the snapshot.
-///
-/// Accepted connections are destroyed at once: the point is only to keep the
-/// port occupied, and a socket that accepts and says nothing leaves the
-/// client's channel exactly as dead as a closed port does.
-Future<ServerSocket> holdPort(int port) async {
-  final held = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
-  held.listen((socket) => socket.destroy());
-  addTearDown(() => held.close());
-  return held;
-}
-
 void main() {
   late int port;
   late Server server;
+  var serverStopped = false;
+
+  void stopServer() {
+    if (serverStopped) return;
+    serverStopped = true;
+    server.shutdown();
+    server.delete();
+  }
 
   setUp(() async {
     port = await freeTcpPort();
+    serverStopped = false;
     server = setupServer(port);
     server.addDataSourceVariableNode(
       gatedNodeId,
@@ -85,10 +71,7 @@ void main() {
     );
   });
 
-  tearDown(() {
-    server.shutdown();
-    server.delete();
-  });
+  tearDown(stopServer);
 
   test('a rejected write releases its native callback: the isolate can exit', () async {
     final report = ReceivePort();
@@ -108,11 +91,9 @@ void main() {
   test('a write on a dead connection fails typed instead of hanging', () async {
     final client = await setupClient(port);
     // Drop the server; wait until the client has noticed the channel is gone.
-    server.shutdown();
-    server.delete();
+    stopServer();
     await holdPort(port);
-    await Future.delayed(Duration(milliseconds: 500));
-    server = setupServer(await freeTcpPort()); // for tearDown
+    await waitForChannelDown(client);
 
     // open62541 refuses to send on a closed channel synchronously and never
     // invokes the callback. write() used to ignore that status: the future

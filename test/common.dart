@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:test/test.dart';
+
 import 'package:open62541/open62541.dart';
 
 /// Returns a TCP port that is free right now, allocated by the OS.
@@ -21,6 +23,63 @@ Future<int> freeTcpPort() async {
   final port = socket.port;
   await socket.close();
   return port;
+}
+
+/// Holds [port] until the end of the current test so that nothing else can
+/// bind it.
+///
+/// **Why a test that kills its server has to do this.** `dart test` runs suites
+/// in parallel and [freeTcpPort] hands out a port by binding :0 and letting
+/// it go, so a port a suite releases can be handed straight to another
+/// suite's server. A client that is still alive and still reconnecting at
+/// the address it was given would connect into that server and open a
+/// session there, and the suite that owns it would see a session it never
+/// created. `server_statistics_test` asserts exact session counts and is the
+/// one that catches it, from the other side, as a timeout on
+/// `currentSessionCount == 1` with an extra session in the snapshot.
+///
+/// Accepted connections are destroyed at once: the point is only to keep the
+/// port occupied, and a socket that accepts and says nothing leaves the
+/// client's channel exactly as dead as a closed port does.
+Future<ServerSocket> holdPort(int port) async {
+  final held = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
+  held.listen((socket) => socket.destroy());
+  addTearDown(() => held.close());
+  return held;
+}
+
+/// Polls [predicate] against a fresh [Server.statistics] snapshot until it
+/// holds (returning the matching snapshot) or [timeout] expires (failing the
+/// test with the last snapshot in the message).
+Future<ServerStatistics> waitForStats(
+  Server server,
+  bool Function(ServerStatistics stats) predicate, {
+  Duration timeout = const Duration(seconds: 10),
+  String? reason,
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  ServerStatistics stats = server.statistics;
+  while (!predicate(stats)) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('Timed out waiting for ${reason ?? 'statistics condition'}; last: $stats');
+    }
+    await Future.delayed(const Duration(milliseconds: 50));
+    stats = server.statistics;
+  }
+  return stats;
+}
+
+/// Polls until [client] has noticed that its secure channel is gone, which
+/// is the point from which open62541 refuses a request before sending it.
+/// Fails the test if the channel is still open after [timeout].
+Future<void> waitForChannelDown(Client client, {Duration timeout = const Duration(seconds: 10)}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (client.state.channelState == SecureChannelState.UA_SECURECHANNELSTATE_OPEN) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('Timed out waiting for the client to notice its secure channel is gone; last: ${client.state}');
+    }
+    await Future.delayed(const Duration(milliseconds: 20));
+  }
 }
 
 final boolNodeId = NodeId.fromString(1, "the.bool");
