@@ -370,6 +370,16 @@ class Server {
     _config.ref.asyncOperationTimeout = timeout.inMilliseconds.toDouble();
   }
 
+  /// The most references the server returns for one node in a single Browse
+  /// or BrowseNext response — `0`, the default, means no limit. A node with
+  /// more references is answered in pages: each response carries a
+  /// continuation point for the next BrowseNext, which `Client.browse`
+  /// follows on its own.
+  int get maxReferencesPerNode => _config.ref.maxReferencesPerNode;
+  set maxReferencesPerNode(int limit) {
+    _config.ref.maxReferencesPerNode = limit;
+  }
+
   /// Releases the UTF-8 identifier buffer that [NodeId.toRaw] allocates (via
   /// `ua_malloc`) for a **string** NodeId. Numeric NodeIds own no heap memory,
   /// so this is a no-op for them.

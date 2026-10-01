@@ -106,6 +106,13 @@ changes that ship the same native library version.
   value's variant and then the attributes holding a shallow copy of it, so
   the payload was freed twice on every call (glibc:
   `free(): double free detected in tcache 2`).
+- **Fixed: `Client.browse` killed the process when the server paged its
+  answer.** A server may return the references of a node a few at a time,
+  with a continuation point to fetch the rest. Following it (BrowseNext)
+  freed the continuation point by hand and then again with the request that
+  owned it (glibc: `free(): invalid pointer`). Nothing in this package made
+  a server page, so the new `Server.maxReferencesPerNode` (getter/setter,
+  default 0: no limit) sets how many references it returns per response.
 - **Fixed: native memory that was allocated and never freed.** Each of these
   stayed on the C heap for the lifetime of the process:
   - every `Server` left its 1.2 kB `UA_ServerConfig` struct behind.

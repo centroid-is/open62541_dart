@@ -1127,6 +1127,8 @@ class Client implements ClientApi {
     final request = raw.UA_BrowseNextRequest_new();
     raw.UA_BrowseNextRequest_init(request);
     request.ref.releaseContinuationPoints = false;
+    // From here on the request owns `cp` and, through it, the caller's
+    // [continuationPointData]: UA_BrowseNextRequest_delete frees both.
     final cp = ua_calloc<raw.UA_ByteString>();
     cp.ref.data = continuationPointData;
     cp.ref.length = continuationPointLength;
@@ -1152,9 +1154,8 @@ class Client implements ClientApi {
           callback.close();
           ua_calloc.free(requestIdPtr);
 
-          // Clean up: free the continuation point data and the request
-          ua_calloc.free(continuationPointData);
-          ua_calloc.free(cp);
+          // The request owns the continuation point (see above): deleting it
+          // frees `cp` and its data as well.
           raw.UA_BrowseNextRequest_delete(request);
 
           if (voidPointer == ffi.nullptr) {
@@ -1217,8 +1218,6 @@ class Client implements ClientApi {
     );
     if (res != raw.UA_STATUSCODE_GOOD) {
       callback.close();
-      ua_calloc.free(continuationPointData);
-      ua_calloc.free(cp);
       raw.UA_BrowseNextRequest_delete(request);
       ua_calloc.free(requestIdPtr);
       completer.completeError('Failed to browse next: ${statusCodeToString(res)}');
