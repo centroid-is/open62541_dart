@@ -945,46 +945,37 @@ class Server {
     NodeId? parentNodeId,
     NodeId? referenceTypeId,
   }) {
-    var dattr = raw.UA_VariableTypeAttributes_new();
-    if (displayName != null) {
-      dattr.ref.displayName.locale.set(displayName.locale);
-      dattr.ref.displayName.text.set(displayName.value);
-    }
-    dattr.ref.dataType = variableTypeId.toRaw();
-    dattr.ref.valueRank = raw.UA_VALUERANK_SCALAR;
-    final variant = valueToVariant(schema);
-    dattr.ref.value = variant.ref;
+    final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
+    final resolvedRef = referenceTypeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
 
-    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
-    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
+    // The attributes are passed by value and open62541 copies what it keeps of
+    // them, of the NodeIds and of the browse name. So the struct is on the Dart
+    // heap (zeroed, like UA_VariableTypeAttributes_new) and owns nothing: what
+    // it points at is scratch in the arena.
+    final res = using((arena) {
+      final dattr = ffi.Struct.create<raw.UA_VariableTypeAttributes>();
+      if (displayName != null) {
+        dattr.displayName.locale.set(displayName.locale, allocator: arena);
+        dattr.displayName.text.set(displayName.value, allocator: arena);
+      }
+      dattr.dataType = variableTypeId.toRaw(allocator: arena);
+      dattr.valueRank = raw.UA_VALUERANK_SCALAR;
+      // A shallow copy: the payload stays the variant's, freed with it.
+      dattr.value = arena.using(valueToVariant(schema), raw.UA_Variant_delete).ref;
 
-    final variableTypeIdRaw = variableTypeId.toRaw();
-    final parentNodeIdRaw = parentNodeId.toRaw();
-    final referenceTypeIdRaw = referenceTypeId.toRaw();
-    final qualifiedName = raw.UA_QUALIFIEDNAME(1, name.toNativeUtf8(allocator: ua_malloc).cast());
-
-    int res = raw.UA_Server_addVariableTypeNode(
-      _server,
-      variableTypeIdRaw,
-      parentNodeIdRaw,
-      referenceTypeIdRaw,
-      qualifiedName,
-      parentNodeIdRaw,
-      dattr.ref,
-      ffi.nullptr,
-      ffi.nullptr,
-    );
-
-    // open62541 deep-copied the NodeId arguments; free our copies. The
-    // `dattr.ref.dataType` NodeId is owned by `dattr` and released by
-    // `UA_VariableTypeAttributes_delete` below.
-    _freeRawNodeId(variableTypeIdRaw);
-    _freeRawNodeId(parentNodeIdRaw);
-    _freeRawNodeId(referenceTypeIdRaw);
-    // `dattr` holds a shallow copy of the variant, so deleting it releases the
-    // variant's payload; only the variant struct itself is left to free.
-    raw.UA_VariableTypeAttributes_delete(dattr);
-    ua_calloc.free(variant);
+      final parentRaw = resolvedParent.toRaw(allocator: arena);
+      return raw.UA_Server_addVariableTypeNode(
+        _server,
+        variableTypeId.toRaw(allocator: arena),
+        parentRaw,
+        resolvedRef.toRaw(allocator: arena),
+        raw.UA_QUALIFIEDNAME(1, name.toNativeUtf8(allocator: arena).cast()),
+        parentRaw,
+        dattr,
+        ffi.nullptr,
+        ffi.nullptr,
+      );
+    }, ua_calloc);
 
     if (res != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add variable type node ${statusCodeToString(res)}';

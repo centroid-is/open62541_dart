@@ -74,6 +74,20 @@ void main() {
       });
     }
 
+    // Refused today whatever the value (BadTypeMismatch, see
+    // variable_type_node_test.dart), so only the failing path can be measured.
+    test('a refused variable type node leaves nothing on the C heap', () async {
+      await expectRefusedAddLeavesNothing(
+        () => server.addVariableTypeNode(
+          DynamicValue(value: 1, typeId: NodeId.int32),
+          nodeId,
+          browseName,
+          displayName: LocalizedText('Leak test node', 'en-US'),
+        ),
+        throwsA(contains('BadTypeMismatch')),
+      );
+    });
+
     test('a variable node without a name leaves nothing on the C heap', () async {
       await expectRefusedAddLeavesNothing(
         () => server.addVariableNode(nodeId, DynamicValue(value: 1, typeId: NodeId.int32)),
