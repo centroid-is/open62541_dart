@@ -19,9 +19,12 @@ import 'schema_util.dart';
 /// use grew. One leaked allocation per operation is at least 32 bytes per
 /// operation (the smallest glibc chunk); the limit is 8.
 ///
-/// glibc only. `dart test` runs every suite in one process, so another suite can
-/// allocate or free while a round is being measured. A leak grows the heap by
-/// the same amount in every round, so the median over the rounds discards that.
+/// glibc only. `dart test` runs every suite in one process, so the heap also
+/// moves with what other suites do meanwhile, by megabytes when one is loaded
+/// or torn down. A leak grows the heap by the same amount in every round, so
+/// the median over the rounds discards the odd disturbed round, and a
+/// measurement that still comes out too high is repeated a little later: a
+/// suite being loaded passes, a leak does not.
 
 final class _Mallinfo2 extends ffi.Struct {
   @ffi.Size()
@@ -59,13 +62,10 @@ const _warmUp = 50000;
 const _rounds = 15;
 const _iterations = 4000;
 const _maxGrowth = 8 * _iterations;
+const _attempts = 10;
 
 /// Median growth of the C heap over [_rounds] rounds of [_iterations] calls.
-int _heapGrowth(void Function() operation) {
-  // Let the JIT and anything lazily initialised settle before measuring.
-  for (var i = 0; i < _warmUp; i++) {
-    operation();
-  }
+int _medianHeapGrowth(void Function() operation) {
   final growth = <int>[];
   for (var round = 0; round < _rounds; round++) {
     final before = _heapInUse();
@@ -134,11 +134,21 @@ void main() {
 
   /// Runs [operation] repeatedly and fails if the C heap grew.
   void expectNoHeapGrowth(void Function() operation) {
+    // Let the JIT and anything lazily initialised settle before measuring. Where
+    // the heap cannot be measured this still puts the operation under whatever
+    // sanitizer is watching.
+    for (var i = 0; i < _warmUp; i++) {
+      operation();
+    }
     if (unmeasurable != null) {
       markTestSkipped(unmeasurable);
       return;
     }
-    final growth = _heapGrowth(operation);
+    var growth = _medianHeapGrowth(operation);
+    for (var attempt = 1; growth >= _maxGrowth && attempt < _attempts; attempt++) {
+      sleep(const Duration(milliseconds: 500));
+      growth = _medianHeapGrowth(operation);
+    }
     expect(
       growth,
       lessThan(_maxGrowth),
