@@ -82,6 +82,10 @@ abstract class ClientApi {
   ///   Note that such a sample carries no payload — the value is whatever was
   ///   last known — because a Bad DataValue arrives with `hasValue` clear.
   ///
+  /// Only the Value attribute has a status to deliver. A Bad sample of any
+  /// other monitored attribute is added to the stream as a
+  /// `UaStatusException` in both modes.
+  ///
   /// The default stays false so that adding this parameter cannot change what
   /// any existing caller receives.
   Stream<Map<NodeId, DynamicValue>> monitoredItems(

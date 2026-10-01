@@ -1619,6 +1619,16 @@ class Client implements ClientApi {
               final nodeId = item.$1;
               final attributeId = item.$2;
 
+              // [deliverBadStatus] delivers the quality of the VALUE: that is
+              // the one attribute whose status a DynamicValue can carry (see
+              // below). A Bad sample of any other attribute has no field to
+              // travel in, so it is reported as the typed error it is on the
+              // default path rather than vanish without a trace. It still
+              // counts as seen below, so it cannot hold back the Value.
+              if (isBadSample && attributeId != AttributeId.UA_ATTRIBUTEID_VALUE) {
+                controller.addError(UaStatusException(sampleStatus));
+              }
+
               var reference = latestValues[nodeId] ?? DynamicValue();
               final ref = value.ref.value;
 

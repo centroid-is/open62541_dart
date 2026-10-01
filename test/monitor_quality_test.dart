@@ -57,6 +57,10 @@ final tickZeroNodeId = NodeId.fromString(1, "the.tickZero");
 /// `UA_STATUSCODE_BADINTERNALERROR`.
 const badInternalError = 0x80020000;
 
+/// What a monitored item samples once its node has been deleted.
+/// `UA_STATUSCODE_BADNODEIDUNKNOWN`.
+const badNodeIdUnknown = 0x80340000;
+
 /// What the default path puts on the error channel: since 1.5.7+3 a typed
 /// [UaStatusException] carrying the exact notification status (for two years
 /// before that it was an English string). The opt-in flag must not move it —
@@ -438,4 +442,63 @@ void main() {
       );
     });
   });
+
+  for (final clientType in clientTypes) {
+    // Regression tests for the review of PR #118: two samples the monitor path
+    // misreported, and that no test looked at.
+    group('the monitor path [$clientType]', () {
+      ClientApi? own;
+
+      tearDown(() async {
+        await own?.delete();
+        own = null;
+      });
+
+      test('deliverBadStatus: true reports a Bad notification of a non-Value attribute as an error', () async {
+        final api = clientType == 'direct'
+            ? client
+            : own = await setupClientOfType(clientType, "opc.tcp://127.0.0.1:$port");
+        final subId = await api.subscriptionCreate();
+
+        final names = <String?>[];
+        final errors = <Object>[];
+        final gotName = Completer<void>();
+        final gotError = Completer<void>();
+        final sub = api
+            .monitoredItems(
+              {
+                goodNodeId: [AttributeId.UA_ATTRIBUTEID_DISPLAYNAME],
+              },
+              subId,
+              deliverBadStatus: true,
+            )
+            .listen(
+              (event) {
+                names.add(event[goodNodeId]?.displayName?.value);
+                if (!gotName.isCompleted) gotName.complete();
+              },
+              onError: (Object e) {
+                errors.add(e);
+                if (!gotError.isCompleted) gotError.complete();
+              },
+            );
+        addTearDown(sub.cancel);
+
+        await gotName.future.timeout(Duration(seconds: 10));
+        // With the node gone, the DisplayName item samples BadNodeIdUnknown.
+        server.deleteNode(goodNodeId);
+        await gotError.future.timeout(Duration(seconds: 10), onTimeout: () {});
+
+        expect(
+          errors,
+          [isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', badNodeIdUnknown)],
+          reason:
+              'a DynamicValue has no field for the status of a DisplayName, so '
+              'deliverBadStatus cannot deliver it as a value; swallowing it '
+              'leaves the caller with neither a value nor an error',
+        );
+        expect(names.toSet(), {'the.int'}, reason: 'the Bad sample carries no DisplayName; the last known one stays');
+      });
+    });
+  }
 }
