@@ -1,0 +1,30 @@
+--- a/src/client/ua_client_subscriptions.c
++++ b/src/client/ua_client_subscriptions.c
+@@ -927,6 +927,27 @@ UA_Client_MonitoredItems_delete_async(UA_Client *client,
+                                       const UA_DeleteMonitoredItemsRequest request,
+                                       UA_ClientAsyncDeleteMonitoredItemsCallback callback,
+                                       void *userdata, UA_UInt32 *requestId) {
++    /* Immediately null out the notification callbacks for the monitored items
++     * being deleted. This prevents use-after-free when a Publish response
++     * arrives (in the same or a later runIterate batch) before the
++     * DeleteMonitoredItems response is processed.
++     * processDataChangeNotification() already checks for NULL before invoking
++     * the callback (line ~1190), so this is safe. */
++    UA_Client_Subscription *sub =
++        findSubscriptionById(client, request.subscriptionId);
++    if(sub) {
++        for(size_t i = 0; i < request.monitoredItemIdsSize; i++) {
++            UA_Client_MonitoredItem *mon;
++            UA_Client_MonitoredItem dummy;
++            dummy.monitoredItemId = request.monitoredItemIds[i];
++            mon = ZIP_FIND(MonitorItemsTree, &sub->monitoredItems, &dummy);
++            if(mon) {
++                mon->handler.dataChangeCallback = NULL;
++                mon->handler.eventCallback = NULL;
++            }
++        }
++    }
++
+     /* Send the request */
+     CustomCallback *cc = (CustomCallback *)UA_calloc(1, sizeof(CustomCallback));
+     if(!cc)
