@@ -12,14 +12,73 @@ import 'heap_growth.dart';
 void main() {
   test('a server leaves nothing on the C heap once deleted', () async {
     // Creating a server builds the whole namespace 0, about 100 ms: a few
-    // servers per round have to do. One leaked UA_ServerConfig is 1184 bytes.
+    // servers per round have to do. One leaked UA_ServerConfig is 1184 bytes;
+    // the heap still settles by a hundred or two per server this early on.
     await expectNoHeapGrowth(
       () => Server(logLevel: LogLevel.UA_LOGLEVEL_FATAL).delete(),
-      warmUp: 2,
+      warmUp: 6,
       iterations: 4,
       rounds: 5,
-      maxGrowth: 256,
+      maxGrowth: 600,
       attempts: 3,
     );
+  });
+
+  group('nodes:', () {
+    late Server server;
+
+    setUp(() => server = Server(logLevel: LogLevel.UA_LOGLEVEL_FATAL));
+    tearDown(() => server.delete());
+
+    final nodeId = NodeId.fromString(1, 'leak.test.node');
+    const browseName = 'LeakTestNode';
+
+    Future<void> expectNoGrowth(void Function() operation) =>
+        expectNoHeapGrowth(operation, warmUp: 2000, iterations: 1000, rounds: 9);
+
+    /// Runs [add], which must throw, and checks the failure leaves nothing.
+    Future<void> expectRefusedAddLeavesNothing(void Function() add, Matcher error) {
+      expect(add, error);
+      return expectNoGrowth(() {
+        try {
+          add();
+        } catch (_) {
+          // Expected, checked above.
+        }
+      });
+    }
+
+    // What adds one node of each kind, with [nodeId] as its NodeId.
+    final kinds = <String, void Function()>{
+      'a variable node': () =>
+          server.addVariableNode(nodeId, DynamicValue(value: 1, typeId: NodeId.int32, name: browseName)),
+      'a data-source variable node': () => server.addDataSourceVariableNode(
+        nodeId,
+        onRead: () => DynamicValue(value: 1, typeId: NodeId.int32),
+        browseName: browseName,
+        typeId: NodeId.int32,
+      ),
+    };
+
+    for (final MapEntry(key: kind, value: add) in kinds.entries) {
+      test('adding and deleting $kind leaves nothing on the C heap', () async {
+        await expectNoGrowth(() {
+          add();
+          server.deleteNode(nodeId);
+        });
+      });
+
+      test('adding $kind that already exists leaves nothing on the C heap', () async {
+        add();
+        await expectRefusedAddLeavesNothing(add, throwsA(contains('BadNodeIdExists')));
+      });
+    }
+
+    test('a variable node without a name leaves nothing on the C heap', () async {
+      await expectRefusedAddLeavesNothing(
+        () => server.addVariableNode(nodeId, DynamicValue(value: 1, typeId: NodeId.int32)),
+        throwsA(contains('name must be provided')),
+      );
+    });
   });
 }

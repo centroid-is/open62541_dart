@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -391,6 +392,14 @@ class Server {
     }
   }
 
+  /// A copy of open62541's default variable attributes on the Dart heap, for
+  /// attributes that are filled in and then passed to open62541 by value.
+  raw.UA_VariableAttributes _defaultVariableAttributes() {
+    final defaults = ffi.Native.addressOf<raw.UA_VariableAttributes>(raw.UA_VariableAttributes_default);
+    final bytes = defaults.cast<ffi.Uint8>().asTypedList(ffi.sizeOf<raw.UA_VariableAttributes>());
+    return ffi.Struct.create<raw.UA_VariableAttributes>(Uint8List.fromList(bytes));
+  }
+
   /// Initializes and starts the OPC UA server.
   ///
   /// This method performs the initial startup sequence for the server, including:
@@ -459,80 +468,70 @@ class Server {
     NodeId? baseDataVariableType,
     NodeId? typeId,
   }) {
-    ffi.Pointer<raw.UA_VariableAttributes> attr = raw.UA_VariableAttributes_new();
-    attr.ref = raw.UA_VariableAttributes_default;
+    final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
+    final resolvedType = baseDataVariableType ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
 
-    final variant = valueToVariant(value);
-    typeId ??= value.typeId;
+    // Everything native here is scratch: the attributes are passed by value and
+    // open62541 copies what it keeps of them, of the NodeIds and of the browse
+    // name. The arena releases it however this returns.
+    using((arena) {
+      final attr = _defaultVariableAttributes();
 
-    // Enum metadata: when the value carries enum field definitions, publish a
-    // custom enum DataType so a client can read back an EnumDefinition (field
-    // value + name). open62541 derives the DataTypeDefinition attribute of a
-    // DataType node from the registered custom `UA_DataType`, so we register an
-    // enum-kind type and point this node's DataType attribute at it. The stored
-    // value stays Int32 on the wire; open62541 relabels it to the enum type on
-    // write via `adjustType` (an enum is Int32-equivalent).
-    if (value.enumFields != null && value.enumFields!.isNotEmpty) {
-      typeId = _addEnumType(value, typeId);
-    }
+      final variant = arena.using(valueToVariant(value), raw.UA_Variant_delete);
+      typeId ??= value.typeId;
 
-    // For a structured value, `valueToVariant` returns a variant wrapping a
-    // binary-encoded UA_ExtensionObject. Store it as such and keep the node's
-    // DataType attribute (set below) pointing at the concrete custom type.
-    //
-    // Historically this branch instead re-labelled the variant as the native
-    // custom type and copied the *binary-encoded* body into `value.data`. That
-    // only happens to work for structs whose members are all fixed-size,
-    // pointer-free primitives (int/bool/double), where the encoded layout
-    // coincides with the in-memory layout. For any member that is a pointer type
-    // in native memory - notably UA_String, which is `{size_t length; UA_Byte*
-    // data}` in memory but `[int32 length][utf8 bytes]` on the wire - open62541
-    // would later walk the members and dereference the encoded bytes as a
-    // pointer, corrupting the heap and aborting the process (e.g. during the
-    // UA_Variant_copy performed by UA_Server_addVariableNode). Storing the value
-    // as an ExtensionObject lets open62541 keep it opaque, and the client read
-    // path already decodes the encoded body via variantToValue/deserialize.
-    attr.ref.value = variant.ref;
-    attr.ref.accessLevel = accessLevel.value;
-    attr.ref.dataType = typeId!.toRaw();
+      // Enum metadata: when the value carries enum field definitions, publish a
+      // custom enum DataType so a client can read back an EnumDefinition (field
+      // value + name). open62541 derives the DataTypeDefinition attribute of a
+      // DataType node from the registered custom `UA_DataType`, so we register an
+      // enum-kind type and point this node's DataType attribute at it. The stored
+      // value stays Int32 on the wire; open62541 relabels it to the enum type on
+      // write via `adjustType` (an enum is Int32-equivalent).
+      if (value.enumFields != null && value.enumFields!.isNotEmpty) {
+        typeId = _addEnumType(value, typeId);
+      }
 
-    if (value.name == null) {
-      throw 'Value name must be provided to use as a browse name';
-    }
-    final name = raw.UA_QUALIFIEDNAME(1, value.name!.toNativeUtf8(allocator: ua_malloc).cast());
+      // For a structured value, `valueToVariant` returns a variant wrapping a
+      // binary-encoded UA_ExtensionObject. Store it as such and keep the node's
+      // DataType attribute (set below) pointing at the concrete custom type.
+      //
+      // Historically this branch instead re-labelled the variant as the native
+      // custom type and copied the *binary-encoded* body into `value.data`. That
+      // only happens to work for structs whose members are all fixed-size,
+      // pointer-free primitives (int/bool/double), where the encoded layout
+      // coincides with the in-memory layout. For any member that is a pointer type
+      // in native memory - notably UA_String, which is `{size_t length; UA_Byte*
+      // data}` in memory but `[int32 length][utf8 bytes]` on the wire - open62541
+      // would later walk the members and dereference the encoded bytes as a
+      // pointer, corrupting the heap and aborting the process (e.g. during the
+      // UA_Variant_copy performed by UA_Server_addVariableNode). Storing the value
+      // as an ExtensionObject lets open62541 keep it opaque, and the client read
+      // path already decodes the encoded body via variantToValue/deserialize.
+      attr.value = variant.ref;
+      attr.accessLevel = accessLevel.value;
+      attr.dataType = typeId!.toRaw(allocator: arena);
 
-    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
-    parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
-    baseDataVariableType ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
+      if (value.name == null) {
+        throw 'Value name must be provided to use as a browse name';
+      }
+      final name = raw.UA_QUALIFIEDNAME(1, value.name!.toNativeUtf8(allocator: arena).cast());
 
-    final variableNodeIdRaw = variableNodeId.toRaw();
-    final parentNodeIdRaw = parentNodeId.toRaw();
-    final parentReferenceNodeIdRaw = parentReferenceNodeId.toRaw();
-    final baseDataVariableTypeRaw = baseDataVariableType.toRaw();
-
-    var returnCode = raw.UA_Server_addVariableNode(
-      _server,
-      variableNodeIdRaw,
-      parentNodeIdRaw,
-      parentReferenceNodeIdRaw,
-      name,
-      baseDataVariableTypeRaw,
-      attr.ref,
-      ffi.nullptr,
-      ffi.nullptr,
-    );
-    // open62541 deep-copied the NodeId arguments; free our copies. The
-    // `attr.ref.dataType` NodeId is owned by `attr` and released by
-    // `UA_VariableAttributes_delete` below, so it is not freed here.
-    _freeRawNodeId(variableNodeIdRaw);
-    _freeRawNodeId(parentNodeIdRaw);
-    _freeRawNodeId(parentReferenceNodeIdRaw);
-    _freeRawNodeId(baseDataVariableTypeRaw);
-    raw.UA_VariableAttributes_delete(attr);
-    ua_calloc.free(variant);
-    if (returnCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to add variable node ${statusCodeToString(returnCode)}, nodeId: $variableNodeId';
-    }
+      var returnCode = raw.UA_Server_addVariableNode(
+        _server,
+        variableNodeId.toRaw(allocator: arena),
+        resolvedParent.toRaw(allocator: arena),
+        resolvedRef.toRaw(allocator: arena),
+        name,
+        resolvedType.toRaw(allocator: arena),
+        attr,
+        ffi.nullptr,
+        ffi.nullptr,
+      );
+      if (returnCode != raw.UA_STATUSCODE_GOOD) {
+        throw 'Failed to add variable node ${statusCodeToString(returnCode)}, nodeId: $variableNodeId';
+      }
+    }, ua_calloc);
   }
 
   /// Lazily creates the shared native read/write dispatchers used by every
@@ -807,44 +806,34 @@ class Server {
 
     final effectiveAccess = accessLevel ?? AccessLevelMask(read: true, write: onWrite != null);
 
-    // 1) Create a plain variable node (no stored value). Its value comes from
-    //    the callback source attached in step 2.
-    final attr = raw.UA_VariableAttributes_new();
-    attr.ref = raw.UA_VariableAttributes_default;
-    attr.ref.accessLevel = effectiveAccess.value;
-    if (typeId != null) {
-      // Owned by `attr`; released by UA_VariableAttributes_delete below.
-      attr.ref.dataType = typeId.toRaw();
-      attr.ref.valueRank = raw.UA_VALUERANK_SCALAR;
-    }
-
-    final name = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
-
     final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
     final resolvedType = baseDataVariableType ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
 
-    final nodeIdRaw = nodeId.toRaw();
-    final parentRaw = resolvedParent.toRaw();
-    final refRaw = resolvedRef.toRaw();
-    final typeRaw = resolvedType.toRaw();
+    // 1) Create a plain variable node (no stored value). Its value comes from
+    //    the callback source attached in step 2. The attributes are passed by
+    //    value and open62541 copies what it keeps of them, of the NodeIds and
+    //    of the browse name, so everything native is scratch in the arena.
+    final addStatus = using((arena) {
+      final attr = _defaultVariableAttributes();
+      attr.accessLevel = effectiveAccess.value;
+      if (typeId != null) {
+        attr.dataType = typeId.toRaw(allocator: arena);
+        attr.valueRank = raw.UA_VALUERANK_SCALAR;
+      }
 
-    final addStatus = raw.UA_Server_addVariableNode(
-      _server,
-      nodeIdRaw,
-      parentRaw,
-      refRaw,
-      name,
-      typeRaw,
-      attr.ref,
-      ffi.nullptr,
-      ffi.nullptr,
-    );
-    _freeRawNodeId(nodeIdRaw);
-    _freeRawNodeId(parentRaw);
-    _freeRawNodeId(refRaw);
-    _freeRawNodeId(typeRaw);
-    raw.UA_VariableAttributes_delete(attr);
+      return raw.UA_Server_addVariableNode(
+        _server,
+        nodeId.toRaw(allocator: arena),
+        resolvedParent.toRaw(allocator: arena),
+        resolvedRef.toRaw(allocator: arena),
+        raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: arena).cast()),
+        resolvedType.toRaw(allocator: arena),
+        attr,
+        ffi.nullptr,
+        ffi.nullptr,
+      );
+    }, ua_calloc);
     if (addStatus != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add data source variable node ${statusCodeToString(addStatus)}, nodeId: $nodeId';
     }

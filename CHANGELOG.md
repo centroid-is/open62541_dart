@@ -111,6 +111,10 @@ changes that ship the same native library version.
   - every `Server` left its 1.2 kB `UA_ServerConfig` struct behind.
     `UA_Server_newWithConfig` moves the contents into the server but leaves
     the struct itself to the caller.
+  - every node added to a `Server` left a copy of its browse name behind
+    (`addVariableNode`, `addDataSourceVariableNode`).
+  - an add that threw left more: `addVariableNode` for a value without a
+    name leaked the attributes and the value (about 300 bytes).
 
 ## 1.5.7+3
 
