@@ -992,8 +992,10 @@ class Server {
     _freeRawNodeId(variableTypeIdRaw);
     _freeRawNodeId(parentNodeIdRaw);
     _freeRawNodeId(referenceTypeIdRaw);
-    raw.UA_Variant_delete(variant);
+    // `dattr` holds a shallow copy of the variant, so deleting it releases the
+    // variant's payload; only the variant struct itself is left to free.
     raw.UA_VariableTypeAttributes_delete(dattr);
+    ua_calloc.free(variant);
 
     if (res != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add variable type node ${statusCodeToString(res)}';

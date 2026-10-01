@@ -102,6 +102,10 @@ changes that ship the same native library version.
   errors of that type now cross to the caller as typed exceptions with their
   status code intact (`on UaStatusException catch (e) => e.statusCode`);
   every other error type still arrives as the stringified fallback.
+- **Fixed: `Server.addVariableTypeNode` killed the process.** It freed the
+  value's variant and then the attributes holding a shallow copy of it, so
+  the payload was freed twice on every call (glibc:
+  `free(): double free detected in tcache 2`).
 - **Fixed: native memory that was allocated and never freed.** Each of these
   stayed on the C heap for the lifetime of the process:
   - every `Server` left its 1.2 kB `UA_ServerConfig` struct behind.
