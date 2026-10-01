@@ -1496,31 +1496,52 @@ class Client implements ClientApi {
               int requestId,
               ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse> response,
             ) {
+              // Did open62541 drop its own items? It does so before it
+              // invokes this callback, and only for a Good service result and
+              // a Good or BadMonitoredItemIdInvalid result per item. In every
+              // other case its items are still there, and usually the
+              // server's too: the response was lost with the channel
+              // (answered locally, BadSecureChannelClosed, with no results),
+              // the request timed out, or the service failed.
+              var itemsGone = false;
               if (response == ffi.nullptr) {
                 _safeErr(
                   "Error deleting monitored item, nullptr provided connection propably already closed. Client cleanup.",
                 );
-              } else if (response.ref.resultsSize == 0) {
+              } else if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD ||
+                  response.ref.resultsSize == 0) {
+                final serviceResult = response.ref.responseHeader.serviceResult;
                 _safeErr(
-                  "Error deleting monitored item, no results provided, connection propably already closed. Client cleanup.",
+                  "Error deleting monitored item, no results provided, connection propably already closed "
+                  "($serviceResult ${statusCodeToString(serviceResult)}). Client cleanup.",
                 );
               } else {
+                itemsGone = response.ref.resultsSize == monIds.length;
                 for (var i = 0; i < response.ref.resultsSize; i++) {
-                  if (response.ref.results[i] != raw.UA_STATUSCODE_GOOD) {
-                    _safeErr(
-                      "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}",
-                    );
+                  final result = response.ref.results[i];
+                  if (result != raw.UA_STATUSCODE_GOOD) {
+                    _safeErr("Error deleting monitored item: $result ${statusCodeToString(result)}");
+                    if (result != raw.UA_STATUSCODE_BADMONITOREDITEMIDINVALID) itemsGone = false;
                   }
                 }
               }
               raw.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
-              // Defer closing monitorCallback: a Publish response processed
-              // later in the same runIterate batch may still invoke it.
-              // scheduleMicrotask runs after runIterate returns to the event
-              // loop, so all native callbacks in the current batch complete first.
-              scheduleMicrotask(() => monitorCallback.close());
               deleteCallback.close();
-              monIds.clear();
+              if (itemsGone) {
+                // Defer closing monitorCallback: a Publish response processed
+                // later in the same runIterate batch may still invoke it.
+                // scheduleMicrotask runs after runIterate returns to the event
+                // loop, so all native callbacks in the current batch complete first.
+                scheduleMicrotask(() => monitorCallback.close());
+                monIds.clear();
+              } else {
+                // An item that survived publishes again once the session is
+                // re-activated, and closing monitorCallback now would abort
+                // the VM on that notification ("Callback invoked after it has
+                // been deleted"). As on the not-sent path below, the client
+                // closes it in delete().
+                _undeletedMonitorCallbacks.add(monitorCallback);
+              }
               completer.complete();
             });
         final res = raw.UA_Client_MonitoredItems_delete_async(
