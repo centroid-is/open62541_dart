@@ -1010,28 +1010,27 @@ class Server {
     NodeId? parentNodeId,
     NodeId? referenceTypeId,
   }) {
-    var attr = raw.UA_DataTypeAttributes_new();
+    // open62541 reads the attributes through a pointer and copies them into
+    // the node, so they are scratch in the arena (zeroed, like
+    // UA_DataTypeAttributes_new), released also when the add throws.
+    using((arena) {
+      final attr = arena<raw.UA_DataTypeAttributes>();
+      if (displayName != null) {
+        attr.ref.displayName.locale.set(displayName.locale, allocator: arena);
+        attr.ref.displayName.text.set(displayName.value, allocator: arena);
+      }
 
-    if (displayName != null) {
-      attr.ref.displayName.locale.set(displayName.locale);
-      attr.ref.displayName.text.set(displayName.value);
-    }
-
-    parentNodeId ??= NodeId.structure;
-    referenceTypeId ??= NodeId.hasSubtype;
-
-    _addNode(
-      raw.UA_NodeClass.UA_NODECLASS_DATATYPE,
-      requestedNewNodeId,
-      parentNodeId,
-      referenceTypeId,
-      browseName,
-      NodeId.nullId,
-      attr.cast(),
-      getType(UaTypes.dataTypeAttributes),
-    );
-
-    raw.UA_DataTypeAttributes_delete(attr);
+      _addNode(
+        raw.UA_NodeClass.UA_NODECLASS_DATATYPE,
+        requestedNewNodeId,
+        parentNodeId ?? NodeId.structure,
+        referenceTypeId ?? NodeId.hasSubtype,
+        browseName,
+        NodeId.nullId,
+        attr.cast(),
+        getType(UaTypes.dataTypeAttributes),
+      );
+    }, ua_calloc);
   }
 
   /// Resolves the identity of the session behind a native callback's
@@ -1389,31 +1388,34 @@ class Server {
     NodeId? parentReferenceNodeId,
     NodeId? typeDefinition,
   }) {
-    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
-    parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
-    typeDefinition ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEOBJECTTYPE);
+    final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
+    final resolvedType = typeDefinition ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEOBJECTTYPE);
 
     final effectiveBrowseName = browseName ?? displayName ?? '';
     final effectiveDisplayName = displayName ?? browseName ?? '';
 
-    final attr = raw.UA_ObjectAttributes_new();
-    attr.ref = raw.UA_ObjectAttributes_default;
-    if (effectiveDisplayName.isNotEmpty) {
-      attr.ref.displayName.text.set(effectiveDisplayName);
-    }
+    // open62541 reads the attributes through a pointer and copies them into
+    // the node, so they are scratch in the arena, released also when the add
+    // throws.
+    using((arena) {
+      final attr = arena<raw.UA_ObjectAttributes>();
+      attr.ref = raw.UA_ObjectAttributes_default;
+      if (effectiveDisplayName.isNotEmpty) {
+        attr.ref.displayName.text.set(effectiveDisplayName, allocator: arena);
+      }
 
-    _addNode(
-      raw.UA_NodeClass.UA_NODECLASS_OBJECT,
-      nodeId,
-      parentNodeId,
-      parentReferenceNodeId,
-      effectiveBrowseName,
-      typeDefinition,
-      attr.cast(),
-      getType(UaTypes.objectAttributes),
-    );
-
-    raw.UA_ObjectAttributes_delete(attr);
+      _addNode(
+        raw.UA_NodeClass.UA_NODECLASS_OBJECT,
+        nodeId,
+        resolvedParent,
+        resolvedRef,
+        effectiveBrowseName,
+        resolvedType,
+        attr.cast(),
+        getType(UaTypes.objectAttributes),
+      );
+    }, ua_calloc);
   }
 
   /// Adds an Object node of type `FolderType` - a convenience over
@@ -1542,23 +1544,21 @@ class Server {
     ffi.Pointer<raw.UA_NodeAttributes> attr,
     ffi.Pointer<raw.UA_DataType> attributeType,
   ) {
-    final browse = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
+    // open62541 deep-copies the NodeId arguments and the browse name (both
+    // begin and finish use copies), so they are scratch in the arena, released
+    // whether or not the calls succeed.
+    using((arena) {
+      final requestedRaw = requestedNewNodeId.toRaw(allocator: arena);
 
-    final requestedRaw = requestedNewNodeId.toRaw();
-    final parentRaw = parentNodeId.toRaw();
-    final referenceRaw = referenceTypeId.toRaw();
-    final typeDefinitionRaw = typeDefinition.toRaw();
-
-    try {
       //TODO: It seems this method has been removed.
       var retCode = raw.UA_Server_addNode_begin(
         _server,
         nodeClass,
         requestedRaw,
-        parentRaw,
-        referenceRaw,
-        browse,
-        typeDefinitionRaw,
+        parentNodeId.toRaw(allocator: arena),
+        referenceTypeId.toRaw(allocator: arena),
+        raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: arena).cast()),
+        typeDefinition.toRaw(allocator: arena),
         attr.cast(),
         attributeType,
         ffi.nullptr,
@@ -1574,14 +1574,7 @@ class Server {
       if (retCode != raw.UA_STATUSCODE_GOOD) {
         throw 'Failed to add node finish ${statusCodeToString(retCode)}';
       }
-    } finally {
-      // open62541 deep-copied the NodeId arguments (both begin and finish use
-      // copies); free ours whether or not the calls succeeded.
-      _freeRawNodeId(requestedRaw);
-      _freeRawNodeId(parentRaw);
-      _freeRawNodeId(referenceRaw);
-      _freeRawNodeId(typeDefinitionRaw);
-    }
+    }, ua_calloc);
   }
 
   /// Writes a description to a variable node in the OPC UA server.

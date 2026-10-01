@@ -113,11 +113,13 @@ changes that ship the same native library version.
     the struct itself to the caller.
   - every node added to a `Server` left a copy of its browse name behind
     (`addVariableNode`, `addDataSourceVariableNode`, `addVariableTypeNode`,
-    `addMethodNode`).
+    `addMethodNode`, `addObjectNode`, `addFolderNode`, `addDataTypeNode`).
   - an add that threw left more: `addVariableNode` for a value without a
-    name leaked the attributes and the value (about 300 bytes), and
+    name leaked the attributes and the value (about 300 bytes),
     `addMethodNode` the attributes and the arguments marshalled so far when
-    an argument could not be marshalled.
+    an argument could not be marshalled, and `addObjectNode`,
+    `addFolderNode` and `addDataTypeNode` the attributes whenever the server
+    refused the node (`BadNodeIdExists`, ...).
 
 ## 1.5.7+3
 

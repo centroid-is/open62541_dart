@@ -75,6 +75,10 @@ void main() {
         outputArguments: [Argument(name: 'out', dataType: NodeId.fromString(1, 'leak.test.type'))],
         callback: (inputs, session) async => inputs,
       ),
+      'an object node': () => server.addObjectNode(nodeId, browseName: browseName, displayName: 'Leak test node'),
+      'a folder node': () => server.addFolderNode(nodeId, browseName),
+      'a data type node': () =>
+          server.addDataTypeNode(nodeId, browseName, displayName: LocalizedText('Leak test node', 'en-US')),
     };
 
     for (final MapEntry(key: kind, value: add) in kinds.entries) {
