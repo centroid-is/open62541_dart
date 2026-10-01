@@ -1703,7 +1703,7 @@ class Client implements ClientApi {
               // key arrive as their own notifications, with their own status
               // and with hasSourceTimestamp clear (measured) — letting them
               // write here would clobber a Bad code with the Good of a
-              // DisplayName read, and a real timestamp with the year 1601.
+              // DisplayName read, and a real timestamp with none.
               //
               // Applied AFTER the switch on purpose: the VALUE branch crosses
               // an async boundary and re-fetches `reference`, so anything set
@@ -1715,9 +1715,12 @@ class Client implements ClientApi {
                 // which is a different fact from null (never came from a
                 // server at all).
                 reference.statusCode = sampleStatus;
-                if ((flags & hasSourceTimestampFlag) != 0) {
-                  reference.sourceTimestamp = uaDateTimeToDateTime(sampleSourceTicks);
-                }
+                // Assigned on every sample, null included: `reference` lives
+                // across notifications, and a sample that came without a
+                // source timestamp must not keep the previous sample's.
+                reference.sourceTimestamp = (flags & hasSourceTimestampFlag) != 0
+                    ? uaDateTimeToDateTime(sampleSourceTicks)
+                    : null;
               }
 
               // Update the seen indexes after processing

@@ -48,6 +48,7 @@ import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import 'common.dart' show clientTypes, freeTcpPort, setupClientOfType;
+import 'data_value_rewriting_proxy.dart';
 
 final goodNodeId = NodeId.fromString(1, "the.int");
 final refusingNodeId = NodeId.fromString(1, "the.refusing");
@@ -498,6 +499,52 @@ void main() {
               'leaves the caller with neither a value nor an error',
         );
         expect(names.toSet(), {'the.int'}, reason: 'the Bad sample carries no DisplayName; the last known one stays');
+      });
+
+      test('a sample without a source timestamp carries none, not the previous sample\'s', () async {
+        // The in-process server stamps every Value sample, so the timestamp
+        // is taken off the second notification on the wire.
+        final proxy = await DataValueRewritingProxy.start(port);
+        final api = await setupClientOfType(clientType, "opc.tcp://127.0.0.1:${proxy.port}");
+        // The link goes first, so the delete does not wait on a server that
+        // shares this isolate.
+        addTearDown(() async {
+          await proxy.close();
+          await api.delete();
+        });
+        final subId = await api.subscriptionCreate();
+
+        final samples = <(dynamic, int?, DateTime?)>[];
+        final gotFirst = Completer<void>();
+        final gotSecond = Completer<void>();
+        final sub = api
+            .monitoredItems({
+              goodNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+            }, subId)
+            .listen((event) {
+              final value = event[goodNodeId]!;
+              samples.add((value.value, value.statusCode, value.sourceTimestamp));
+              if (samples.length == 1) gotFirst.complete();
+              if (samples.length == 2) gotSecond.complete();
+            });
+        addTearDown(sub.cancel);
+
+        await gotFirst.future.timeout(Duration(seconds: 10));
+        proxy.rewriteNotification = withoutSourceTimestamp;
+        server.write(goodNodeId, DynamicValue(value: 43, typeId: NodeId.int32));
+        await gotSecond.future.timeout(Duration(seconds: 10));
+
+        expect(proxy.notificationRewrites, 1, reason: 'anti-vacuity: the second notification must have been rewritten');
+        expect(samples[0].$1, 42);
+        expect(samples[0].$3, isNotNull, reason: 'anti-vacuity: the first sample has a source timestamp to go stale');
+        expect((samples[1].$1, samples[1].$2), (43, UA_STATUSCODE_GOOD));
+        expect(
+          samples[1].$3,
+          isNull,
+          reason:
+              'this sample came without a source timestamp; keeping the '
+              'previous sample\'s dates the new value to the old value\'s instant',
+        );
       });
     });
   }
