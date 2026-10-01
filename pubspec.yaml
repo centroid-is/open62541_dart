@@ -13,10 +13,8 @@ environment:
 dependencies:
   archive: ^4.2.0
   binarize: ^2.0.0
-  # The build hook is compatible with code_assets 1.x and 2.x. Resolution lands
-  # on 2.x now that native_toolchain_c (via native_toolchain_cmake) and ffigen
-  # have migrated to code_assets 2.0.0's Architecture/OS equality change; 1.x
-  # stays allowed for consumers whose other dependencies still pin it.
+  # The build hook is compatible with code_assets 1.x and 2.x. Both stay
+  # allowed so a consumer whose other dependencies pin either major resolves.
   code_assets: ">=1.0.0 <3.0.0"
   crypto: ^3.0.0
   ffi: ^2.1.2

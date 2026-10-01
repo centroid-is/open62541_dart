@@ -26,12 +26,21 @@ changes that ship the same native library version.
   - All build-time source patches (subscription cleanup, bounded send,
     session-recreate race, delete-by-client-handle, single-threaded
     AsyncManager) still apply to v1.5.8; none has landed upstream yet.
-- **Dependencies: `code_assets` 2.x and `ffigen` 22.** The ecosystem blocker
-  noted in 1.5.7 is resolved — `ffigen` 22 and `native_toolchain_c` now
-  support `code_assets` 2.x — so resolution lands on `code_assets` 2.x (1.x
-  remains allowed). The dev-only binding generator (`tool/ffigen.dart`) is
-  ported to ffigen 22's visitor-based config API; the generated bindings are
-  unchanged by the port.
+- **Build: the hook re-downloads open62541 when the pinned version changes.**
+  The extracted source tree in the shared hook output directory was reused
+  whenever it existed, whatever version it held, so a project upgraded with
+  a warm `.dart_tool` kept building the previous open62541 release under the
+  new bindings. The tree is now stamped with its version and discarded on a
+  mismatch (an unstamped tree from an older package revision is discarded
+  once). `verify_version_test` additionally checks the version the native
+  library reports, not only the constant in the generated bindings.
+- **Dev tooling: `ffigen` 22.** The binding generator (`tool/ffigen.dart`) is
+  ported to ffigen 22's visitor-based config API, which replaced the one it
+  was written against; the generated bindings are unchanged by the port.
+  ffigen 22 depends on `code_assets` 2.x, so development now resolves
+  `code_assets` 2.x. Nothing changes for consumers: `ffigen` is a dev
+  dependency and the runtime constraint (`code_assets: >=1.0.0 <3.0.0`) is
+  the same.
 - **`Client.call` (and `readAttribute` / monitored-item creation) surface the
   real service status.** The async response handlers checked `resultsSize`
   before `responseHeader.serviceResult`, so an infrastructure failure (session

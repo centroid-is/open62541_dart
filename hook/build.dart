@@ -190,10 +190,18 @@ Future<Uri> download(Uri outputDirectory, String version) async {
   // Use short directory names to avoid Windows MAX_PATH (260 char) limit.
   final extractDir = Directory.fromUri(outputDirectory.resolve('dl/'));
 
-  // Return early if already downloaded and renamed
+  // Reuse the extracted tree only if it holds the pinned version. The shared
+  // output directory outlives a package upgrade, so an unstamped or
+  // differently-stamped tree is a previous release's source (and CMake build
+  // directory, which lives inside it): discard it rather than silently build
+  // the old library against the new bindings.
   final srcDir = Directory.fromUri(extractDir.uri.resolve('src/'));
-  if (await srcDir.exists()) {
+  final versionStamp = File.fromUri(extractDir.uri.resolve('version'));
+  if (await srcDir.exists() && await versionStamp.exists() && (await versionStamp.readAsString()).trim() == version) {
     return srcDir.uri;
+  }
+  if (await extractDir.exists()) {
+    await extractDir.delete(recursive: true);
   }
 
   final expectedSha256 = _open62541Sha256[version];
@@ -227,6 +235,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
     throw Exception('Error extracting open62541 version $version: extracted directory not found');
   }
   await (folder as Directory).rename(srcDir.path);
+  await versionStamp.writeAsString(version);
   return srcDir.uri;
 }
 
