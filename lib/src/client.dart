@@ -173,17 +173,6 @@ class ClientConfig {
   Stream<int> get subscriptionDeletedStream => _subscriptionDeleted.stream;
   Stream<void> get inactivityStream => _inactivity.stream;
 
-  /// True while anything is subscribed to [stateStream],
-  /// [subscriptionInactivityStream] or [subscriptionDeletedStream].
-  ///
-  /// Every monitored-item stream holds one listener on each of the three for
-  /// as long as it lives, so on a client with no other subscribers this reads
-  /// false exactly when every monitored item has released its listeners. The
-  /// regression tests for the listener leak assert on it; nothing in the
-  /// package reads it.
-  bool get hasStreamListeners =>
-      _stateStream.hasListener || _subscriptionInactivity.hasListener || _subscriptionDeleted.hasListener;
-
   raw.UA_MessageSecurityMode get securityMode => _clientConfig.ref.securityMode;
   set securityMode(raw.UA_MessageSecurityMode mode) {
     _clientConfig.ref.securityModeAsInt = mode.value;
