@@ -19,13 +19,12 @@
 // for an unrelated event to arrive.
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:isolate';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'common.dart' show freeTcpPort;
+import 'common.dart' show freeTcpPort, holdPort;
 
 final intNodeId = NodeId.fromString(1, "the.int");
 final unknownNodeId = NodeId.fromString(1, "does.not.exist");
@@ -222,11 +221,8 @@ void main() {
     server.delete();
     serverShutdown = true;
     // Keep the port, so the client still reconnecting at this address
-    // cannot wander into another suite's server and open a session there
-    // -- `dart test` runs suites in parallel and `freeTcpPort()` recycles.
-    final held = await ServerSocket.bind(InternetAddress.loopbackIPv4, serverPort);
-    held.listen((socket) => socket.destroy());
-    addTearDown(() => held.close());
+    // cannot wander into another suite's server and open a session there.
+    await holdPort(serverPort);
     await Future.delayed(Duration(milliseconds: 500));
 
     // A cancel that cannot reach the server must still finish (the caller
