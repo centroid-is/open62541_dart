@@ -4,8 +4,43 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
+## 1.5.8
 
+- Bump bundled open62541 from `v1.5.7` to `v1.5.8`.
+  - Upstream v1.5.8 is a maintenance release focused on hardening and
+    stability: overflow/bounds checks across the binary, JSON and XML
+    decoders and the SecureChannel chunk/OPN handling; server MonitoredItem
+    fixes (items follow a node on replacement, reentrant/local deletion from
+    callbacks, O(1) removal and a lookup tree instead of quadratic scans);
+    the client validates the service result before reading result arrays and
+    no longer runs the connectivity check before the Session is activated;
+    and a batch of PubSub transport/encoding fixes (UADP security headers,
+    oversized DataSetMessages, RawData metadata, MQTT/Ethernet). See
+    https://github.com/open62541/open62541/releases/tag/v1.5.8.
+  - Regenerated the amalgamated header
+    (`third_party/open62541/open62541_modified.h`) and the ffigen bindings
+    (`lib/src/third_party/open62541.g.dart`) against v1.5.8. No ABI or
+    struct-layout changes: `remove_bitfields.patch` applies unchanged and
+    `verify_sizes_test` still passes. The only public-header addition is
+    `UA_Node_moveMonitoredItems` (custom-nodestore API, not bound).
+  - All build-time source patches (subscription cleanup, bounded send,
+    session-recreate race, delete-by-client-handle, single-threaded
+    AsyncManager) still apply to v1.5.8; none has landed upstream yet.
+- **Build: the hook re-downloads open62541 when the pinned version changes.**
+  The extracted source tree in the shared hook output directory was reused
+  whenever it existed, whatever version it held, so a project upgraded with
+  a warm `.dart_tool` kept building the previous open62541 release under the
+  new bindings. The tree is now stamped with its version and discarded on a
+  mismatch (an unstamped tree from an older package revision is discarded
+  once). `verify_version_test` additionally checks the version the native
+  library reports, not only the constant in the generated bindings.
+- **Dev tooling: `ffigen` 22.** The binding generator (`tool/ffigen.dart`) is
+  ported to ffigen 22's visitor-based config API, which replaced the one it
+  was written against; the generated bindings are unchanged by the port.
+  ffigen 22 depends on `code_assets` 2.x, so development now resolves
+  `code_assets` 2.x. Nothing changes for consumers: `ffigen` is a dev
+  dependency and the runtime constraint (`code_assets: >=1.0.0 <3.0.0`) is
+  the same.
 - **`Client.call` (and `readAttribute` / monitored-item creation) surface the
   real service status.** The async response handlers checked `resultsSize`
   before `responseHeader.serviceResult`, so an infrastructure failure (session
