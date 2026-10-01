@@ -861,7 +861,12 @@ class Client implements ClientApi {
               // not a catchable Dart error. Treat it exactly like the
               // tolerated BadAttributeIdInvalid above: the attribute is
               // absent.
-              if (value != null && value.type == ffi.nullptr) {
+              //
+              // Except for VALUE, where empty is a value: the node was read
+              // and its value is null, which is what the monitor path and
+              // read() report. That case goes on into the switch, where
+              // _variantToValueAutoSchema answers a null DynamicValue.
+              if (value != null && value.type == ffi.nullptr && attributeId != AttributeId.UA_ATTRIBUTEID_VALUE) {
                 continue;
               }
 

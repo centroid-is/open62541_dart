@@ -141,19 +141,23 @@ void main() {
     // Regression tests for PR #118 (Good status with an empty Value) and its
     // review: the first version only looked at the FIRST notification.
     group('Good empty Value [$clientType]', () {
-      test('readAttribute of a Good empty Value answers "attribute absent", not SIGSEGV', () async {
+      test('readAttribute returns the node with a null value for a Good empty Value', () async {
         final port = await startRawServer();
         client = await setupClientOfType(clientType, 'opc.tcp://127.0.0.1:$port');
 
-        // Pre-fix this read killed the process; reaching the expectation at
-        // all is the proof that it no longer does.
+        // Before PR #118 this read killed the process; reaching the
+        // expectations at all is the proof that it no longer does.
         final result = await client!.readAttribute({
           emptyNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
         });
 
-        // The empty answer is treated like the tolerated BadAttributeIdInvalid
-        // path: the attribute is absent from the result.
-        expect(result[emptyNodeId]?.isNull ?? true, isTrue, reason: 'an empty Value must decode to no value');
+        // One contract, the same the monitor path and read() have: the node
+        // was read, so it is in the result, and its value is null.
+        expect(result.keys, [
+          emptyNodeId,
+        ], reason: 'a Good answer is an answer: the node must be in the result, or results[nodeId]! throws');
+        expect(result[emptyNodeId]!.isNull, isTrue, reason: 'an empty Value decodes to a null value');
+        expect((await client!.read(emptyNodeId)).isNull, isTrue, reason: 'read() must agree with readAttribute()');
       }, timeout: Timeout(Duration(seconds: 30)));
 
       test('monitor emits null with status Good when the Value goes empty, not the previous value', () async {
