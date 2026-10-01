@@ -18,6 +18,12 @@ changes that ship the same native library version.
   only when the items are really gone (Good service result, every item Good
   or `BadMonitoredItemIdInvalid`); otherwise it stays open and is released
   by `Client.delete()`, as for a delete that could not be sent.
+- **Fixed: `ClientIsolate.delete()` failed with `Concurrent modification
+  during iteration` when a stream ended during the teardown.** The worker
+  cancelled its streams while iterating the map a finishing stream removes
+  itself from (for example a refused monitored-item create answered at that
+  moment). The delete then failed before the worker deleted its client, so
+  the server kept the session and its subscriptions.
 - **Requests on a dead connection fail instead of hanging.** When the secure
   channel is down, open62541 refuses a request before sending it and never
   calls back. `Client.write()` and `Client.subscriptionCreate()` ignored that
