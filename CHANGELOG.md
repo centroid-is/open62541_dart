@@ -6,6 +6,26 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **Requests on a dead connection fail instead of hanging.** When the secure
+  channel is down, open62541 refuses a request before sending it and never
+  calls back. `Client.write()` and `Client.subscriptionCreate()` ignored that
+  status, so the future they returned never completed; both now throw
+  `UaStatusException(BadServerNotConnected)`, and
+  `UA_STATUSCODE_BADSERVERNOTCONNECTED` is exported to match on. Cancelling a
+  monitored-item stream hung the same way on the refused
+  DeleteMonitoredItems request; `cancel()` on a dead connection now
+  completes.
+- **Fixed: native callbacks leaked by refused requests.** Each of these left
+  a native callback open for the lifetime of the isolate, together with what
+  its closure captured, and an isolate with an open native callback cannot
+  exit:
+  - a monitored-item create the server refuses (`BadNodeIdUnknown`, ...)
+    never closed the item's data callback, which holds the item's last
+    value. A caller that rebuilds a refused item leaked one per attempt;
+  - `Client.write()` closed its callback only when the write succeeded, so
+    a write the server rejected (`BadNotWritable`, ...) leaked it;
+  - a `write()` or `subscriptionCreate()` refused on a dead connection
+    leaked the callbacks it had registered, and the write its variant.
 - **Fixed: a monitored item torn down on a dead connection kept its native
   callback open for good.** With the secure channel down, DeleteMonitoredItems
   cannot be sent. The item's native callback has to stay open at that point:
