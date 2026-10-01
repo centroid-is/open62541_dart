@@ -102,6 +102,11 @@ changes that ship the same native library version.
   errors of that type now cross to the caller as typed exceptions with their
   status code intact (`on UaStatusException catch (e) => e.statusCode`);
   every other error type still arrives as the stringified fallback.
+- **Fixed: native memory that was allocated and never freed.** Each of these
+  stayed on the C heap for the lifetime of the process:
+  - every `Server` left its 1.2 kB `UA_ServerConfig` struct behind.
+    `UA_Server_newWithConfig` moves the contents into the server but leaves
+    the struct itself to the caller.
 
 ## 1.5.7+3
 

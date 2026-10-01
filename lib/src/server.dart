@@ -226,19 +226,25 @@ class DataSourceValue {
 
 class Server {
   Server({LogLevel? logLevel, int? port}) {
-    final config = ua_calloc<raw.UA_ServerConfig>();
+    // The config struct is scratch. UA_Server_newWithConfig moves its contents
+    // into the server and zeroes the struct it was given, and a failing
+    // UA_ServerConfig_setMinimal clears it, so either way only the struct
+    // itself is left, for the arena to free.
+    using((arena) {
+      final config = arena<raw.UA_ServerConfig>();
 
-    if (logLevel != null) {
-      config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
-    }
-    // setMinimal sets the logging level if not set.
-    int res = raw.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
-    if (res != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to set default server config ${statusCodeToString(res)}';
-    }
+      if (logLevel != null) {
+        config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
+      }
+      // setMinimal sets the logging level if not set.
+      int res = raw.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
+      if (res != raw.UA_STATUSCODE_GOOD) {
+        throw 'Failed to set default server config ${statusCodeToString(res)}';
+      }
 
-    _server = raw.UA_Server_newWithConfig(config);
-    _config = raw.UA_Server_getConfig(_server);
+      _server = raw.UA_Server_newWithConfig(config);
+      _config = raw.UA_Server_getConfig(_server);
+    }, ua_calloc);
   }
 
   late ffi.Pointer<raw.UA_Server> _server;
