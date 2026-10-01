@@ -112,15 +112,17 @@ void main() {
     });
   });
 
-  // Guards PR #119 review finding 2: delete() returned before killing the
-  // worker and closing its ports whenever the worker answered with an error.
-  group('ClientIsolate cleanup when the worker fails the delete', () {
+  // Guards the worker race found in the PR #119 review: a stream that ended
+  // while the worker was cancelling its streams made delete() fail with
+  // "Concurrent modification during iteration", and the worker never deleted
+  // its client, so the server kept the session and the subscription.
+  group('ClientIsolate cleanup while a stream ends', () {
     late IsolateWatch watch;
 
     setUpAll(() async => watch = await IsolateWatch.start());
     tearDownAll(() => watch.stop());
 
-    test('delete() tears the worker isolate down and still reports the error', () async {
+    test('delete() with two live streams and a refused create in flight leaves nothing behind', () async {
       final port = await freeTcpPort();
       final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
       server.start();
@@ -140,13 +142,9 @@ void main() {
       await client.keepConnected('opc.tcp://127.0.0.1:$port');
       final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
 
-      // The worker answers the delete with an error here through a second,
-      // still open defect: a stream that ends while the worker is cancelling
-      // its streams modifies the map the worker is iterating ("Concurrent
-      // modification during iteration"). Two live streams, and a refused
-      // create that is answered while the first one is being cancelled, hit
-      // it every time. It is the only way to make the worker fail a delete;
-      // if that defect is fixed, this test needs another one.
+      // The refused create is answered while the worker is cancelling the
+      // first live stream, and its stream ends while the worker waits for the
+      // second one: that is the stream ending in the middle of the teardown.
       for (final nodeId in [intNodeId, boolNodeId]) {
         client
             .monitoredItems({
@@ -167,12 +165,16 @@ void main() {
       } catch (e) {
         deleteError = e;
       }
-      expect(deleteError, isNotNull, reason: 'precondition: the worker must answer the delete with an error');
-      await watch.expectGone(
-        worker,
-        reason:
-            'the ClientIsolate worker isolate is still alive after a delete() '
-            'the worker answered with an error ($deleteError)',
+      expect(
+        deleteError,
+        isNull,
+        reason: 'ClientIsolate.delete() must complete without an error when a stream ends during the teardown',
+      );
+      await watch.expectGone(worker, reason: 'the ClientIsolate worker isolate is still alive after delete()');
+      await waitForStats(
+        server,
+        (s) => s.currentSessionCount == 0 && s.currentSubscriptionCount == 0,
+        reason: 'no session and no subscription left on the server after ClientIsolate.delete()',
       );
     }, timeout: Timeout(Duration(seconds: 30)));
   });

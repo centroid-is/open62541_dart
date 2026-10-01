@@ -1104,8 +1104,10 @@ void _isolateEntryPoint(_IsolateData data) {
           await iterateStopped!.future;
         }
 
-        // Cancel all active streams
-        for (final subscription in activeStreams.values) {
+        // Cancel all active streams. Iterate a copy: a stream that ends while
+        // one of these cancels is awaited (a refused create answered at that
+        // moment) removes itself from activeStreams in its onDone.
+        for (final subscription in activeStreams.values.toList()) {
           await subscription.cancel();
         }
         activeStreams.clear();
