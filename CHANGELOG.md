@@ -6,6 +6,15 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **Fixed: tearing down a `monitoredItems` stream that has no monitored
+  item.** When the server refuses every item of a create with a tolerated
+  status (`BadAttributeIdInvalid`, e.g. the Value attribute of an Object
+  node), the stream stays open with nothing behind it. Cancelling it, or
+  deleting the client while it was active, treated the already answered
+  create as still in flight: it read the freed request id, sent a Cancel for
+  whatever that slot held and never closed the stream's native callback, so
+  an isolate that did this could not exit. The teardown now releases the
+  callback and completes.
 - **Fixed: `ClientIsolate.delete()` left the worker isolate running when the
   worker answered the delete with an error.** The error was rethrown before
   the worker was killed and the two receive ports were closed, so the worker

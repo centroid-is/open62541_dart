@@ -1452,7 +1452,14 @@ class Client implements ClientApi {
       final completer = Completer<void>();
       if (monIds.isEmpty) {
         if (localRequestId == ffi.nullptr) {
-          throw 'This should not happen';
+          // The create was answered and left no item: every node was refused
+          // with a tolerated status, so the stream stayed open with nothing
+          // behind it. There is nothing to delete on the server. open62541
+          // dropped its own item for each refused result before it delivered
+          // the create response, so no native code can invoke monitorCallback
+          // any more and it can be closed right here.
+          monitorCallback.close();
+          completer.complete();
         } else {
           // The monitored item request has not yet returned. Ask the server to
           // cancel it (best effort — Cancel only affects requests it has not
