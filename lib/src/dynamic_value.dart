@@ -45,27 +45,6 @@ class EnumField {
 
 typedef Schema = Map<NodeId, DynamicValue>;
 
-/// The number of 100 ns ticks between the OPC UA / Windows FILETIME epoch
-/// (1601-01-01T00:00:00Z) and the Unix epoch (1970-01-01T00:00:00Z).
-///
-/// `UA_DATETIME_UNIX_EPOCH` in open62541 is a C macro, so it is not emitted
-/// into the generated bindings and has to be restated here.
-const int _uaDateTimeUnixEpochTicks = 11644473600 * 10000000;
-
-/// Converts an OPC UA `UA_DateTime` — 100 ns ticks since 1601-01-01T00:00:00Z —
-/// into a UTC [DateTime].
-///
-/// Dart's [DateTime] resolves to microseconds, so the sub-microsecond tail of a
-/// tick value is truncated. That is lossless for anything a PLC produces.
-///
-/// A tick value of 0 is a genuine instant (the epoch itself) rather than a
-/// sentinel: callers that need "the server sent no timestamp" must consult the
-/// `hasSourceTimestamp` flag instead, because reading an absent field as a real
-/// instant is how a value ends up dated to the year 1601.
-DateTime uaDateTimeToDateTime(int ticks) {
-  return DateTime.fromMicrosecondsSinceEpoch((ticks - _uaDateTimeUnixEpochTicks) ~/ 10, isUtc: true);
-}
-
 class DynamicValue {
   dynamic value;
   NodeId? typeId;
@@ -88,7 +67,8 @@ class DynamicValue {
   int? statusCode;
 
   /// The instant the SOURCE (the PLC, not this process) says the value was
-  /// produced, or null when the server sent no source timestamp.
+  /// produced, or null when the server sent no source timestamp (or sent the
+  /// OPC UA null timestamp, tick 0).
   ///
   /// Null is deliberate and load-bearing: a consumer that needs an instant must
   /// substitute its own arrival time knowingly, and record that it did. Filling

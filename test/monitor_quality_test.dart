@@ -2,10 +2,10 @@
 //
 // Before this suite existed the monitored-item callback read `value.ref.status`
 // only to throw the sample away: anything but Good became
-// `controller.addError('Failed to read value: <english>')` and returned, and
+// `controller.addError(UaStatusException(status))` and returned, and
 // `value.ref.sourceTimestamp` was never read at all. A consumer could therefore
-// only ever say "the moment I heard about it", and could not say
-// BadOutOfRange at all.
+// only ever say "the moment I heard about it", and saw BadOutOfRange as a
+// stream error, never on a value.
 //
 // What UA_DataValue actually carries, MEASURED against the in-process server on
 // 2026-09-01 (macOS arm64, open62541 as pinned by hook/build.dart) rather than
@@ -41,29 +41,39 @@
 //
 // The default lane runs this file on purpose: an `integration`/`plc` tag would
 // make it local-only and it would prove nothing in CI.
+
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'common.dart' show clientTypes, freeTcpPort, setupClientOfType;
+import 'data_value_rewriting_proxy.dart';
 
 final goodNodeId = NodeId.fromString(1, "the.int");
 final refusingNodeId = NodeId.fromString(1, "the.refusing");
+final tickZeroNodeId = NodeId.fromString(1, "the.tickZero");
+final lastKnownNodeId = NodeId.fromString(1, "the.lastKnown");
 
 /// What the data-source read dispatcher returns when `onRead` throws.
 /// `UA_STATUSCODE_BADINTERNALERROR`.
 const badInternalError = 0x80020000;
 
+/// What a monitored item samples once its node has been deleted.
+/// `UA_STATUSCODE_BADNODEIDUNKNOWN`.
+const badNodeIdUnknown = 0x80340000;
+
+/// `UA_STATUSCODE_BADNOCOMMUNICATION`.
+const badNoCommunication = 0x80310000;
+
 /// What the default path puts on the error channel: since 1.5.7+3 a typed
 /// [UaStatusException] carrying the exact notification status (for two years
 /// before that it was an English string). The opt-in flag must not move it —
 /// a caller that never asked for qualities keeps getting the typed error.
-final legacyBadStatusMatcher = isA<UaStatusException>()
-    .having((e) => e.statusCode, 'statusCode', badInternalError);
+final legacyBadStatusMatcher = isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', badInternalError);
 
 void main() {
-  final port = 23840 + Random().nextInt(1000);
+  late int port;
 
   late Server server;
   late Client client;
@@ -71,6 +81,7 @@ void main() {
   late Timer clientTimer;
 
   setUp(() async {
+    port = await freeTcpPort();
     server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
     server.start();
 
@@ -84,6 +95,31 @@ void main() {
       browseName: "the.refusing",
       typeId: NodeId.int32,
       onRead: () => throw StateError('this tag is unreadable on purpose'),
+    );
+
+    // A node whose source stamps its value with UA_DateTime tick 0: the flag
+    // hasSourceTimestamp is SET on the wire and the field under it is the OPC
+    // UA null timestamp.
+    server.addDataSourceVariableNode(
+      tickZeroNodeId,
+      browseName: "the.tickZero",
+      typeId: NodeId.int32,
+      onReadValue: () => DataSourceValue(
+        value: DynamicValue(value: 7, typeId: NodeId.int32),
+        sourceTimestamp: DateTime.utc(1601, 1, 1),
+      ),
+    );
+
+    // A node that answers Bad AND carries a value: the last-known reading of a
+    // device that has gone quiet.
+    server.addDataSourceVariableNode(
+      lastKnownNodeId,
+      browseName: "the.lastKnown",
+      typeId: NodeId.int32,
+      onReadValue: () => DataSourceValue(
+        value: DynamicValue(value: 5, typeId: NodeId.int32),
+        statusCode: badNoCommunication,
+      ),
     );
 
     serverTimer = Timer.periodic(Duration(milliseconds: 10), (_) => server.runIterate());
@@ -104,16 +140,17 @@ void main() {
 
   group('UA_DateTime conversion', () {
     test('a known instant converts, so an off-by-369-years is caught', () {
-      // 1601-01-01T00:00:00Z is tick zero: UA_DateTime counts 100 ns ticks from
-      // the Windows FILETIME epoch, not the Unix one. The two are 11644473600
+      // UA_DateTime counts 100 ns ticks from the Windows FILETIME epoch
+      // (1601-01-01T00:00:00Z), not the Unix one. The two are 11644473600
       // seconds apart, and getting that constant wrong is the classic failure
       // here — invisible without a fixed-value assertion.
       expect(
-        uaDateTimeToDateTime(0),
-        DateTime.utc(1601, 1, 1),
+        uaDateTimeToDateTime(10),
+        DateTime.utc(1601, 1, 1, 0, 0, 0, 0, 1),
         reason:
-            'tick zero is the FILETIME epoch; if this drifts, every plant '
-            'timestamp the gateway publishes is wrong by a constant',
+            'ten ticks are one microsecond past the FILETIME epoch; if this '
+            'drifts, every plant timestamp the gateway publishes is wrong by a '
+            'constant',
       );
       expect(
         uaDateTimeToDateTime(11644473600 * 10000000),
@@ -135,6 +172,65 @@ void main() {
             'in 2026, not in 1601 and not in 2395',
       );
     });
+  });
+
+  // Regression tests for the review of PR #118: the exported helper replaced
+  // one that answered null for tick 0, and Client.readValue silently started
+  // dating such values to the year 1601.
+  group('UA_DateTime tick 0 is the null timestamp', () {
+    test('uaDateTimeToDateTime(0) is null, not 1601-01-01', () {
+      expect(
+        uaDateTimeToDateTime(0),
+        isNull,
+        reason: 'tick 0 is the OPC UA null timestamp ("no time"), not an instant in the year 1601',
+      );
+    });
+
+    for (final clientType in clientTypes) {
+      group('[$clientType]', () {
+        ClientApi? own;
+        // The direct client is the one every test here already has; an
+        // isolate-backed one is connected on demand and deleted afterwards.
+        Future<ClientApi> clientOfType() async =>
+            clientType == 'direct' ? client : own = await setupClientOfType(clientType, "opc.tcp://127.0.0.1:$port");
+
+        tearDown(() async {
+          await own?.delete();
+          own = null;
+        });
+
+        test('readValue reports a source timestamp of tick 0 as null', () async {
+          final api = await clientOfType();
+
+          final dataValue = await api.readValue(tickZeroNodeId);
+
+          expect(dataValue.value.value, 7, reason: 'anti-vacuity: the read must have reached the data source');
+          expect(
+            dataValue.sourceTimestamp,
+            isNull,
+            reason: 'hasSourceTimestamp over tick 0 is "no timestamp", as readValue reported before this branch',
+          );
+        });
+
+        test('a monitored sample with a source timestamp of tick 0 carries a null sourceTimestamp', () async {
+          final api = await clientOfType();
+          final subId = await api.subscriptionCreate();
+
+          final value = await api
+              .monitor(tickZeroNodeId, subId)
+              .firstWhere((v) => v.value != null)
+              .timeout(Duration(seconds: 10));
+
+          expect(value.value, 7, reason: 'anti-vacuity: the sample must have reached the data source');
+          expect(value.statusCode, UA_STATUSCODE_GOOD);
+          expect(
+            value.sourceTimestamp,
+            isNull,
+            reason: 'the monitor path must agree with readValue: tick 0 is no timestamp, not 1601-01-01',
+          );
+        });
+      });
+    }
   });
 
   group('DynamicValue carries quality and source time', () {
@@ -343,8 +439,8 @@ void main() {
         badInternalError,
         reason:
             'the relay maps the server\'s numeric StatusCode onto a relay '
-            'Quality; an English string on the error channel cannot say '
-            'BadOutOfRange to an operator',
+            'Quality, and needs it on the value it describes rather than on '
+            'the error channel',
       );
       expect(
         values,
@@ -363,4 +459,127 @@ void main() {
       );
     });
   });
+
+  for (final clientType in clientTypes) {
+    // Regression tests for the review of PR #118: samples of the monitor path
+    // that no test looked at, two of which it misreported.
+    group('the monitor path [$clientType]', () {
+      ClientApi? own;
+
+      tearDown(() async {
+        await own?.delete();
+        own = null;
+      });
+
+      test('deliverBadStatus: true delivers the value a Bad sample carries, with its code', () async {
+        final api = clientType == 'direct'
+            ? client
+            : own = await setupClientOfType(clientType, "opc.tcp://127.0.0.1:$port");
+        final subId = await api.subscriptionCreate();
+
+        final value = await api
+            .monitor(lastKnownNodeId, subId, deliverBadStatus: true)
+            .firstWhere((v) => v.statusCode != null)
+            .timeout(Duration(seconds: 10));
+
+        expect(
+          (value.value, value.statusCode),
+          (5, badNoCommunication),
+          reason: 'a Bad sample that carries a value is decoded like any other; only one without keeps the last known',
+        );
+      });
+
+      test('deliverBadStatus: true reports a Bad notification of a non-Value attribute as an error', () async {
+        final api = clientType == 'direct'
+            ? client
+            : own = await setupClientOfType(clientType, "opc.tcp://127.0.0.1:$port");
+        final subId = await api.subscriptionCreate();
+
+        final names = <String?>[];
+        final errors = <Object>[];
+        final gotName = Completer<void>();
+        final gotError = Completer<void>();
+        final sub = api
+            .monitoredItems(
+              {
+                goodNodeId: [AttributeId.UA_ATTRIBUTEID_DISPLAYNAME],
+              },
+              subId,
+              deliverBadStatus: true,
+            )
+            .listen(
+              (event) {
+                names.add(event[goodNodeId]?.displayName?.value);
+                if (!gotName.isCompleted) gotName.complete();
+              },
+              onError: (Object e) {
+                errors.add(e);
+                if (!gotError.isCompleted) gotError.complete();
+              },
+            );
+        addTearDown(sub.cancel);
+
+        await gotName.future.timeout(Duration(seconds: 10));
+        // With the node gone, the DisplayName item samples BadNodeIdUnknown.
+        server.deleteNode(goodNodeId);
+        await gotError.future.timeout(Duration(seconds: 10), onTimeout: () {});
+
+        expect(
+          errors,
+          [isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', badNodeIdUnknown)],
+          reason:
+              'a DynamicValue has no field for the status of a DisplayName, so '
+              'deliverBadStatus cannot deliver it as a value; swallowing it '
+              'leaves the caller with neither a value nor an error',
+        );
+        expect(names.toSet(), {'the.int'}, reason: 'the Bad sample carries no DisplayName; the last known one stays');
+      });
+
+      test('a sample without a source timestamp carries none, not the previous sample\'s', () async {
+        // The in-process server stamps every Value sample, so the timestamp
+        // is taken off the second notification on the wire.
+        final proxy = await DataValueRewritingProxy.start(port);
+        final api = await setupClientOfType(clientType, "opc.tcp://127.0.0.1:${proxy.port}");
+        // The link goes first, so the delete does not wait on a server that
+        // shares this isolate.
+        addTearDown(() async {
+          await proxy.close();
+          await api.delete();
+        });
+        final subId = await api.subscriptionCreate();
+
+        final samples = <(dynamic, int?, DateTime?)>[];
+        final gotFirst = Completer<void>();
+        final gotSecond = Completer<void>();
+        final sub = api
+            .monitoredItems({
+              goodNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+            }, subId)
+            .listen((event) {
+              final value = event[goodNodeId]!;
+              samples.add((value.value, value.statusCode, value.sourceTimestamp));
+              if (samples.length == 1) gotFirst.complete();
+              if (samples.length == 2) gotSecond.complete();
+            });
+        addTearDown(sub.cancel);
+
+        await gotFirst.future.timeout(Duration(seconds: 10));
+        proxy.rewriteNotification = withoutSourceTimestamp;
+        server.write(goodNodeId, DynamicValue(value: 43, typeId: NodeId.int32));
+        await gotSecond.future.timeout(Duration(seconds: 10));
+
+        expect(proxy.notificationRewrites, 1, reason: 'anti-vacuity: the second notification must have been rewritten');
+        expect(samples[0].$1, 42);
+        expect(samples[0].$3, isNotNull, reason: 'anti-vacuity: the first sample has a source timestamp to go stale');
+        expect((samples[1].$1, samples[1].$2), (43, UA_STATUSCODE_GOOD));
+        expect(
+          samples[1].$3,
+          isNull,
+          reason:
+              'this sample came without a source timestamp; keeping the '
+              'previous sample\'s dates the new value to the old value\'s instant',
+        );
+      });
+    });
+  }
 }
