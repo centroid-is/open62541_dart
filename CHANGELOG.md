@@ -6,6 +6,12 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **Fixed: `ClientIsolate.delete()` left the worker isolate running when the
+  worker answered the delete with an error.** The error was rethrown before
+  the worker was killed and the two receive ports were closed, so the worker
+  stayed alive and the open ports kept the calling isolate (and with it a CLI
+  process) from exiting. `delete()` now always kills the worker and closes
+  its ports; the error is still reported to the caller.
 - **`Client.call` (and `readAttribute` / monitored-item creation) surface the
   real service status.** The async response handlers checked `resultsSize`
   before `responseHeader.serviceResult`, so an infrastructure failure (session

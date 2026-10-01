@@ -1,4 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:test/test.dart';
 
@@ -79,6 +83,69 @@ Future<void> waitForChannelDown(Client client, {Duration timeout = const Duratio
       fail('Timed out waiting for the client to notice its secure channel is gone; last: ${client.state}');
     }
     await Future.delayed(const Duration(milliseconds: 20));
+  }
+}
+
+/// Lists the isolates of the calling suite's isolate group through the VM
+/// service.
+///
+/// ClientIsolate does not expose its worker isolate, and a worker that was
+/// never killed is invisible from the outside: it holds an open ReceivePort
+/// and simply stays. The VM service is the one place that lists it, so a
+/// suite that has to prove a worker is gone switches the service on for its
+/// own duration ([start] in setUpAll, [stop] in tearDownAll).
+class IsolateWatch {
+  IsolateWatch._(this._socket, this._replies, this._disableOnStop);
+
+  final WebSocket _socket;
+  final StreamIterator<dynamic> _replies;
+  final bool _disableOnStop;
+  late final String _groupId;
+
+  static Future<IsolateWatch> start() async {
+    final alreadyOn = (await developer.Service.getInfo()).serverWebSocketUri != null;
+    final info = await developer.Service.controlWebServer(enable: true, silenceOutput: true);
+    final uri = info.serverWebSocketUri;
+    if (uri == null) throw StateError('The VM service is not available, cannot list isolates');
+    final socket = await WebSocket.connect(uri.toString());
+    final watch = IsolateWatch._(socket, StreamIterator(socket), !alreadyOn);
+    final self = await watch._call('getIsolate', {'isolateId': developer.Service.getIsolateId(Isolate.current)});
+    watch._groupId = self['isolateGroupId'] as String;
+    return watch;
+  }
+
+  Future<Map<String, dynamic>> _call(String method, Map<String, dynamic> params) async {
+    _socket.add(jsonEncode({'jsonrpc': '2.0', 'id': '0', 'method': method, 'params': params}));
+    await _replies.moveNext();
+    final reply = jsonDecode(_replies.current as String) as Map<String, dynamic>;
+    final result = reply['result'];
+    if (result is! Map<String, dynamic>) throw StateError('VM service call $method failed: $reply');
+    return result;
+  }
+
+  /// The ids of the isolates currently alive in this suite's isolate group.
+  Future<Set<String>> isolates() async {
+    final group = await _call('getIsolateGroup', {'isolateGroupId': _groupId});
+    return {for (final isolate in group['isolates'] as List) (isolate as Map)['id'] as String};
+  }
+
+  /// Polls until [isolate] is no longer alive; fails the test with [reason]
+  /// if it still is after [timeout].
+  Future<void> expectGone(
+    String isolate, {
+    required String reason,
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while ((await isolates()).contains(isolate)) {
+      if (DateTime.now().isAfter(deadline)) fail(reason);
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+  }
+
+  Future<void> stop() async {
+    await _socket.close();
+    if (_disableOnStop) await developer.Service.controlWebServer(enable: false);
   }
 }
 
