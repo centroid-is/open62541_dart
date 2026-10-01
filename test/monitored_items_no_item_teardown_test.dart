@@ -131,10 +131,9 @@ void main() {
       await client.delete();
     }, timeout: Timeout(Duration(seconds: 30)));
 
-    test('Client.delete() with the stream still active completes and closes the session', () async {
+    test('Client.delete() with the stream still active completes and closes the stream', () async {
       final streamDone = Completer<void>();
       await listenToNoItemStream(client, subscriptionId, onDone: streamDone.complete);
-      expect(server.statistics.currentSessionCount, 1);
 
       try {
         await client.delete();
@@ -146,17 +145,24 @@ void main() {
         Duration(seconds: 5),
         onTimeout: () => fail('Client.delete() did not close the active stream'),
       );
-      final stats = await waitForStats(
-        server,
-        (s) => s.currentSessionCount == 0,
-        reason: 'the session to be closed on the server after Client.delete()',
-      );
-      expect(stats.currentSubscriptionCount, 0);
+      // What the delete leaves on the server is not asserted here. This
+      // server is pumped on the client's isolate, so it cannot answer the
+      // CloseSession that Client.delete() waits for synchronously; it only
+      // gets to read that request after the client has given up and closed
+      // its socket, and whether it still can then depends on the platform:
+      // on the Windows CI runner the session was still there afterwards. The
+      // group below asserts it with the client on an isolate of its own.
     }, timeout: Timeout(Duration(seconds: 30)));
+  });
 
+  // Guards the same regression with the client on an isolate of its own, so
+  // that the server, pumped here, answers while the client deletes itself:
+  // the delete must close the session, and release the stream's callback.
+  group('Client on its own isolate, stream with every item refused with a tolerated status', () {
     for (final cancelFirst in [true, false]) {
       final how = cancelFirst ? 'cancelled' : 'still active when the client is deleted';
-      test('a stream with no monitored item that is $how releases its native callback: the isolate can exit', () async {
+      test('a stream with no monitored item that is $how leaves nothing on the server '
+          'and releases its native callback: the isolate can exit', () async {
         final report = ReceivePort();
         final exited = ReceivePort();
         await Isolate.spawn(noItemStreamThenReturn, (
@@ -169,6 +175,11 @@ void main() {
           await report.first.timeout(Duration(seconds: 20)),
           'ok',
           reason: 'cancel() / Client.delete() must not throw for a stream with no monitored item',
+        );
+        await waitForStats(
+          server,
+          (s) => s.currentSessionCount == 0 && s.currentSubscriptionCount == 0,
+          reason: 'no session and no subscription left on the server after Client.delete()',
         );
         await exited.first.timeout(
           Duration(seconds: 10),
