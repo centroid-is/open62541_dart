@@ -64,16 +64,21 @@ class TcpProxy {
   final int targetPort;
   ServerSocket? _listener;
   final List<Socket> _sockets = [];
+  bool _stalled = false;
 
-  static Future<TcpProxy> start(int targetPort) async {
+  /// Starts the proxy. Inside a test it is [cut] when the test ends; a
+  /// scenario that runs outside a test passes [cutOnTearDown] false and cuts
+  /// it itself.
+  static Future<TcpProxy> start(int targetPort, {bool cutOnTearDown = true}) async {
     final proxy = TcpProxy._(await freeTcpPort(), targetPort);
     await proxy.resume();
-    addTearDown(proxy.cut);
+    if (cutOnTearDown) addTearDown(proxy.cut);
     return proxy;
   }
 
   /// Accepts connections (again) and forwards them to [targetPort].
   Future<void> resume() async {
+    _stalled = false;
     final listener = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
     _listener = listener;
     listener.listen((client) async {
@@ -82,13 +87,25 @@ class TcpProxy {
         _sockets
           ..add(client)
           ..add(upstream);
-        client.listen(upstream.add, onDone: upstream.destroy, onError: (_) => upstream.destroy());
-        upstream.listen(client.add, onDone: client.destroy, onError: (_) => client.destroy());
+        client.listen(
+          (data) => _stalled ? null : upstream.add(data),
+          onDone: upstream.destroy,
+          onError: (_) => upstream.destroy(),
+        );
+        upstream.listen(
+          (data) => _stalled ? null : client.add(data),
+          onDone: client.destroy,
+          onError: (_) => client.destroy(),
+        );
       } catch (_) {
         client.destroy();
       }
     });
   }
+
+  /// Keeps the open connections but drops everything sent on them from now
+  /// on, in both directions: a black-holed link. [cut] then [resume] ends it.
+  void stall() => _stalled = true;
 
   /// Stops accepting and destroys every open connection.
   Future<void> cut() async {

@@ -6,6 +6,18 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **Fixed: VM abort (`Callback invoked after it has been deleted`) after a
+  lost DeleteMonitoredItems response.** Cancelling a monitored-item stream
+  closed the stream's native callback as soon as the delete request was
+  answered, whatever the answer. When the response is lost with the secure
+  channel (a frozen or dropped link while the cancel is in flight), the
+  request is answered locally with `BadSecureChannelClosed`; the item still
+  exists in the native client and, because the session outlives the channel,
+  on the server. After the reconnect it published into the closed callback
+  and aborted the process. The callback is now closed on a delete response
+  only when the items are really gone (Good service result, every item Good
+  or `BadMonitoredItemIdInvalid`); otherwise it stays open and is released
+  by `Client.delete()`, as for a delete that could not be sent.
 - **Requests on a dead connection fail instead of hanging.** When the secure
   channel is down, open62541 refuses a request before sending it and never
   calls back. `Client.write()` and `Client.subscriptionCreate()` ignored that
