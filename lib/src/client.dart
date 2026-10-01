@@ -316,11 +316,15 @@ class Client implements ClientApi {
     }
 
     if (username != null) {
-      raw.UA_ClientConfig_setAuthenticationUsername(
-        config,
-        username.toNativeUtf8(allocator: ua_malloc).cast(),
-        password != null ? password.toNativeUtf8(allocator: ua_malloc).cast() : ffi.nullptr,
-      );
+      // open62541 copies both into the identity token (UA_STRING_ALLOC), so
+      // the C strings are scratch for the call.
+      using((arena) {
+        raw.UA_ClientConfig_setAuthenticationUsername(
+          config,
+          username.toNativeUtf8(allocator: arena).cast(),
+          password != null ? password.toNativeUtf8(allocator: arena).cast() : ffi.nullptr,
+        );
+      }, ua_calloc);
       // open62541 drops the plaintext-password UserTokenPolicy on an
       // unencrypted (SecurityPolicy#None) channel, so username auth silently
       // fails there unless this is enabled. Many PLC lab setups (and our
@@ -374,7 +378,9 @@ class Client implements ClientApi {
     if (_client == ffi.nullptr) {
       return raw.UA_STATUSCODE_BADSERVERNOTCONNECTED;
     }
-    return raw.UA_Client_connectAsync(_client, url.toNativeUtf8(allocator: ua_malloc).cast());
+    // open62541 copies the URL into the client config (UA_STRING_ALLOC), so the
+    // C string is scratch for the call.
+    return using((arena) => raw.UA_Client_connectAsync(_client, url.toNativeUtf8(allocator: arena).cast()), ua_calloc);
   }
 
   /// Whether an auto-reconnect supervisor is currently running (see
@@ -521,6 +527,18 @@ class Client implements ClientApi {
 
   @override
   Future<void> write(NodeId nodeId, DynamicValue value) {
+    // open62541 encodes the request before the service call returns, so the
+    // buffer behind a string NodeId is scratch until then, not until the
+    // write completes.
+    final arena = Arena(ua_calloc);
+    try {
+      return _write(nodeId.toRaw(allocator: arena), value);
+    } finally {
+      arena.releaseAll();
+    }
+  }
+
+  Future<void> _write(raw.UA_NodeId nodeId, DynamicValue value) {
     Completer<void> completer = Completer<void>();
 
     final variant = valueToVariant(value);
@@ -571,7 +589,7 @@ class Client implements ClientApi {
         });
     raw.UA_Client_writeValueAttribute_async(
       _client,
-      nodeId.toRaw(),
+      nodeId,
       variant,
       callback.nativeFunction,
       ffi.nullptr,
@@ -1109,6 +1127,8 @@ class Client implements ClientApi {
     final request = raw.UA_BrowseNextRequest_new();
     raw.UA_BrowseNextRequest_init(request);
     request.ref.releaseContinuationPoints = false;
+    // From here on the request owns `cp` and, through it, the caller's
+    // [continuationPointData]: UA_BrowseNextRequest_delete frees both.
     final cp = ua_calloc<raw.UA_ByteString>();
     cp.ref.data = continuationPointData;
     cp.ref.length = continuationPointLength;
@@ -1134,9 +1154,8 @@ class Client implements ClientApi {
           callback.close();
           ua_calloc.free(requestIdPtr);
 
-          // Clean up: free the continuation point data and the request
-          ua_calloc.free(continuationPointData);
-          ua_calloc.free(cp);
+          // The request owns the continuation point (see above): deleting it
+          // frees `cp` and its data as well.
           raw.UA_BrowseNextRequest_delete(request);
 
           if (voidPointer == ffi.nullptr) {
@@ -1199,8 +1218,6 @@ class Client implements ClientApi {
     );
     if (res != raw.UA_STATUSCODE_GOOD) {
       callback.close();
-      ua_calloc.free(continuationPointData);
-      ua_calloc.free(cp);
       raw.UA_BrowseNextRequest_delete(request);
       ua_calloc.free(requestIdPtr);
       completer.completeError('Failed to browse next: ${statusCodeToString(res)}');
@@ -1939,17 +1956,6 @@ class Client implements ClientApi {
 
   @override
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
-    final len = args.length;
-    var inputArgs = ua_calloc<raw.UA_Variant>(len);
-    var ptrs = <ffi.Pointer<raw.UA_Variant>>[];
-    final argsIter = args.iterator;
-
-    for (var i = 0; i < len; i++) {
-      argsIter.moveNext();
-      final ptr = valueToVariant(argsIter.current);
-      ptrs.add(ptr);
-      inputArgs[i] = ptr.ref;
-    }
     final completer = Completer<List<DynamicValue>>();
     final callbackInner =
         ffi.NativeCallable<
@@ -2034,24 +2040,37 @@ class Client implements ClientApi {
           } catch (e) {
             _safeErr("Error calling callback: $e");
             completer.completeError(e, StackTrace.current);
-          } finally {
-            // cleanup input arguments
-            for (var ptr in ptrs) {
-              raw.UA_Variant_delete(ptr);
-            }
           }
         });
 
-    final statusCode = raw.UA_Client_call_async(
-      _client,
-      objectId.toRaw(),
-      methodId.toRaw(),
-      len,
-      inputArgs,
-      callbackInner.nativeFunction,
-      ffi.nullptr, // todo set context?
-      ffi.nullptr,
-    );
+    // open62541 encodes the request before the call returns and keeps nothing
+    // of it, so the argument array, the variants in it and the buffers behind
+    // string NodeIds are scratch for the call. The arena releases them however
+    // it ends, also when an argument cannot be encoded.
+    final int statusCode;
+    try {
+      statusCode = using((arena) {
+        final values = args.toList();
+        final inputArgs = arena<raw.UA_Variant>(values.length);
+        for (var i = 0; i < values.length; i++) {
+          // A shallow copy: the payload stays the variant's, freed with it.
+          inputArgs[i] = arena.using(valueToVariant(values[i]), raw.UA_Variant_delete).ref;
+        }
+        return raw.UA_Client_call_async(
+          _client,
+          objectId.toRaw(allocator: arena),
+          methodId.toRaw(allocator: arena),
+          values.length,
+          inputArgs,
+          callbackInner.nativeFunction,
+          ffi.nullptr, // todo set context?
+          ffi.nullptr,
+        );
+      }, ua_calloc);
+    } catch (_) {
+      callbackInner.close();
+      rethrow;
+    }
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
       callbackInner.close();
       throw 'Unable to call method: $statusCode ${statusCodeToString(statusCode)}';

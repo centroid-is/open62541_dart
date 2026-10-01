@@ -102,6 +102,41 @@ changes that ship the same native library version.
   errors of that type now cross to the caller as typed exceptions with their
   status code intact (`on UaStatusException catch (e) => e.statusCode`);
   every other error type still arrives as the stringified fallback.
+- **Fixed: `Server.addVariableTypeNode` killed the process.** It freed the
+  value's variant and then the attributes holding a shallow copy of it, so
+  the payload was freed twice on every call (glibc:
+  `free(): double free detected in tcache 2`).
+- **Fixed: `Client.browse` killed the process when the server paged its
+  answer.** A server may return the references of a node a few at a time,
+  with a continuation point to fetch the rest. Following it (BrowseNext)
+  freed the continuation point by hand and then again with the request that
+  owned it (glibc: `free(): invalid pointer`). Nothing in this package made
+  a server page, so the new `Server.maxReferencesPerNode` (getter/setter,
+  default 0: no limit) sets how many references it returns per response.
+- **Fixed: native memory that was allocated and never freed.** Each of these
+  stayed on the C heap for the lifetime of the process:
+  - every `Server` left its 1.2 kB `UA_ServerConfig` struct behind.
+    `UA_Server_newWithConfig` moves the contents into the server but leaves
+    the struct itself to the caller.
+  - every node added to a `Server` left a copy of its browse name behind
+    (`addVariableNode`, `addDataSourceVariableNode`, `addVariableTypeNode`,
+    `addMethodNode`, `addObjectNode`, `addFolderNode`, `addDataTypeNode`).
+  - an add that threw left more: `addVariableNode` for a value without a
+    name leaked the attributes and the value (about 300 bytes),
+    `addMethodNode` the attributes and the arguments marshalled so far when
+    an argument could not be marshalled, and `addObjectNode`,
+    `addFolderNode` and `addDataTypeNode` the attributes whenever the server
+    refused the node (`BadNodeIdExists`, ...).
+  - a `Client` created with a `username` left a copy of the username and of
+    the password behind.
+  - every `Client.connect()` left a copy of the endpoint URL behind, as did
+    every reconnect attempt of `keepConnected()`.
+  - every `Client.write()` to a node with a string NodeId left a copy of the
+    identifier behind.
+  - every `Client.call()` left its argument array behind, and a copy of the
+    identifier of each string NodeId. A call that failed before it was sent
+    (an argument that cannot be encoded, a client that is not connected) also
+    left the arguments encoded so far.
 
 ## 1.5.7+3
 
