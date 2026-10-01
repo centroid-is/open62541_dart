@@ -1957,17 +1957,6 @@ class Client implements ClientApi {
 
   @override
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
-    final len = args.length;
-    var inputArgs = ua_calloc<raw.UA_Variant>(len);
-    var ptrs = <ffi.Pointer<raw.UA_Variant>>[];
-    final argsIter = args.iterator;
-
-    for (var i = 0; i < len; i++) {
-      argsIter.moveNext();
-      final ptr = valueToVariant(argsIter.current);
-      ptrs.add(ptr);
-      inputArgs[i] = ptr.ref;
-    }
     final completer = Completer<List<DynamicValue>>();
     final callbackInner =
         ffi.NativeCallable<
@@ -2052,24 +2041,37 @@ class Client implements ClientApi {
           } catch (e) {
             _safeErr("Error calling callback: $e");
             completer.completeError(e, StackTrace.current);
-          } finally {
-            // cleanup input arguments
-            for (var ptr in ptrs) {
-              raw.UA_Variant_delete(ptr);
-            }
           }
         });
 
-    final statusCode = raw.UA_Client_call_async(
-      _client,
-      objectId.toRaw(),
-      methodId.toRaw(),
-      len,
-      inputArgs,
-      callbackInner.nativeFunction,
-      ffi.nullptr, // todo set context?
-      ffi.nullptr,
-    );
+    // open62541 encodes the request before the call returns and keeps nothing
+    // of it, so the argument array, the variants in it and the buffers behind
+    // string NodeIds are scratch for the call. The arena releases them however
+    // it ends, also when an argument cannot be encoded.
+    final int statusCode;
+    try {
+      statusCode = using((arena) {
+        final values = args.toList();
+        final inputArgs = arena<raw.UA_Variant>(values.length);
+        for (var i = 0; i < values.length; i++) {
+          // A shallow copy: the payload stays the variant's, freed with it.
+          inputArgs[i] = arena.using(valueToVariant(values[i]), raw.UA_Variant_delete).ref;
+        }
+        return raw.UA_Client_call_async(
+          _client,
+          objectId.toRaw(allocator: arena),
+          methodId.toRaw(allocator: arena),
+          values.length,
+          inputArgs,
+          callbackInner.nativeFunction,
+          ffi.nullptr, // todo set context?
+          ffi.nullptr,
+        );
+      }, ua_calloc);
+    } catch (_) {
+      callbackInner.close();
+      rethrow;
+    }
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
       callbackInner.close();
       throw 'Unable to call method: $statusCode ${statusCodeToString(statusCode)}';

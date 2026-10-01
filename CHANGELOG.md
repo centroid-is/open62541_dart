@@ -126,6 +126,10 @@ changes that ship the same native library version.
     every reconnect attempt of `keepConnected()`.
   - every `Client.write()` to a node with a string NodeId left a copy of the
     identifier behind.
+  - every `Client.call()` left its argument array behind, and a copy of the
+    identifier of each string NodeId. A call that failed before it was sent
+    (an argument that cannot be encoded, a client that is not connected) also
+    left the arguments encoded so far.
 
 ## 1.5.7+3
 
