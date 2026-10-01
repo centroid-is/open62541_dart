@@ -6,6 +6,69 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **Fixed: VM abort (`Callback invoked after it has been deleted`) after a
+  lost DeleteMonitoredItems response.** Cancelling a monitored-item stream
+  closed the stream's native callback as soon as the delete request was
+  answered, whatever the answer. When the response is lost with the secure
+  channel (a frozen or dropped link while the cancel is in flight), the
+  request is answered locally with `BadSecureChannelClosed`; the item still
+  exists in the native client and, because the session outlives the channel,
+  on the server. After the reconnect it published into the closed callback
+  and aborted the process. The callback is now closed on a delete response
+  only when the items are really gone (Good service result, every item Good
+  or `BadMonitoredItemIdInvalid`); otherwise it stays open and is released
+  by `Client.delete()`, as for a delete that could not be sent.
+- **Fixed: `ClientIsolate.delete()` failed with `Concurrent modification
+  during iteration` when a stream ended during the teardown.** The worker
+  cancelled its streams while iterating the map a finishing stream removes
+  itself from (for example a refused monitored-item create answered at that
+  moment). The delete then failed before the worker deleted its client, so
+  the server kept the session and its subscriptions.
+- **Requests on a dead connection fail instead of hanging.** When the secure
+  channel is down, open62541 refuses a request before sending it and never
+  calls back. `Client.write()` and `Client.subscriptionCreate()` ignored that
+  status, so the future they returned never completed; both now throw
+  `UaStatusException(BadServerNotConnected)`, and
+  `UA_STATUSCODE_BADSERVERNOTCONNECTED` is exported to match on. Cancelling a
+  monitored-item stream hung the same way on the refused
+  DeleteMonitoredItems request; `cancel()` on a dead connection now
+  completes.
+- **Fixed: native callbacks leaked by refused requests.** Each of these left
+  a native callback open for the lifetime of the isolate, together with what
+  its closure captured, and an isolate with an open native callback cannot
+  exit:
+  - a monitored-item create the server refuses (`BadNodeIdUnknown`, ...)
+    never closed the item's data callback, which holds the item's last
+    value. A caller that rebuilds a refused item leaked one per attempt;
+  - `Client.write()` closed its callback only when the write succeeded, so
+    a write the server rejected (`BadNotWritable`, ...) leaked it;
+  - a `write()` or `subscriptionCreate()` refused on a dead connection
+    leaked the callbacks it had registered, and the write its variant.
+- **Fixed: a monitored item torn down on a dead connection kept its native
+  callback open for good.** With the secure channel down, DeleteMonitoredItems
+  cannot be sent. The item's native callback has to stay open at that point:
+  the item survives on the server with its session, and publishes into the
+  callback again once the client has reconnected. It is now closed when
+  `Client.delete()` has freed the native client, so an isolate that cancelled
+  an item (or deleted its client with the stream still active) on a dead
+  connection can exit. Known limitation: the delete is not retried when the
+  session comes back, so the server keeps sampling the cancelled item until
+  the session or the subscription ends.
+- **Fixed: tearing down a `monitoredItems` stream that has no monitored
+  item.** When the server refuses every item of a create with a tolerated
+  status (`BadAttributeIdInvalid`, e.g. the Value attribute of an Object
+  node), the stream stays open with nothing behind it. Cancelling it, or
+  deleting the client while it was active, treated the already answered
+  create as still in flight: it read the freed request id, sent a Cancel for
+  whatever that slot held and never closed the stream's native callback, so
+  an isolate that did this could not exit. The teardown now releases the
+  callback and completes.
+- **Fixed: `ClientIsolate.delete()` left the worker isolate running when the
+  worker answered the delete with an error.** The error was rethrown before
+  the worker was killed and the two receive ports were closed, so the worker
+  stayed alive and the open ports kept the calling isolate (and with it a CLI
+  process) from exiting. `delete()` now always kills the worker and closes
+  its ports; the error is still reported to the caller.
 - **`Client.call` (and `readAttribute` / monitored-item creation) surface the
   real service status.** The async response handlers checked `resultsSize`
   before `responseHeader.serviceResult`, so an infrastructure failure (session

@@ -856,11 +856,13 @@ class ClientIsolate implements ClientApi {
       );
     } finally {
       _pendingRequests.remove(id);
+      // Tear the worker down whatever it answered: if it reported an error
+      // (rethrown to the caller once this block is done) it would otherwise
+      // stay alive, and the two open ports would keep this isolate alive too.
+      _isolate.kill();
+      _receivePort.close();
+      _errPort.close();
     }
-
-    _isolate.kill();
-    _receivePort.close();
-    _errPort.close();
   }
 
   /// Wait for the connection to be fully established
@@ -1102,8 +1104,10 @@ void _isolateEntryPoint(_IsolateData data) {
           await iterateStopped!.future;
         }
 
-        // Cancel all active streams
-        for (final subscription in activeStreams.values) {
+        // Cancel all active streams. Iterate a copy: a stream that ends while
+        // one of these cancels is awaited (a refused create answered at that
+        // moment) removes itself from activeStreams in its onDone.
+        for (final subscription in activeStreams.values.toList()) {
           await subscription.cancel();
         }
         activeStreams.clear();
