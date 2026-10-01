@@ -22,8 +22,15 @@ import 'package:open62541/open62541.dart';
 /// The tiny window between closing the probe socket and the server binding
 /// the port is safe in practice: the OS does not reuse an ephemeral port it
 /// just handed out while other ports remain available.
+///
+/// The probe binds the wildcard address, because that is what the servers
+/// under test bind. A port can be free on loopback and taken on the wildcard
+/// address, and a loopback probe then hands out a port the server cannot
+/// bind: seen on a macOS CI runner as "Error binding the socket ... (Address
+/// already in use)" from the server, followed by "Could not open a TCP
+/// connection" from its client.
 Future<int> freeTcpPort() async {
-  final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+  final socket = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
   final port = socket.port;
   await socket.close();
   return port;
