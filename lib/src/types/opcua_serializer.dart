@@ -107,23 +107,9 @@ class OpcUaDynamicValueSerializer {
     if (schema.isObject) {
       ByteReader bodyReader = reader;
       if (root) {
-        // The variant's data buffer holds a UA_ExtensionObject header (48
-        // bytes: encoding, typeId, body ByteString) whose `body.data` pointer
-        // points into memory open62541 owns. All we need from the header is
-        // that pointer + length, so read the header through a struct VIEW over
-        // a Dart-heap copy of its bytes (`Struct.create`) instead of
-        // calloc'ing a native UA_ExtensionObject to reinterpret them.
-        //
-        // The calloc this replaces was never freed: 48 bytes leaked per
-        // struct-valued variant decoded, i.e. per struct notification and per
-        // element of an array of structs (this branch is reached once per
-        // element, see the array case below). On a station subscribing whole
-        // machine structs that was ~1.07 M allocations/h, ~70 MB/h before
-        // glibc arena fragmentation, against a measured 97-110 MiB/h leak.
-        // Freeing it after `bodyBytes` is taken would also have been safe
-        // (`bodyBytes` views the body's data, not the header struct), but a
-        // Dart-heap view needs no ownership argument at all: nothing is
-        // allocated natively, so nothing can be leaked.
+        // The header is only read here, so view it over a Dart copy of its
+        // bytes rather than a native one that would need freeing. The body it
+        // points at stays where it is, in memory the variant owns.
         final objBytes = reader.read(ffi.sizeOf<raw.UA_ExtensionObject>());
         final obj = ffi.Struct.create<raw.UA_ExtensionObject>(Uint8List.fromList(objBytes));
         // Todo only support encoded byte string for now
