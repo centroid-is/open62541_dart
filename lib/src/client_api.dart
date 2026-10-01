@@ -70,17 +70,17 @@ abstract class ClientApi {
   /// and defaults to **false** — the behaviour this binding has had for years.
   ///
   /// - `false`: the sample is DROPPED and its status is added to the stream as
-  ///   an error string (`'Failed to read value: <name>'`). Applications built
-  ///   on this binding treat a Bad reading as a failure of the read, which is
-  ///   the right call for a screen that would otherwise show a stale number as
-  ///   if it were live.
+  ///   an error, a typed `UaStatusException` carrying the exact status code.
+  ///   Applications built on this binding treat a Bad reading as a failure of
+  ///   the read, which is the right call for a screen that would otherwise
+  ///   show a stale number as if it were live.
   /// - `true`: the sample is DELIVERED as a value whose
   ///   [DynamicValue.statusCode] is the server's own numeric StatusCode. A
-  ///   gateway that maps upstream status onto a published quality needs the
-  ///   code, not English: "BadOutOfRange" and "BadCommunicationError" are
-  ///   different instructions to an operator, and both are lost in a String.
-  ///   Note that such a sample carries no payload — the value is whatever was
-  ///   last known — because a Bad DataValue arrives with `hasValue` clear.
+  ///   gateway that maps upstream status onto a published quality gets the
+  ///   code on the value stream, next to the value and source timestamp it
+  ///   belongs to, instead of on the error channel. A Bad DataValue usually
+  ///   arrives with `hasValue` clear; the value is then whatever was last
+  ///   known. One that does carry a value is decoded like any other sample.
   ///
   /// Only the Value attribute has a status to deliver. A Bad sample of any
   /// other monitored attribute is added to the stream as a

@@ -2,10 +2,10 @@
 //
 // Before this suite existed the monitored-item callback read `value.ref.status`
 // only to throw the sample away: anything but Good became
-// `controller.addError('Failed to read value: <english>')` and returned, and
+// `controller.addError(UaStatusException(status))` and returned, and
 // `value.ref.sourceTimestamp` was never read at all. A consumer could therefore
-// only ever say "the moment I heard about it", and could not say
-// BadOutOfRange at all.
+// only ever say "the moment I heard about it", and saw BadOutOfRange as a
+// stream error, never on a value.
 //
 // What UA_DataValue actually carries, MEASURED against the in-process server on
 // 2026-09-01 (macOS arm64, open62541 as pinned by hook/build.dart) rather than
@@ -53,6 +53,7 @@ import 'data_value_rewriting_proxy.dart';
 final goodNodeId = NodeId.fromString(1, "the.int");
 final refusingNodeId = NodeId.fromString(1, "the.refusing");
 final tickZeroNodeId = NodeId.fromString(1, "the.tickZero");
+final lastKnownNodeId = NodeId.fromString(1, "the.lastKnown");
 
 /// What the data-source read dispatcher returns when `onRead` throws.
 /// `UA_STATUSCODE_BADINTERNALERROR`.
@@ -61,6 +62,9 @@ const badInternalError = 0x80020000;
 /// What a monitored item samples once its node has been deleted.
 /// `UA_STATUSCODE_BADNODEIDUNKNOWN`.
 const badNodeIdUnknown = 0x80340000;
+
+/// `UA_STATUSCODE_BADNOCOMMUNICATION`.
+const badNoCommunication = 0x80310000;
 
 /// What the default path puts on the error channel: since 1.5.7+3 a typed
 /// [UaStatusException] carrying the exact notification status (for two years
@@ -103,6 +107,18 @@ void main() {
       onReadValue: () => DataSourceValue(
         value: DynamicValue(value: 7, typeId: NodeId.int32),
         sourceTimestamp: DateTime.utc(1601, 1, 1),
+      ),
+    );
+
+    // A node that answers Bad AND carries a value: the last-known reading of a
+    // device that has gone quiet.
+    server.addDataSourceVariableNode(
+      lastKnownNodeId,
+      browseName: "the.lastKnown",
+      typeId: NodeId.int32,
+      onReadValue: () => DataSourceValue(
+        value: DynamicValue(value: 5, typeId: NodeId.int32),
+        statusCode: badNoCommunication,
       ),
     );
 
@@ -423,8 +439,8 @@ void main() {
         badInternalError,
         reason:
             'the relay maps the server\'s numeric StatusCode onto a relay '
-            'Quality; an English string on the error channel cannot say '
-            'BadOutOfRange to an operator',
+            'Quality, and needs it on the value it describes rather than on '
+            'the error channel',
       );
       expect(
         values,
@@ -445,14 +461,32 @@ void main() {
   });
 
   for (final clientType in clientTypes) {
-    // Regression tests for the review of PR #118: two samples the monitor path
-    // misreported, and that no test looked at.
+    // Regression tests for the review of PR #118: samples of the monitor path
+    // that no test looked at, two of which it misreported.
     group('the monitor path [$clientType]', () {
       ClientApi? own;
 
       tearDown(() async {
         await own?.delete();
         own = null;
+      });
+
+      test('deliverBadStatus: true delivers the value a Bad sample carries, with its code', () async {
+        final api = clientType == 'direct'
+            ? client
+            : own = await setupClientOfType(clientType, "opc.tcp://127.0.0.1:$port");
+        final subId = await api.subscriptionCreate();
+
+        final value = await api
+            .monitor(lastKnownNodeId, subId, deliverBadStatus: true)
+            .firstWhere((v) => v.statusCode != null)
+            .timeout(Duration(seconds: 10));
+
+        expect(
+          (value.value, value.statusCode),
+          (5, badNoCommunication),
+          reason: 'a Bad sample that carries a value is decoded like any other; only one without keeps the last known',
+        );
       });
 
       test('deliverBadStatus: true reports a Bad notification of a non-Value attribute as an error', () async {
