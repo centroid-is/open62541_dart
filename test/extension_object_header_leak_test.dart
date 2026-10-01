@@ -1,4 +1,5 @@
 import 'dart:ffi' as ffi;
+import 'dart:io';
 
 import 'package:test/test.dart';
 
@@ -9,21 +10,91 @@ import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'package:open62541/src/ua_allocation.dart';
 import 'schema_util.dart';
 
-/// Regression test for the extension-object header leak.
+/// Regression tests for native memory left behind by the struct paths of
+/// OpcUaDynamicValueSerializer: decoding a struct-valued variant, writing one,
+/// and a write that fails part-way.
 ///
-/// OpcUaDynamicValueSerializer.deserialize used to calloc a UA_ExtensionObject
-/// to read the header of every struct-valued variant -- once per struct
-/// notification, per struct read, and per ELEMENT of an array of structs -- and
-/// never freed it (48 bytes each). serialize did the same for every struct
-/// written. On a station subscribing whole machine structs that was about
-/// 1.07 million allocations an hour, ~70 MB/h of allocator growth before arena
-/// fragmentation, against a measured 97-110 MiB/h process leak.
+/// They measure the C heap itself (glibc `mallinfo2`): each test repeats one
+/// operation that must leave the heap as it found it, and fails if the bytes in
+/// use grew. One leaked allocation per operation is at least 32 bytes per
+/// operation (the smallest glibc chunk); the limit is 8.
 ///
-/// The check is a counting one, not an RSS one: ua_allocation.dart keeps
-/// running totals of the allocations and frees made through ua_malloc /
-/// ua_calloc. Decoding N variants must leave (allocs - frees) exactly where it
-/// was. Before the fix every decode left one allocation behind (three per
-/// three-element array); after it, none.
+/// glibc only. `dart test` runs every suite in one process, so another suite can
+/// allocate or free while a round is being measured. A leak grows the heap by
+/// the same amount in every round, so the median over the rounds discards that.
+
+final class _Mallinfo2 extends ffi.Struct {
+  @ffi.Size()
+  external int arena;
+  @ffi.Size()
+  external int ordblks;
+  @ffi.Size()
+  external int smblks;
+  @ffi.Size()
+  external int hblks;
+  @ffi.Size()
+  external int hblkhd;
+  @ffi.Size()
+  external int usmblks;
+  @ffi.Size()
+  external int fsmblks;
+  @ffi.Size()
+  external int uordblks;
+  @ffi.Size()
+  external int fordblks;
+  @ffi.Size()
+  external int keepcost;
+}
+
+final _Mallinfo2 Function() _mallinfo2 = ffi.DynamicLibrary.process()
+    .lookupFunction<_Mallinfo2 Function(), _Mallinfo2 Function()>('mallinfo2');
+
+/// Bytes handed out by malloc and not yet freed, across all arenas.
+int _heapInUse() {
+  final info = _mallinfo2();
+  return info.uordblks + info.hblkhd;
+}
+
+const _warmUp = 50000;
+const _rounds = 15;
+const _iterations = 4000;
+const _maxGrowth = 8 * _iterations;
+
+/// Median growth of the C heap over [_rounds] rounds of [_iterations] calls.
+int _heapGrowth(void Function() operation) {
+  // Let the JIT and anything lazily initialised settle before measuring.
+  for (var i = 0; i < _warmUp; i++) {
+    operation();
+  }
+  final growth = <int>[];
+  for (var round = 0; round < _rounds; round++) {
+    final before = _heapInUse();
+    for (var i = 0; i < _iterations; i++) {
+      operation();
+    }
+    growth.add(_heapInUse() - before);
+  }
+  growth.sort();
+  return growth[_rounds ~/ 2];
+}
+
+/// Why the heap cannot be measured here, or null if it can.
+String? _whyUnmeasurable() {
+  if (!Platform.isLinux) return 'needs glibc mallinfo2, not available on ${Platform.operatingSystem}';
+  if (!ffi.DynamicLibrary.process().providesSymbol('mallinfo2')) return 'this libc has no mallinfo2 (glibc >= 2.33)';
+  // mallinfo2 must see what ua_calloc allocates. It does not when malloc is
+  // replaced, e.g. under AddressSanitizer.
+  const blocks = 4096, blockSize = 64;
+  for (var attempt = 0; attempt < 3; attempt++) {
+    final before = _heapInUse();
+    final held = [for (var i = 0; i < blocks; i++) ua_calloc<ffi.Uint8>(blockSize)];
+    final growth = _heapInUse() - before;
+    held.forEach(ua_calloc.free);
+    if (growth >= blocks * blockSize) return null;
+  }
+  return 'mallinfo2 does not track this process\'s allocator (malloc replaced?)';
+}
+
 void main() {
   final structId = NodeId.fromString(4, 'LeakTestStruct');
 
@@ -43,68 +114,78 @@ void main() {
     return v;
   }
 
-  int outstanding() => uaAllocCount - uaFreeCount;
+  DynamicValue arrayOf(List<DynamicValue> elements) {
+    final array = DynamicValue(typeId: structId);
+    for (var i = 0; i < elements.length; i++) {
+      array[i] = elements[i];
+    }
+    return array;
+  }
 
-  test('decoding a struct-valued variant allocates nothing it does not free', () {
-    final variant = valueToVariant(instance(7));
-    final defs = {structId: schema()};
-    addTearDown(() => raw.UA_Variant_delete(variant));
+  final defs = {structId: schema()};
+  late final String? unmeasurable = _whyUnmeasurable();
 
-    // Warm up once so lazily-initialised state is not counted against the loop.
-    variantToValue(variant.ref, defs: defs, dataTypeId: structId);
+  /// Runs [operation] repeatedly and fails if the C heap grew.
+  void expectNoHeapGrowth(void Function() operation) {
+    if (unmeasurable != null) {
+      markTestSkipped(unmeasurable);
+      return;
+    }
+    final growth = _heapGrowth(operation);
+    expect(
+      growth,
+      lessThan(_maxGrowth),
+      reason: 'C heap grew by $growth bytes per $_iterations operations (${growth / _iterations} per operation)',
+    );
+  }
 
-    const n = 1000;
-    final before = outstanding();
-    for (var i = 0; i < n; i++) {
+  group('decoding leaves nothing on the C heap:', () {
+    test('a struct', () {
+      final variant = valueToVariant(instance(7));
+      addTearDown(() => raw.UA_Variant_delete(variant));
+
       final decoded = variantToValue(variant.ref, defs: defs, dataTypeId: structId);
       expect(decoded['a'].asInt, 7);
       expect(decoded['c'].asString, 'item 7');
-    }
-    expect(outstanding() - before, 0, reason: 'each decode of a struct variant left native memory behind');
-  });
 
-  test('decoding an array of structs allocates nothing per element either', () {
-    final array = DynamicValue(typeId: structId);
-    for (var i = 0; i < 3; i++) {
-      array[i] = instance(i);
-    }
-    final variant = valueToVariant(array);
-    final defs = {structId: schema()};
-    addTearDown(() => raw.UA_Variant_delete(variant));
+      expectNoHeapGrowth(() => variantToValue(variant.ref, defs: defs, dataTypeId: structId));
+    });
 
-    variantToValue(variant.ref, defs: defs, dataTypeId: structId);
+    test('an array of structs', () {
+      final variant = valueToVariant(arrayOf([instance(0), instance(1), instance(2)]));
+      addTearDown(() => raw.UA_Variant_delete(variant));
 
-    const n = 500;
-    final before = outstanding();
-    for (var i = 0; i < n; i++) {
       final decoded = variantToValue(variant.ref, defs: defs, dataTypeId: structId);
       expect(decoded.asArray.length, 3);
       expect(decoded[2]['a'].asInt, 2);
-    }
-    expect(outstanding() - before, 0, reason: 'each element of an array of structs left native memory behind');
+
+      expectNoHeapGrowth(() => variantToValue(variant.ref, defs: defs, dataTypeId: structId));
+    });
   });
 
-  test('encoding a struct allocates only what the variant takes ownership of', () {
-    // A struct write allocates natively exactly what the variant takes
-    // ownership of: the encoded body, the characters of its string typeId,
-    // and the variant's own data buffer -- three, all released by
-    // UA_Variant_delete. The header must not be a fourth, leaked one.
-    final v = instance(1);
+  group('writing leaves nothing on the C heap once the variant is deleted:', () {
+    test('a struct', () {
+      final value = instance(1);
 
-    valueToVariant(v); // warm-up, deliberately not freed: counts only bracket the loop
-    const n = 200;
-    final variants = <ffi.Pointer<raw.UA_Variant>>[];
-    final before = uaAllocCount;
-    for (var i = 0; i < n; i++) {
-      variants.add(valueToVariant(v));
-    }
-    expect(
-      uaAllocCount - before,
-      3 * n,
-      reason: 'a struct write must allocate body, typeId string and data buffer, nothing else',
-    );
-    for (final p in variants) {
-      raw.UA_Variant_delete(p);
-    }
+      final variant = valueToVariant(value);
+      final decoded = variantToValue(variant.ref, defs: defs, dataTypeId: structId);
+      raw.UA_Variant_delete(variant);
+      expect(decoded['b'].asDouble, 0.5);
+      expect(decoded['c'].asString, 'item 1');
+
+      expectNoHeapGrowth(() => raw.UA_Variant_delete(valueToVariant(value)));
+    });
+
+    test('an array of structs', () {
+      final value = arrayOf([instance(0), instance(1), instance(2)]);
+
+      final variant = valueToVariant(value);
+      final decoded = variantToValue(variant.ref, defs: defs, dataTypeId: structId);
+      raw.UA_Variant_delete(variant);
+      expect(decoded.asArray.length, 3);
+      expect(decoded[1]['c'].asString, 'item 1');
+
+      expectNoHeapGrowth(() => raw.UA_Variant_delete(valueToVariant(value)));
+    });
   });
 }
