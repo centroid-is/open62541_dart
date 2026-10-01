@@ -38,7 +38,7 @@ topics:
   - open62541
   - hmi
 dev_dependencies:
-  ffigen: ^21.0.0
+  ffigen: ">=21.0.0 <23.0.0"
   lints: ^6.0.0
   test: ^1.31.2
   import_sorter: ^4.6.0
