@@ -43,11 +43,11 @@
 // make it local-only and it would prove nothing in CI.
 
 import 'dart:async';
-import 'dart:math';
 
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'common.dart' show freeTcpPort;
 
 final goodNodeId = NodeId.fromString(1, "the.int");
 final refusingNodeId = NodeId.fromString(1, "the.refusing");
@@ -63,7 +63,7 @@ const badInternalError = 0x80020000;
 final legacyBadStatusMatcher = isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', badInternalError);
 
 void main() {
-  final port = 23840 + Random().nextInt(1000);
+  late int port;
 
   late Server server;
   late Client client;
@@ -71,6 +71,7 @@ void main() {
   late Timer clientTimer;
 
   setUp(() async {
+    port = await freeTcpPort();
     server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
     server.start();
 
