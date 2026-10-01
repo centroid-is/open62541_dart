@@ -216,5 +216,13 @@ void main() {
       final value = arrayOf([instance(0), instance(1), unserialisable()]);
       expectNoHeapGrowth(failingWrite(value, throwsStateError));
     });
+
+    // valueToVariant rejects this value itself, not the serializer.
+    test('a struct whose numeric type id is not a namespace 0 type', () {
+      final value = instance(1);
+      value.typeId = NodeId.fromNumeric(4, 5001);
+      value.extObjEncodingId = structId;
+      expectNoHeapGrowth(failingWrite(value, throwsArgumentError));
+    });
   });
 }
