@@ -52,6 +52,55 @@ Future<ServerSocket> holdPort(int port) async {
   return held;
 }
 
+/// A TCP proxy in front of [targetPort], so a test can cut a client's
+/// connection, and with it the secure channel, without stopping the server.
+/// The server then keeps the session and its monitored items, and the client
+/// re-activates that session once the proxy is back ([resume]).
+class TcpProxy {
+  TcpProxy._(this.port, this.targetPort);
+
+  /// The port clients connect to.
+  final int port;
+  final int targetPort;
+  ServerSocket? _listener;
+  final List<Socket> _sockets = [];
+
+  static Future<TcpProxy> start(int targetPort) async {
+    final proxy = TcpProxy._(await freeTcpPort(), targetPort);
+    await proxy.resume();
+    addTearDown(proxy.cut);
+    return proxy;
+  }
+
+  /// Accepts connections (again) and forwards them to [targetPort].
+  Future<void> resume() async {
+    final listener = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
+    _listener = listener;
+    listener.listen((client) async {
+      try {
+        final upstream = await Socket.connect(InternetAddress.loopbackIPv4, targetPort);
+        _sockets
+          ..add(client)
+          ..add(upstream);
+        client.listen(upstream.add, onDone: upstream.destroy, onError: (_) => upstream.destroy());
+        upstream.listen(client.add, onDone: client.destroy, onError: (_) => client.destroy());
+      } catch (_) {
+        client.destroy();
+      }
+    });
+  }
+
+  /// Stops accepting and destroys every open connection.
+  Future<void> cut() async {
+    await _listener?.close();
+    _listener = null;
+    for (final socket in _sockets) {
+      socket.destroy();
+    }
+    _sockets.clear();
+  }
+}
+
 /// Polls [predicate] against a fresh [Server.statistics] snapshot until it
 /// holds (returning the matching snapshot) or [timeout] expires (failing the
 /// test with the last snapshot in the message).

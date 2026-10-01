@@ -1546,18 +1546,28 @@ class Client implements ClientApi {
           // secure channel is down, which is exactly when a caller reacting
           // to SecureChannelClosed cancels). deleteCallback will never run,
           // so release what it would have released and complete — a cancel
-          // the caller awaits must not hang forever. monitorCallback stays
-          // open on purpose: the session (and its monitored items) survives
-          // a channel drop and is re-activated on reconnect, so the item may
-          // publish again and the trampoline must still exist to drop those
-          // notifications; the server side is unreachable from here.
+          // the caller awaits must not hang forever.
+          //
+          // monitorCallback cannot be closed here: the request never left,
+          // so the native client still holds the items, and so does the
+          // server if the session outlives the channel drop. The session is
+          // then re-activated on reconnect and the items publish again, into
+          // this callback, which drops the notifications. It is handed to
+          // the client instead, which closes it in delete() once
+          // UA_Client_delete has freed the items.
+          //
+          // Known limitation: the delete is not retried when the session
+          // comes back, so the server keeps sampling an item nobody listens
+          // to until the session or the subscription ends. A retry has to
+          // tell a re-activated session from a recreated one, where the
+          // stale ids can name a new subscription's items.
           _safeErr(
             "Error deleting monitored item, request not sent: $res ${statusCodeToString(res)}. "
             "The native client releases it with the session.",
           );
           raw.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
           deleteCallback.close();
-          monIds.clear();
+          _undeletedMonitorCallbacks.add(monitorCallback);
           completer.complete();
         }
       }
@@ -2294,6 +2304,12 @@ class Client implements ClientApi {
     _client = ffi.nullptr;
     await Future.delayed(Duration(milliseconds: 10));
     raw.UA_Client_delete(client);
+    // The native client is freed, and with it every monitored item that could
+    // still invoke one of these callbacks. Only now can they be closed.
+    for (final callback in _undeletedMonitorCallbacks) {
+      callback.close();
+    }
+    _undeletedMonitorCallbacks.clear();
     // Client_delete calls client config state callbacks
     // Need to close the config after deleting the client
     // s.t. the native callbacks are not closed when called
@@ -2303,6 +2319,12 @@ class Client implements ClientApi {
   late ffi.Pointer<raw.UA_Client> _client;
   late final ClientConfig _clientConfig;
   final List<ffi.NativeCallable> _subscriptionDeleteCallbacks = [];
+
+  // Monitor callbacks of items whose DeleteMonitoredItems request could not be
+  // sent (dead channel). The native client still holds those items and can
+  // invoke the callbacks again after a reconnect, so they stay open until
+  // delete() has freed the native client.
+  final List<ffi.NativeCallable> _undeletedMonitorCallbacks = [];
 
   // Registry of active monitored-item streams keyed by their StreamController,
   // mapped to their native teardown function. Populated on onListen, removed on
