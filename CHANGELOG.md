@@ -42,16 +42,25 @@ changes that ship the same native library version.
   `example/metar_redundant_server.dart` publishes live BIRK (Reykjavík
   Airport) weather as a custom structured type on a data-source node
   (`onReadValue` — real status codes and source timestamps, last-known value
-  served with `Bad_NoCommunication` when the feed is down), and advertises a
-  hot-redundant set on the standard NS0 nodes (`ServiceLevel`,
-  `RedundancySupport`, `ServerUriArray` holding the members' ApplicationUris,
-  each instance announcing its own through `Server(applicationUri:)`) via
-  `Server.setVariableValueSource`. `example/metar_redundant_client.dart` is a
-  Part 4 non-transparent redundant client that is given the members'
-  endpoints, identifies each by its ApplicationUri (`ServerArray[0]`),
-  matches them against `ServerUriArray` and fails over by the ServiceLevel
-  bands of OPC 10000-4 Table 105 (no failover from a Healthy server; a
-  Degraded one is left for any Healthy one). See `example/README.md`.
+  served with `Bad_NoCommunication` when the feed is down), computes its
+  `ServiceLevel` in the bands of OPC 10000-4 Table 105 (served through
+  `Server.setVariableValueSource`), and publishes the hot-redundant set the
+  Part 5 way through `Server.setRedundancy(RedundancySupport.hot,
+  serverUris:, networkGroups:)`: `ServerRedundancy` typed
+  `NonTransparentNetworkRedundancyType`, `ServerUriArray` holding the
+  members' ApplicationUris (each instance announcing its own through
+  `Server(applicationUri:)`) and `ServerNetworkGroups` mapping them to
+  endpoints. It shuts down orderly with `Server.shutdown(delay:,
+  announceServiceLevel: true)`. `example/metar_redundant_client.dart` is a
+  Part 4 non-transparent redundant client seeded with ONE endpoint: it
+  identifies the server by `ServerArray[0]`, reads `ServerUriArray` and
+  `ServerNetworkGroups`, connects to the other members, polls every
+  member's `ServiceLevel` and `ServerStatus.State` and switches by the Table
+  105 bands (no failover from a Healthy server; a Degraded one is left for
+  any Healthy one; a NoData member is polled but never given data; a
+  Maintenance or shutting-down member is disconnected and retried much
+  later). See `example/README.md` for what is spec-exact and what is
+  simplified.
 
 - **Known structures decode from their native layout.** A value whose
   DataType is a structure the bundled open62541 knows (every NS0 DataType in
