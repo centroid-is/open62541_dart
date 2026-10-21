@@ -4,7 +4,7 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
+## 1.5.9
 
 - **Fixed: a second `Client.keepConnected()` doubled the pump.** The call
   reset its stop flag and set it again synchronously, so the pump and the
@@ -13,9 +13,6 @@ changes that ship the same native library version.
   two supervisors reconnecting. Each call now starts a new generation and the
   previous loops end on their next turn. `stopKeepConnected()` behaviour is
   unchanged.
-
-## 1.5.9
-
 - **Example: redundant METAR servers with ServiceLevel failover.**
   `example/metar_redundant_server.dart` publishes live BIRK (Reykjavík
   Airport) weather as a custom structured type on a data-source node
