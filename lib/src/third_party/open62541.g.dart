@@ -1181,6 +1181,21 @@ external ffi.Pointer<UA_Variant> UA_Variant_new();
 @ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Pointer<UA_DataType>)>()
 external void UA_clear(ffi.Pointer<ffi.Void> p, ffi.Pointer<UA_DataType> type);
 
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_ByteString>,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_DataType>,
+    ffi.Pointer<UA_DecodeBinaryOptions>,
+  )
+>()
+external int UA_decodeBinary(
+  ffi.Pointer<UA_ByteString> inBuf,
+  ffi.Pointer<ffi.Void> p,
+  ffi.Pointer<UA_DataType> type,
+  ffi.Pointer<UA_DecodeBinaryOptions> options,
+);
+
 const addresses = _SymbolAddresses();
 
 class _SymbolAddresses {
@@ -3131,6 +3146,43 @@ enum UA_DeadbandType {
     2147483647 => __UA_DEADBANDTYPE_FORCE32BIT,
     _ => throw ArgumentError('Unknown value for UA_DeadbandType: $value'),
   };
+}
+
+final class UA_DecodeBinaryOptions extends ffi.Struct {
+  external ffi.Pointer<UA_DataTypeArray> customTypes;
+
+  external ffi.Pointer<UA_NamespaceMapping> namespaceMapping;
+
+  external ffi.Pointer<ffi.Void> callocContext;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void> callocContext, ffi.Size nelem, ffi.Size elsize)
+    >
+  >
+  calloc;
+
+  @ffi.Size()
+  external int decodedLength;
+
+  static ffi.Pointer<UA_DecodeBinaryOptions> $allocate(
+    ffi.Allocator $allocator, {
+    required ffi.Pointer<UA_DataTypeArray> customTypes,
+    required ffi.Pointer<UA_NamespaceMapping> namespaceMapping,
+    required ffi.Pointer<ffi.Void> callocContext,
+    required ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void> callocContext, ffi.Size nelem, ffi.Size elsize)
+      >
+    >
+    calloc,
+    required int decodedLength,
+  }) => $allocator<UA_DecodeBinaryOptions>()
+    ..ref.customTypes = customTypes
+    ..ref.namespaceMapping = namespaceMapping
+    ..ref.callocContext = callocContext
+    ..ref.calloc = calloc
+    ..ref.decodedLength = decodedLength;
 }
 
 final class UA_DeleteEventDetails extends ffi.Opaque {}
@@ -55401,6 +55453,28 @@ const int UA_NS0ID_YARRAYITEMTYPE_TITLE = 12035;
 const int UA_NS0ID_YARRAYITEMTYPE_VALUEPRECISION = 12031;
 
 const int UA_NS0ID_YARRAYITEMTYPE_XAXISDEFINITION = 12037;
+
+/// Namespace Mapping
+/// -----------------
+///
+/// Every :ref:`nodeid` references a namespace index. Actually the namespace is
+/// identified by its URI. The namespace-array of the server maps the URI to the
+/// namespace index in the array. Namespace zero always has the URI
+/// ```http://opcfoundation.org/UA/```. Namespace one has the application URI of
+/// the server. All namespaces beyond get a custom assignment.
+///
+/// In order to have predictable NodeIds, a client might predefined its own
+/// namespace array that is different from the server's. When a NodeId is decoded
+/// from a network message (binary or JSON), a mapping-table can be used to
+/// automatically translate between the remote and local namespace index. The
+/// mapping is typically done by the client who can generate the mapping table
+/// after reading the namespace-array of the server. The reverse mapping is done
+/// in the encoding if the mapping table is set in the options.
+///
+/// The mapping table also contains the full URI names. It is also used to
+/// translate the ``NamespaceUri`` field of an ExpandedNodeId into the namespace
+/// index of the NodeId embedded in the ExpandedNodeId.
+final class UA_NamespaceMapping extends ffi.Opaque {}
 
 enum UA_NamingRuleType {
   UA_NAMINGRULETYPE_MANDATORY(1),

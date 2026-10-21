@@ -6,6 +6,7 @@ import 'package:ffi/ffi.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/types/create_type.dart';
+import 'package:open62541/src/types/native_decode.dart';
 import 'extensions.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
@@ -58,10 +59,32 @@ final ffi.Pointer<ffi.Void> _uaEmptyArraySentinel = ffi.Pointer.fromAddress(0x01
 ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
   final isEmptyArray = value.isArray && value.asArray.isEmpty;
 
+  // Determine the element type from the innermost element: for a multi-dimensional
+  // array the first element is itself an array, so peel arrays until a leaf is
+  // reached. A struct leaf means the whole (possibly nested) array is encoded as
+  // an array of extension objects.
+  DynamicValue? innermostLeaf(DynamicValue v) {
+    var cur = v;
+    while (cur.isArray) {
+      if (cur.asArray.isEmpty) return null;
+      cur = cur.asArray.first;
+    }
+    return cur;
+  }
+
+  final leaf = innermostLeaf(value);
+  // A structure the bundled open62541 knows (an NS0 DataType such as Range,
+  // i=884): it travels as an ExtensionObject with that type's binary encoding
+  // id. An empty array has no leaf to inspect; its typeId tells.
+  final isNs0Struct = value.typeId != null && ns0BinaryEncodingId(value.typeId!) != null;
+  final isStruct = value.isObject || (value.isArray && leaf != null && leaf.isObject) || (isEmptyArray && isNs0Struct);
+
   // Can throw, so it comes before serialize: what serialize allocates natively
-  // for a struct is only freed through the variant created below.
+  // for a struct is only freed through the variant created below. A known NS0
+  // structure's id has no entry in the enum and needs none; any other numeric
+  // id is checked as before.
   Namespace0Id? id;
-  if (value.typeId != null && value.typeId!.isNumeric()) {
+  if (value.typeId != null && value.typeId!.isNumeric() && !(isStruct && isNs0Struct)) {
     id = Namespace0Id.fromInt(value.typeId!.numeric);
   }
 
@@ -97,22 +120,7 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
     variant.ref.data = pointer.cast();
   }
 
-  // Determine the element type from the innermost element: for a multi-dimensional
-  // array the first element is itself an array, so peel arrays until a leaf is
-  // reached. A struct leaf means the whole (possibly nested) array is encoded as
-  // an array of extension objects.
-  DynamicValue? innermostLeaf(DynamicValue v) {
-    var cur = v;
-    while (cur.isArray) {
-      if (cur.asArray.isEmpty) return null;
-      cur = cur.asArray.first;
-    }
-    return cur;
-  }
-
-  final leaf = innermostLeaf(value);
-  final hasObjectElement = value.isArray && leaf != null && leaf.isObject;
-  if (value.isObject || hasObjectElement) {
+  if (isStruct) {
     variant.ref.type = getType(UaTypes.extensionObject);
   } else if (id != null) {
     variant.ref.type = getType(id.toUaTypes()); //TODO: This is not really the correct.
@@ -150,10 +158,24 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
     return DynamicValue(value: <DynamicValue>[], typeId: typeId);
   }
 
+  // A structure open62541 knows (every NS0 DataType, or a registered custom
+  // type) arrives decoded into the native struct, not as an encoded
+  // ExtensionObject: `data` is struct memory laid out by the type's member
+  // table. Walk it. The variant's own type is the concrete one, so it wins
+  // over a declared DataType (which may be an abstract supertype).
+  if (isNativeStructKind(data.type.ref.typeKind)) {
+    return decodeNativeVariant(data, defs: defs);
+  }
+
   NodeId? extObjEncodingId;
   if (data.type.ref.typeKind == raw.UA_DataTypeKind.UA_DATATYPEKIND_EXTENSIONOBJECT) {
     final ext = data.data.cast<raw.UA_ExtensionObject>();
     extObjEncodingId = ext.ref.content.encoded.typeId.toNodeId();
+    // An encoded body of a structure the bundled open62541 knows, that never
+    // crossed the wire (a value the Dart server published, read in-process):
+    // decode it the way the wire decoder would have, into the native struct.
+    final known = decodeEncodedExtensionObjects(data, defs: defs);
+    if (known != null) return known;
   }
 
   final dimensions = data.dimensions;
@@ -176,6 +198,11 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
     final wireTypeId = data.type.ref.typeId.toNodeId();
     if (wireTypeId != typeId && nodeIdToPayloadType(wireTypeId) != null) {
       return DynamicValue(typeId: wireTypeId);
+    }
+    // An enum open62541 knows and no schema for it (a method output, a
+    // Server.read): Int32 with the fields of the native enum type.
+    if (data.type.ref.typeKind == raw.UA_DataTypeKind.UA_DATATYPEKIND_ENUM) {
+      return DynamicValue(typeId: NodeId.int32)..enumFields = nativeEnumFields(data.type);
     }
     throw 'Unsupported nodeId type: $typeId';
   }

@@ -7,6 +7,7 @@ import '../dynamic_value.dart';
 import '../node_id.dart';
 import '../third_party/open62541.g.dart' as raw;
 import 'create_type.dart';
+import 'native_decode.dart';
 import 'payloads.dart';
 
 /// OPC UA specific serializer for DynamicValue.
@@ -235,7 +236,12 @@ class OpcUaDynamicValueSerializer {
         _serialize(value.value[i], writer, value.value[i], endian, insideStruct, rootStructs);
       }
     } else if (value.isObject && root) {
-      final typeId = value.extObjEncodingId ?? value.typeId!;
+      // The ExtensionObject's typeId is the binary encoding id: a receiver
+      // matches it against the `binaryEncodingId` of the types it knows. A
+      // value read from open62541 carries it in `extObjEncodingId`; one built
+      // in Dart with an NS0 DataType id (Range, i=884) gets the id of the
+      // bundled type; a custom type's id is used as it is.
+      final typeId = value.extObjEncodingId ?? ns0BinaryEncodingId(value.typeId!) ?? value.typeId!;
       final bodyWriter = ByteWriter();
       _serializeStructBody(value, bodyWriter, endian);
       rootStructs.add((typeId, bodyWriter.toBytes()));
