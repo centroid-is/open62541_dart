@@ -2,8 +2,7 @@
   A non-transparent redundant client (OPC UA Part 4, §6.6.2) for the METAR
   server pair in `metar_redundant_server.dart`.
 
-    dart run example/metar_redundant_client.dart \
-        --endpoint opc.tcp://localhost:4840 --endpoint opc.tcp://localhost:4841
+    dart run example/metar_redundant_client.dart --endpoint opc.tcp://localhost:4840
 
   Algorithm:
 
@@ -15,11 +14,12 @@
       ApplicationUri, and `Server/ServerRedundancy/ServerUriArray`
       (ns=0;i=11314), the ApplicationUris of the members of the redundant set
       it belongs to. ServerUris are identities, not addresses, so a client
-      cannot dial them: the standard way to map one to endpoints is the
-      `ServerNetworkGroups` property (Part 5, §6.3.10) or FindServers. This
-      example is handed the endpoints on the command line and matches them to
-      the set's members by ApplicationUri, reporting any member it has no
-      endpoint for.
+      cannot dial them; the standard map from a ServerUri to endpoints is
+      `Server/ServerRedundancy/ServerNetworkGroups` (ns=0;i=14415, Part 5
+      §6.3.10), which the client reads next and uses to connect to every
+      member it has no endpoint for yet. One seed endpoint is therefore
+      enough; more can be given (an override, or for a server that does not
+      publish the groups), and a member nobody answers for is reported.
    3. Read `Server/ServiceLevel` (ns=0;i=2267) from each connected server on
       every tick. An unreachable server ranks below every reachable one.
    4. Subscribe to the METAR structure node of the server chosen by the
@@ -96,6 +96,14 @@ class _Link {
   /// The set this server advertises in `ServerUriArray`, once identified.
   List<String> serverUris = const [];
 
+  /// `ServerNetworkGroups` as this server advertises it: each member's URI
+  /// to the endpoint URLs of its first network path (empty: no path known).
+  Map<String, List<String>> networkGroups = const {};
+
+  /// For an endpoint learned from another member's `ServerNetworkGroups`:
+  /// the ServerUri it is expected to answer as.
+  String? expectedUri;
+
   StreamSubscription<Map<NodeId, DynamicValue>>? dataSubscription;
   StreamSubscription<void>? reconnectSubscription;
 
@@ -113,6 +121,7 @@ class MetarFailoverClient {
     this.publishingInterval = const Duration(milliseconds: 500),
     this.logLevel = LogLevel.UA_LOGLEVEL_FATAL,
     this.identifyMembers = true,
+    this.discoverMembers = true,
     void Function(String message)? log,
   }) : _log = log ?? print,
        _seed = List.of(endpoints);
@@ -144,6 +153,11 @@ class MetarFailoverClient {
   /// member without an endpoint reported. Ranking works without it.
   final bool identifyMembers;
 
+  /// Whether to read each server's `ServerNetworkGroups` and connect to the
+  /// members it lists that no known endpoint answers for (needs
+  /// [identifyMembers]). Off, every member needs a configured endpoint.
+  final bool discoverMembers;
+
   final void Function(String message) _log;
   final List<String> _seed;
 
@@ -168,9 +182,9 @@ class MetarFailoverClient {
   /// ServiceLevel of the active server (`-1` when unreachable).
   int get activeServiceLevel => _active?.serviceLevel ?? -1;
 
-  /// Every endpoint the client connects to. Only configured endpoints are
-  /// ever dialled: the entries of `ServerUriArray` are identities, not
-  /// addresses.
+  /// Every endpoint the client connects to: the configured ones and those
+  /// learned from `ServerNetworkGroups`. The entries of `ServerUriArray` are
+  /// identities, never dialled.
   List<String> get knownEndpoints => _links.keys.toList(growable: false);
 
   /// Last ServiceLevel read from each known endpoint.
@@ -183,6 +197,11 @@ class MetarFailoverClient {
   /// in `ServerUriArray` (the union, in case the servers disagree).
   Set<String> get serverUris => {for (final l in _links.values) ...l.serverUris};
 
+  /// The endpoint URLs of each member, as the reached servers advertise them
+  /// in `ServerNetworkGroups` (merged; a later-identified server's entry for
+  /// a URI replaces an earlier one).
+  Map<String, List<String>> get networkGroups => {for (final l in _links.values) ...l.networkGroups};
+
   /// The configured endpoint of the member with [applicationUri], if any.
   String? endpointOf(String applicationUri) {
     for (final link in _links.values) {
@@ -191,10 +210,13 @@ class MetarFailoverClient {
     return null;
   }
 
-  /// Members of the set (see [serverUris]) that none of the configured
-  /// endpoints answers for. The client cannot reach them until it is given
-  /// their endpoint.
-  List<String> get membersWithoutEndpoint => serverUris.where((uri) => endpointOf(uri) == null).toList(growable: false);
+  /// Members of the set (see [serverUris]) that no known endpoint answers
+  /// for, nor is expected to (a discovered endpoint not identified yet). The
+  /// client cannot reach them until a server publishes their endpoint in
+  /// `ServerNetworkGroups` or it is given one.
+  List<String> get membersWithoutEndpoint => serverUris
+      .where((uri) => endpointOf(uri) == null && !_links.values.any((l) => l.expectedUri == uri))
+      .toList(growable: false);
 
   /// Fires on every failover, including the initial server selection.
   Stream<FailoverEvent> get failovers => _failovers.stream;
@@ -222,10 +244,10 @@ class MetarFailoverClient {
     _timer = Timer.periodic(pollInterval, (_) => _arbitrate());
   }
 
-  Future<void> _addEndpoint(String endpoint) async {
+  Future<void> _addEndpoint(String endpoint, {String? expectedUri}) async {
     final normalised = endpoint.trim();
     if (normalised.isEmpty || _links.containsKey(normalised)) return;
-    final link = _Link(normalised);
+    final link = _Link(normalised)..expectedUri = expectedUri;
     _links[normalised] = link;
 
     final client = await ClientIsolate.create(logLevel: logLevel);
@@ -248,10 +270,11 @@ class MetarFailoverClient {
       _log('[client] $normalised: session recovered');
       link.applicationUri = null;
       link.serverUris = const [];
+      link.networkGroups = const {};
       if (identical(_active, link)) await _subscribe(link);
     });
 
-    _log('[client] tracking $normalised');
+    _log('[client] tracking $normalised${expectedUri == null ? '' : ' (discovered: $expectedUri)'}');
   }
 
   Future<void> _arbitrate() async {
@@ -350,7 +373,40 @@ class MetarFailoverClient {
       link.serverUris = const [];
       _log('[client] ${link.endpoint}: no ServerUriArray (${e.runtimeType}); it advertises no redundant set');
     }
+    // Part 5 §6.3.10: NetworkGroupDataType[] -- {ServerUri, NetworkPaths:
+    // [{EndpointUrlList: [url, ...]}, ...]}. A member's first network path is
+    // the one this client uses; the others would be alternative routes.
+    try {
+      final groups = await client.read(NodeId.serverNetworkGroups).timeout(readTimeout);
+      link.networkGroups = {
+        if (groups.isArray)
+          for (final group in groups.asArray)
+            group['ServerUri'].asString: group['NetworkPaths'].asArray.isEmpty
+                ? const []
+                : group['NetworkPaths'][0]['EndpointUrlList'].asArray.map((u) => u.asString).toList(growable: false),
+      };
+    } catch (e) {
+      link.networkGroups = const {};
+      if (link.serverUris.isNotEmpty) {
+        _log('[client] ${link.endpoint}: no ServerNetworkGroups (${e.runtimeType}); members need configured endpoints');
+      }
+    }
     _reportMembership(link);
+    if (discoverMembers) await _discover(link);
+  }
+
+  /// Connects to every member of the set that [link] advertises an endpoint
+  /// for and that no known endpoint answers for (or is expected to).
+  Future<void> _discover(_Link link) async {
+    for (final entry in link.networkGroups.entries) {
+      final uri = entry.key;
+      if (uri == link.applicationUri || entry.value.isEmpty) continue;
+      if (endpointOf(uri) != null || _links.values.any((l) => l.expectedUri == uri)) continue;
+      final endpoint = entry.value.first;
+      if (_links.containsKey(endpoint)) continue;
+      _log('[client] discovered $uri at $endpoint from ${link.endpoint}\'s ServerNetworkGroups');
+      await _addEndpoint(endpoint, expectedUri: uri);
+    }
   }
 
   void _reportMembership(_Link link) {
@@ -359,11 +415,20 @@ class MetarFailoverClient {
     if (link.serverUris.isNotEmpty && !link.serverUris.contains(uri)) {
       _log('[client] ${link.endpoint}: $uri is missing from its own ServerUriArray; the set is misconfigured');
     }
-    // The ServerUris are identities: a member nobody answers for can only be
-    // reported, it cannot be dialled.
+    final expected = link.expectedUri;
+    if (expected != null && expected != uri) {
+      _log('[client] ${link.endpoint} answers as $uri, not as $expected, which it was discovered for');
+    }
+    for (final member in link.serverUris) {
+      if (!link.networkGroups.containsKey(member) && link.networkGroups.isNotEmpty) {
+        _log('[client] ${link.endpoint}: ServerNetworkGroups has no entry for member $member (Part 5 §6.3.10)');
+      }
+    }
+    // The ServerUris are identities: a member nobody answers for and no
+    // server publishes an endpoint for can only be reported, not dialled.
     for (final member in membersWithoutEndpoint) {
       if (_reportedMissing.add(member)) {
-        _log('[client] no endpoint configured for set member $member; pass --endpoint for it');
+        _log('[client] no endpoint known for set member $member; pass --endpoint for it');
       }
     }
     final duplicate = _links.values.where((l) => l.applicationUri == uri && !identical(l, link));
@@ -507,7 +572,7 @@ Future<void> main(List<String> args) async {
     stdout.write(_usage);
     return;
   }
-  final endpoints = flags['endpoint'] ?? const ['opc.tcp://localhost:4840', 'opc.tcp://localhost:4841'];
+  final endpoints = flags['endpoint'] ?? const ['opc.tcp://localhost:4840'];
 
   final client = MetarFailoverClient(
     endpoints: endpoints,
@@ -515,6 +580,7 @@ Future<void> main(List<String> args) async {
     pollInterval: Duration(milliseconds: int.parse(flags['poll']?.last ?? '2000')),
     hysteresis: int.parse(flags['hysteresis']?.last ?? '10'),
     identifyMembers: !flags.containsKey('no-identify'),
+    discoverMembers: !flags.containsKey('no-discover'),
   );
 
   await client.start();
@@ -531,16 +597,19 @@ Future<void> main(List<String> args) async {
 const String _usage = '''
 Usage: dart run example/metar_redundant_client.dart [options]
 
-  --endpoint <url>   Server endpoint, repeatable. Defaults to
-                     opc.tcp://localhost:4840 and opc.tcp://localhost:4841.
-                     Every member of the set needs one: ServerUriArray names
-                     the members by ApplicationUri, which cannot be dialled.
+  --endpoint <url>   Seed endpoint, repeatable; default opc.tcp://localhost:4840.
+                     One member is enough: the others are found through its
+                     ServerNetworkGroups. Give every member's endpoint for a
+                     set that does not publish them (or with --no-discover).
   --station <ICAO>   Station node to subscribe to (default: BIRK)
   --poll <ms>        ServiceLevel poll interval (default: 2000)
   --hysteresis <n>   Margin a Degraded rival must beat a Degraded active
                      server by (default: 10). Not used while the active
                      server is Healthy, nor when a Healthy one is available.
-  --no-identify      Do not read ServerArray / ServerUriArray; rank the
-                     --endpoint servers without matching them to the set
+  --no-identify      Do not read ServerArray / ServerUriArray /
+                     ServerNetworkGroups; rank the --endpoint servers without
+                     matching them to the set (implies --no-discover)
+  --no-discover      Do not connect to members learned from
+                     ServerNetworkGroups; only --endpoint servers are dialled
   --help
 ''';

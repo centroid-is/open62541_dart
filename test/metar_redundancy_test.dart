@@ -9,9 +9,10 @@ import '../example/metar_redundant_client.dart';
 import '../example/metar_redundant_server.dart';
 import 'common.dart';
 
-/// The NS0 type nodes of Part 5 §6.3.7 without a `NodeId` static.
+/// The NS0 type nodes of Part 5 §6.3.7 / §6.3.10 without a `NodeId` static.
 final serverRedundancyType = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVERREDUNDANCYTYPE);
 final nonTransparentRedundancyType = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANSPARENTREDUNDANCYTYPE);
+final nonTransparentNetworkRedundancyType = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANSPARENTNETWORKREDUNDANCYTYPE);
 
 /// In-process integration test for the redundant-METAR example.
 ///
@@ -23,6 +24,8 @@ final nonTransparentRedundancyType = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANS
 ///   * identify the members of the set by ApplicationUri (`ServerArray[0]`,
 ///     ns=0;i=2254) and match them against `ServerUriArray` (ns=0;i=11314),
 ///     which lists ServerUris -- identities, never dialled as endpoints,
+///   * discover the other members' endpoints from ONE seed endpoint through
+///     `ServerNetworkGroups` (ns=0;i=14415, Part 5 §6.3.10),
 ///   * move when the active server's data feed degrades,
 ///   * stay put when the server it left dies outright, and
 ///   * come back when the abandoned server returns as the healthier one.
@@ -143,7 +146,7 @@ void main() {
       String instance,
       int port,
       MetarSource source, {
-      required List<String> peers,
+      required Map<String, List<String>> peers,
       String? applicationUri,
     }) => MetarRedundantServer(
       instance: instance,
@@ -162,17 +165,28 @@ void main() {
       fakeA = FakeMetarSource('BIRK', recent());
       fakeB = FakeMetarSource('BIRK', recent());
 
-      serverA = buildServer('metar-a', 0, fakeA, peers: [uriB]);
-      serverB = buildServer('metar-b', 0, fakeB, peers: [uriA]);
+      // The ports are OS-picked, so A starts knowing B only by URI, B starts
+      // knowing A's endpoint, and A learns B's once B listens: what a
+      // deployment does when a member's address changes.
+      serverA = buildServer('metar-a', 0, fakeA, peers: {uriB: []});
       await serverA.start();
-      await serverB.start();
       portA = serverA.listenPort;
-      portB = serverB.listenPort;
       cleanup.add(() => serverA.stop());
+      serverB = buildServer(
+        'metar-b',
+        0,
+        fakeB,
+        peers: {
+          uriA: [serverA.endpoint],
+        },
+      );
+      await serverB.start();
+      portB = serverB.listenPort;
       cleanup.add(() => serverB.stop());
+      serverA.setPeer(uriB, [serverB.endpoint]);
 
-      // Both endpoints are configured: ServerUriArray names the members by
-      // ApplicationUri, which a client cannot dial.
+      // Both endpoints are configured here; the single-seed discovery has
+      // its own test.
       client = MetarFailoverClient(
         endpoints: [endpointOf(portA), endpointOf(portB)],
         pollInterval: clientPoll,
@@ -274,7 +288,15 @@ void main() {
         // Restarted on the port A had, under A's identity: that is the
         // endpoint the client is configured with (see test/common.dart) and
         // the member B advertises.
-        final restartedA = buildServer('metar-a2', portA, fakeA, peers: [uriB], applicationUri: uriA);
+        final restartedA = buildServer(
+          'metar-a2',
+          portA,
+          fakeA,
+          peers: {
+            uriB: [serverB.endpoint],
+          },
+          applicationUri: uriA,
+        );
         await restartedA.start();
         cleanup.add(() => restartedA.stop());
 
@@ -292,16 +314,49 @@ void main() {
       timeout: const Timeout(Duration(minutes: 3)),
     );
 
-    test('a member with no configured endpoint is reported, never dialled', () async {
-      // Only A is configured. The old discovery would have joined every
-      // ServerUriArray entry as an endpoint; those are ApplicationUris.
+    test('discovers the whole set from one seed endpoint through ServerNetworkGroups', () async {
+      // Only A's endpoint is given. ServerUriArray names B by ApplicationUri,
+      // which cannot be dialled; ServerNetworkGroups (Part 5 §6.3.10) maps
+      // that URI to B's endpoint, which the client then connects to.
+      final seeded = MetarFailoverClient(endpoints: [endpointOf(portA)], pollInterval: clientPoll, log: (_) {});
+      cleanup.add(() => seeded.stop());
+      await seeded.start();
+      expect(seeded.activeEndpoint, endpointOf(portA));
+      expect(
+        await waitUntil(() => seeded.endpointOf(uriB) == endpointOf(portB)),
+        isTrue,
+        reason: 'B\'s endpoint is learned from A\'s ServerNetworkGroups and B answers as $uriB there',
+      );
+      expect(seeded.knownEndpoints, unorderedEquals([endpointOf(portA), endpointOf(portB)]));
+      expect(seeded.membersWithoutEndpoint, isEmpty);
+      expect(seeded.networkGroups, {
+        uriA: [endpointOf(portA)],
+        uriB: [endpointOf(portB)],
+      }, reason: 'what the set advertises: ServerUris equal to ServerUriArray, each with its endpoint');
+      expect(await waitUntil(() => seeded.serviceLevels[endpointOf(portB)] == 250), isTrue);
+      expect(seeded.applicationUris, {endpointOf(portA): uriA, endpointOf(portB): uriB});
+      expect(seeded.serviceLevels.keys.where((e) => e.startsWith('urn:')), isEmpty, reason: 'URIs are never dialled');
+
+      // The discovered member is a full member: A degrades, the client moves.
+      serverA.forceServiceLevel(100);
+      expect(await waitUntil(() => seeded.activeEndpoint == endpointOf(portB)), isTrue);
+      expect(seeded.activeApplicationUri, uriB);
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('a member whose network group has no path is reported, never dialled', () async {
+      // A does not know where B is (its group for B has no network path).
+      serverA.setPeer(uriB, []);
       final partial = MetarFailoverClient(endpoints: [endpointOf(portA)], pollInterval: clientPoll, log: (_) {});
       cleanup.add(() => partial.stop());
       await partial.start();
       expect(partial.activeEndpoint, endpointOf(portA));
       expect(await waitUntil(() => partial.applicationUris[endpointOf(portA)] == uriA), isTrue);
       expect(partial.serverUris, {uriA, uriB});
-      expect(partial.membersWithoutEndpoint, [uriB], reason: 'B is a member, but the client has no endpoint for it');
+      expect(partial.networkGroups, {
+        uriA: [endpointOf(portA)],
+        uriB: <String>[],
+      });
+      expect(partial.membersWithoutEndpoint, [uriB], reason: 'B is a member, but no endpoint is known for it');
       expect(partial.endpointOf(uriB), isNull);
       await Future.delayed(clientPoll * 3);
       expect(partial.knownEndpoints, [endpointOf(portA)], reason: 'a ServerUri is not an address to dial');
@@ -401,17 +456,17 @@ void main() {
       // Part 5 §6.3.7: the base ServerRedundancyType (i=2034) is for
       // RedundancySupport None only; a server advertising Hot must type
       // Server/ServerRedundancy (i=2296) as NonTransparentRedundancyType
-      // (i=2039), the subtype that declares ServerUriArray.
+      // (i=2039), the subtype that declares ServerUriArray -- here its
+      // subtype NonTransparentNetworkRedundancyType (i=11945, §6.3.10),
+      // which adds ServerNetworkGroups.
       final typeRefs = await probe.browse(NodeId.serverRedundancy, referenceTypeId: NodeId.hasTypeDefinition);
       expect(typeRefs.map((r) => r.nodeId), [
-        nonTransparentRedundancyType,
+        nonTransparentNetworkRedundancyType,
       ], reason: 'Hot on the base ServerRedundancyType is forbidden by Part 5 §6.3.7');
-      final supertypes = await probe.browse(
-        nonTransparentRedundancyType,
-        direction: 1,
-        referenceTypeId: NodeId.hasSubtype,
-      );
-      expect(supertypes.map((r) => r.nodeId), [serverRedundancyType]);
+      Future<List<NodeId>> supertypeOf(NodeId type) async =>
+          (await probe.browse(type, direction: 1, referenceTypeId: NodeId.hasSubtype)).map((r) => r.nodeId).toList();
+      expect(await supertypeOf(nonTransparentNetworkRedundancyType), [nonTransparentRedundancyType]);
+      expect(await supertypeOf(nonTransparentRedundancyType), [serverRedundancyType]);
 
       // Each member has its own ApplicationUri (OPC 10000-4 §6.6.2.4: the
       // members of a non-transparent set must be distinguishable by it), which
@@ -433,6 +488,29 @@ void main() {
       expect(listed, [uriA, uriB]);
       expect(listed.where((u) => u.startsWith('opc.tcp://')), isEmpty, reason: 'ServerUris, not endpoints');
       expect((await probeB.read(NodeId.serverUriArray)).asArray.map((v) => v.asString).toList(), [uriB, uriA]);
+
+      // ServerNetworkGroups (OPC 10000-5 §6.3.10): one NetworkGroupDataType
+      // per ServerUriArray entry, in its order, each with one network path
+      // holding that member's endpoint. This is what lets a client find B
+      // from A.
+      final groups = await probe.read(NodeId.serverNetworkGroups);
+      expect(groups.isArray, isTrue, reason: 'a NetworkGroupDataType[]; got ${groups.value}');
+      expect(groups.asArray.map((g) => g['ServerUri'].asString), listed);
+      List<List<String>> pathsOf(DynamicValue group) => [
+        for (final path in group['NetworkPaths'].asArray)
+          path['EndpointUrlList'].asArray.map((u) => u.asString).toList(),
+      ];
+      expect(pathsOf(groups[0]), [
+        [endpointOf(portA)],
+      ]);
+      expect(pathsOf(groups[1]), [
+        [endpointOf(portB)],
+      ]);
+      final groupsB = await probeB.read(NodeId.serverNetworkGroups);
+      expect(groupsB.asArray.map((g) => g['ServerUri'].asString), [uriB, uriA]);
+      expect(pathsOf(groupsB[1]), [
+        [endpointOf(portA)],
+      ]);
     }, timeout: const Timeout(Duration(minutes: 2)));
   });
 

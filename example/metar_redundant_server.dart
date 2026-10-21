@@ -4,9 +4,9 @@
   Run the same file twice to get the pair (see example/README.md):
 
     dart run example/metar_redundant_server.dart --instance metar-a --port 4840 \
-        --peer urn:localhost:metar:metar-b
+        --peer urn:localhost:metar:metar-b=opc.tcp://localhost:4841
     dart run example/metar_redundant_server.dart --instance metar-b --port 4841 \
-        --peer urn:localhost:metar:metar-a
+        --peer urn:localhost:metar:metar-a=opc.tcp://localhost:4840
 
   What each instance demonstrates:
 
@@ -19,11 +19,13 @@
      health and reported in the Part 4 bands (Maintenance / NoData / Degraded
      / Healthy) through `Server.setVariableValueSource`, and the set itself
      through `Server.setRedundancy`: Server/ServerRedundancy typed
-     NonTransparentRedundancyType (Part 5 §6.3.7 forbids a non-None
-     RedundancySupport on the base type), RedundancySupport (i=3709) = Hot
-     and ServerUriArray listing the ApplicationUris of both members. Each
-     instance announces its own ApplicationUri (`urn:<host>:metar:<instance>`
-     by default), as Part 4 requires of the members of a non-transparent set.
+     NonTransparentNetworkRedundancyType (Part 5 §6.3.7 forbids a non-None
+     RedundancySupport on the base type), RedundancySupport (i=3709) = Hot,
+     ServerUriArray listing the ApplicationUris of both members and
+     ServerNetworkGroups (§6.3.10) mapping each of those URIs to the member's
+     endpoint, so a client given ONE endpoint finds the rest. Each instance
+     announces its own ApplicationUri (`urn:<host>:metar:<instance>` by
+     default), as Part 4 requires of the members of a non-transparent set.
      No vendor-specific nodes: any standards-based client can discover and
      rank the set.
 */
@@ -63,13 +65,13 @@ class MetarRedundantServer {
     required this.source,
     this.host = 'localhost',
     String? applicationUri,
-    List<String> peers = const [],
+    Map<String, List<String>> peers = const {},
     this.pollInterval = const Duration(minutes: 5),
     this.staleAfter = const Duration(hours: 2),
     this.logLevel = LogLevel.UA_LOGLEVEL_ERROR,
     void Function(String message)? log,
   }) : applicationUri = applicationUri ?? defaultApplicationUri(host, instance),
-       peers = List.unmodifiable(peers),
+       _peers = {for (final e in peers.entries) e.key: List.unmodifiable(e.value)},
        _log = log ?? print;
 
   /// The ApplicationUri an instance announces unless one is given:
@@ -96,8 +98,11 @@ class MetarRedundantServer {
   /// `ServerUriArray`.
   final String applicationUri;
 
-  /// The ApplicationUris of the other members of the redundant set.
-  final List<String> peers;
+  /// The other members of the redundant set: ApplicationUri to the endpoint
+  /// URLs it can be reached at (an empty list for a member whose address is
+  /// not known; it is still listed in `ServerUriArray`). See [setPeer].
+  Map<String, List<String>> get peers => Map.unmodifiable(_peers);
+  final Map<String, List<String>> _peers;
 
   /// How often to re-fetch the observation.
   final Duration pollInterval;
@@ -236,7 +241,7 @@ class MetarRedundantServer {
   }
 
   /// The ServerUris of the set, this member first (OPC 10000-5 §6.3.9).
-  List<String> _serverUriArray() => [applicationUri, ...peers];
+  List<String> _serverUriArray() => [applicationUri, ..._peers.keys];
 
   void _publishMetarNodes(Server server) {
     server.addCustomType(metarTypeId, _metarSchema());
@@ -280,20 +285,35 @@ class MetarRedundantServer {
   /// open62541 pins `ServiceLevel` at 255 through an internal callback that
   /// accepts no write; [Server.setVariableValueSource] swaps the value source
   /// of that existing node, which is the only way to publish a real service
-  /// level. The set itself is [Server.setRedundancy]'s job: it retypes
-  /// `Server/ServerRedundancy` to `NonTransparentRedundancyType` (creating
-  /// the type, which the reduced NS0 lacks), serves `RedundancySupport` and
-  /// adds `ServerUriArray` (OPC 10000-5 §6.3.9: the ServerUris, i.e. the
-  /// ApplicationUris, of the members, the local one included -- identities,
-  /// not addresses). Every member of the set runs and serves data
-  /// continuously and the client picks one by ServiceLevel, which is what
-  /// `Hot` means.
+  /// level. The set itself is [_publishSet]'s job.
   void _publishRedundancySurface(Server server) {
     server.setVariableValueSource(
       NodeId.serviceLevel,
       onRead: () => DynamicValue(value: serviceLevel, typeId: NodeId.byte, name: 'ServiceLevel'),
     );
-    server.setRedundancy(RedundancySupport.hot, serverUris: _serverUriArray());
+    _publishSet(server);
+  }
+
+  /// [Server.setRedundancy] with the members and their endpoints: it retypes
+  /// `Server/ServerRedundancy` to `NonTransparentNetworkRedundancyType`
+  /// (creating the types and DataType nodes the reduced NS0 lacks), serves
+  /// `RedundancySupport`, adds `ServerUriArray` (OPC 10000-5 §6.3.9: the
+  /// ServerUris, i.e. the ApplicationUris, of the members, the local one
+  /// first -- identities, not addresses) and `ServerNetworkGroups` (§6.3.10:
+  /// for each of those URIs the endpoints it answers at, which is how a
+  /// client seeded with one member's endpoint finds the others). Every
+  /// member of the set runs and serves data continuously and the client
+  /// picks one by ServiceLevel, which is what `Hot` means. Called again
+  /// whenever the set changes ([setPeer]); the arrays update in place.
+  void _publishSet(Server server) {
+    server.setRedundancy(
+      RedundancySupport.hot,
+      serverUris: _serverUriArray(),
+      networkGroups: {
+        applicationUri: [endpoint],
+        ..._peers,
+      },
+    );
   }
 
   /// The data-source read for the struct node.
@@ -400,6 +420,21 @@ class MetarRedundantServer {
     return s;
   }
 
+  /// Adds or updates the peer [uri] with the endpoints it answers at, and
+  /// republishes `ServerUriArray` / `ServerNetworkGroups` when the server is
+  /// running: a member whose address changed, or one that was started after
+  /// this instance on an OS-picked port.
+  void setPeer(String uri, List<String> endpoints) {
+    _peers[uri] = List.unmodifiable(endpoints);
+    final server = _server;
+    if (server != null) {
+      _publishSet(server);
+      _log(
+        '[$instance] set: ${_serverUriArray().join(', ')}; $uri at ${endpoints.isEmpty ? '(unknown)' : endpoints.join(', ')}',
+      );
+    }
+  }
+
   /// Stops polling, drops the ServiceLevel to 0 and shuts the server down.
   ///
   /// [gracePeriod] keeps the server answering for a moment *after* the service
@@ -470,8 +505,12 @@ Usage: dart run example/metar_redundant_server.dart [options]
                         used in the default ApplicationUri (default: localhost)
   --uri <uri>           This server's ApplicationUri, its identity in the
                         redundant set (default: urn:<host>:metar:<instance>)
-  --peer <uri>          A peer's ApplicationUri, repeatable. Published in
-                        ServerUriArray after this server's own.
+  --peer <uri>[=<url>]  A peer: its ApplicationUri and, after `=`, an
+                        endpoint URL it answers at. Repeatable (also for a
+                        second URL of the same peer). Published in
+                        ServerUriArray after this server's own, and in
+                        ServerNetworkGroups, which is where a client seeded
+                        with this server's endpoint learns the peer's.
   --station <ICAO>      Station to publish (default: BIRK, Reykjavik Airport)
   --poll <seconds>      Fetch interval (default: 300)
   --stale <seconds>     Age at which data is flagged Bad_NoCommunication
@@ -502,7 +541,7 @@ class _Options {
   final int port;
   final String host;
   final String? applicationUri;
-  final List<String> peers;
+  final Map<String, List<String>> peers;
   final String station;
   final Duration pollInterval;
   final Duration staleAfter;
@@ -517,7 +556,7 @@ class _Options {
       port: int.parse(flags['port']?.last ?? '4840'),
       host: flags['host']?.last ?? 'localhost',
       applicationUri: flags['uri']?.last,
-      peers: flags['peer'] ?? const [],
+      peers: parsePeers(flags['peer'] ?? const []),
       station: (flags['station']?.last ?? 'BIRK').toUpperCase(),
       pollInterval: Duration(seconds: int.parse(flags['poll']?.last ?? '300')),
       staleAfter: Duration(seconds: int.parse(flags['stale']?.last ?? '7200')),
@@ -526,6 +565,21 @@ class _Options {
       help: flags.containsKey('help'),
     );
   }
+}
+
+/// `--peer` values, `<uri>` or `<uri>=<endpoint url>`, as a map from the
+/// peer's ApplicationUri to its endpoint URLs (several entries for one URI
+/// accumulate; a bare URI contributes no URL).
+Map<String, List<String>> parsePeers(List<String> values) {
+  final peers = <String, List<String>>{};
+  for (final value in values) {
+    final eq = value.indexOf('=');
+    final uri = (eq < 0 ? value : value.substring(0, eq)).trim();
+    if (uri.isEmpty) continue;
+    final urls = peers.putIfAbsent(uri, () => []);
+    if (eq >= 0 && value.substring(eq + 1).trim().isNotEmpty) urls.add(value.substring(eq + 1).trim());
+  }
+  return peers;
 }
 
 /// Tiny `--key value` / `--key=value` parser, so the examples stay free of
