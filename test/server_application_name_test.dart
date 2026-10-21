@@ -11,9 +11,10 @@ void main() {
   // What open62541's UA_ServerConfig_setMinimal puts in the config.
   const defaultApplicationName = 'open62541-based OPC UA Application';
   const defaultApplicationUri = 'urn:open62541.unconfigured.application';
+  const defaultProductUri = 'http://open62541.org';
 
-  final serverArray = NodeId.fromNumeric(0, 2254);
-  final namespaceArray = NodeId.fromNumeric(0, 2255);
+  final serverArray = NodeId.serverArray; // i=2254
+  final namespaceArray = NodeId.namespaceArray; // i=2255
   final buildInfoProductUri = NodeId.fromNumeric(0, 2262);
   final buildInfoProductName = NodeId.fromNumeric(0, 2261);
   final buildInfoManufacturerName = NodeId.fromNumeric(0, 2263);
@@ -81,5 +82,6 @@ void main() {
     addTearDown(server.delete);
     expect(server.applicationName, defaultApplicationName);
     expect(server.applicationUri, defaultApplicationUri);
+    expect(server.productUri, defaultProductUri);
   });
 }

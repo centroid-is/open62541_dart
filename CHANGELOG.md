@@ -18,7 +18,7 @@ changes that ship the same native library version.
   / `Server.productUri` read them back. `productUri` sets both places
   open62541 keeps it, `ApplicationDescription.productUri` and
   `BuildInfo.productUri` (`Server/ServerStatus/BuildInfo/ProductUri`); left
-  out it stays `urn:open62541.open62541` even when `productName` /
+  out it stays open62541's `http://open62541.org` even when `productName` /
   `manufacturerName` are set. Each one is opt-in: `Server()` still announces
   the defaults.
   Once security is configured the ApplicationUri must match the URI in the

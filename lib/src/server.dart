@@ -248,8 +248,8 @@ class Server {
   /// * [productUri] - the product's URI, set on BOTH places open62541 keeps
   ///   it: `ApplicationDescription.productUri` (GetEndpoints/FindServers) and
   ///   `BuildInfo.productUri` (`Server/ServerStatus/BuildInfo/ProductUri`).
-  ///   Left `null` it stays `urn:open62541.open62541` even when the product
-  ///   name is set.
+  ///   Left `null` it stays open62541's `http://open62541.org` even when the
+  ///   product name is set.
   ///
   /// Each one left `null` keeps open62541's default, so an existing
   /// `Server()` is unchanged.
