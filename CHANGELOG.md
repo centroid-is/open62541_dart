@@ -6,6 +6,14 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- `ServerStatistics` gained `liveDataChangeNotificationCount` and
+  `liveNotificationCount`: the per-subscription `dataChangeNotificationsCount`
+  / `notificationsCount` (data changes + events; keep-alives carry none) of
+  the NS0 SubscriptionDiagnosticsArray summed over the subscriptions alive
+  right now (`null` without diagnostics). Lets a server derive its
+  notification rate without hooking the publish path. Not cumulative since
+  server start: a deleted subscription takes its share of the sum with it, so
+  rate consumers difference the value and clamp a negative delta to zero.
 - **`Server(applicationName:, applicationUri:, productName:, manufacturerName:, productUri:)`:
   the identity a server announces.** open62541's minimal config names every
   server `open62541-based OPC UA Application` with the ApplicationUri
