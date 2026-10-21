@@ -66,6 +66,26 @@ jobs:
         working-directory: flutter_example
         run: flutter test test/library_test.dart
 
+      # On Windows flutter_tools discards flutter_tester's exit code
+      # (flutter_tester_device.dart, `finished`: "On Windows, the [exitCode]
+      # and the terminating signal have no correlation"), so a tester that
+      # dies mid-run is indistinguishable from one that finished: the test
+      # channel just closes, package:test marks the running test and every
+      # test after it complete without a result (the github reporter still
+      # prints them with a ✅), the summary counts only the tests that really
+      # finished ("🎉 4 tests passed." under seven ✅ lines) and the step exits
+      # 1 with no ❌ anywhere. Only Windows itself records the crash: print
+      # the Application-log entries (exception code, faulting module and
+      # offset) so the next occurrence can be attributed.
+      - name: Crash records for flutter_tester (Windows Application log)
+        if: failure()
+        shell: pwsh
+        run: |
+          $events = Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001; StartTime=(Get-Date).AddHours(-2)} -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'flutter_tester|dart' }
+          if (-not $events) { "No Application-log crash record for flutter_tester/dart in the last 2 hours."; exit 0 }
+          foreach ($e in $events) { "--- $($e.TimeCreated) event $($e.Id)"; $e.Message }
+
   macos:
     name: macOS Test
     runs-on: macos-latest
