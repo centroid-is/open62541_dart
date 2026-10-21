@@ -1015,6 +1015,11 @@ class Client implements ClientApi, DataValueMonitoringApi {
                   reference.typeId = reference.typeId ?? temporary.typeId; // Prefer explicitly fetched type id
                   reference.enumFields = reference.enumFields ?? temporary.enumFields;
                   reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
+                case AttributeId.UA_ATTRIBUTEID_VALUERANK:
+                case AttributeId.UA_ATTRIBUTEID_ARRAYDIMENSIONS:
+                  // An Int32 scalar / a UInt32 array, delivered as the value
+                  // (read one of them per call: both land in `value`).
+                  reference.value = (await _variantToValueAutoSchema(value!, null)).value;
                 case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
                   final temporary = OpcUaDynamicValueSerializer.fromDataTypeDefinition(
                     reference.typeId ?? value!.type.ref.typeId.toNodeId(),

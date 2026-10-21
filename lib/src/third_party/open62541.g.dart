@@ -874,6 +874,17 @@ external int UA_Server_addWriterGroup(
   ffi.Pointer<UA_NodeId> wgId,
 );
 
+/// View Service Set
+/// ----------------
+/// The View Service Set allows Clients to discover Nodes by browsing the
+/// information model.
+@ffi.Native<UA_BrowseResult Function(ffi.Pointer<UA_Server>, UA_UInt32, ffi.Pointer<UA_BrowseDescription>)>()
+external UA_BrowseResult UA_Server_browse(
+  ffi.Pointer<UA_Server> server,
+  int maxReferences,
+  ffi.Pointer<UA_BrowseDescription> bd,
+);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>)>()
 external int UA_Server_delete(ffi.Pointer<UA_Server> server);
 
@@ -3119,20 +3130,6 @@ final class UA_DataValue extends ffi.Struct {
   external int substitute;
 }
 
-final class UA_DecodeBinaryOptions extends ffi.Struct {
-  external ffi.Pointer<UA_DataTypeArray> customTypes;
-
-  external ffi.Pointer<UA_NamespaceMapping> namespaceMapping;
-
-  external ffi.Pointer<ffi.Void> callocContext;
-
-  external ffi.Pointer<ffi.NativeFunction<ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, ffi.Size, ffi.Size)>>
-  calloc;
-
-  @ffi.Size()
-  external int decodedLength;
-}
-
 enum UA_DeadbandType {
   UA_DEADBANDTYPE_NONE(0),
   UA_DEADBANDTYPE_ABSOLUTE(1),
@@ -3149,6 +3146,43 @@ enum UA_DeadbandType {
     2147483647 => __UA_DEADBANDTYPE_FORCE32BIT,
     _ => throw ArgumentError('Unknown value for UA_DeadbandType: $value'),
   };
+}
+
+final class UA_DecodeBinaryOptions extends ffi.Struct {
+  external ffi.Pointer<UA_DataTypeArray> customTypes;
+
+  external ffi.Pointer<UA_NamespaceMapping> namespaceMapping;
+
+  external ffi.Pointer<ffi.Void> callocContext;
+
+  external ffi.Pointer<
+    ffi.NativeFunction<
+      ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void> callocContext, ffi.Size nelem, ffi.Size elsize)
+    >
+  >
+  calloc;
+
+  @ffi.Size()
+  external int decodedLength;
+
+  static ffi.Pointer<UA_DecodeBinaryOptions> $allocate(
+    ffi.Allocator $allocator, {
+    required ffi.Pointer<UA_DataTypeArray> customTypes,
+    required ffi.Pointer<UA_NamespaceMapping> namespaceMapping,
+    required ffi.Pointer<ffi.Void> callocContext,
+    required ffi.Pointer<
+      ffi.NativeFunction<
+        ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void> callocContext, ffi.Size nelem, ffi.Size elsize)
+      >
+    >
+    calloc,
+    required int decodedLength,
+  }) => $allocator<UA_DecodeBinaryOptions>()
+    ..ref.customTypes = customTypes
+    ..ref.namespaceMapping = namespaceMapping
+    ..ref.callocContext = callocContext
+    ..ref.calloc = calloc
+    ..ref.decodedLength = decodedLength;
 }
 
 final class UA_DeleteEventDetails extends ffi.Opaque {}
@@ -55420,6 +55454,28 @@ const int UA_NS0ID_YARRAYITEMTYPE_VALUEPRECISION = 12031;
 
 const int UA_NS0ID_YARRAYITEMTYPE_XAXISDEFINITION = 12037;
 
+/// Namespace Mapping
+/// -----------------
+///
+/// Every :ref:`nodeid` references a namespace index. Actually the namespace is
+/// identified by its URI. The namespace-array of the server maps the URI to the
+/// namespace index in the array. Namespace zero always has the URI
+/// ```http://opcfoundation.org/UA/```. Namespace one has the application URI of
+/// the server. All namespaces beyond get a custom assignment.
+///
+/// In order to have predictable NodeIds, a client might predefined its own
+/// namespace array that is different from the server's. When a NodeId is decoded
+/// from a network message (binary or JSON), a mapping-table can be used to
+/// automatically translate between the remote and local namespace index. The
+/// mapping is typically done by the client who can generate the mapping table
+/// after reading the namespace-array of the server. The reverse mapping is done
+/// in the encoding if the mapping table is set in the options.
+///
+/// The mapping table also contains the full URI names. It is also used to
+/// translate the ``NamespaceUri`` field of an ExpandedNodeId into the namespace
+/// index of the NodeId embedded in the ExpandedNodeId.
+final class UA_NamespaceMapping extends ffi.Opaque {}
+
 enum UA_NamingRuleType {
   UA_NAMINGRULETYPE_MANDATORY(1),
   UA_NAMINGRULETYPE_OPTIONAL(2),
@@ -55611,8 +55667,6 @@ enum UA_NodeClass {
   };
 }
 
-final class UA_NamespaceMapping extends ffi.Opaque {}
-
 final class UA_NodeId extends ffi.Struct {
   @UA_UInt16()
   external int namespaceIndex;
@@ -55705,6 +55759,24 @@ final class UA_ObjectAttributes extends ffi.Struct {
 
   @UA_Byte()
   external int eventNotifier;
+}
+
+final class UA_ObjectTypeAttributes extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedAttributes;
+
+  external UA_LocalizedText displayName;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt32()
+  external int writeMask;
+
+  @UA_UInt32()
+  external int userWriteMask;
+
+  @ffi.Bool()
+  external bool isAbstract;
 }
 
 enum UA_OpenFileMode {
