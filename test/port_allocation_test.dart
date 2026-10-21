@@ -32,11 +32,26 @@ void _identify(Server server, String id) {
   server.addVariableNode(_idNodeId, DynamicValue(value: id, typeId: NodeId.uastring, name: 'server.id'));
 }
 
+/// Upper bound on one connect or one read. Nothing in this file waits
+/// unboundedly: a step that does not finish fails the test instead of
+/// hanging it until the runner's timeout.
+const _step = Duration(seconds: 10);
+
+/// Connects to [port], reads the server's identity, and deletes the client
+/// whatever happens, so a failed expectation never leaves a client pumping.
 Future<String> _whoAnswers(int port) async {
-  final client = await setupClient(port);
+  final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+  var pumping = true;
+  () async {
+    while (pumping && client.runIterate(const Duration(milliseconds: 10))) {
+      await Future.delayed(const Duration(milliseconds: 5));
+    }
+  }();
   try {
-    return (await client.read(_idNodeId)).value as String;
+    await client.connect('opc.tcp://127.0.0.1:$port').timeout(_step);
+    return (await client.read(_idNodeId).timeout(_step)).value as String;
   } finally {
+    pumping = false;
     await client.delete();
   }
 }
@@ -91,85 +106,104 @@ void main() {
       reason: 'port $port must be in use by the server that reported it',
     );
     expect(await _whoAnswers(port), 'the one');
-  });
+  }, timeout: const Timeout(Duration(seconds: 30)));
 
   test('servers started at the same time, across isolates, never share a port', () async {
     const isolates = 6;
     const serversPerIsolate = 4;
 
+    // Every isolate's stop port is registered before anything can fail, so no
+    // server outlives the test on any path (a timeout included).
     final controls = <SendPort>[];
-    final owners = <int, String>{};
-    try {
-      final replies = <Future<dynamic>>[];
-      for (var i = 0; i < isolates; i++) {
-        final reply = ReceivePort();
-        replies.add(reply.first);
-        await Isolate.spawn(_serverIsolate, <Object>[reply.sendPort, 'isolate$i', serversPerIsolate]);
-      }
-      for (final message in await Future.wait(replies)) {
-        final parts = message as List;
-        controls.add(parts[0] as SendPort);
-        for (final entry in parts.skip(1)) {
-          final port = (entry as List)[0] as int;
-          final id = entry[1] as String;
-          expect(owners, isNot(contains(port)), reason: 'port $port handed to both ${owners[port]} and $id');
-          owners[port] = id;
-        }
-      }
-      expect(owners, hasLength(isolates * serversPerIsolate));
-
-      // Every port leads to the server that reported it.
-      for (final MapEntry(key: port, value: id) in owners.entries) {
-        expect(await _whoAnswers(port), id, reason: 'port $port');
-      }
-    } finally {
+    addTearDown(() {
       for (final control in controls) {
         control.send('stop');
       }
-    }
-  });
-
-  test('why a probed port was unsafe: two servers given one port both bind it and split the connections', () async {
-    // What freeTcpPort() did: bind 0, read the number, close. Nothing holds
-    // the port once it is reported.
-    final probe = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
-    final port = probe.port;
-    await probe.close();
-
-    final servers = <Server>[];
-    addTearDown(() {
-      for (final server in servers) {
-        server.shutdown();
-        server.delete();
-      }
     });
-    Server startOn(int port, String id) {
-      final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
-      server.start();
-      _identify(server, id);
-      servers.add(server);
-      () async {
-        while (server.runIterate()) {
-          await Future.delayed(const Duration(milliseconds: 20));
+
+    final replies = <Future<dynamic>>[];
+    for (var i = 0; i < isolates; i++) {
+      final reply = ReceivePort();
+      replies.add(reply.first);
+      await Isolate.spawn(_serverIsolate, <Object>[reply.sendPort, 'isolate$i', serversPerIsolate]);
+    }
+    final reported = <(int, String)>[];
+    for (final message in await Future.wait(replies).timeout(_step)) {
+      final parts = message as List;
+      controls.add(parts[0] as SendPort);
+      for (final entry in parts.skip(1)) {
+        reported.add(((entry as List)[0] as int, entry[1] as String));
+      }
+    }
+
+    final owners = <int, String>{};
+    for (final (port, id) in reported) {
+      expect(owners, isNot(contains(port)), reason: 'port $port handed to both ${owners[port]} and $id');
+      owners[port] = id;
+    }
+    expect(owners, hasLength(isolates * serversPerIsolate));
+
+    // Every port leads to the server that reported it.
+    for (final MapEntry(key: port, value: id) in owners.entries) {
+      expect(await _whoAnswers(port), id, reason: 'port $port');
+    }
+  }, timeout: const Timeout(Duration(seconds: 90)));
+
+  test(
+    'why a probed port was unsafe: two servers given one port both bind it and split the connections',
+    () async {
+      // What freeTcpPort() did: bind 0, read the number, close. Nothing holds
+      // the port once it is reported.
+      final probe = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
+      final port = probe.port;
+      await probe.close();
+
+      final servers = <Server>[];
+      addTearDown(() {
+        for (final server in servers) {
+          server.shutdown();
+          server.delete();
         }
-      }();
-      return server;
-    }
+      });
+      Server startOn(int port, String id) {
+        final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+        server.start();
+        _identify(server, id);
+        servers.add(server);
+        () async {
+          while (server.runIterate()) {
+            await Future.delayed(const Duration(milliseconds: 20));
+          }
+        }();
+        return server;
+      }
 
-    final owner = startOn(port, 'owner');
-    expect(owner.port, port);
-    // open62541 sets SO_REUSEPORT on its listen sockets, so the second bind
-    // does not fail: the collision is silent.
-    final squatter = startOn(port, 'squatter');
-    expect(squatter.port, port);
+      final owner = startOn(port, 'owner');
+      expect(owner.port, port);
+      // open62541 sets SO_REUSEPORT on its listen sockets, so the second bind
+      // does not fail: the collision is silent.
+      final squatter = startOn(port, 'squatter');
+      expect(squatter.port, port);
 
-    // Linux spreads the connections over both listeners (by 4-tuple hash);
-    // the BSDs give them all to the most recently bound one. Either way the
-    // owner's clients end up on the squatter.
-    final answered = <String>{};
-    for (var i = 0; i < 24 && !answered.contains('squatter'); i++) {
-      answered.add(await _whoAnswers(port));
-    }
-    expect(answered, contains('squatter'), reason: 'connections to port $port reached $answered');
-  }, skip: Platform.isWindows ? 'Windows has no SO_REUSEPORT; the collision there is a bind failure' : null);
+      // Linux spreads the connections over both listeners by 4-tuple hash, so
+      // a handful of connects reaches the squatter. Each connect is bounded by
+      // [_step]; the loop ends at the first squatter answer.
+      final answered = <String>{};
+      for (var i = 0; i < 12 && !answered.contains('squatter'); i++) {
+        answered.add(await _whoAnswers(port));
+      }
+      expect(answered, contains('squatter'), reason: 'connections to port $port reached $answered');
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+    skip: _onlyOnLinux,
+  );
 }
+
+/// The squatter illustration is Linux-only. Two SO_REUSEPORT listeners on one
+/// port behave differently per kernel: on the macOS CI runner this test
+/// timed out (a connect to the doubly bound port never completed), and
+/// Windows has no SO_REUSEPORT at all, where the collision is a bind failure
+/// instead. The guarantees live in the first two tests, which run everywhere.
+final _onlyOnLinux = Platform.isLinux
+    ? null
+    : 'kernel behaviour for two SO_REUSEPORT listeners differs; illustrated on Linux only';
