@@ -18,18 +18,29 @@ final theInt = NodeId.fromString(1, 'the.int');
 
 const serverStateRunning = 0;
 const serverStateShutdown = 4;
+const defaultServiceLevel = 255; // open62541's readServiceLevel
+const ownServiceLevel = 200;
 const delay = Duration(seconds: 3);
 
 /// A server on its own isolate. Reports `['port', port, control]`, pumps
 /// until anything arrives on `control`, then shuts down the way [mode] says
 /// ('arg': `shutdown(delay:)`, 'config': `shutdownDelay` then `shutdown()`,
-/// 'plain': `shutdown()`) and reports `['stopped', millisecondsBlocked]`.
+/// 'service': `shutdown(delay:, announceServiceLevel: true)`, 'service-own':
+/// the same on a server serving its own ServiceLevel (200) through
+/// `setVariableValueSource`, 'plain': `shutdown()`) and reports
+/// `['stopped', millisecondsBlocked]`.
 void _serverIsolate(List<Object> args) {
   final reply = args[0] as SendPort;
   final mode = args[1] as String;
 
   final server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
   server.addVariableNode(theInt, DynamicValue(name: 'the.int', value: 42, typeId: NodeId.int32));
+  if (mode == 'service-own') {
+    server.setVariableValueSource(
+      NodeId.serviceLevel,
+      onRead: () => DynamicValue(value: ownServiceLevel, typeId: NodeId.byte, name: 'ServiceLevel'),
+    );
+  }
   server.start();
 
   final control = ReceivePort();
@@ -47,6 +58,8 @@ void _serverIsolate(List<Object> args) {
       case 'config':
         server.shutdownDelay = delay;
         server.shutdown();
+      case 'service' || 'service-own':
+        server.shutdown(delay: delay, announceServiceLevel: true);
       default:
         server.shutdown();
     }
@@ -101,6 +114,8 @@ void main() {
       final data = await client.readValue(theInt);
       expect(data.isGood, isTrue);
       expect(data.value.asInt, 42);
+      // Not announced through ServiceLevel unless asked.
+      expect((await client.read(NodeId.serviceLevel)).asInt, defaultServiceLevel);
       // And the clock runs.
       await Future.delayed(const Duration(milliseconds: 1100));
       expect((await client.read(secondsTillShutdownId)).asInt, lessThan(secondsLeft));
@@ -111,6 +126,20 @@ void main() {
       expect(blocked, lessThan(delay.inMilliseconds + 1500));
       await expectLater(client.read(theInt), throwsA(anything));
     }, timeout: const Timeout(Duration(seconds: 30)));
+
+    for (final (mode, before) in [('service', defaultServiceLevel), ('service-own', ownServiceLevel)]) {
+      test('announceServiceLevel drops ServiceLevel from $before to 0 for the delay ($mode)', () async {
+        await spawn(mode);
+        expect((await client.read(NodeId.serviceLevel)).asInt, before);
+        control.send('go');
+        await Future.delayed(const Duration(milliseconds: 300));
+        // Part 4 Table 105: 0 tells the clients of a redundant set to leave.
+        expect((await client.read(NodeId.serviceLevel)).asInt, 0);
+        expect((await client.read(stateId)).asInt, serverStateShutdown);
+        expect((await client.readValue(theInt)).isGood, isTrue);
+        expect(await stopped(), greaterThanOrEqualTo(delay.inMilliseconds));
+      }, timeout: const Timeout(Duration(seconds: 30)));
+    }
 
     test('a shutdownDelay set beforehand is honoured by shutdown()', () async {
       await spawn('config');

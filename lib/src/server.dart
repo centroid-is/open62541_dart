@@ -3014,6 +3014,17 @@ class Server {
   /// test) live on another isolate. Without a delay the call is immediate,
   /// as it always was.
   ///
+  /// A redundant server also drops its `ServiceLevel` (`i=2267`) to 0 for
+  /// the delay with [announceServiceLevel]: Part 4 Table 105 makes
+  /// ServiceLevel 0 the signal for the clients of a redundant set to move to
+  /// another member, and a client that watches the service levels rather
+  /// than `ServerStatus` needs it. open62541 serves ServiceLevel through a
+  /// callback value source (a constant 255) that accepts no write
+  /// (`Bad_WriteNotSupported`), so the announcement replaces the source,
+  /// also when this server installed one of its own with
+  /// [setVariableValueSource] (the #108 way); nothing is restored, the
+  /// server stops at the end of the delay. Only meaningful with a delay.
+  ///
   /// Throws an exception if the shutdown operation fails, with the error
   /// message including the status code.
   ///
@@ -3025,7 +3036,7 @@ class Server {
   ///   print('Failed to shutdown server: $e');
   /// }
   /// ```
-  void shutdown({Duration? delay}) {
+  void shutdown({Duration? delay, bool announceServiceLevel = false}) {
     if (_server == ffi.nullptr) {
       throw StateError('Server has been deleted; shutdown() must be called before delete()');
     }
@@ -3046,6 +3057,16 @@ class Server {
         NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_SECONDSTILLSHUTDOWN),
         DynamicValue(value: seconds, typeId: NodeId.uint32),
       );
+      if (announceServiceLevel) {
+        // ServiceLevel is a callback value source on every open62541 server
+        // (ua_server_ns0.c, readServiceLevel) without a write function, so a
+        // write answers Bad_WriteNotSupported and a server's own source would
+        // swallow one anyway: replace the source for the delay.
+        setVariableValueSource(
+          NodeId.serviceLevel,
+          onRead: () => DynamicValue(value: 0, typeId: NodeId.byte, name: 'ServiceLevel'),
+        );
+      }
       final deadline = DateTime.now().add(Duration(seconds: seconds));
       while (DateTime.now().isBefore(deadline)) {
         // Blocks until there is work or for at most 500 ms (UA_MAXTIMEOUT).
