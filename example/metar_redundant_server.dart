@@ -14,29 +14,26 @@
      the decoded observation, served from a DATA-SOURCE variable node through
      `onReadValue` so every read carries a real OPC UA StatusCode and the
      observation's own sourceTimestamp.
-   * The Part 4 / Part 5 non-transparent redundancy surface published on the
-     STANDARD NS0 nodes via `Server.setVariableValueSource`: ServiceLevel
-     (i=2267) computed live from this instance's own health and reported in
-     the Part 4 bands (Maintenance / NoData / Degraded / Healthy),
-     RedundancySupport (i=3709) = Hot, and ServerUriArray listing the
-     ApplicationUris of both members of the set. Each instance announces its
-     own ApplicationUri (`urn:<host>:metar:<instance>` by default), as Part 4
-     requires of the members of a non-transparent set. No vendor-specific
-     nodes: any standards-based client can discover and rank the set.
+   * The Part 4 / Part 5 non-transparent redundancy surface on the STANDARD
+     NS0 nodes: ServiceLevel (i=2267) computed live from this instance's own
+     health and reported in the Part 4 bands (Maintenance / NoData / Degraded
+     / Healthy) through `Server.setVariableValueSource`, and the set itself
+     through `Server.setRedundancy`: Server/ServerRedundancy typed
+     NonTransparentRedundancyType (Part 5 §6.3.7 forbids a non-None
+     RedundancySupport on the base type), RedundancySupport (i=3709) = Hot
+     and ServerUriArray listing the ApplicationUris of both members. Each
+     instance announces its own ApplicationUri (`urn:<host>:metar:<instance>`
+     by default), as Part 4 requires of the members of a non-transparent set.
+     No vendor-specific nodes: any standards-based client can discover and
+     rank the set.
 */
 
 import 'dart:async';
 import 'dart:io';
 
 import 'package:open62541/open62541.dart';
-import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 
 import 'metar_common.dart';
-
-/// OPC UA Part 5 `RedundancySupport` enumeration value for Hot redundancy:
-/// every member of the set runs and serves data continuously, and the client
-/// picks one by ServiceLevel.
-const int redundancySupportHot = 3;
 
 /// The ServiceLevel bands of OPC 10000-4 §6.6.2.4.2, Table 105.
 ///
@@ -241,14 +238,6 @@ class MetarRedundantServer {
   /// The ServerUris of the set, this member first (OPC 10000-5 §6.3.9).
   List<String> _serverUriArray() => [applicationUri, ...peers];
 
-  static final NodeId _serverUriArrayNodeId = NodeId.fromNumeric(
-    0,
-    raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERURIARRAY,
-  );
-
-  DynamicValue _serverUriArrayValue() =>
-      DynamicValue.fromList(_serverUriArray(), typeId: NodeId.uastring, name: 'ServerUriArray');
-
   void _publishMetarNodes(Server server) {
     server.addCustomType(metarTypeId, _metarSchema());
     server.addDataTypeNode(
@@ -285,43 +274,26 @@ class MetarRedundantServer {
     );
   }
 
-  /// Replaces the value source of the standard NS0 redundancy nodes.
+  /// Publishes this instance's health and its place in the set on the
+  /// standard NS0 nodes.
   ///
-  /// open62541 pins `ServiceLevel` at 255 through an internal callback and
-  /// stores `RedundancySupport = None`; neither accepts a write.
-  /// [Server.setVariableValueSource] swaps the value source of those existing
-  /// nodes, which is the only way to publish a real service level.
+  /// open62541 pins `ServiceLevel` at 255 through an internal callback that
+  /// accepts no write; [Server.setVariableValueSource] swaps the value source
+  /// of that existing node, which is the only way to publish a real service
+  /// level. The set itself is [Server.setRedundancy]'s job: it retypes
+  /// `Server/ServerRedundancy` to `NonTransparentRedundancyType` (creating
+  /// the type, which the reduced NS0 lacks), serves `RedundancySupport` and
+  /// adds `ServerUriArray` (OPC 10000-5 §6.3.9: the ServerUris, i.e. the
+  /// ApplicationUris, of the members, the local one included -- identities,
+  /// not addresses). Every member of the set runs and serves data
+  /// continuously and the client picks one by ServiceLevel, which is what
+  /// `Hot` means.
   void _publishRedundancySurface(Server server) {
     server.setVariableValueSource(
-      NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVICELEVEL),
+      NodeId.serviceLevel,
       onRead: () => DynamicValue(value: serviceLevel, typeId: NodeId.byte, name: 'ServiceLevel'),
     );
-
-    server.setVariableValueSource(
-      NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_REDUNDANCYSUPPORT),
-      onRead: () => DynamicValue(value: redundancySupportHot, typeId: NodeId.int32, name: 'RedundancySupport'),
-    );
-
-    // open62541 deletes the standard ServerUriArray property from NS0 at
-    // startup ("Remove unused subtypes of ServerRedundancy"), so it has to be
-    // re-added as a HasProperty child of ServerRedundancy.
-    //
-    // OPC 10000-5 §6.3.9: the array holds the ServerUris (ApplicationUris) of
-    // the members, the local one included -- identities, not addresses. The
-    // spec's way to map a ServerUri to endpoints is the `ServerNetworkGroups`
-    // property of NonTransparentNetworkRedundancyType (§6.3.10) or FindServers;
-    // this package cannot publish `NetworkGroupDataType[]` yet (see the README),
-    // so the client is seeded with the endpoints and matches them to the
-    // members by reading each server's ApplicationUri (ServerArray[0]).
-    server.addVariableNode(
-      _serverUriArrayNodeId,
-      _serverUriArrayValue(),
-      accessLevel: const AccessLevelMask(read: true),
-      parentNodeId: NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY),
-      parentReferenceNodeId: NodeId.fromNumeric(0, raw.UA_NS0ID_HASPROPERTY),
-      baseDataVariableType: NodeId.fromNumeric(0, raw.UA_NS0ID_PROPERTYTYPE),
-      typeId: NodeId.uastring,
-    );
+    server.setRedundancy(RedundancySupport.hot, serverUris: _serverUriArray());
   }
 
   /// The data-source read for the struct node.

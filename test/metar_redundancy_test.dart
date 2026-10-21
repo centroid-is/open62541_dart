@@ -3,10 +3,15 @@ import 'dart:async';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import '../example/metar_common.dart';
 import '../example/metar_redundant_client.dart';
 import '../example/metar_redundant_server.dart';
 import 'common.dart';
+
+/// The NS0 type nodes of Part 5 §6.3.7 without a `NodeId` static.
+final serverRedundancyType = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVERREDUNDANCYTYPE);
+final nonTransparentRedundancyType = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANSPARENTREDUNDANCYTYPE);
 
 /// In-process integration test for the redundant-METAR example.
 ///
@@ -384,22 +389,37 @@ void main() {
 
       // ServiceLevel: open62541 pins this node at 255 internally; the example
       // replaces its value source, so it must report the computed level.
-      final level = await probe.read(serviceLevelNodeId);
+      final level = await probe.read(NodeId.serviceLevel);
       expect(level.asInt, 250);
       expect(level.asInt, serverA.serviceLevel);
 
       // RedundancySupport = Hot (3), not open62541's default None (0).
-      final support = await probe.read(redundancySupportNodeId);
-      expect(support.asInt, redundancySupportHot);
-      expect(support.asInt, isNot(0));
+      final support = await probe.read(NodeId.redundancySupport);
+      expect(support.asInt, RedundancySupport.hot.value);
+      expect(support.asInt, 3);
+
+      // Part 5 §6.3.7: the base ServerRedundancyType (i=2034) is for
+      // RedundancySupport None only; a server advertising Hot must type
+      // Server/ServerRedundancy (i=2296) as NonTransparentRedundancyType
+      // (i=2039), the subtype that declares ServerUriArray.
+      final typeRefs = await probe.browse(NodeId.serverRedundancy, referenceTypeId: NodeId.hasTypeDefinition);
+      expect(typeRefs.map((r) => r.nodeId), [
+        nonTransparentRedundancyType,
+      ], reason: 'Hot on the base ServerRedundancyType is forbidden by Part 5 §6.3.7');
+      final supertypes = await probe.browse(
+        nonTransparentRedundancyType,
+        direction: 1,
+        referenceTypeId: NodeId.hasSubtype,
+      );
+      expect(supertypes.map((r) => r.nodeId), [serverRedundancyType]);
 
       // Each member has its own ApplicationUri (OPC 10000-4 §6.6.2.4: the
       // members of a non-transparent set must be distinguishable by it), which
       // the server publishes as ServerArray[0] (ns=0;i=2254).
       final probeB = await setupClient(portB);
       addTearDown(probeB.delete);
-      final uriA = (await probe.read(serverArrayNodeId))[0].asString;
-      final uriB = (await probeB.read(serverArrayNodeId))[0].asString;
+      final uriA = (await probe.read(NodeId.serverArray))[0].asString;
+      final uriB = (await probeB.read(NodeId.serverArray))[0].asString;
       expect(uriA, isNot('urn:open62541.unconfigured.application'), reason: 'open62541\'s default is not an identity');
       expect(uriA, isNot(uriB), reason: 'the members of a redundant set need unique ApplicationUris');
       expect(uriA, startsWith('urn:'));
@@ -407,12 +427,12 @@ void main() {
       // ServerUriArray (OPC 10000-5 §6.3.9) lists the ServerUris -- the
       // ApplicationUris -- of BOTH members of the set, this server first. It
       // is not a list of endpoint URLs.
-      final uris = await probe.read(serverUriArrayNodeId);
+      final uris = await probe.read(NodeId.serverUriArray);
       expect(uris.isArray, isTrue);
       final listed = uris.asArray.map((v) => v.asString).toList();
       expect(listed, [uriA, uriB]);
       expect(listed.where((u) => u.startsWith('opc.tcp://')), isEmpty, reason: 'ServerUris, not endpoints');
-      expect((await probeB.read(serverUriArrayNodeId)).asArray.map((v) => v.asString).toList(), [uriB, uriA]);
+      expect((await probeB.read(NodeId.serverUriArray)).asArray.map((v) => v.asString).toList(), [uriB, uriA]);
     }, timeout: const Timeout(Duration(minutes: 2)));
   });
 
@@ -483,7 +503,7 @@ void main() {
 
       // ServiceLevel fell with it, but not to 0: the server is still up and
       // still has a value, it just should not be preferred.
-      final level = await probe.read(serviceLevelNodeId);
+      final level = await probe.read(NodeId.serviceLevel);
       expect(level.asInt, lessThan(250));
       expect(level.asInt, greaterThan(0));
 
@@ -493,7 +513,7 @@ void main() {
       final recovered = await probe.readValue(server.metarNodeId);
       expect(recovered.statusCode, UA_STATUSCODE_GOOD);
       expect(recovered.sourceTimestamp, observationTime);
-      expect((await probe.read(serviceLevelNodeId)).asInt, 250);
+      expect((await probe.read(NodeId.serviceLevel)).asInt, 250);
     }, timeout: const Timeout(Duration(minutes: 2)));
 
     test('data that ages past the staleness threshold goes Bad without any fetch failing', () async {
@@ -523,7 +543,7 @@ void main() {
       expect(dv.statusCode, UA_STATUSCODE_BADNOCOMMUNICATION);
       expect(dv.value['Station'].value, 'BIRK');
       // 6 h old with a 2 h threshold: past 2x staleAfter, so the lowest rung.
-      expect((await staleProbe.read(serviceLevelNodeId)).asInt, 5);
+      expect((await staleProbe.read(NodeId.serviceLevel)).asInt, 5);
     }, timeout: const Timeout(Duration(minutes: 2)));
 
     test('the failed-fetch floor is Degraded (2) while a last-known value is still served', () async {
@@ -538,7 +558,7 @@ void main() {
         reason: 'five failures take 250 below the floor whatever its value',
       );
       expect(server.serviceLevel, serviceLevelDegradedFloor);
-      expect((await probe.read(serviceLevelNodeId)).asInt, 2);
+      expect((await probe.read(NodeId.serviceLevel)).asInt, 2);
       final dv = await probe.readValue(server.metarNodeId);
       expect(dv.statusCode, UA_STATUSCODE_BADNOCOMMUNICATION);
       expect(dv.value['Station'].value, 'BIRK', reason: 'still serving the last-known value');
@@ -564,7 +584,7 @@ void main() {
       // reconnect"), which is wrong for a server that is up and will have
       // data on its next poll. 1, NoData, is the band for "nothing to serve
       // yet".
-      expect((await coldProbe.read(serviceLevelNodeId)).asInt, serviceLevelNoData);
+      expect((await coldProbe.read(NodeId.serviceLevel)).asInt, serviceLevelNoData);
       expect(coldServer.serviceLevel, 1);
 
       // With no last-known value there is nothing honest to serve, so the read

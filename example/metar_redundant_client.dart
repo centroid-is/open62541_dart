@@ -36,21 +36,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:open62541/open62541.dart';
-import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 
 import 'metar_redundant_server.dart' show isHealthyServiceLevel, parseFlags, serviceLevelMaintenance;
-
-/// `ns=0;i=2267` — Server/ServiceLevel.
-final NodeId serviceLevelNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVICELEVEL);
-
-/// `ns=0;i=2254` — Server/ServerArray; `[0]` is the server's own ApplicationUri.
-final NodeId serverArrayNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERARRAY);
-
-/// `ns=0;i=11314` — Server/ServerRedundancy/ServerUriArray.
-final NodeId serverUriArrayNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERURIARRAY);
-
-/// `ns=0;i=3709` — Server/ServerRedundancy/RedundancySupport.
-final NodeId redundancySupportNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_REDUNDANCYSUPPORT);
 
 /// Emitted every time the client moves its data subscription to another server.
 class FailoverEvent {
@@ -330,7 +317,7 @@ class MetarFailoverClient {
     final client = link.client;
     if (client == null) return;
     try {
-      final dv = await client.readValue(serviceLevelNodeId).timeout(readTimeout);
+      final dv = await client.readValue(NodeId.serviceLevel).timeout(readTimeout);
       link.serviceLevel = (dv.value.value as num?)?.toInt() ?? -1;
     } catch (_) {
       link.serviceLevel = -1;
@@ -345,7 +332,7 @@ class MetarFailoverClient {
     final client = link.client;
     if (client == null) return;
     try {
-      final serverArray = await client.read(serverArrayNodeId).timeout(readTimeout);
+      final serverArray = await client.read(NodeId.serverArray).timeout(readTimeout);
       final uri = serverArray.isArray && serverArray.asArray.isNotEmpty ? serverArray[0].asString : '';
       if (uri.isEmpty) {
         _log('[client] ${link.endpoint}: empty ServerArray; cannot identify this server');
@@ -357,7 +344,7 @@ class MetarFailoverClient {
       return;
     }
     try {
-      final uris = await client.read(serverUriArrayNodeId).timeout(readTimeout);
+      final uris = await client.read(NodeId.serverUriArray).timeout(readTimeout);
       link.serverUris = uris.isArray ? uris.asArray.map((v) => v.asString).toList(growable: false) : const [];
     } catch (e) {
       link.serverUris = const [];
