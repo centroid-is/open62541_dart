@@ -63,6 +63,12 @@ set on the standard NS0 nodes, and a client follows whichever one is healthiest
   `RedundancySupport = None`; neither accepts a write, so replacing the value
   source is the only way to publish a real service level. No vendor nodes are
   invented — any standards-based client can discover and rank the set.
+  One caveat on the mode: `RedundancySupport = Hot` with members that refuse
+  writes (every node here is read-only, so a "standby" never accepts a
+  write) sits in the primary/standby gap between the Part 4 modes that the
+  Foundation only closed in 1.05.03
+  ([mantis 8786](https://mantis.opcfoundation.org/view.php?id=8786)) — take
+  it as what fits a read-only data feed, not as the general pattern.
 * **One identity per member.** The members of a non-transparent set must have
   unique ApplicationUris ([OPC 10000-4 §6.6.2.4](https://reference.opcfoundation.org/specs/OPC-10000-4/6.6.2.4)),
   so each instance announces its own — `urn:<host>:metar:<instance>` unless
