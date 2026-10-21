@@ -4,6 +4,21 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## Unreleased
+
+- **`Server(applicationName:, applicationUri:, productName:, manufacturerName:)`:
+  the identity a server announces.** open62541's minimal config names every
+  server `open62541-based OPC UA Application` with the ApplicationUri
+  `urn:open62541.unconfigured.application`, which is what OPC UA browsers
+  list it under (GetEndpoints/FindServers) and what `ServerArray[0]`,
+  `NamespaceArray[1]` and `Server/ServerStatus/BuildInfo` report. The new
+  constructor parameters replace those defaults on the config before the
+  server is created (the defaults are freed, the copies are owned by the
+  config and freed with it); `Server.applicationName` / `Server.applicationUri`
+  read them back. Each one is opt-in: `Server()` still announces the defaults.
+  Once security is configured the ApplicationUri must match the URI in the
+  server certificate.
+
 ## 1.5.9
 
 - **`Server.port`: the port the server listens on, for `Server(port: 0)`.**

@@ -226,7 +226,36 @@ class DataSourceValue {
 }
 
 class Server {
-  Server({LogLevel? logLevel, int? port}) {
+  /// Creates a server with open62541's minimal default configuration,
+  /// listening on [port] (4840 by default; `0` lets the OS pick, see [Server.port]).
+  ///
+  /// The optional identity strings replace what open62541 announces about the
+  /// server (`open62541-based OPC UA Application`, `urn:open62541.unconfigured.application`,
+  /// ...). Clients see them in GetEndpoints/FindServers and under
+  /// `Server/ServerStatus/BuildInfo`:
+  ///
+  /// * [applicationName] - the `ApplicationDescription.applicationName`
+  ///   (locale `en`), the name an OPC UA browser lists the server under.
+  /// * [applicationUri] - the `ApplicationDescription.applicationUri`.
+  ///   open62541 also publishes it as `ServerArray[0]` (`ns=0;i=2254`) and as
+  ///   `NamespaceArray[1]`, the server's own namespace. Once security is
+  ///   configured it **must** match the URI embedded in the server certificate
+  ///   (open62541 logs a warning at startup when it does not, and clients
+  ///   validating the certificate reject the session).
+  /// * [productName] / [manufacturerName] - `BuildInfo.productName` and
+  ///   `BuildInfo.manufacturerName` (`Server/ServerStatus/BuildInfo/ProductName`,
+  ///   `.../ManufacturerName`).
+  ///
+  /// Each one left `null` keeps open62541's default, so an existing
+  /// `Server()` is unchanged.
+  Server({
+    LogLevel? logLevel,
+    int? port,
+    String? applicationName,
+    String? applicationUri,
+    String? productName,
+    String? manufacturerName,
+  }) {
     // The config struct is scratch. UA_Server_newWithConfig moves its contents
     // into the server and zeroes the struct it was given, and a failing
     // UA_ServerConfig_setMinimal clears it, so either way only the struct
@@ -243,6 +272,28 @@ class Server {
         throw 'Failed to set default server config ${statusCodeToString(res)}';
       }
 
+      // The identity strings go in before UA_Server_newWithConfig: server
+      // init copies applicationUri into NamespaceArray[1], and startup writes
+      // it to ServerArray[0]. setMinimal allocated the defaults with UA_malloc
+      // (plain malloc); `UA_String.set` frees that data and leaves a malloc'd
+      // copy in its place, which UA_ServerConfig_clean releases with the rest
+      // of the ApplicationDescription / BuildInfo when the server is deleted.
+      final description = config.ref.applicationDescription;
+      if (applicationName != null) {
+        description.applicationName.locale.set('en');
+        description.applicationName.text.set(applicationName);
+      }
+      if (applicationUri != null) {
+        description.applicationUri.set(applicationUri);
+      }
+      final buildInfo = config.ref.buildInfo;
+      if (productName != null) {
+        buildInfo.productName.set(productName);
+      }
+      if (manufacturerName != null) {
+        buildInfo.manufacturerName.set(manufacturerName);
+      }
+
       _server = raw.UA_Server_newWithConfig(config);
       _config = raw.UA_Server_getConfig(_server);
     }, ua_calloc);
@@ -250,6 +301,14 @@ class Server {
 
   late ffi.Pointer<raw.UA_Server> _server;
   late ffi.Pointer<raw.UA_ServerConfig> _config;
+
+  /// The text of the `ApplicationDescription.applicationName` this server
+  /// announces (open62541's default unless given to the constructor).
+  String get applicationName => _config.ref.applicationDescription.applicationName.text.value;
+
+  /// The `ApplicationDescription.applicationUri` this server announces, also
+  /// published as `ServerArray[0]` and `NamespaceArray[1]`.
+  String get applicationUri => _config.ref.applicationDescription.applicationUri.value;
 
   // ---- Data-source (callback) variable node plumbing -----------------------
   //
