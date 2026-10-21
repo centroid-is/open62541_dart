@@ -171,6 +171,11 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
   if (data.type.ref.typeKind == raw.UA_DataTypeKind.UA_DATATYPEKIND_EXTENSIONOBJECT) {
     final ext = data.data.cast<raw.UA_ExtensionObject>();
     extObjEncodingId = ext.ref.content.encoded.typeId.toNodeId();
+    // An encoded body of a structure the bundled open62541 knows, that never
+    // crossed the wire (a value the Dart server published, read in-process):
+    // decode it the way the wire decoder would have, into the native struct.
+    final known = decodeEncodedExtensionObjects(data, defs: defs);
+    if (known != null) return known;
   }
 
   final dimensions = data.dimensions;

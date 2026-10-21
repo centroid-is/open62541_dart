@@ -14,6 +14,9 @@ void main() {
     // internal `securityPolicyHistory` pointer (888 -> 896 on 64-bit).
     expect(sizeOf<raw.UA_ClientConfig>(), 896);
     expect(sizeOf<raw.UA_DataType>(), 96);
+    // Hand-added binding (tool/ffigen.dart lists it for the next
+    // regeneration): four pointers and a size_t.
+    expect(sizeOf<raw.UA_DecodeBinaryOptions>(), 4 * sizeOf<Pointer>() + sizeOf<Size>());
     // Statistics structs (Server.statistics). UA_ServerStatistics is returned
     // by value from UA_Server_getStatistics; the diagnostics data types are
     // cast straight out of native variant memory, so their Dart layout must

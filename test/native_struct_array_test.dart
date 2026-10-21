@@ -27,6 +27,7 @@ import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'common.dart';
 
 final networkGroupsId = NodeId.fromString(1, 'the.networkGroups');
+final abstractGroupsId = NodeId.fromString(1, 'the.abstractGroups');
 final rangeMethodId = NodeId.fromString(1, 'the.rangeMethod');
 final networkGroupTypeId = NodeId.fromNumeric(0, raw.UA_NS0ID_NETWORKGROUPDATATYPE);
 final networkGroupEncodingId = NodeId.fromNumeric(0, raw.UA_NS0ID_NETWORKGROUPDATATYPE_ENCODING_DEFAULTBINARY);
@@ -113,11 +114,24 @@ void main() {
 
       setUp(() async {
         server = setupServer();
-        // The DataType is the abstract Structure (i=22): open62541's reduced
-        // NS0 nodeset has no NetworkGroupDataType node (i=11944) to check a
-        // value against, although its UA_TYPES table knows the type and
-        // decodes it. The client reads the concrete type from the value.
-        server.addVariableNode(networkGroupsId, initialGroups, typeId: NodeId.structure);
+        // open62541's reduced NS0 nodeset has no DataType nodes for
+        // EndpointUrlListDataType (i=11943) and NetworkGroupDataType
+        // (i=11944), although its UA_TYPES table knows both types. Adding them
+        // as subtypes of Structure lets the property declare its Part 5
+        // DataType (open62541 then serves their DataTypeDefinition from
+        // UA_TYPES). The _Encoding_DefaultBinary objects (i=11957/11958)
+        // cannot be added: the nodeset has no HasEncoding reference type.
+        // Harmless on the wire; the encoding id travels in the value.
+        server.addDataTypeNode(endpointUrlListTypeId, 'EndpointUrlListDataType');
+        server.addDataTypeNode(networkGroupTypeId, 'NetworkGroupDataType');
+        server.addVariableNode(networkGroupsId, initialGroups, typeId: networkGroupTypeId);
+        // The same value under the abstract Structure (i=22): the concrete
+        // type comes from the value, not from the declared DataType.
+        server.addVariableNode(
+          abstractGroupsId,
+          DynamicValue.from(initialGroups)..name = 'the.abstractGroups',
+          typeId: NodeId.structure,
+        );
         server.addMethodNode(
           rangeMethodId,
           outputArguments: [
@@ -139,15 +153,37 @@ void main() {
       });
 
       test('read NetworkGroupDataType[] with nested EndpointUrlListDataType[] and String[]', () async {
-        expectInitialGroups(await client.read(networkGroupsId), rootTypeId: NodeId.structure);
+        expectInitialGroups(await client.read(networkGroupsId));
       });
 
-      test('readValue and readAttribute agree', () async {
+      test('readValue and readAttribute agree; the DataType attribute is NetworkGroupDataType', () async {
         expectInitialGroups((await client.readValue(networkGroupsId)).value);
         final read = await client.readAttribute({
           networkGroupsId: [AttributeId.UA_ATTRIBUTEID_VALUE, AttributeId.UA_ATTRIBUTEID_DATATYPE],
         });
-        expectInitialGroups(read[networkGroupsId]!, rootTypeId: NodeId.structure);
+        expectInitialGroups(read[networkGroupsId]!);
+        final dataType = await client.readAttribute({
+          networkGroupsId: [AttributeId.UA_ATTRIBUTEID_DATATYPE],
+        });
+        expect(dataType[networkGroupsId]!.typeId, networkGroupTypeId);
+      });
+
+      test('a property declared as the abstract Structure: the concrete type comes from the value', () async {
+        expectInitialGroups(await client.read(abstractGroupsId), rootTypeId: NodeId.structure);
+        expectInitialGroups((await client.readValue(abstractGroupsId)).value);
+        final dataType = await client.readAttribute({
+          abstractGroupsId: [AttributeId.UA_ATTRIBUTEID_DATATYPE],
+        });
+        expect(dataType[abstractGroupsId]!.typeId, NodeId.structure);
+      });
+
+      test('the client can read the DataTypeDefinition of the added DataType nodes', () async {
+        final definition = await client.readAttribute({
+          networkGroupTypeId: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION],
+        });
+        final fields = definition[networkGroupTypeId]!;
+        expect(fields.isObject, isTrue);
+        expect(fields.asObject.keys.toList(), ['ServerUri', 'NetworkPaths']);
       });
 
       test('a server write replaces the array, and an empty array reads back empty', () async {
@@ -169,7 +205,7 @@ void main() {
             .monitor(networkGroupsId, subId, samplingInterval: Duration(milliseconds: 50))
             .first
             .timeout(Duration(seconds: 10));
-        expectInitialGroups(first, rootTypeId: NodeId.structure);
+        expectInitialGroups(first);
       });
 
       test('Client.call: a Range and a Range[] output', () async {
@@ -208,8 +244,64 @@ void main() {
         final read = await client.read(networkGroupsId);
         read.name = 'the.networkGroups';
         server.write(networkGroupsId, read);
-        expectInitialGroups(await client.read(networkGroupsId), rootTypeId: NodeId.structure);
+        expectInitialGroups(await client.read(networkGroupsId));
       });
     });
   }
+
+  group('Server.read of a value the server published as an encoded ExtensionObject', () {
+    // The Dart server stores a struct as the binary ExtensionObject
+    // valueToVariant encoded; nothing decoded it into the native struct (no
+    // wire trip), so variantToValue used to throw `Unsupported nodeId type`
+    // at the root. The encoding id maps to a UA_TYPES entry, and the body is
+    // decoded with UA_decodeBinary into a native struct that is walked.
+    late Server server;
+
+    setUp(() {
+      server = setupServer();
+      server.addDataTypeNode(endpointUrlListTypeId, 'EndpointUrlListDataType');
+      server.addDataTypeNode(networkGroupTypeId, 'NetworkGroupDataType');
+      server.addVariableNode(networkGroupsId, initialGroups, typeId: networkGroupTypeId);
+    });
+
+    tearDown(() {
+      server.shutdown();
+      server.delete();
+    });
+
+    test('NetworkGroupDataType[] (an array of encoded ExtensionObjects)', () {
+      expectInitialGroups(server.read(networkGroupsId));
+    });
+
+    test('a scalar Range, and an empty array of Range', () {
+      final rangeId = NodeId.fromString(1, 'the.range');
+      server.addVariableNode(rangeId, range(1, 2)..name = 'the.range', typeId: rangeTypeId);
+      final read = server.read(rangeId);
+      expect(read.isObject, isTrue, reason: 'expected a Range object, got ${read.value}');
+      expect(read.typeId, rangeTypeId);
+      expect(read.extObjEncodingId, rangeEncodingId);
+      expect(read['Low'].asDouble, 1);
+      expect(read['High'].asDouble, 2);
+
+      final emptyId = NodeId.fromString(1, 'the.ranges');
+      server.addVariableNode(
+        emptyId,
+        DynamicValue.fromList([], typeId: rangeTypeId, name: 'the.ranges'),
+        typeId: rangeTypeId,
+      );
+      final empty = server.read(emptyId);
+      expect(empty.isArray, isTrue);
+      expect(empty.asArray, isEmpty);
+    });
+
+    test('an encoded ExtensionObject of a type open62541 does not know keeps the old path', () {
+      // A custom struct type with no schema at hand: the root throws the same
+      // way as before (there is nothing to decode it with).
+      final customId = NodeId.fromString(1, 'the.custom');
+      final value = DynamicValue(typeId: NodeId.fromString(1, 'CustomType'), name: 'the.custom');
+      value['A'] = DynamicValue(value: 1, typeId: NodeId.int32);
+      server.addVariableNode(customId, value, typeId: NodeId.structure);
+      expect(() => server.read(customId), throwsA(isA<String>()));
+    });
+  });
 }

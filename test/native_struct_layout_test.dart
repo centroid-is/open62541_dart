@@ -539,6 +539,35 @@ void main() {
       expect(unknown.typeId, NodeId.structure);
       expect(unknown.extObjEncodingId, NodeId.fromNumeric(1, 5000));
 
+      // Encoded, a type open62541 knows (the encoding id of Range, i=886) and
+      // no schema: the body is decoded with UA_decodeBinary and walked.
+      final known = decodeSingle(getType(UaTypes.extensionObject), (p) {
+        final eo = p.cast<raw.UA_ExtensionObject>().ref;
+        eo.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
+        native.nodeId(eo.content.encoded.typeId, NodeId.fromNumeric(0, raw.UA_NS0ID_RANGE_ENCODING_DEFAULTBINARY));
+        final body = native.alloc<ffi.Uint8>(16);
+        body.cast<ffi.Double>().asTypedList(2).setAll(0, [-2.5, 2.5]);
+        eo.content.encoded.body.length = 16;
+        eo.content.encoded.body.data = body;
+      });
+      expect(known.asObject.keys.toList(), ['Low', 'High']);
+      expect(known['Low'].asDouble, -2.5);
+      expect(known['High'].asDouble, 2.5);
+      expect(known.typeId, NodeId.fromNumeric(0, raw.UA_NS0ID_RANGE));
+      expect(known.extObjEncodingId, NodeId.fromNumeric(0, raw.UA_NS0ID_RANGE_ENCODING_DEFAULTBINARY));
+
+      // Encoded, a known type, a body that does not decode: an error, and
+      // nothing left behind (the ASan runs check that).
+      final type2 = single(getType(UaTypes.extensionObject));
+      final value2 = native.bytes(type2.ref.memSize);
+      final eo2 = value2.cast<raw.UA_ExtensionObject>().ref;
+      eo2.encodingAsInt = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING.value;
+      native.nodeId(eo2.content.encoded.typeId, NodeId.fromNumeric(0, raw.UA_NS0ID_RANGE_ENCODING_DEFAULTBINARY));
+      final short = native.alloc<ffi.Uint8>(4);
+      eo2.content.encoded.body.length = 4;
+      eo2.content.encoded.body.data = short;
+      expect(() => variantToValue(native.variant(type2, value2).ref), throwsA(isA<UaStatusException>()));
+
       // Encoded, with a schema for its type in `defs`: decoded through it.
       final schemaId = NodeId.fromString(1, 'MyType');
       final schema = DynamicValue(typeId: schemaId);

@@ -10,7 +10,9 @@ import '../dynamic_value.dart';
 import '../extensions.dart';
 import '../node_id.dart';
 import '../third_party/open62541.g.dart' as raw;
+import '../ua_allocation.dart';
 import 'create_type.dart';
+import 'errors.dart';
 import 'opcua_serializer.dart';
 
 /// Decoding of values from the in-memory layout open62541 gives a type it
@@ -64,19 +66,53 @@ final ffi.Pointer<ffi.Void> _emptyArraySentinel = ffi.Pointer.fromAddress(0x01);
 /// schema is known for.
 DynamicValue decodeNativeVariant(raw.UA_Variant data, {Schema? defs}) {
   final type = data.type;
+  return _decodeElements(
+    data,
+    type.ref.memSize,
+    (element) => decodeNative(element, type, defs: defs),
+    listTypeId: type.ref.typeId.toNodeId(),
+  );
+}
+
+/// Decodes a variant of ExtensionObjects whose first one is an encoded body
+/// of a type the bundled open62541 knows (its encoding id is the
+/// `binaryEncodingId` of a `UA_TYPES` entry), or null when it is not: the
+/// caller's own ExtensionObject path applies then. Each body is decoded with
+/// `UA_decodeBinary` into a native struct and walked, see
+/// [decodeEncodedKnown]; a value the Dart server published as an encoded
+/// ExtensionObject reads back the way a client receives it over the wire.
+DynamicValue? decodeEncodedExtensionObjects(raw.UA_Variant data, {Schema? defs}) {
+  final first = data.data.cast<raw.UA_ExtensionObject>().ref;
+  if (first.encoding != raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING) return null;
+  final type = findNs0DataTypeByEncodingId(first.content.encoded.typeId.toNodeId());
+  if (type == null) return null;
+  return _decodeElements(
+    data,
+    ffi.sizeOf<raw.UA_ExtensionObject>(),
+    (element) => _decodeExtensionObject(element.cast<raw.UA_ExtensionObject>().ref, defs),
+    listTypeId: type.ref.typeId.toNodeId(),
+  );
+}
+
+/// The variant's payload as a scalar, a list or nested lists (row-major over
+/// `arrayDimensions`), each element [elementSize] bytes apart.
+DynamicValue _decodeElements(
+  raw.UA_Variant data,
+  int elementSize,
+  DynamicValue Function(ffi.Pointer<ffi.Void> element) decodeElement, {
+  required NodeId listTypeId,
+}) {
   final dimensions = data.dimensions;
   if (dimensions.isEmpty) {
-    return decodeNative(data.data, type, defs: defs);
+    return decodeElement(data.data);
   }
-  final typeId = type.ref.typeId.toNodeId();
-  final memSize = type.ref.memSize;
   var index = 0;
   DynamicValue nested(List<int> dims) {
-    final list = DynamicValue(typeId: typeId);
+    final list = DynamicValue(typeId: listTypeId);
     list.value = <DynamicValue>[];
     for (var i = 0; i < dims[0]; i++) {
       if (dims.length == 1) {
-        list[i] = decodeNative(ffi.Pointer.fromAddress(data.data.address + index * memSize), type, defs: defs);
+        list[i] = decodeElement(ffi.Pointer.fromAddress(data.data.address + index * elementSize));
         index++;
       } else {
         list[i] = nested(dims.sublist(1));
@@ -183,6 +219,8 @@ Map<int, EnumField> nativeEnumFields(ffi.Pointer<raw.UA_DataType> type) {
   final t = type.ref;
   for (var i = 0; i < t.membersSize; i++) {
     final member = t.members[i];
+    // The generator stores the value in the pointer itself:
+    // `.memberType = (const UA_DataType*)(uintptr_t)VALUE` (types_generated.c).
     final value = member.memberType.address;
     final name = member.memberName == ffi.nullptr ? '' : member.memberName.cast<Utf8>().toDartString();
     fields[value] = EnumField(value, name, LocalizedText('', ''), LocalizedText('', ''));
@@ -207,11 +245,61 @@ NodeId? ns0BinaryEncodingId(NodeId typeId) {
   return type.ref.binaryEncodingId.toNodeId();
 }
 
+/// The `UA_TYPES` entry whose `binaryEncodingId` is [encodingId] (the
+/// `<Type>_Encoding_DefaultBinary` NodeId an ExtensionObject carries), or
+/// null.
+ffi.Pointer<raw.UA_DataType>? findNs0DataTypeByEncodingId(NodeId encodingId) {
+  if (encodingId.namespace != 0 || !encodingId.isNumeric()) return null;
+  final index = _ns0EncodingIndex[encodingId.numeric];
+  return index == null ? null : getTypeByIndex(index);
+}
+
+/// Decodes [body], the binary encoding of a value of [type] (a `UA_TYPES`
+/// entry), into a native struct and walks it with [decodeNative]. The struct
+/// lives in a `ua_calloc`'d buffer of the type's `memSize` for the duration
+/// of the walk; `UA_clear` releases what open62541 allocated into it (on a
+/// failed decode open62541 has already cleared, and a second clear is a
+/// no-op) and the buffer is freed, on every path. A decode that fails throws
+/// a [UaStatusException] with open62541's status.
+DynamicValue decodeEncodedKnown(raw.UA_String body, ffi.Pointer<raw.UA_DataType> type, {Schema? defs}) {
+  // UA_decodeBinary takes the input by pointer: a scratch UA_ByteString over
+  // the body's bytes (not a copy of them; it is only read).
+  final input = ua_calloc<raw.UA_String>();
+  input.ref.length = body.length;
+  input.ref.data = body.data;
+  final buffer = ua_calloc<ffi.Uint8>(type.ref.memSize).cast<ffi.Void>();
+  try {
+    final status = raw.UA_decodeBinary(input, buffer, type, ffi.nullptr);
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
+    return decodeNative(buffer, type, defs: defs);
+  } finally {
+    raw.UA_clear(buffer, type);
+    ua_calloc.free(buffer);
+    ua_calloc.free(input);
+  }
+}
+
 final Map<int, int> _ns0TypeIndex = () {
   final map = <int, int>{};
   for (var i = 0; i < raw.UA_TYPES_COUNT; i++) {
     final id = getTypeByIndex(i).ref.typeId;
     if (id.namespaceIndex == 0 && id.isNumeric()) {
+      map[id.identifier.numeric] = i;
+    }
+  }
+  return map;
+}();
+
+final Map<int, int> _ns0EncodingIndex = () {
+  final map = <int, int>{};
+  for (var i = 0; i < raw.UA_TYPES_COUNT; i++) {
+    final type = getTypeByIndex(i).ref;
+    final id = type.binaryEncodingId;
+    // Only a structure has a binary encoding object; built-ins carry a null
+    // encoding id (0), which must not map to anything.
+    if (isNativeStructKind(type.typeKind) && id.namespaceIndex == 0 && id.isNumeric() && id.identifier.numeric != 0) {
       map[id.identifier.numeric] = i;
     }
   }
@@ -339,18 +427,25 @@ DynamicValue _decodeExtensionObject(raw.UA_ExtensionObject ext, Schema? defs) {
     case raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING:
     case raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_XML:
       final encodingId = ext.content.encoded.typeId.toNodeId();
-      final body = Uint8List.fromList(ext.content.encoded.body.asTypedList());
+      final isBinary = ext.encoding == raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
       final schema = defs?[encodingId];
-      if (schema != null && ext.encoding == raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_ENCODED_BYTESTRING) {
+      if (schema != null && isBinary) {
         final value = OpcUaDynamicValueSerializer.deserialize(
           DynamicValue.from(schema),
-          binarize.ByteReader(body, endian: Endian.little),
+          binarize.ByteReader(Uint8List.fromList(ext.content.encoded.body.asTypedList()), endian: Endian.little),
           Endian.little,
         );
         value.extObjEncodingId = encodingId;
         return value;
       }
+      // A type the bundled open62541 knows: decode the body the way the
+      // wire decoder would have.
+      final known = isBinary ? findNs0DataTypeByEncodingId(encodingId) : null;
+      if (known != null) {
+        return decodeEncodedKnown(ext.content.encoded.body, known, defs: defs);
+      }
       // Unknown type: keep the encoded body so nothing is lost.
+      final body = Uint8List.fromList(ext.content.encoded.body.asTypedList());
       return DynamicValue(value: body, typeId: NodeId.structure)..extObjEncodingId = encodingId;
   }
 }

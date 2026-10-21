@@ -1167,6 +1167,24 @@ external void UA_Variant_delete(ffi.Pointer<UA_Variant> p);
 @ffi.Native<ffi.Pointer<UA_Variant> Function()>()
 external ffi.Pointer<UA_Variant> UA_Variant_new();
 
+@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Pointer<UA_DataType>)>()
+external void UA_clear(ffi.Pointer<ffi.Void> p, ffi.Pointer<UA_DataType> type);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_ByteString>,
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<UA_DataType>,
+    ffi.Pointer<UA_DecodeBinaryOptions>,
+  )
+>()
+external int UA_decodeBinary(
+  ffi.Pointer<UA_ByteString> inBuf,
+  ffi.Pointer<ffi.Void> p,
+  ffi.Pointer<UA_DataType> type,
+  ffi.Pointer<UA_DecodeBinaryOptions> options,
+);
+
 const addresses = _SymbolAddresses();
 
 class _SymbolAddresses {
@@ -3099,6 +3117,20 @@ final class UA_DataValue extends ffi.Struct {
 
   @UA_Byte()
   external int substitute;
+}
+
+final class UA_DecodeBinaryOptions extends ffi.Struct {
+  external ffi.Pointer<UA_DataTypeArray> customTypes;
+
+  external ffi.Pointer<UA_NamespaceMapping> namespaceMapping;
+
+  external ffi.Pointer<ffi.Void> callocContext;
+
+  external ffi.Pointer<ffi.NativeFunction<ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, ffi.Size, ffi.Size)>>
+  calloc;
+
+  @ffi.Size()
+  external int decodedLength;
 }
 
 enum UA_DeadbandType {
@@ -55578,6 +55610,8 @@ enum UA_NodeClass {
     _ => throw ArgumentError('Unknown value for UA_NodeClass: $value'),
   };
 }
+
+final class UA_NamespaceMapping extends ffi.Opaque {}
 
 final class UA_NodeId extends ffi.Struct {
   @UA_UInt16()

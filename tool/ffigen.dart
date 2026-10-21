@@ -15,6 +15,8 @@ Future<void> main() async {
     'UA_Variant_new',
     'UA_Variant_delete',
     'UA_Variant_copy',
+    'UA_clear',
+    'UA_decodeBinary',
 
     'UA_ClientConfig_setDefault',
     'UA_Client_delete',
@@ -262,6 +264,7 @@ Future<void> main() async {
     'UA_TargetVariablesDataType',
     'UA_FieldTargetDataType',
     'UA_ValueCallback',
+    'UA_DecodeBinaryOptions',
   };
 
   const typedefSet = {
