@@ -435,26 +435,32 @@ class MetarRedundantServer {
     }
   }
 
-  /// Stops polling, drops the ServiceLevel to 0 and shuts the server down.
+  /// Stops polling and shuts the server down, orderly when given a [delay].
   ///
-  /// [gracePeriod] keeps the server answering for a moment *after* the service
-  /// level has gone to 0, so a connected redundant client can observe the
-  /// hand-off instead of just losing the socket.
-  Future<void> stop({Duration gracePeriod = Duration.zero}) async {
+  /// With a delay the hand-off is the one Part 5 §12.6 and Part 4 Table 105
+  /// describe, done by [Server.shutdown]: the server announces the shutdown
+  /// (`ServerStatus.State` = Shutdown, `SecondsTillShutdown` counting down)
+  /// and, with `announceServiceLevel`, serves `ServiceLevel` 0, the signal
+  /// for the clients of a redundant set to leave, while every read, write
+  /// and subscription is still served for the whole delay. A redundant
+  /// client therefore moves on while the data is still Good, instead of
+  /// just losing the socket. The call blocks this isolate for the delay
+  /// (open62541 is pumped by the shutdown itself), which is fine for a
+  /// server process; a test observes it from another isolate.
+  Future<void> stop({Duration delay = Duration.zero}) async {
     final server = _server;
     if (server == null) return;
     _shuttingDown = true;
     _pollTimer?.cancel();
     _pollTimer = null;
-    if (gracePeriod > Duration.zero) {
-      _log('[$instance] going out of service: ServiceLevel 0 for $gracePeriod before shutdown');
-      await Future.delayed(gracePeriod);
-    }
     _pumping = false;
-    // Let the pump loop observe _pumping == false and return before the
-    // native server is deleted underneath it.
+    // Let the pump loop observe _pumping == false and return: the shutdown
+    // pumps the server itself and then deletes it.
     await Future.delayed(const Duration(milliseconds: 50));
-    server.shutdown();
+    if (delay > Duration.zero) {
+      _log('[$instance] going out of service: State = Shutdown, ServiceLevel 0 for $delay, then shutdown');
+    }
+    server.shutdown(delay: delay, announceServiceLevel: true);
     server.delete();
     _server = null;
     source.close();
@@ -487,12 +493,13 @@ Future<void> main(List<String> args) async {
 
   await server.start();
 
-  // Ctrl-C: drop ServiceLevel to 0, hold briefly so a connected client sees
-  // the hand-off, then shut down.
+  // Ctrl-C: announce the shutdown (State = Shutdown, ServiceLevel 0), keep
+  // serving for the delay so a connected client moves to the other member,
+  // then shut down.
   final signals = StreamController<void>();
   ProcessSignal.sigint.watch().listen((_) => signals.add(null));
   await signals.stream.first;
-  await server.stop(gracePeriod: const Duration(seconds: 2));
+  await server.stop(delay: const Duration(seconds: 2));
   exit(0);
 }
 

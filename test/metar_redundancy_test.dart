@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:isolate';
 
 import 'package:test/test.dart';
 
@@ -27,8 +28,11 @@ final nonTransparentNetworkRedundancyType = NodeId.fromNumeric(0, raw.UA_NS0ID_N
 ///   * discover the other members' endpoints from ONE seed endpoint through
 ///     `ServerNetworkGroups` (ns=0;i=14415, Part 5 §6.3.10),
 ///   * move when the active server's data feed degrades,
-///   * stay put when the server it left dies outright, and
-///   * come back when the abandoned server returns as the healthier one.
+///   * stay put when the server it left dies outright,
+///   * come back when the abandoned server returns as the healthier one, and
+///   * move during a member's orderly shutdown (`Server.shutdown(delay:)`:
+///     ServerStatus.State = Shutdown, ServiceLevel 0, data still Good), which
+///     blocks the member's isolate, so that member runs on a spawned one.
 ///
 /// A separate group pins the data-quality contract: a failing feed must still
 /// serve the LAST KNOWN value, flagged `Bad_NoCommunication`, with the
@@ -100,19 +104,60 @@ MetarObservation recent({String? raw, Duration ago = const Duration(minutes: 5)}
   return raw == null ? observedAt(at) : observedAt(at, raw: raw);
 }
 
+/// A [MetarRedundantServer] on its own isolate, for the orderly-shutdown
+/// test: `Server.shutdown(delay:)` blocks the isolate it runs on for the
+/// delay, and the observers (the failover client, a probe) live on the
+/// test's. Args: `[SendPort reply, String instance, String applicationUri,
+/// Map peers]` (peers: ApplicationUri to endpoint URLs). Reports
+/// `['port', port, SendPort control]`; on `['peer', uri, urls]` calls
+/// `setPeer`; on `['stop', ms]` calls `stop(delay:)` and reports
+/// `['stopped', millisecondsBlocked]`.
+void _isolatedServer(List<Object> args) {
+  final reply = args[0] as SendPort;
+  final instance = args[1] as String;
+  final applicationUri = args[2] as String;
+  final peers = args[3] as Map;
+  final server = MetarRedundantServer(
+    instance: instance,
+    host: '127.0.0.1',
+    port: 0,
+    source: FakeMetarSource('BIRK', recent()),
+    applicationUri: applicationUri,
+    peers: {for (final e in peers.entries) e.key as String: (e.value as List).cast<String>()},
+    pollInterval: const Duration(milliseconds: 200),
+    log: (_) {},
+  );
+  final control = ReceivePort();
+  () async {
+    await server.start();
+    reply.send(['port', server.listenPort, control.sendPort]);
+    await for (final message in control) {
+      switch (message) {
+        case ['peer', String uri, List urls]:
+          server.setPeer(uri, urls.cast<String>());
+        case ['stop', int ms]:
+          final clock = Stopwatch()..start();
+          await server.stop(delay: Duration(milliseconds: ms));
+          reply.send(['stopped', clock.elapsedMilliseconds]);
+          control.close();
+      }
+    }
+  }();
+}
+
 /// Polls [condition] until it holds or [timeout] elapses; returns whether it
 /// held. Used instead of fixed sleeps so the test tracks real progress.
 Future<bool> waitUntil(
-  bool Function() condition, {
+  FutureOr<bool> Function() condition, {
   Duration timeout = const Duration(seconds: 30),
   Duration step = const Duration(milliseconds: 50),
 }) async {
   final sw = Stopwatch()..start();
   while (sw.elapsed < timeout) {
-    if (condition()) return true;
+    if (await condition()) return true;
     await Future.delayed(step);
   }
-  return condition();
+  return await condition();
 }
 
 void main() {
@@ -512,6 +557,127 @@ void main() {
         [endpointOf(portA)],
       ]);
     }, timeout: const Timeout(Duration(minutes: 2)));
+  });
+
+  group('orderly shutdown of a member (Server.shutdown(delay:))', () {
+    const delay = Duration(seconds: 4);
+    String endpointOf(int port) => 'opc.tcp://127.0.0.1:$port';
+    final uriA = MetarRedundantServer.defaultApplicationUri('127.0.0.1', 'metar-a');
+    final uriB = MetarRedundantServer.defaultApplicationUri('127.0.0.1', 'metar-b');
+
+    late ReceivePort reply;
+    late StreamIterator<dynamic> messages;
+    late SendPort controlA;
+    late int portA;
+    late MetarRedundantServer serverB;
+    late MetarFailoverClient client;
+    final events = <FailoverEvent>[];
+
+    setUp(() async {
+      events.clear();
+      // A on its own isolate; B here. A learns B's endpoint once B listens.
+      reply = ReceivePort();
+      messages = StreamIterator(reply);
+      await Isolate.spawn(_isolatedServer, <Object>[
+        reply.sendPort,
+        'metar-a',
+        uriA,
+        <String, List<String>>{uriB: []},
+      ]);
+      expect(await messages.moveNext(), isTrue);
+      final [_, int port, SendPort control] = messages.current as List;
+      portA = port;
+      controlA = control;
+      serverB = MetarRedundantServer(
+        instance: 'metar-b',
+        host: '127.0.0.1',
+        port: 0,
+        source: FakeMetarSource('BIRK', recent()),
+        peers: {
+          uriA: [endpointOf(portA)],
+        },
+        pollInterval: serverPoll,
+        log: (_) {},
+      );
+      await serverB.start();
+      controlA.send([
+        'peer',
+        uriB,
+        [serverB.endpoint],
+      ]);
+
+      client = MetarFailoverClient(
+        endpoints: [endpointOf(portA), endpointOf(serverB.listenPort)],
+        pollInterval: clientPoll,
+        log: (_) {},
+      );
+      client.failovers.listen(events.add);
+    });
+
+    tearDown(() async {
+      await client.stop().timeout(const Duration(seconds: 15));
+      await serverB.stop().timeout(const Duration(seconds: 15));
+      reply.close();
+    });
+
+    test(
+      'during the delay a client sees State Shutdown, ServiceLevel 0 and still-Good data, and the client moves',
+      () async {
+        await client.start();
+        expect(client.activeEndpoint, endpointOf(portA));
+        expect(await waitUntil(() => client.serviceLevels[endpointOf(serverB.listenPort)] == 250), isTrue);
+        expect(client.serverStates[endpointOf(portA)], 0, reason: 'Running');
+
+        final probe = await setupClient(portA);
+        addTearDown(probe.delete);
+        expect((await probe.read(NodeId.serverStatusState)).asInt, 0);
+
+        // A announces its shutdown and keeps serving for the delay.
+        controlA.send(['stop', delay.inMilliseconds]);
+        Future<bool> stateIsShutdown() async {
+          try {
+            return (await probe.read(NodeId.serverStatusState)).asInt == 4;
+          } catch (_) {
+            return false; // gone already: not an announcement
+          }
+        }
+
+        expect(
+          await waitUntil(stateIsShutdown, timeout: delay),
+          isTrue,
+          reason: 'ServerStatus.State = Shutdown (4) during the delay, Part 5 §12.6',
+        );
+        expect((await probe.read(NodeId.serviceLevel)).asInt, 0, reason: 'Table 105: 0 tells the clients to leave');
+        final data = await probe.readValue(NodeId.fromString(1, 'BIRK.Metar'));
+        expect(data.isGood, isTrue, reason: 'the hand-off happens while the data is still Good');
+        expect(data.value['Station'].value, 'BIRK');
+
+        // The failover client treats State != Running like ServiceLevel 0.
+        expect(
+          await waitUntil(() => client.activeEndpoint == endpointOf(serverB.listenPort), timeout: delay),
+          isTrue,
+          reason: 'the client must move to B before A goes away',
+        );
+        expect(events, hasLength(2));
+        expect(events.last.from, endpointOf(portA));
+        expect(events.last.fromLevel, 0);
+        expect(events.last.toLevel, 250);
+        expect(events.last.reason, contains('shutdown'));
+        expect(client.serverStates[endpointOf(portA)], 4);
+        expect(client.serviceLevels[endpointOf(portA)], 0);
+        final fromB = await client.readActive();
+        expect(fromB!.isGood, isTrue);
+
+        // Then A is gone, having held for the delay.
+        expect(await messages.moveNext(), isTrue);
+        final [_, int blocked] = messages.current as List;
+        expect(blocked, greaterThanOrEqualTo(delay.inMilliseconds));
+        expect(await waitUntil(() => client.serviceLevels[endpointOf(portA)] == -1), isTrue);
+        expect(client.activeEndpoint, endpointOf(serverB.listenPort));
+        expect(events, hasLength(2), reason: 'losing the server it already left is not a failover');
+      },
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
   });
 
   group('data quality on the METAR data-source node', () {

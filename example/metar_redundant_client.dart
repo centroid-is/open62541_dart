@@ -20,8 +20,11 @@
       member it has no endpoint for yet. One seed endpoint is therefore
       enough; more can be given (an override, or for a server that does not
       publish the groups), and a member nobody answers for is reported.
-   3. Read `Server/ServiceLevel` (ns=0;i=2267) from each connected server on
-      every tick. An unreachable server ranks below every reachable one.
+   3. Read `Server/ServiceLevel` (ns=0;i=2267) and `ServerStatus.State`
+      (ns=0;i=2259) from each connected server on every tick, in one request.
+      A server whose State is not Running (an orderly shutdown announces
+      Shutdown and counts down, Part 5 §12.6) is treated like ServiceLevel 0.
+      An unreachable server ranks below every reachable one.
    4. Subscribe to the METAR structure node of the server chosen by the
       band-aware rule of Part 4 §6.6.2.4.2 (Table 105): the initial selection
       is the highest ServiceLevel; while the active server is Healthy
@@ -80,6 +83,11 @@ class FailoverEvent {
   static String _describe(String endpoint, String? uri) => uri == null ? endpoint : '$uri ($endpoint)';
 }
 
+/// `ServerStatus.State` (ns=0;i=2259) value for Running; anything else
+/// (Failed 1, NoConfiguration 2, Suspended 3, Shutdown 4, Test 5,
+/// CommunicationFault 6, Unknown 7) means the server is not serving as usual.
+const int serverStateRunning = 0;
+
 /// One connection in the redundant set.
 class _Link {
   _Link(this.endpoint);
@@ -89,6 +97,14 @@ class _Link {
 
   /// Last ServiceLevel read, or `-1` when the server could not be reached.
   int serviceLevel = -1;
+
+  /// Last `ServerStatus.State` read ([serverStateRunning] normally; Shutdown
+  /// (4) during an orderly shutdown), or `-1` when unreachable.
+  int serverState = -1;
+
+  /// What the server ranks as: its ServiceLevel, or 0 (Maintenance: leave)
+  /// when its State says it is not running, e.g. shutting down.
+  int get rank => serverState != serverStateRunning && reachable ? serviceLevelMaintenance : serviceLevel;
 
   /// The server's ApplicationUri (`ServerArray[0]`), once identified.
   String? applicationUri;
@@ -181,6 +197,10 @@ class MetarFailoverClient {
 
   /// ServiceLevel of the active server (`-1` when unreachable).
   int get activeServiceLevel => _active?.serviceLevel ?? -1;
+
+  /// Last `ServerStatus.State` read from each known endpoint (0 Running, 4
+  /// Shutdown, ...; `-1` unreachable).
+  Map<String, int> get serverStates => {for (final e in _links.entries) e.key: e.value.serverState};
 
   /// Every endpoint the client connects to: the configured ones and those
   /// learned from `ServerNetworkGroups`. The entries of `ServerUriArray` are
@@ -285,11 +305,12 @@ class MetarFailoverClient {
       if (_stopped) return;
 
       final active = _active;
-      // The highest ServiceLevel; on a tie the first configured endpoint, so
-      // the choice is deterministic.
+      // The highest rank (ServiceLevel, or 0 for a server whose State is not
+      // Running); on a tie the first configured endpoint, so the choice is
+      // deterministic.
       _Link? best;
       for (final link in _links.values) {
-        if (link.serviceLevel > 0 && (best == null || link.serviceLevel > best.serviceLevel)) best = link;
+        if (link.rank > 0 && (best == null || link.rank > best.rank)) best = link;
       }
       if (best == null) {
         if (active != null && !active.reachable) {
@@ -305,13 +326,17 @@ class MetarFailoverClient {
       if (identical(active, best)) return;
 
       // OPC 10000-4 §6.6.2.4.2, Table 105. An active server that is
-      // unreachable or has declared Maintenance (ServiceLevel 0) is abandoned
-      // at once. A Healthy one is kept whatever the others report. A Degraded
+      // unreachable, has announced a shutdown (ServerStatus.State, Part 5
+      // §12.6) or has declared Maintenance (ServiceLevel 0) is abandoned at
+      // once. A Healthy one is kept whatever the others report. A Degraded
       // or NoData one is left for any Healthy server; failing that, for a
       // higher Degraded one that clears the hysteresis margin.
       final String? reason;
       if (!active.reachable) {
         reason = 'connection lost';
+      } else if (active.serverState != serverStateRunning) {
+        reason =
+            'server announced shutdown (ServerStatus.State ${active.serverState}, ServiceLevel ${active.serviceLevel})';
       } else if (active.serviceLevel == serviceLevelMaintenance) {
         reason = 'server reported ServiceLevel 0 (out of service)';
       } else if (isHealthyServiceLevel(active.serviceLevel)) {
@@ -323,7 +348,7 @@ class MetarFailoverClient {
       } else {
         reason = null;
       }
-      if (reason != null) await _switchTo(best, reason, fromLevel: active.serviceLevel);
+      if (reason != null) await _switchTo(best, reason, fromLevel: active.rank);
     } finally {
       _arbitrating = false;
     }
@@ -340,10 +365,19 @@ class MetarFailoverClient {
     final client = link.client;
     if (client == null) return;
     try {
-      final dv = await client.readValue(NodeId.serviceLevel).timeout(readTimeout);
-      link.serviceLevel = (dv.value.value as num?)?.toInt() ?? -1;
+      // One Read request for both: the level and the state are set together
+      // by an orderly shutdown, and they are judged together.
+      final read = await client
+          .readAttribute({
+            NodeId.serviceLevel: [AttributeId.UA_ATTRIBUTEID_VALUE],
+            NodeId.serverStatusState: [AttributeId.UA_ATTRIBUTEID_VALUE],
+          })
+          .timeout(readTimeout);
+      link.serviceLevel = read[NodeId.serviceLevel]?.asInt ?? -1;
+      link.serverState = read[NodeId.serverStatusState]?.asInt ?? serverStateRunning;
     } catch (_) {
       link.serviceLevel = -1;
+      link.serverState = -1;
       return;
     }
     if (identifyMembers && link.applicationUri == null) await _identify(link);
