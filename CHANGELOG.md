@@ -24,14 +24,18 @@ changes that ship the same native library version.
   the address space lacks it (open62541's reduced NS0 does), retypes
   `Server/ServerRedundancy` (`i=2296`) to it, serves `RedundancySupport`
   (`i=3709`) through the value-source takeover and adds `ServerUriArray`
-  (`i=11314`, `0:ServerUriArray` of `PropertyType`, String[]). Calling it
+  (`i=11314`, `0:ServerUriArray` of `PropertyType`, a String array with
+  ValueRank 1 and ArrayDimensions `[0]`, as is the declaration). Calling it
   again updates the mode and the array in place; `RedundancySupport.none`
   puts the object back on the base type and removes the array, so a non-NONE
   mode on the base type (Part 5 §6.3.7) is not reachable through the API.
   An empty `serverUris`, URIs with `none`, and `transparent` (which calls
   for `TransparentRedundancyType`, not modelled) throw `ArgumentError`
-  before anything changes. Part 5 wants *server URIs* (application URIs,
-  this server's included); the caller includes its own. The new
+  before anything changes. Part 5 wants *server URIs* (application URIs)
+  and §6.3.9 the local server among them: the server's own ApplicationUri
+  (`applicationDescription.applicationUri`) is prepended when the list does
+  not contain it. Works before `start()` too: open62541 deletes the standard
+  `ServerUriArray` when the server is created, not at startup. The new
   `RedundancySupport` enum carries the Part 5 values (0..5). Built on two
   generic additions:
   - **`Server.addObjectTypeNode`**: a custom ObjectType, subtype of
@@ -50,6 +54,8 @@ changes that ship the same native library version.
   - Bindings: `UA_Server_browse`, `UA_clear` and `UA_ObjectTypeAttributes`
     added by hand in ffigen's form and listed in `tool/ffigen.dart` for the
     next regeneration; their sizes are pinned in `verify_sizes_test`.
+  - `Client.readAttribute` reads `ValueRank` and `ArrayDimensions` (one of
+    them per call; both land in the value).
 - **Orderly shutdown: `Server.shutdown(delay:)` and `Server.shutdownDelay`.**
   With a delay the server first announces the shutdown, keeps serving for
   the delay, then shuts down: during the delay `ServerStatus.State`
@@ -58,7 +64,12 @@ changes that ship the same native library version.
   set, while reads, writes, calls and subscriptions are served as before.
   The call blocks the calling isolate for the delay (rounded up to whole
   seconds, the unit of the announcement) and pumps open62541 itself; the
-  no-argument `shutdown()` is unchanged. `shutdownDelay` is
+  no-argument `shutdown()` is unchanged. A redundant server passes
+  `announceServiceLevel: true` to serve `ServiceLevel` 0 for the delay, the
+  Part 4 Table 105 signal for the clients of a redundant set to leave; it
+  replaces the ServiceLevel value source (open62541's constant 255, which
+  refuses writes with `Bad_WriteNotSupported`, or the server's own from
+  `setVariableValueSource`). `shutdownDelay` is
   `UA_ServerConfig.shutdownDelay`; `shutdown()` honours it and `shutdown(delay:)`
   sets it. Why not open62541's own delayed shutdown: `UA_Server_run_shutdown`
   ignores `shutdownDelay` and stops the listeners at once; the delay is

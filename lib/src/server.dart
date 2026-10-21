@@ -1863,7 +1863,7 @@ class Server {
   /// client should try them. §6.3.9 requires the local server among them,
   /// so this server's ApplicationUri
   /// (`UA_ServerConfig.applicationDescription.applicationUri`, by default
-  /// `urn:open62541.server.application`) is prepended when [serverUris] does
+  /// `urn:open62541.unconfigured.application`) is prepended when [serverUris] does
   /// not contain it; a list that has it is published as given. A deployment
   /// without a discovery server can publish `opc.tcp://` endpoint URLs
   /// instead; say so to your clients. [RedundancySupport.transparent] is refused
