@@ -85,6 +85,18 @@ class BrowseTreeItem {
 /// non-Good status), a [DataValue] surfaces the quality: per OPC UA a Bad
 /// status may still carry a value — e.g. a proxy serving the last-known value
 /// with `Bad_NoCommunication` while its backing device is down.
+/// The packed `UA_DataValue` flag byte. ffigen does not emit the C bitfield
+/// members individually: the generated struct ends with a single
+/// `@UA_Byte() external int substitute`, which IS their storage unit. Bit
+/// positions follow the declaration order in `include/open62541/types.h`
+/// (hasValue, hasStatus, hasSourceTimestamp, hasServerTimestamp,
+/// hasSourcePicoseconds, hasServerPicoseconds); measured against the
+/// in-process server and pinned by test/monitor_data_value_test.dart.
+const int _hasValueFlag = 0x01;
+const int _hasStatusFlag = 0x02;
+const int _hasSourceTimestampFlag = 0x04;
+const int _hasServerTimestampFlag = 0x08;
+
 class DataValue {
   const DataValue({required this.value, required this.statusCode, this.sourceTimestamp, this.serverTimestamp});
 
@@ -722,11 +734,15 @@ class Client implements ClientApi {
             // the `substitute` byte in the patched bindings): hasValue 0x01,
             // hasStatus 0x02, hasSourceTimestamp 0x04, hasServerTimestamp 0x08.
             final flags = copy.ref.substitute;
-            final statusCode = (flags & 0x02) != 0 ? copy.ref.status : raw.UA_STATUSCODE_GOOD;
-            final sourceTimestamp = (flags & 0x04) != 0 ? uaDateTimeToDateTime(copy.ref.sourceTimestamp) : null;
-            final serverTimestamp = (flags & 0x08) != 0 ? uaDateTimeToDateTime(copy.ref.serverTimestamp) : null;
+            final statusCode = (flags & _hasStatusFlag) != 0 ? copy.ref.status : raw.UA_STATUSCODE_GOOD;
+            final sourceTimestamp = (flags & _hasSourceTimestampFlag) != 0
+                ? uaDateTimeToDateTime(copy.ref.sourceTimestamp)
+                : null;
+            final serverTimestamp = (flags & _hasServerTimestampFlag) != 0
+                ? uaDateTimeToDateTime(copy.ref.serverTimestamp)
+                : null;
             DynamicValue value = DynamicValue();
-            if ((flags & 0x01) != 0 && copy.ref.value.data != ffi.nullptr) {
+            if ((flags & _hasValueFlag) != 0 && copy.ref.value.data != ffi.nullptr) {
               value = await _variantToValueAutoSchema(copy.ref.value);
             }
             if (!completer.isCompleted) {
@@ -879,6 +895,24 @@ class Client implements ClientApi {
               final ok = status == raw.UA_STATUSCODE_GOOD;
               var reference = retVal[indorderNodes[i].$1] ?? DynamicValue();
               raw.UA_Variant? value = ok ? pointers[i].ref.value : null;
+
+              // A server may legally answer Good with an EMPTY variant: "the
+              // attribute exists and carries no value" (Part 4 — asyncua does
+              // this for the DataTypeDefinition of every base DataType node;
+              // TwinCAT answers BadAttributeIdInvalid instead). An empty
+              // variant has type == NULL and data == NULL, so every case below
+              // would dereference NULL natively — a process-killing SIGSEGV,
+              // not a catchable Dart error. Treat it exactly like the
+              // tolerated BadAttributeIdInvalid above: the attribute is
+              // absent.
+              //
+              // Except for VALUE, where empty is a value: the node was read
+              // and its value is null, which is what the monitor path and
+              // read() report. That case goes on into the switch, where
+              // _variantToValueAutoSchema answers a null DynamicValue.
+              if (value != null && value.type == ffi.nullptr && attributeId != AttributeId.UA_ATTRIBUTEID_VALUE) {
+                continue;
+              }
 
               switch (indorderNodes[i].$2) {
                 case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
@@ -1713,46 +1747,67 @@ class Client implements ClientApi {
               var reference = latestValues[nodeId] ?? DynamicValue();
               final ref = value.ref.value;
 
-              switch (attributeId) {
-                case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
-                  final description = ref.data.cast<raw.UA_LocalizedText>();
-                  reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
-                case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
-                  final displayName = ref.data.cast<raw.UA_LocalizedText>();
-                  reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
-                case AttributeId.UA_ATTRIBUTEID_DATATYPE:
-                  final dataType = ref.data.cast<raw.UA_NodeId>();
-                  reference.typeId = dataType.ref.toNodeId();
-                case AttributeId.UA_ATTRIBUTEID_VALUE:
-                  // Steal the variant pointer from open62541 so they don't delete it
-                  // if we don't do this, the variant will be freed on a flutter async
-                  // boundary. f.e. while we fetch the structure of a schema.
-                  // because the callback we are currently in "returns" before completing.
-                  final source = ua_calloc<raw.UA_Variant>();
-                  source.ref = value.ref.value;
-                  final variant = raw.UA_Variant_new();
-                  raw.UA_Variant_copy(source, variant);
-                  ua_calloc.free(source);
-                  final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
-                  // Now that we have crossed an async boundary, we need to fetch a new reference. It might have been updated
-                  // with a description or other fields while we processed data.
-                  reference = latestValues[nodeId] ?? reference;
+              // A notification without a decodable payload must not enter the
+              // switch: every case dereferences the variant's native pointers,
+              // and an empty variant (type == NULL) turns that into a
+              // process-killing SIGSEGV. A GOOD sample may legally carry no
+              // value ("the attribute exists and has no value", Part 4) in two
+              // wire shapes: hasValue clear, or hasValue set around a null
+              // variant. Both leave type == NULL, so both are checked.
+              final hasNothingToDecode = (value.ref.substitute & _hasValueFlag) == 0 || ref.type == ffi.nullptr;
 
-                  // Update the values of the fields
-                  reference.value = data.value;
-                  reference.typeId = reference.typeId ?? data.typeId;
-                  reference.enumFields = data.enumFields;
-                  raw.UA_Variant_delete(variant);
-                case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
-                  final temporary = OpcUaDynamicValueSerializer.fromDataTypeDefinition(
-                    reference.typeId ?? ref.type.ref.typeId.toNodeId(),
-                    ref,
-                  );
-                  reference.value = temporary.value;
-                  reference.typeId = reference.typeId ?? temporary.typeId;
-                  reference.enumFields = reference.enumFields ?? temporary.enumFields;
-                default:
-                  throw 'Unhandled attribute id $attributeId';
+              if (hasNothingToDecode) {
+                // A GOOD sample without a payload says the Value is empty NOW,
+                // so the previously decoded value has to go: left in place it
+                // is re-emitted as current while a read of the same node
+                // answers null. Any other attribute is absent, like the
+                // tolerated BadAttributeIdInvalid of readAttribute: nothing
+                // is set, and nothing already known is unset.
+                if (attributeId == AttributeId.UA_ATTRIBUTEID_VALUE) {
+                  reference.value = null;
+                }
+              } else {
+                switch (attributeId) {
+                  case AttributeId.UA_ATTRIBUTEID_DESCRIPTION:
+                    final description = ref.data.cast<raw.UA_LocalizedText>();
+                    reference.description = LocalizedText(description.ref.text.value, description.ref.locale.value);
+                  case AttributeId.UA_ATTRIBUTEID_DISPLAYNAME:
+                    final displayName = ref.data.cast<raw.UA_LocalizedText>();
+                    reference.displayName = LocalizedText(displayName.ref.text.value, displayName.ref.locale.value);
+                  case AttributeId.UA_ATTRIBUTEID_DATATYPE:
+                    final dataType = ref.data.cast<raw.UA_NodeId>();
+                    reference.typeId = dataType.ref.toNodeId();
+                  case AttributeId.UA_ATTRIBUTEID_VALUE:
+                    // Steal the variant pointer from open62541 so they don't delete it
+                    // if we don't do this, the variant will be freed on a flutter async
+                    // boundary. f.e. while we fetch the structure of a schema.
+                    // because the callback we are currently in "returns" before completing.
+                    final source = ua_calloc<raw.UA_Variant>();
+                    source.ref = value.ref.value;
+                    final variant = raw.UA_Variant_new();
+                    raw.UA_Variant_copy(source, variant);
+                    ua_calloc.free(source);
+                    final data = await _variantToValueAutoSchema(variant.ref, reference.typeId);
+                    // Now that we have crossed an async boundary, we need to fetch a new reference. It might have been updated
+                    // with a description or other fields while we processed data.
+                    reference = latestValues[nodeId] ?? reference;
+
+                    // Update the values of the fields
+                    reference.value = data.value;
+                    reference.typeId = reference.typeId ?? data.typeId;
+                    reference.enumFields = data.enumFields;
+                    raw.UA_Variant_delete(variant);
+                  case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
+                    final temporary = OpcUaDynamicValueSerializer.fromDataTypeDefinition(
+                      reference.typeId ?? ref.type.ref.typeId.toNodeId(),
+                      ref,
+                    );
+                    reference.value = temporary.value;
+                    reference.typeId = reference.typeId ?? temporary.typeId;
+                    reference.enumFields = reference.enumFields ?? temporary.enumFields;
+                  default:
+                    throw 'Unhandled attribute id $attributeId';
+                }
               }
 
               // Update the seen indexes after processing
@@ -2247,6 +2302,13 @@ class Client implements ClientApi {
   Schema defs = {};
 
   Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data, [NodeId? dataTypeId]) async {
+    // An empty variant (type == NULL) has no payload and no type to probe a
+    // schema from — the deref on the next line would be a native SIGSEGV, not
+    // a catchable error. Answer the same null DynamicValue that variantToValue
+    // produces for a variant without data.
+    if (data.type == ffi.nullptr) {
+      return DynamicValue();
+    }
     var typeId = data.type.ref.typeId.toNodeId();
     if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null) {
       if (!defs.containsKey(dataTypeId)) {
