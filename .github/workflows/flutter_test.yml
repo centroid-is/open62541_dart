@@ -104,14 +104,37 @@ jobs:
           # Flake hunting: verbose output per run (it is the only place
           # flutter_tools reports the tester's exit code on Windows), kept
           # for the failed runs and uploaded with the crash dumps.
+          # The Dart VM filters the access violation itself (no WER dump, no
+          # event-log record), so attach ProcDump to each flutter_tester and
+          # take a full dump on the first-chance access violation.
+          $pd = "$env:RUNNER_TEMP\procdump"
+          New-Item -ItemType Directory -Force $pd | Out-Null
+          Invoke-WebRequest -Uri https://download.sysinternals.com/files/Procdump.zip -OutFile "$pd\Procdump.zip"
+          Expand-Archive "$pd\Procdump.zip" -DestinationPath $pd -Force
+          $procdump = "$pd\procdump64.exe"
           $failed = 0
           for ($i = 1; $i -le $repeats; $i++) {
             "===== run $i of $repeats ====="
             $log = "$env:DUMP_DIR\run_$i.log"
-            flutter test -v test/library_test.dart 2>&1 | Out-File -FilePath $log -Encoding utf8
-            $code = $LASTEXITCODE
+            $job = Start-Job -ScriptBlock {
+              param($dir, $log)
+              Set-Location $dir
+              & flutter test -v test/library_test.dart 2>&1 | Out-File -FilePath $log -Encoding utf8
+              $LASTEXITCODE
+            } -ArgumentList (Get-Location).Path, $log
+            $tester = $null
+            for ($w = 0; $w -lt 600 -and -not $tester; $w++) {
+              Start-Sleep -Milliseconds 100
+              $tester = Get-Process flutter_tester -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($job.State -ne 'Running') { break }
+            }
+            if ($tester) {
+              & $procdump -accepteula -ma -e 1 -f C0000005 $tester.Id "$env:DUMP_DIR\run_${i}_PROCESSNAME_PID.dmp" 2>&1 |
+                Select-String -Pattern 'Dump|Exception|exception' | ForEach-Object { $_.Line }
+            } else { "no flutter_tester process seen" }
+            $code = Receive-Job -Job $job -Wait -AutoRemoveJob | Select-Object -Last 1
             Get-Content $log | Select-String -Pattern 'tests passed|exited with code|Shell subprocess|Shell:|exception|Exception|crash' | ForEach-Object { $_.Line }
-            if ($code -ne 0) { $failed++; "===== run $i FAILED (exit $code) =====" } else { Remove-Item $log }
+            if ($code -ne 0) { $failed++; "===== run $i FAILED (exit $code) =====" } else { Remove-Item $log -ErrorAction SilentlyContinue }
           }
           if ($failed -gt 0) { "$failed of $repeats runs failed"; exit 1 }
 
