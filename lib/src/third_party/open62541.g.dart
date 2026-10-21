@@ -874,8 +874,10 @@ external int UA_Server_addWriterGroup(
   ffi.Pointer<UA_NodeId> wgId,
 );
 
-/// Browse the references of a node. The result is allocated and must be
-/// cleared by the caller (``UA_clear`` with ``UA_TYPES_BROWSERESULT``).
+/// View Service Set
+/// ----------------
+/// The View Service Set allows Clients to discover Nodes by browsing the
+/// information model.
 @ffi.Native<UA_BrowseResult Function(ffi.Pointer<UA_Server>, UA_UInt32, ffi.Pointer<UA_BrowseDescription>)>()
 external UA_BrowseResult UA_Server_browse(
   ffi.Pointer<UA_Server> server,
@@ -1176,9 +1178,6 @@ external void UA_Variant_delete(ffi.Pointer<UA_Variant> p);
 @ffi.Native<ffi.Pointer<UA_Variant> Function()>()
 external ffi.Pointer<UA_Variant> UA_Variant_new();
 
-/// Deletes the dynamically allocated content of a variable (e.g. resets all
-/// arrays to undefined arrays). Afterwards, the variable can be safely deleted
-/// without causing memory leaks. But the variable is not initialized.
 @ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Pointer<UA_DataType>)>()
 external void UA_clear(ffi.Pointer<ffi.Void> p, ffi.Pointer<UA_DataType> type);
 
