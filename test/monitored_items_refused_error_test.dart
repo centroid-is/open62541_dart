@@ -4,7 +4,9 @@
 // read the status code; service-level failures of the same create were
 // already a UaStatusException. The refusal is now a MonitoredItemsRefused,
 // a UaStatusException carrying the status of every refused item, and it
-// crosses the ClientIsolate boundary as itself.
+// crosses the ClientIsolate boundary as itself. The DataValue stream of #130
+// (monitoredDataValues) shares the create with monitoredItems, so it reports
+// the same error.
 
 import 'dart:async';
 
@@ -16,21 +18,24 @@ import 'common.dart';
 
 final missingNodeId = NodeId.fromString(1, 'does.not.exist');
 
-/// Monitors [missingNodeId] on [client] and returns the first error the
+/// Monitors [missingNodeId] on [client], through `monitoredItems` or, with
+/// [dataValues], `monitoredDataValues`, and returns the first error the
 /// stream delivers.
-Future<Object> firstStreamError(ClientApi client) async {
+Future<Object> firstStreamError(ClientApi client, {bool dataValues = false}) async {
   final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
+  final nodes = {
+    missingNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+  };
+  final Stream<Object> stream = dataValues
+      ? (client as DataValueMonitoringApi).monitoredDataValues(nodes, subscriptionId)
+      : client.monitoredItems(nodes, subscriptionId);
   final error = Completer<Object>();
-  final subscription = client
-      .monitoredItems({
-        missingNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
-      }, subscriptionId)
-      .listen(
-        (_) {},
-        onError: (Object e) {
-          if (!error.isCompleted) error.complete(e);
-        },
-      );
+  final subscription = stream.listen(
+    (_) {},
+    onError: (Object e) {
+      if (!error.isCompleted) error.complete(e);
+    },
+  );
   addTearDown(subscription.cancel);
   return error.future.timeout(
     Duration(seconds: 10),
@@ -64,6 +69,16 @@ void main() {
     server.delete();
   });
 
+  Future<ClientIsolate> setupClientIsolate() async {
+    final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+    // The worker pumps the native client only while runIterate runs; it ends
+    // with an error once the client is deleted in the teardown.
+    unawaited(client.runIterate().catchError((_) {}));
+    await client.connect('opc.tcp://127.0.0.1:${server.port}');
+    addTearDown(client.delete);
+    return client;
+  }
+
   test('Client: a refused monitored item fails the stream with MonitoredItemsRefused', () async {
     final client = await setupClient(server.port);
     addTearDown(client.delete);
@@ -71,12 +86,16 @@ void main() {
   }, timeout: Timeout(Duration(seconds: 30)));
 
   test('ClientIsolate: the MonitoredItemsRefused crosses the isolate boundary typed', () async {
-    final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
-    // The worker pumps the native client only while runIterate runs; it ends
-    // with an error once the client is deleted in the teardown.
-    unawaited(client.runIterate().catchError((_) {}));
-    await client.connect('opc.tcp://127.0.0.1:${server.port}');
+    expectRefused(await firstStreamError(await setupClientIsolate()));
+  }, timeout: Timeout(Duration(seconds: 30)));
+
+  test('Client, monitoredDataValues: the same MonitoredItemsRefused', () async {
+    final client = await setupClient(server.port);
     addTearDown(client.delete);
-    expectRefused(await firstStreamError(client));
+    expectRefused(await firstStreamError(client, dataValues: true));
+  }, timeout: Timeout(Duration(seconds: 30)));
+
+  test('ClientIsolate, monitoredDataValues: the same MonitoredItemsRefused, typed', () async {
+    expectRefused(await firstStreamError(await setupClientIsolate(), dataValues: true));
   }, timeout: Timeout(Duration(seconds: 30)));
 }

@@ -6,6 +6,39 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **Monitoring with quality: `monitorDataValue` / `monitoredDataValues`.**
+  `Client` and `ClientIsolate` implement the new `DataValueMonitoringApi`,
+  two methods mirroring `monitor` / `monitoredItems` that emit every sample
+  as a `DataValue` (the type `readValue` returns): the value, the server's
+  status code and the source/server timestamps of the notification. A sample
+  with a non-Good status is delivered with its code (`DataValue.isGood` /
+  `isUncertain` / `isBad`) and the value it carries, or else the last known
+  one; a Good sample without a value is a null value; a timestamp the
+  notification does not carry (or carries as the null timestamp, tick 0) is
+  null, never the previous sample's. A Bad sample of a monitored attribute
+  other than Value has no field to travel in and is a `UaStatusException`
+  error on the stream. Every event is a fresh map of fresh `DataValue`
+  objects over copies of the values, on both client types. The existing
+  `monitor` / `monitoredItems` are unchanged (value only; a non-Good status
+  is a `UaStatusException` error and nothing is delivered for that sample),
+  and so are `ClientApi` and `DynamicValue`: the new methods live on their
+  own interface because Dart requires an `implements` class to define every
+  member of its interface, so a class written against `ClientApi` keeps
+  compiling. Code holding a `ClientApi` checks `is DataValueMonitoringApi`.
+- **Fixed: a Good answer carrying an empty variant killed the process.** A
+  server may answer an attribute read, a data-change notification or a method
+  output with status Good and an empty variant ("the attribute exists and has
+  no value" — python-asyncua does this for the `DataTypeDefinition` of its
+  base DataType nodes). `Client.readAttribute`, the monitored-item callback
+  and the decode behind `Client.call` dereferenced the empty variant's NULL
+  type/data pointers natively: a SIGSEGV, not a catchable Dart error. An
+  empty **Value** now reads as a null `DynamicValue`: `readAttribute` returns
+  the node with a null value, `read` and `call` return a null `DynamicValue`,
+  and a monitored item emits null — also when a node that had a value goes
+  empty (the previous value is not re-emitted). Any other attribute
+  (`Description`, `DisplayName`, `DataType`, `DataTypeDefinition`) answered
+  Good and empty is treated as absent, like the already tolerated
+  `BadAttributeIdInvalid`.
 - **`ua_malloc` is gone; the package allocates with `ua_calloc` only
   (#45).** Every buffer handed to open62541 or freed with `free()` came from
   one of two allocators that differed only in zero-filling; the malloc one is

@@ -52,5 +52,5 @@ export 'src/server.dart'
 export 'src/types/errors.dart'
     show Inactivity, MonitoredItemsRefused, SecureChannelClosed, SubscriptionDeleted, UaStatusException;
 export 'src/isolate.dart' show ClientIsolate;
-export 'src/client_api.dart' show ClientApi;
+export 'src/client_api.dart' show ClientApi, DataValueMonitoringApi;
 export 'src/types/opcua_serializer.dart' show OpcUaDynamicValueSerializer;

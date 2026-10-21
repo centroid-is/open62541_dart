@@ -2,6 +2,7 @@ import 'client.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'node_id.dart';
+import 'types/errors.dart';
 
 abstract class ClientApi {
   /// Waits until the client session is fully activated.
@@ -121,4 +122,71 @@ abstract class ClientApi {
 
   /// Disconnects and releases all resources.
   Future<void> delete();
+}
+
+/// Monitoring with quality: every sample as a [DataValue], carrying the status
+/// code and the source/server timestamps the server attached to it.
+///
+/// A separate interface, not new members of [ClientApi]: Dart requires a class
+/// that `implements` an interface to define every member of it, bodies
+/// included, so there is no way to add a member to [ClientApi] that a class
+/// written against today's [ClientApi] (a wrapper, a test fake) would survive.
+/// [Client] and `ClientIsolate` implement both. Code that holds a [ClientApi]
+/// checks `is DataValueMonitoringApi` to reach these.
+///
+/// [ClientApi.monitor] / [ClientApi.monitoredItems] are unchanged: they deliver
+/// the value alone, and put a sample with a non-Good status on the stream as a
+/// [UaStatusException] error, delivering nothing for it.
+abstract class DataValueMonitoringApi {
+  /// Monitors the Value attribute of [nodeId] (with its DataType, Description
+  /// and DisplayName, like [ClientApi.monitor]) and emits every sample as a
+  /// [DataValue].
+  ///
+  /// Each event is a fresh [DataValue] over a fresh copy of the value, on
+  /// [Client] as on `ClientIsolate`: a consumer may keep it. See
+  /// [monitoredDataValues] for what a sample's status and timestamps become.
+  /// Requires a [subscriptionId] from [ClientApi.subscriptionCreate].
+  Stream<DataValue> monitorDataValue(
+    NodeId nodeId,
+    int subscriptionId, {
+    MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    Duration samplingInterval = const Duration(milliseconds: 100),
+    bool discardOldest = true,
+    int queueSize = 1,
+  });
+
+  /// Monitors multiple nodes and attributes, like [ClientApi.monitoredItems],
+  /// and emits a map of [DataValue] per node whenever any monitored value
+  /// changes. Requires a [subscriptionId] from [ClientApi.subscriptionCreate].
+  ///
+  /// A sample of the **Value** attribute is delivered whatever its status:
+  ///
+  /// - [DataValue.statusCode] is the server's own code (`UA_STATUSCODE_GOOD`,
+  ///   0, when the notification carries none). Uncertain is a status like any
+  ///   other; tell them apart with [DataValue.isGood], [DataValue.isUncertain]
+  ///   and [DataValue.isBad].
+  /// - A sample that carries a value is decoded like any other, Bad or not.
+  ///   A sample with a non-Good status and no value keeps the last known
+  ///   value (an empty [DynamicValue] when there is none yet). A Good sample
+  ///   with no value says the Value is empty now: the value is null.
+  /// - [DataValue.sourceTimestamp] and [DataValue.serverTimestamp] are the
+  ///   notification's own, null when it carries none or carries the OPC UA
+  ///   null timestamp (tick 0). A sample never keeps the previous sample's.
+  ///
+  /// Only the Value attribute has a status to deliver. A Bad sample of any
+  /// other monitored attribute is added to the stream as a [UaStatusException]
+  /// error, and does not hold the map back. A node whose Value attribute is
+  /// not monitored reports `UA_STATUSCODE_GOOD` and no timestamps.
+  ///
+  /// Each event is a fresh map of fresh [DataValue] objects over fresh copies
+  /// of the values, on [Client] as on `ClientIsolate`: a consumer may keep
+  /// them, or compare one event with the next.
+  Stream<Map<NodeId, DataValue>> monitoredDataValues(
+    ReadAttributeParam nodes,
+    int subscriptionId, {
+    MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    Duration samplingInterval = const Duration(milliseconds: 100),
+    bool discardOldest = true,
+    int queueSize = 1,
+  });
 }
