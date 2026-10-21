@@ -4,6 +4,23 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## Unreleased
+
+- **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the
+  owning isolate.** By default the supervisor's pump calls
+  `runIterate(iterateInterval)`, which sits in open62541's `select()` for up
+  to `iterateInterval`, so a `Client` has needed an isolate of its own (or a
+  `ClientIsolate`). With `nonBlocking: true` the pump calls
+  `runIterate(Duration.zero)`, a zero-timeout poll that still fires due timers
+  and drains ready sockets, and then yields for `iterateInterval` like any
+  other timer; `iterateInterval` becomes the poll cadence (and the floor on
+  notification latency; 1 ms is reasonable for a fan-in). The client can then
+  share the isolate that consumes its data: several clients on one isolate,
+  or a client on a UI isolate. The default is `false`, so existing callers
+  keep their exact behaviour. `runIterate` is documented as a timeout, with
+  `Duration.zero` as the non-blocking poll. `tool/bench_pump.dart` measures
+  the cost.
+
 ## 1.5.9
 
 - **`Server.port`: the port the server listens on, for `Server(port: 0)`.**

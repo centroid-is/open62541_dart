@@ -15,8 +15,8 @@ void main() {
   late int port;
 
   setUp(() async {
-    port = await freeTcpPort();
-    server = setupServer(port);
+    server = setupServer();
+    port = server.port;
     addBasicVariables(server);
   });
 
@@ -38,7 +38,7 @@ void main() {
         await Future.delayed(const Duration(milliseconds: 1));
       }
     }();
-    await client.connect('opc.tcp://localhost:$port');
+    await client.connect('opc.tcp://127.0.0.1:$port');
     pumping = false;
     await Future.delayed(const Duration(milliseconds: 20));
 
@@ -63,7 +63,7 @@ void main() {
   test('keepConnected(nonBlocking: true) delivers values without blocking its isolate', () async {
     final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
     await client.keepConnected(
-      'opc.tcp://localhost:$port',
+      'opc.tcp://127.0.0.1:$port',
       nonBlocking: true,
       iterateInterval: const Duration(milliseconds: 1),
     );
