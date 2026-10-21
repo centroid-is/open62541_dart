@@ -6,180 +6,169 @@ import 'package:logging/logging.dart';
 
 Future<void> main() async {
   final packageRoot = Platform.script.resolve('../');
-  final functions = Functions(
-    includeSymbolAddress: Declarations.includeSet({'UA_Variant_new'}),
-    include: Declarations.includeSet({
-      '__UA_Client_AsyncService',
-      '__UA_Server_addNode',
-      '__UA_Server_write',
-      'UA_StatusCode_name',
+  const functionSet = {
+    '__UA_Client_AsyncService',
+    '__UA_Server_addNode',
+    '__UA_Server_write',
+    'UA_StatusCode_name',
 
-      'UA_Variant_new',
-      'UA_Variant_delete',
-      'UA_Variant_copy',
+    'UA_Variant_new',
+    'UA_Variant_delete',
+    'UA_Variant_copy',
 
-      'UA_ClientConfig_setDefault',
-      'UA_Client_delete',
-      'UA_Client_disconnect',
-      'UA_Client_findDataType',
-      'UA_ClientConfig_setDefaultEncryption',
-      'UA_CertificateGroup_AcceptAll',
-      'UA_ClientConfig_setAuthenticationUsername',
-      'UA_Client_newWithConfig',
-      'UA_Client_getConfig',
-      'UA_Client_connectAsync',
-      'UA_Client_run_iterate',
-      'UA_Client_writeValueAttribute_async',
-      'UA_Client_getState',
-      'UA_ReadRequest_init',
-      'UA_ReadRequest_new',
-      'UA_ReadRequest_delete',
-      'UA_DataValue_new',
-      'UA_DataValue_init',
-      'UA_DataValue_delete',
-      'UA_DataValue_copy',
-      'UA_CreateSubscriptionRequest_new',
-      'UA_CreateSubscriptionRequest_init',
-      'UA_CreateSubscriptionRequest_delete',
-      'UA_CreateMonitoredItemsRequest_init',
-      'UA_CreateMonitoredItemsRequest_new',
-      'UA_CreateMonitoredItemsRequest_delete',
-      'UA_Client_Subscriptions_create_async',
-      'UA_DeleteMonitoredItemsRequest_new',
-      'UA_DeleteMonitoredItemsRequest_init',
-      'UA_DeleteMonitoredItemsRequest_delete',
-      'UA_Client_cancelByRequestId',
-      'UA_Client_MonitoredItems_createDataChanges_async',
-      'UA_Client_MonitoredItems_delete_async',
-      'UA_Client_call_async',
+    'UA_ClientConfig_setDefault',
+    'UA_Client_delete',
+    'UA_Client_disconnect',
+    'UA_Client_findDataType',
+    'UA_ClientConfig_setDefaultEncryption',
+    'UA_CertificateGroup_AcceptAll',
+    'UA_ClientConfig_setAuthenticationUsername',
+    'UA_Client_newWithConfig',
+    'UA_Client_getConfig',
+    'UA_Client_connectAsync',
+    'UA_Client_run_iterate',
+    'UA_Client_writeValueAttribute_async',
+    'UA_Client_getState',
+    'UA_ReadRequest_init',
+    'UA_ReadRequest_new',
+    'UA_ReadRequest_delete',
+    'UA_DataValue_new',
+    'UA_DataValue_init',
+    'UA_DataValue_delete',
+    'UA_DataValue_copy',
+    'UA_CreateSubscriptionRequest_new',
+    'UA_CreateSubscriptionRequest_init',
+    'UA_CreateSubscriptionRequest_delete',
+    'UA_CreateMonitoredItemsRequest_init',
+    'UA_CreateMonitoredItemsRequest_new',
+    'UA_CreateMonitoredItemsRequest_delete',
+    'UA_Client_Subscriptions_create_async',
+    'UA_DeleteMonitoredItemsRequest_new',
+    'UA_DeleteMonitoredItemsRequest_init',
+    'UA_DeleteMonitoredItemsRequest_delete',
+    'UA_Client_cancelByRequestId',
+    'UA_Client_MonitoredItems_createDataChanges_async',
+    'UA_Client_MonitoredItems_delete_async',
+    'UA_Client_call_async',
 
-      // Browse functions
-      'UA_BrowseRequest_new',
-      'UA_BrowseRequest_init',
-      'UA_BrowseRequest_delete',
-      'UA_BrowseNextRequest_new',
-      'UA_BrowseNextRequest_init',
-      'UA_BrowseNextRequest_delete',
-      'UA_BrowseDescription_init',
+    // Browse functions
+    'UA_BrowseRequest_new',
+    'UA_BrowseRequest_init',
+    'UA_BrowseRequest_delete',
+    'UA_BrowseNextRequest_new',
+    'UA_BrowseNextRequest_init',
+    'UA_BrowseNextRequest_delete',
+    'UA_BrowseDescription_init',
 
-      'UA_ServerConfig_setMinimal',
-      'UA_Server_newWithConfig',
-      'UA_Server_getConfig',
-      'UA_Server_run_startup',
-      'UA_Server_addNode_begin',
-      'UA_Server_addNode_finish',
-      'UA_Server_addMethodNode',
-      'UA_Server_addObjectNode',
-      'UA_Server_addReference',
-      'UA_Server_deleteReference',
-      'UA_Server_deleteNode',
-      'UA_Server_setVariableNode_callbackValueSource',
-      'UA_Server_addVariableNode',
-      'UA_Server_addVariableTypeNode',
-      'UA_Server_addNode',
-      'UA_Server_writeDescription',
-      'UA_Server_readValue',
-      'UA_Server_writeValue',
-      'UA_Server_findDataType',
-      'UA_Server_addNamespace',
-      'UA_Server_getLifecycleState',
-      'UA_Server_run_iterate',
-      'UA_Server_run_shutdown',
-      'UA_Server_delete',
-      // UA_Server_setVariableNode_valueCallback is a macro over this one:
-      'UA_Server_setVariableNode_internalValueSource',
+    'UA_ServerConfig_setMinimal',
+    'UA_Server_newWithConfig',
+    'UA_Server_getConfig',
+    'UA_Server_run_startup',
+    'UA_Server_addNode_begin',
+    'UA_Server_addNode_finish',
+    'UA_Server_addMethodNode',
+    'UA_Server_addObjectNode',
+    'UA_Server_addReference',
+    'UA_Server_deleteReference',
+    'UA_Server_deleteNode',
+    'UA_Server_setVariableNode_callbackValueSource',
+    'UA_Server_addVariableNode',
+    'UA_Server_addVariableTypeNode',
+    'UA_Server_addNode',
+    'UA_Server_writeDescription',
+    'UA_Server_readValue',
+    'UA_Server_writeValue',
+    'UA_Server_findDataType',
+    'UA_Server_addNamespace',
+    'UA_Server_getLifecycleState',
+    'UA_Server_run_iterate',
+    'UA_Server_run_shutdown',
+    'UA_Server_delete',
+    // UA_Server_setVariableNode_valueCallback is a macro over this one:
+    'UA_Server_setVariableNode_internalValueSource',
 
-      // PubSub (publisher side)
-      'UA_Server_addPubSubConnection',
-      'UA_Server_removePubSubConnection',
-      'UA_Server_addPublishedDataSet',
-      'UA_Server_removePublishedDataSet',
-      'UA_Server_addDataSetField',
-      'UA_Server_removeDataSetField',
-      'UA_Server_addWriterGroup',
-      'UA_Server_removeWriterGroup',
-      'UA_Server_addDataSetWriter',
-      'UA_Server_removeDataSetWriter',
-      'UA_Server_triggerWriterGroupPublish',
-      // PubSub (subscriber side)
-      'UA_Server_addReaderGroup',
-      'UA_Server_removeReaderGroup',
-      'UA_Server_addDataSetReader',
-      'UA_Server_removeDataSetReader',
-      'UA_Server_setDataSetReaderTargetVariables',
-      // PubSub component state machine
-      'UA_Server_enableAllPubSubComponents',
-      'UA_Server_disableAllPubSubComponents',
-      'UA_Server_enablePubSubConnection',
-      'UA_Server_disablePubSubConnection',
-      'UA_Server_enableWriterGroup',
-      'UA_Server_disableWriterGroup',
-      'UA_Server_enableDataSetWriter',
-      'UA_Server_disableDataSetWriter',
-      'UA_Server_enableReaderGroup',
-      'UA_Server_disableReaderGroup',
-      'UA_Server_enableDataSetReader',
-      'UA_Server_disableDataSetReader',
-      'UA_Server_getWriterGroupState',
-      'UA_Server_getDataSetWriterState',
-      'UA_Server_getReaderGroupState',
-      'UA_Server_getDataSetReaderState',
+    // PubSub (publisher side)
+    'UA_Server_addPubSubConnection',
+    'UA_Server_removePubSubConnection',
+    'UA_Server_addPublishedDataSet',
+    'UA_Server_removePublishedDataSet',
+    'UA_Server_addDataSetField',
+    'UA_Server_removeDataSetField',
+    'UA_Server_addWriterGroup',
+    'UA_Server_removeWriterGroup',
+    'UA_Server_addDataSetWriter',
+    'UA_Server_removeDataSetWriter',
+    'UA_Server_triggerWriterGroupPublish',
+    // PubSub (subscriber side)
+    'UA_Server_addReaderGroup',
+    'UA_Server_removeReaderGroup',
+    'UA_Server_addDataSetReader',
+    'UA_Server_removeDataSetReader',
+    'UA_Server_setDataSetReaderTargetVariables',
+    // PubSub component state machine
+    'UA_Server_enableAllPubSubComponents',
+    'UA_Server_disableAllPubSubComponents',
+    'UA_Server_enablePubSubConnection',
+    'UA_Server_disablePubSubConnection',
+    'UA_Server_enableWriterGroup',
+    'UA_Server_disableWriterGroup',
+    'UA_Server_enableDataSetWriter',
+    'UA_Server_disableDataSetWriter',
+    'UA_Server_enableReaderGroup',
+    'UA_Server_disableReaderGroup',
+    'UA_Server_enableDataSetReader',
+    'UA_Server_disableDataSetReader',
+    'UA_Server_getWriterGroupState',
+    'UA_Server_getDataSetWriterState',
+    'UA_Server_getReaderGroupState',
+    'UA_Server_getDataSetReaderState',
 
-      // Statistics / diagnostics
-      'UA_Server_getStatistics',
+    // Statistics / diagnostics
+    'UA_Server_getStatistics',
 
-      // Session introspection (method-callback session identity)
-      'UA_Server_getSessionAttribute',
+    // Session introspection (method-callback session identity)
+    'UA_Server_getSessionAttribute',
 
-      // Async operations (method calls now; async data-source writes later)
-      'UA_Server_setAsyncCallMethodResult',
-      'UA_Server_setAsyncWriteResult',
+    // Async operations (method calls now; async data-source writes later)
+    'UA_Server_setAsyncCallMethodResult',
+    'UA_Server_setAsyncWriteResult',
 
-      'UA_DataTypeAttributes_new',
-      'UA_DataTypeAttributes_delete',
+    'UA_DataTypeAttributes_new',
+    'UA_DataTypeAttributes_delete',
 
-      'UA_ObjectAttributes_new',
-      'UA_ObjectAttributes_delete',
+    'UA_ObjectAttributes_new',
+    'UA_ObjectAttributes_delete',
 
-      'UA_VariableTypeAttributes_new',
-      'UA_VariableTypeAttributes_delete',
-      'UA_VariableAttributes_new',
-      'UA_VariableAttributes_delete',
+    'UA_VariableTypeAttributes_new',
+    'UA_VariableTypeAttributes_delete',
+    'UA_VariableAttributes_new',
+    'UA_VariableAttributes_delete',
 
-      'UA_LocalizedText_new',
-      'UA_LocalizedText_delete',
+    'UA_LocalizedText_new',
+    'UA_LocalizedText_delete',
 
-      'UA_Log_Stdout_new',
-      'UA_Log_Stdout_delete',
+    'UA_Log_Stdout_new',
+    'UA_Log_Stdout_delete',
 
-      'UA_NodeId_new',
-      'UA_NodeId_delete',
-      'UA_NODEID_STRING',
-      'UA_NODEID_NUMERIC',
+    'UA_NodeId_new',
+    'UA_NodeId_delete',
+    'UA_NODEID_STRING',
+    'UA_NODEID_NUMERIC',
 
-      'UA_QUALIFIEDNAME',
-    }),
-    rename: (declaration) {
-      switch (declaration.originalName) {
-        case '__UA_Client_AsyncService':
-          return 'UA_Client_AsyncService';
-        case '__UA_Server_addNode':
-          return 'UA_Server_addNode';
-        case '__UA_Server_write':
-          return 'UA_Server_write_raw';
-        default:
-          return declaration.originalName;
-      }
-    },
-  );
+    'UA_QUALIFIEDNAME',
+  };
+  const functionRenames = {
+    '__UA_Client_AsyncService': 'UA_Client_AsyncService',
+    '__UA_Server_addNode': 'UA_Server_addNode',
+    '__UA_Server_write': 'UA_Server_write_raw',
+  };
+  const symbolAddressSet = {'UA_Variant_new'};
 
-  final globals = Globals(
-    include: Declarations.includeSet({
-      // 'UA_TYPES', The code generated from this variable causes the dart runtime to crash. See : https://github.com/dart-lang/sdk/issues/62087
-      'UA_VariableAttributes_default',
-      'UA_ObjectAttributes_default',
-    }),
-  );
+  const globalSet = {
+    // 'UA_TYPES', The code generated from this variable causes the dart runtime to crash. See : https://github.com/dart-lang/sdk/issues/62087
+    'UA_VariableAttributes_default',
+    'UA_ObjectAttributes_default',
+  };
 
   final macroSet = {
     'UA_OPEN62541_VER_MAJOR',
@@ -191,115 +180,129 @@ Future<void> main() async {
     'UA_TYPES_COUNT',
   };
 
-  final macros = Macros(
-    include: (decl) {
-      if (decl.originalName.startsWith('UA_ACCESSLEVELMASK_') ||
-          decl.originalName.startsWith('UA_STATUSCODE_') ||
-          decl.originalName.startsWith('UA_TYPES_') ||
-          decl.originalName.startsWith('UA_VALUERANK_') ||
-          decl.originalName.startsWith('UA_UADPNETWORKMESSAGECONTENTMASK_') ||
-          decl.originalName.startsWith('UA_NS0ID_')) {
-        return true;
-      }
-      return macroSet.contains(decl.originalName);
-    },
-  );
+  bool includeMacro(String name) {
+    if (name.startsWith('UA_ACCESSLEVELMASK_') ||
+        name.startsWith('UA_STATUSCODE_') ||
+        name.startsWith('UA_TYPES_') ||
+        name.startsWith('UA_VALUERANK_') ||
+        name.startsWith('UA_UADPNETWORKMESSAGECONTENTMASK_') ||
+        name.startsWith('UA_NS0ID_')) {
+      return true;
+    }
+    return macroSet.contains(name);
+  }
+
+  const structSet = {
+    'UA_ClientConfig',
+    'UA_Variant',
+    'UA_EnumDefinition',
+    'UA_EnumField',
+    'UA_StructureDefinition',
+    'UA_StructureField',
+    'UA_ValueSourceNotifications',
+    'UA_Server',
+    'UA_DataValue',
+    'UA_NumericRange',
+    'UA_ServerConfig',
+    'UA_NodeAttributes',
+    'UA_DataTypeAttributes',
+    'UA_ObjectAttributes',
+    'UA_MethodAttributes',
+    'UA_Argument',
+    'UA_DataTypeArray',
+    'UA_DataTypeMember',
+    'UA_WriteResponse',
+    'UA_ReadValueId',
+    'UA_ReadRequest',
+    'UA_ReadResponse',
+    'UA_CreateSubscriptionRequest',
+    'UA_CreateSubscriptionResponse',
+    'UA_DeleteMonitoredItemsResponse',
+    'UA_MonitoredItemCreateRequest',
+    'UA_MonitoredItemCreateResponse',
+    'UA_MonitoredItemCreateResult',
+    'UA_CreateMonitoredItemsRequest',
+    'UA_CreateMonitoredItemsResponse',
+    'UA_CallResponse',
+    'UA_CallMethodResult',
+    'UA_DeleteMonitoredItemsRequest',
+    'UA_DataType',
+    'UA_Logger',
+    // Browse structs
+    'UA_BrowseRequest',
+    'UA_BrowseResponse',
+    'UA_BrowseNextRequest',
+    'UA_BrowseNextResponse',
+    'UA_BrowseDescription',
+    'UA_BrowseResult',
+    'UA_ReferenceDescription',
+    // Statistics / diagnostics structs
+    'UA_ServerStatistics',
+    'UA_SecureChannelStatistics',
+    'UA_SessionStatistics',
+    'UA_ServerDiagnosticsSummaryDataType',
+    'UA_SubscriptionDiagnosticsDataType',
+    'UA_SessionSecurityDiagnosticsDataType',
+    // PubSub structs
+    'UA_PublisherId',
+    'UA_PubSubConnectionConfig',
+    'UA_NetworkAddressUrlDataType',
+    'UA_PublishedDataSetConfig',
+    'UA_AddPublishedDataSetResult',
+    'UA_DataSetFieldConfig',
+    'UA_DataSetFieldResult',
+    'UA_PublishedVariableDataType',
+    'UA_WriterGroupConfig',
+    'UA_DataSetWriterConfig',
+    'UA_UadpWriterGroupMessageDataType',
+    'UA_ReaderGroupConfig',
+    'UA_DataSetReaderConfig',
+    'UA_DataSetMetaDataType',
+    'UA_FieldMetaData',
+    'UA_TargetVariablesDataType',
+    'UA_FieldTargetDataType',
+    'UA_ValueCallback',
+  };
+
+  const typedefSet = {
+    'UA_Byte',
+    'UA_StatusCode',
+    'UA_ByteString',
+    'UA_Float',
+    'UA_Double',
+    'UA_Int64',
+    'UA_UInt64',
+    'UA_Int32',
+    'UA_UInt32',
+    'UA_Int16',
+    'UA_UInt16',
+    'UA_SByte',
+    'UA_ValueCallback',
+  };
 
   // Define our generator
   final generator = FfiGenerator(
-    headers: Headers(entryPoints: [packageRoot.resolve('third_party/open62541/open62541_modified.h')]),
-    functions: functions,
-    structs: Structs.includeSet({
-      'UA_ClientConfig',
-      'UA_Variant',
-      'UA_EnumDefinition',
-      'UA_EnumField',
-      'UA_StructureDefinition',
-      'UA_StructureField',
-      'UA_ValueSourceNotifications',
-      'UA_Server',
-      'UA_DataValue',
-      'UA_NumericRange',
-      'UA_ServerConfig',
-      'UA_NodeAttributes',
-      'UA_DataTypeAttributes',
-      'UA_ObjectAttributes',
-      'UA_MethodAttributes',
-      'UA_Argument',
-      'UA_DataTypeArray',
-      'UA_DataTypeMember',
-      'UA_WriteResponse',
-      'UA_ReadValueId',
-      'UA_ReadRequest',
-      'UA_ReadResponse',
-      'UA_CreateSubscriptionRequest',
-      'UA_CreateSubscriptionResponse',
-      'UA_DeleteMonitoredItemsResponse',
-      'UA_MonitoredItemCreateRequest',
-      'UA_MonitoredItemCreateResponse',
-      'UA_MonitoredItemCreateResult',
-      'UA_CreateMonitoredItemsRequest',
-      'UA_CreateMonitoredItemsResponse',
-      'UA_CallResponse',
-      'UA_CallMethodResult',
-      'UA_DeleteMonitoredItemsRequest',
-      'UA_DataType',
-      'UA_Logger',
-      // Browse structs
-      'UA_BrowseRequest',
-      'UA_BrowseResponse',
-      'UA_BrowseNextRequest',
-      'UA_BrowseNextResponse',
-      'UA_BrowseDescription',
-      'UA_BrowseResult',
-      'UA_ReferenceDescription',
-      // Statistics / diagnostics structs
-      'UA_ServerStatistics',
-      'UA_SecureChannelStatistics',
-      'UA_SessionStatistics',
-      'UA_ServerDiagnosticsSummaryDataType',
-      'UA_SubscriptionDiagnosticsDataType',
-      'UA_SessionSecurityDiagnosticsDataType',
-      // PubSub structs
-      'UA_PublisherId',
-      'UA_PubSubConnectionConfig',
-      'UA_NetworkAddressUrlDataType',
-      'UA_PublishedDataSetConfig',
-      'UA_AddPublishedDataSetResult',
-      'UA_DataSetFieldConfig',
-      'UA_DataSetFieldResult',
-      'UA_PublishedVariableDataType',
-      'UA_WriterGroupConfig',
-      'UA_DataSetWriterConfig',
-      'UA_UadpWriterGroupMessageDataType',
-      'UA_ReaderGroupConfig',
-      'UA_DataSetReaderConfig',
-      'UA_DataSetMetaDataType',
-      'UA_FieldMetaData',
-      'UA_TargetVariablesDataType',
-      'UA_FieldTargetDataType',
-      'UA_ValueCallback',
-    }),
-    typedefs: Typedefs.includeSet({
-      'UA_Byte',
-      'UA_StatusCode',
-      'UA_ByteString',
-      'UA_Float',
-      'UA_Double',
-      'UA_Int64',
-      'UA_UInt64',
-      'UA_Int32',
-      'UA_UInt32',
-      'UA_Int16',
-      'UA_UInt16',
-      'UA_SByte',
-      'UA_ValueCallback',
-    }),
-    globals: globals,
-    macros: macros,
-    enums: Enums.includeAll,
+    input: Input(entryPoints: [packageRoot.resolve('third_party/open62541/open62541_modified.h')]),
+    visitors: [
+      Visitor(
+        func: (node) {
+          node.isIncluded = functionSet.contains(node.originalName);
+          node.exposeSymbolAddress = symbolAddressSet.contains(node.originalName);
+          if (functionRenames[node.originalName] case final rename?) {
+            node.name = rename;
+          }
+        },
+        struct: (node) => node.isIncluded = structSet.contains(node.originalName),
+        // Only emitted when another generated binding references them.
+        typealias: (node) =>
+            node.isIncluded = typedefSet.contains(node.originalName) ? TypealiasInclude.ifUsed : TypealiasInclude.never,
+        global: (node) => node.isIncluded = globalSet.contains(node.originalName),
+        macroConstant: (node) => node.isIncluded = includeMacro(node.originalName),
+        enumClass: (node) => node.isIncluded = true,
+      ),
+    ],
     output: Output(
-      dartFile: packageRoot.resolve('lib/src/third_party/open62541.g.dart'),
+      dart: DartOutput(path: packageRoot.resolve('lib/src/third_party/open62541.g.dart')),
       preamble: '''
 /*
  * Copyright (C) 2014-2021 the contributors as stated in the AUTHORS file
@@ -319,7 +322,7 @@ Future<void> main() async {
 ''',
     ),
   );
-  generator.generate(logger: Logger('')..onRecord.listen((record) => print(record.message)));
+  await generator.generate(logger: Logger('')..onRecord.listen((record) => print(record.message)));
 
   print("Appending workaround for UA_TYPES...");
   var output = File(
