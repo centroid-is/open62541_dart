@@ -15,6 +15,7 @@ Future<void> main() async {
     'UA_Variant_new',
     'UA_Variant_delete',
     'UA_Variant_copy',
+    'UA_clear',
 
     'UA_ClientConfig_setDefault',
     'UA_Client_delete',
@@ -70,6 +71,7 @@ Future<void> main() async {
     'UA_Server_addObjectNode',
     'UA_Server_addReference',
     'UA_Server_deleteReference',
+    'UA_Server_browse',
     'UA_Server_deleteNode',
     'UA_Server_setVariableNode_callbackValueSource',
     'UA_Server_addVariableNode',
@@ -207,6 +209,7 @@ Future<void> main() async {
     'UA_NodeAttributes',
     'UA_DataTypeAttributes',
     'UA_ObjectAttributes',
+    'UA_ObjectTypeAttributes',
     'UA_MethodAttributes',
     'UA_Argument',
     'UA_DataTypeArray',

@@ -38,6 +38,11 @@ void main() {
     expect(sizeOf<raw.UA_PubSubConnectionConfig>(), 192);
     expect(sizeOf<raw.UA_WriterGroupConfig>(), 224);
     expect(sizeOf<raw.UA_DataSetReaderConfig>(), 376);
+    // Hand-added to the bindings (tool/ffigen.dart lists them for the next
+    // regeneration): the ObjectType attributes Server.addObjectTypeNode fills
+    // and the BrowseResult UA_Server_browse returns by value.
+    expect(sizeOf<raw.UA_ObjectTypeAttributes>(), getTypeByIndex(raw.UA_TYPES_OBJECTTYPEATTRIBUTES).ref.memSize);
+    expect(sizeOf<raw.UA_BrowseResult>(), getTypeByIndex(raw.UA_TYPES_BROWSERESULT).ref.memSize);
   });
   test("Verify types", () {
     expect(getType(UaTypes.boolean).ref.typeName.cast<Utf8>().toDartString(), "Boolean");

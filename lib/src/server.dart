@@ -58,6 +58,8 @@ class ServerStatistics {
     required this.currentSubscriptionCount,
     required this.cumulatedSubscriptionCount,
     required this.currentMonitoredItemCount,
+    this.liveDataChangeNotificationCount,
+    this.liveNotificationCount,
   });
 
   // Secure-channel layer.
@@ -88,12 +90,32 @@ class ServerStatistics {
   /// SubscriptionDiagnosticsArray), or `null` when unavailable.
   final int? currentMonitoredItemCount;
 
+  /// Data-change notifications delivered by the subscriptions that are
+  /// alive right now, summed over them (each entry's
+  /// `dataChangeNotificationsCount` in the NS0 SubscriptionDiagnosticsArray),
+  /// or `null` when unavailable. NOT cumulative since server start: a
+  /// deleted subscription takes its share of the sum with it, so the value
+  /// only grows while the subscription set is stable — a rate consumer
+  /// differences it and clamps a negative delta to zero. (open62541 keeps no
+  /// server-wide counter and offers no subscription-delete hook, so a true
+  /// cumulative count is not cheaply available.)
+  final int? liveDataChangeNotificationCount;
+
+  /// Data-change plus event notifications (open62541's per-subscription
+  /// `notificationsCount`, which counts exactly `dataChangeNotificationsCount
+  /// + eventNotificationsCount` — keep-alive messages carry no notifications
+  /// and are not in it), summed over the live subscriptions the same way, or
+  /// `null` when unavailable.
+  final int? liveNotificationCount;
+
   @override
   String toString() =>
       'ServerStatistics(sessions: $currentSessionCount (cumulated $cumulatedSessionCount), '
       'channels: $currentChannelCount (cumulated $cumulatedChannelCount), '
       'subscriptions: $currentSubscriptionCount (cumulated $cumulatedSubscriptionCount), '
-      'monitoredItems: $currentMonitoredItemCount)';
+      'monitoredItems: $currentMonitoredItemCount, '
+      'dataChangeNotifications: $liveDataChangeNotificationCount, '
+      'notifications: $liveNotificationCount)';
 }
 
 /// The activation identity of the session that invoked a method callback —
@@ -225,6 +247,39 @@ class DataSourceValue {
   final DateTime? sourceTimestamp;
 }
 
+/// How a server takes part in a redundant set: the OPC UA `RedundancySupport`
+/// enumeration (Part 5), published as `Server/ServerRedundancy/RedundancySupport`
+/// (`i=3709`). See [Server.setRedundancy].
+enum RedundancySupport {
+  /// No redundancy. The value every server starts with.
+  none(0),
+
+  /// Cold: a backup server is started on failure of the active one.
+  cold(1),
+
+  /// Warm: the backup servers run but do not keep connections to the data
+  /// sources until they become active.
+  warm(2),
+
+  /// Hot: all servers of the set are running and connected to the data
+  /// sources; a client fails over by itself.
+  hot(3),
+
+  /// Transparent: fail-over is handled below the OPC UA layer; clients see one
+  /// server. Published with `TransparentRedundancyType`, which
+  /// [Server.setRedundancy] does not model (it throws for this value).
+  transparent(4),
+
+  /// Hot and mirrored: hot redundancy where the servers also mirror session
+  /// and subscription state.
+  hotAndMirrored(5);
+
+  const RedundancySupport(this.value);
+
+  /// The enumeration value on the wire (an Int32).
+  final int value;
+}
+
 class Server {
   /// Creates a server with open62541's minimal default configuration,
   /// listening on [port] (4840 by default; `0` lets the OS pick, see [Server.port]).
@@ -245,6 +300,11 @@ class Server {
   /// * [productName] / [manufacturerName] - `BuildInfo.productName` and
   ///   `BuildInfo.manufacturerName` (`Server/ServerStatus/BuildInfo/ProductName`,
   ///   `.../ManufacturerName`).
+  /// * [productUri] - the product's URI, set on BOTH places open62541 keeps
+  ///   it: `ApplicationDescription.productUri` (GetEndpoints/FindServers) and
+  ///   `BuildInfo.productUri` (`Server/ServerStatus/BuildInfo/ProductUri`).
+  ///   Left `null` it stays open62541's `http://open62541.org` even when the
+  ///   product name is set.
   ///
   /// Each one left `null` keeps open62541's default, so an existing
   /// `Server()` is unchanged.
@@ -255,6 +315,7 @@ class Server {
     String? applicationUri,
     String? productName,
     String? manufacturerName,
+    String? productUri,
   }) {
     // The config struct is scratch. UA_Server_newWithConfig moves its contents
     // into the server and zeroes the struct it was given, and a failing
@@ -293,6 +354,10 @@ class Server {
       if (manufacturerName != null) {
         buildInfo.manufacturerName.set(manufacturerName);
       }
+      if (productUri != null) {
+        description.productUri.set(productUri);
+        buildInfo.productUri.set(productUri);
+      }
 
       _server = raw.UA_Server_newWithConfig(config);
       _config = raw.UA_Server_getConfig(_server);
@@ -309,6 +374,10 @@ class Server {
   /// The `ApplicationDescription.applicationUri` this server announces, also
   /// published as `ServerArray[0]` and `NamespaceArray[1]`.
   String get applicationUri => _config.ref.applicationDescription.applicationUri.value;
+
+  /// The `ApplicationDescription.productUri` this server announces (the same
+  /// value is in `BuildInfo.productUri`).
+  String get productUri => _config.ref.applicationDescription.productUri.value;
 
   // ---- Data-source (callback) variable node plumbing -----------------------
   //
@@ -427,6 +496,24 @@ class Server {
   Duration get asyncOperationTimeout => Duration(milliseconds: _config.ref.asyncOperationTimeout.round());
   set asyncOperationTimeout(Duration timeout) {
     _config.ref.asyncOperationTimeout = timeout.inMilliseconds.toDouble();
+  }
+
+  /// How long [shutdown] keeps serving after announcing the shutdown to
+  /// clients, `UA_ServerConfig.shutdownDelay`; `Duration.zero`, the default,
+  /// is an immediate shutdown. [shutdown] honours it when called without a
+  /// `delay` and sets it when called with one. Whole seconds: the
+  /// announcement is `ServerStatus.SecondsTillShutdown`, a count of seconds,
+  /// so [shutdown] rounds up.
+  ///
+  /// open62541 itself reads this field only in `UA_Server_run`, the blocking
+  /// loop this binding does not use (`runIterate` drives the server), so
+  /// nothing but [shutdown] acts on it.
+  Duration get shutdownDelay => Duration(milliseconds: _config.ref.shutdownDelay.round());
+  set shutdownDelay(Duration delay) {
+    if (delay.isNegative) {
+      throw ArgumentError.value(delay, 'delay', 'must not be negative');
+    }
+    _config.ref.shutdownDelay = delay.inMilliseconds.toDouble();
   }
 
   /// The most references the server returns for one node in a single Browse
@@ -1557,6 +1644,105 @@ class Server {
     );
   }
 
+  /// Adds an ObjectType node: a type for [addObjectNode] to instantiate.
+  ///
+  /// The type is a subtype (`HasSubtype`) of [parentType], `BaseObjectType`
+  /// by default. Its BrowseName is [browseName] in namespace 1, like every
+  /// node this class adds; [displayName] defaults to the browse name.
+  /// [isAbstract] marks a type that is not meant to be instantiated.
+  ///
+  /// Properties and components the type requires are added as children of
+  /// the type node with [addVariableNode] / [addObjectNode], and copied onto
+  /// every instance when they carry a `HasModellingRule` reference to
+  /// `Mandatory` (`i=78`): open62541 instantiates only the mandatory
+  /// children of a type. Without that reference the child stays on the type.
+  ///
+  /// Throws a [UaStatusException] with open62541's status when the node
+  /// cannot be added (e.g. `Bad_NodeIdExists`, or
+  /// `Bad_TypeDefinitionInvalid` when [parentType] is not an ObjectType).
+  ///
+  /// Example:
+  /// ```dart
+  /// final pumpType = NodeId.fromString(1, 'PumpType');
+  /// server.addObjectTypeNode(pumpType, 'PumpType');
+  /// final speed = NodeId.fromString(1, 'PumpType.Speed');
+  /// server.addVariableNode(
+  ///   speed,
+  ///   DynamicValue(name: 'Speed', value: 0.0, typeId: NodeId.double),
+  ///   parentNodeId: pumpType,
+  ///   parentReferenceNodeId: NodeId.hasProperty,
+  ///   baseDataVariableType: NodeId.propertyType,
+  /// );
+  /// server.addReference(
+  ///   speed,
+  ///   NodeId.fromNumeric(0, raw.UA_NS0ID_HASMODELLINGRULE),
+  ///   NodeId.fromNumeric(0, raw.UA_NS0ID_MODELLINGRULE_MANDATORY),
+  /// );
+  /// // Every pump now gets its own Speed property.
+  /// server.addObjectNode(NodeId.fromString(1, 'Pump1'), browseName: 'Pump1', typeDefinition: pumpType);
+  /// ```
+  void addObjectTypeNode(
+    NodeId typeId,
+    String browseName, {
+    NodeId? parentType,
+    LocalizedText? displayName,
+    bool isAbstract = false,
+  }) {
+    _addObjectTypeNode(
+      typeId,
+      1,
+      browseName,
+      parentType: parentType ?? NodeId.baseObjectType,
+      displayName: displayName ?? LocalizedText(browseName, ''),
+      isAbstract: isAbstract,
+    );
+  }
+
+  /// [addObjectTypeNode] with the BrowseName in namespace [browseNameNs]: the
+  /// standard type [setRedundancy] re-creates carries a `0:` name.
+  void _addObjectTypeNode(
+    NodeId typeId,
+    int browseNameNs,
+    String browseName, {
+    required NodeId parentType,
+    required LocalizedText displayName,
+    required bool isAbstract,
+  }) {
+    // open62541 deep-copies the NodeIds, the browse name and what it keeps of
+    // the attributes (read through the pointer), so everything is scratch in
+    // the arena. A zeroed attributes struct is UA_ObjectTypeAttributes_default.
+    final status = using((arena) {
+      final attr = arena<raw.UA_ObjectTypeAttributes>();
+      attr.ref.displayName.locale.set(displayName.locale, allocator: arena);
+      attr.ref.displayName.text.set(displayName.value, allocator: arena);
+      attr.ref.isAbstract = isAbstract;
+
+      final requestedRaw = typeId.toRaw(allocator: arena);
+      // A type node has no type definition of its own (a null NodeId here);
+      // open62541 checks the parent type's class instead.
+      final code = raw.UA_Server_addNode_begin(
+        _server,
+        raw.UA_NodeClass.UA_NODECLASS_OBJECTTYPE,
+        requestedRaw,
+        parentType.toRaw(allocator: arena),
+        NodeId.hasSubtype.toRaw(allocator: arena),
+        raw.UA_QUALIFIEDNAME(browseNameNs, browseName.toNativeUtf8(allocator: arena).cast()),
+        raw.UA_NODEID_NUMERIC(0, 0),
+        attr.cast(),
+        getType(UaTypes.objectTypeAttributes),
+        ffi.nullptr,
+        ffi.nullptr,
+      );
+      if (code != raw.UA_STATUSCODE_GOOD) {
+        return code;
+      }
+      return raw.UA_Server_addNode_finish(_server, requestedRaw);
+    }, ua_calloc);
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
+  }
+
   /// Deletes a node from the server's address space.
   ///
   /// Required parameters:
@@ -1631,6 +1817,272 @@ class Server {
 
     if (code != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add reference ${statusCodeToString(code)}, source: $sourceNodeId, target: $targetNodeId';
+    }
+  }
+
+  /// Deletes a reference between two nodes: the counterpart of [addReference].
+  ///
+  /// Removes the [referenceTypeId] reference from [sourceNodeId] to
+  /// [targetNodeId] in the direction [forward] gives and, with
+  /// [deleteBidirectional] (the default), the inverse reference stored on the
+  /// target as well. open62541 checks no model constraints here: a node can be
+  /// left without a parent or a type definition.
+  ///
+  /// Throws a [UaStatusException] with open62541's status when the reference
+  /// type is unknown (`Bad_ReferenceTypeIdInvalid`) or the source node does
+  /// not exist (`Bad_SourceNodeIdInvalid`). Deleting a reference that is not
+  /// there is not an error.
+  void deleteReference(
+    NodeId sourceNodeId,
+    NodeId referenceTypeId,
+    NodeId targetNodeId, {
+    bool forward = true,
+    bool deleteBidirectional = true,
+  }) {
+    // The NodeIds are used for lookups only; nothing is kept. Scratch.
+    final status = using((arena) {
+      final target = arena<raw.UA_ExpandedNodeId>();
+      target.ref.nodeId = targetNodeId.toRaw(allocator: arena);
+      return raw.UA_Server_deleteReference(
+        _server,
+        sourceNodeId.toRaw(allocator: arena),
+        referenceTypeId.toRaw(allocator: arena),
+        forward,
+        target.ref,
+        deleteBidirectional,
+      );
+    }, ua_calloc);
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
+  }
+
+  /// The targets of the [referenceTypeId] references (subtypes included) of
+  /// [nodeId], browsed on the server side in the direction [forward] gives.
+  /// `null` when [nodeId] does not exist; a [UaStatusException] for any other
+  /// failure.
+  List<NodeId>? _browseTargets(NodeId nodeId, NodeId referenceTypeId, {bool forward = true}) {
+    return using((arena) {
+      final description = arena<raw.UA_BrowseDescription>();
+      raw.UA_BrowseDescription_init(description);
+      description.ref.nodeId = nodeId.toRaw(allocator: arena);
+      description.ref.referenceTypeId = referenceTypeId.toRaw(allocator: arena);
+      description.ref.browseDirection = forward
+          ? raw.UA_BrowseDirection.UA_BROWSEDIRECTION_FORWARD
+          : raw.UA_BrowseDirection.UA_BROWSEDIRECTION_INVERSE;
+      description.ref.includeSubtypes = true;
+      description.ref.resultMask = raw.UA_BrowseResultMask.UA_BROWSERESULTMASK_NONE.value;
+
+      // The result comes back by value; its references array is open62541's
+      // allocation, handed to us: UA_clear releases it (and nothing else, the
+      // struct itself is the arena's). maxReferences 0 means no limit.
+      final result = arena<raw.UA_BrowseResult>();
+      result.ref = raw.UA_Server_browse(_server, 0, description);
+      try {
+        if (result.ref.statusCode == raw.UA_STATUSCODE_BADNODEIDUNKNOWN) {
+          return null;
+        }
+        if (result.ref.statusCode != raw.UA_STATUSCODE_GOOD) {
+          throw UaStatusException(result.ref.statusCode);
+        }
+        return [
+          for (var i = 0; i < result.ref.referencesSize; i++) NodeId.fromRaw(result.ref.references[i].nodeId.nodeId),
+        ];
+      } finally {
+        raw.UA_clear(result.cast(), getType(UaTypes.browseResult));
+      }
+    }, ua_calloc);
+  }
+
+  /// Whether [nodeId] exists in the address space.
+  bool _nodeExists(NodeId nodeId) => _browseTargets(nodeId, NodeId.fromNumeric(0, raw.UA_NS0ID_REFERENCES)) != null;
+
+  /// Changes the type definition of the existing Object node [object] to
+  /// [newType]: its `HasTypeDefinition` reference(s) are deleted and one to
+  /// [newType] is added, so a client browsing the object sees [newType].
+  ///
+  /// This is a retype of the node as it stands. Nothing is instantiated:
+  /// mandatory children of [newType] that the object lacks are not added, and
+  /// children of the old type are not removed. Add or delete them yourself
+  /// ([addVariableNode], [deleteNode]). Nodes of NS0 can be retyped too; that
+  /// is how [setRedundancy] changes `Server/ServerRedundancy`.
+  ///
+  /// A no-op when the object already has exactly that type. Throws a
+  /// [UaStatusException] with `Bad_NodeIdUnknown` when [object] does not
+  /// exist and with `Bad_TypeDefinitionInvalid` when [newType] does not,
+  /// before anything is changed.
+  void setTypeDefinition(NodeId object, NodeId newType) {
+    final current = _browseTargets(object, NodeId.hasTypeDefinition);
+    if (current == null) {
+      throw const UaStatusException(raw.UA_STATUSCODE_BADNODEIDUNKNOWN);
+    }
+    if (current.length == 1 && current.single == newType) {
+      return;
+    }
+    if (!_nodeExists(newType)) {
+      throw const UaStatusException(raw.UA_STATUSCODE_BADTYPEDEFINITIONINVALID);
+    }
+    for (final type in current) {
+      deleteReference(object, NodeId.hasTypeDefinition, type);
+    }
+    addReference(object, NodeId.hasTypeDefinition, newType);
+  }
+
+  // ---- Redundancy (setRedundancy) ------------------------------------------
+  //
+  // What `Server/ServerRedundancy/RedundancySupport` (i=3709) reports. The
+  // node is served through the value-source takeover, which reads this field.
+  RedundancySupport _redundancySupport = RedundancySupport.none;
+
+  /// Publishes this server's place in a redundant server set, the OPC UA
+  /// Part 5 way: `Server/ServerRedundancy` (`i=2296`) gets the type the
+  /// mode requires, `RedundancySupport` (`i=3709`) reports [support] and the
+  /// `ServerUriArray` property (`i=11314`, a String array) lists the set.
+  ///
+  /// open62541's reduced NS0 ships `ServerRedundancy` typed as the base
+  /// `ServerRedundancyType` (`i=2034`), whose `RedundancySupport` must be
+  /// `None` (Part 5 §6.3.7), and deletes `ServerUriArray` at startup. For a
+  /// non-transparent mode ([RedundancySupport.cold], [RedundancySupport.warm],
+  /// [RedundancySupport.hot], [RedundancySupport.hotAndMirrored]) this
+  /// creates `NonTransparentRedundancyType` (`i=2039`, a subtype of `i=2034`
+  /// with the mandatory `ServerUriArray` property `i=2040`) when it is not
+  /// there yet, retypes `ServerRedundancy` to it ([setTypeDefinition]), takes
+  /// over `RedundancySupport` ([setVariableValueSource]) and adds
+  /// `ServerUriArray` with [serverUris]. A non-NONE mode on the base type is
+  /// not possible through this call.
+  ///
+  /// [RedundancySupport.none] puts `ServerRedundancy` back on the base type,
+  /// deletes `ServerUriArray` and reports `None`; it takes no [serverUris].
+  /// Every other mode requires a non-empty [serverUris]: Part 5 specifies
+  /// the *server URIs* (the `applicationUri` of each member) in the order a
+  /// client should try them. §6.3.9 requires the local server among them,
+  /// so this server's ApplicationUri
+  /// (`UA_ServerConfig.applicationDescription.applicationUri`, by default
+  /// `urn:open62541.unconfigured.application`) is prepended when [serverUris] does
+  /// not contain it; a list that has it is published as given. A deployment
+  /// without a discovery server can publish `opc.tcp://` endpoint URLs
+  /// instead; say so to your clients. [RedundancySupport.transparent] is refused
+  /// ([ArgumentError]): it calls for `TransparentRedundancyType`, which this
+  /// does not model.
+  ///
+  /// Callable before or after [start], and again at any time: the mode and
+  /// the array are updated in place (a member joining or leaving the set).
+  /// A configuration made before [start] survives it: open62541 deletes the
+  /// standard `ServerUriArray` when the server is *created*
+  /// (`UA_Server_init` → `initNS0` → `configureNS0`), and
+  /// `UA_Server_run_startup` touches no NS0 node but `ServerArray` and
+  /// `ServerStatus.StartTime`.
+  /// Throws [ArgumentError] for an unusable argument before touching the
+  /// address space, a [UaStatusException] when open62541 refuses a step.
+  ///
+  /// ```dart
+  /// server.setRedundancy(
+  ///   RedundancySupport.hot,
+  ///   serverUris: ['urn:plant:opcua:a', 'urn:plant:opcua:b'],
+  /// );
+  /// ```
+  void setRedundancy(RedundancySupport support, {List<String> serverUris = const []}) {
+    if (support == RedundancySupport.transparent) {
+      throw ArgumentError.value(
+        support,
+        'support',
+        'transparent redundancy calls for TransparentRedundancyType, which setRedundancy does not model',
+      );
+    }
+    if (support == RedundancySupport.none && serverUris.isNotEmpty) {
+      throw ArgumentError.value(serverUris, 'serverUris', 'RedundancySupport.none publishes no ServerUriArray');
+    }
+    if (support != RedundancySupport.none && serverUris.isEmpty) {
+      throw ArgumentError.value(serverUris, 'serverUris', 'a redundant set needs at least one server URI');
+    }
+
+    if (support == RedundancySupport.none) {
+      setTypeDefinition(NodeId.serverRedundancy, NodeId.fromNumeric(0, raw.UA_NS0ID_SERVERREDUNDANCYTYPE));
+      if (_nodeExists(NodeId.serverUriArray)) {
+        deleteNode(NodeId.serverUriArray);
+      }
+    } else {
+      final nonTransparentType = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANSPARENTREDUNDANCYTYPE);
+      if (!_nodeExists(nonTransparentType)) {
+        _addNonTransparentRedundancyType(nonTransparentType);
+      }
+      setTypeDefinition(NodeId.serverRedundancy, nonTransparentType);
+      // Part 5 §6.3.9: the array shall contain the local server.
+      final ownUri = _config.ref.applicationDescription.applicationUri.value;
+      final members = serverUris.contains(ownUri) ? serverUris : [ownUri, ...serverUris];
+      final uris = DynamicValue.fromList(members, typeId: NodeId.uastring, name: 'ServerUriArray');
+      if (_nodeExists(NodeId.serverUriArray)) {
+        write(NodeId.serverUriArray, uris);
+      } else {
+        _addNs0Property(NodeId.serverUriArray, NodeId.serverRedundancy, uris);
+      }
+    }
+
+    // Last, so a failed step above leaves the reported mode as it was.
+    _redundancySupport = support;
+    setVariableValueSource(
+      NodeId.redundancySupport,
+      onRead: () => DynamicValue(value: _redundancySupport.value, typeId: NodeId.int32, name: 'RedundancySupport'),
+    );
+  }
+
+  /// Adds `NonTransparentRedundancyType` (Part 5 §6.3.7) as [typeId]: a
+  /// subtype of `ServerRedundancyType` with the mandatory `ServerUriArray`
+  /// property (`i=2040`), both with `0:` browse names like the rest of NS0.
+  void _addNonTransparentRedundancyType(NodeId typeId) {
+    _addObjectTypeNode(
+      typeId,
+      0,
+      'NonTransparentRedundancyType',
+      parentType: NodeId.fromNumeric(0, raw.UA_NS0ID_SERVERREDUNDANCYTYPE),
+      displayName: LocalizedText('NonTransparentRedundancyType', ''),
+      isAbstract: false,
+    );
+    final serverUriArray = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANSPARENTREDUNDANCYTYPE_SERVERURIARRAY);
+    _addNs0Property(
+      serverUriArray,
+      typeId,
+      DynamicValue.fromList(<String>[], typeId: NodeId.uastring, name: 'ServerUriArray'),
+    );
+    addReference(
+      serverUriArray,
+      NodeId.fromNumeric(0, raw.UA_NS0ID_HASMODELLINGRULE),
+      NodeId.fromNumeric(0, raw.UA_NS0ID_MODELLINGRULE_MANDATORY),
+    );
+  }
+
+  /// Adds the read-only Property [nodeId] (`HasProperty` child of [parent],
+  /// type `PropertyType`) holding [value], with its name in namespace 0: a
+  /// standard property that open62541's reduced NS0 does not carry.
+  void _addNs0Property(NodeId nodeId, NodeId parent, DynamicValue value) {
+    // As in addVariableNode: the attributes go by value and open62541 copies
+    // what it keeps, so everything here is scratch in the arena.
+    final status = using((arena) {
+      final attr = _defaultVariableAttributes();
+      attr.value = arena.using(valueToVariant(value), raw.UA_Variant_delete).ref;
+      attr.accessLevel = raw.UA_ACCESSLEVELMASK_READ;
+      // A one-dimensional array of any length (ArrayDimensions [0]): the
+      // default attributes say ValueRank Any, which strict browsers flag on
+      // an array property. The arena's UInt32 is zeroed; open62541 copies it.
+      attr.valueRank = 1; // UA_VALUERANK_ONEDIMENSION
+      attr.arrayDimensionsSize = 1;
+      attr.arrayDimensions = arena<ffi.Uint32>(1);
+      attr.dataType = value.typeId!.toRaw(allocator: arena);
+      attr.displayName.text.set(value.name!, allocator: arena);
+      return raw.UA_Server_addVariableNode(
+        _server,
+        nodeId.toRaw(allocator: arena),
+        parent.toRaw(allocator: arena),
+        NodeId.hasProperty.toRaw(allocator: arena),
+        raw.UA_QUALIFIEDNAME(0, value.name!.toNativeUtf8(allocator: arena).cast()),
+        NodeId.propertyType.toRaw(allocator: arena),
+        attr,
+        ffi.nullptr,
+        ffi.nullptr,
+      );
+    }, ua_calloc);
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
     }
   }
 
@@ -1772,6 +2224,8 @@ class Server {
     // (i=2290) serves one UA_SubscriptionDiagnosticsDataType per live
     // subscription; the total is the sum of their monitoredItemCount fields.
     int? currentMonitoredItems;
+    int? dataChangeNotifications;
+    int? notifications;
     final subsVariant = raw.UA_Variant_new();
     final subsNodeId = NodeId.fromNumeric(
       0,
@@ -1781,13 +2235,20 @@ class Server {
     if (subsStatus == raw.UA_STATUSCODE_GOOD &&
         subsVariant.ref.type == getTypeByIndex(raw.UA_TYPES_SUBSCRIPTIONDIAGNOSTICSDATATYPE)) {
       var total = 0;
+      var dataChanges = 0;
+      var all = 0;
       // An empty array uses open62541's non-null empty-array sentinel for
       // `data`; arrayLength 0 keeps the loop from touching it either way.
       final entries = subsVariant.ref.data.cast<raw.UA_SubscriptionDiagnosticsDataType>();
       for (var i = 0; i < subsVariant.ref.arrayLength; i++) {
-        total += (entries + i).ref.monitoredItemCount;
+        final entry = (entries + i).ref;
+        total += entry.monitoredItemCount;
+        dataChanges += entry.dataChangeNotificationsCount;
+        all += entry.notificationsCount;
       }
       currentMonitoredItems = total;
+      dataChangeNotifications = dataChanges;
+      notifications = all;
     }
     raw.UA_Variant_delete(subsVariant);
 
@@ -1807,6 +2268,8 @@ class Server {
       currentSubscriptionCount: currentSubscriptions,
       cumulatedSubscriptionCount: cumulatedSubscriptions,
       currentMonitoredItemCount: currentMonitoredItems,
+      liveDataChangeNotificationCount: dataChangeNotifications,
+      liveNotificationCount: notifications,
     );
   }
 
@@ -2642,20 +3105,79 @@ class Server {
   /// network operations and cleaning up resources. It should be called before
   /// deleting the server instance.
   ///
+  /// With a [delay] (or a [shutdownDelay] set beforehand; [delay] sets it)
+  /// the shutdown is orderly, the Part 5 §12.6 hand-off: the server first
+  /// announces it, then keeps serving for the delay, then shuts down. During
+  /// the delay `ServerStatus.State` (`i=2259`) reads `Shutdown` (4) and
+  /// `ServerStatus.SecondsTillShutdown` (`i=2992`) counts down to 0, which is
+  /// how a client learns to move to another server of a redundant set (see
+  /// [setRedundancy]); every other read, write, call and subscription is
+  /// served as before, from this isolate. The call blocks the calling isolate
+  /// for the whole delay, rounded up to whole seconds (the announcement is a
+  /// count of seconds), pumping open62541 itself: nothing else runs on the
+  /// isolate meanwhile, and the server's `runIterate` loop, if any, simply
+  /// resumes afterwards to find the server stopped. Observers (a client, a
+  /// test) live on another isolate. Without a delay the call is immediate,
+  /// as it always was.
+  ///
+  /// A redundant server also drops its `ServiceLevel` (`i=2267`) to 0 for
+  /// the delay with [announceServiceLevel]: Part 4 Table 105 makes
+  /// ServiceLevel 0 the signal for the clients of a redundant set to move to
+  /// another member, and a client that watches the service levels rather
+  /// than `ServerStatus` needs it. open62541 serves ServiceLevel through a
+  /// callback value source (a constant 255) that accepts no write
+  /// (`Bad_WriteNotSupported`), so the announcement replaces the source,
+  /// also when this server installed one of its own with
+  /// [setVariableValueSource] (the #108 way); nothing is restored, the
+  /// server stops at the end of the delay. Only meaningful with a delay.
+  ///
   /// Throws an exception if the shutdown operation fails, with the error
   /// message including the status code.
   ///
   /// Example:
   /// ```dart
   /// try {
-  ///   server.shutdown();
+  ///   server.shutdown(delay: const Duration(seconds: 5));
   /// } catch (e) {
   ///   print('Failed to shutdown server: $e');
   /// }
   /// ```
-  void shutdown() {
+  void shutdown({Duration? delay, bool announceServiceLevel = false}) {
     if (_server == ffi.nullptr) {
       throw StateError('Server has been deleted; shutdown() must be called before delete()');
+    }
+    if (delay != null) {
+      shutdownDelay = delay;
+    }
+    final seconds = (_config.ref.shutdownDelay / 1000).ceil();
+    // Only a started server can announce anything (and only it has an event
+    // loop to pump); run_shutdown reports the state as before otherwise.
+    if (seconds > 0 && raw.UA_Server_getLifecycleState(_server) == raw.UA_LifecycleState.UA_LIFECYCLESTATE_STARTED) {
+      // open62541's run_shutdown stops the listeners at once; its delayed
+      // shutdown lives in UA_Server_run, which this binding does not use.
+      // What that loop does is reachable from outside: a local (admin) write
+      // of SecondsTillShutdown sets the server's end time, from which the
+      // ServerStatus value source derives State = Shutdown and the
+      // countdown (src/server/ua_server_ns0.c, writeStatus / readStatus).
+      write(
+        NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_SECONDSTILLSHUTDOWN),
+        DynamicValue(value: seconds, typeId: NodeId.uint32),
+      );
+      if (announceServiceLevel) {
+        // ServiceLevel is a callback value source on every open62541 server
+        // (ua_server_ns0.c, readServiceLevel) without a write function, so a
+        // write answers Bad_WriteNotSupported and a server's own source would
+        // swallow one anyway: replace the source for the delay.
+        setVariableValueSource(
+          NodeId.serviceLevel,
+          onRead: () => DynamicValue(value: 0, typeId: NodeId.byte, name: 'ServiceLevel'),
+        );
+      }
+      final deadline = DateTime.now().add(Duration(seconds: seconds));
+      while (DateTime.now().isBefore(deadline)) {
+        // Blocks until there is work or for at most 500 ms (UA_MAXTIMEOUT).
+        raw.UA_Server_run_iterate(_server, true);
+      }
     }
     int ret = raw.UA_Server_run_shutdown(_server);
     if (ret != 0) {
