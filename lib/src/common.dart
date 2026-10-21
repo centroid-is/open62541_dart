@@ -73,19 +73,18 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
   }
 
   final leaf = innermostLeaf(value);
-  // An empty array has no leaf to inspect; its typeId tells when it is an
-  // array of a structure the bundled open62541 knows (NS0, e.g. Range).
-  final isStruct =
-      value.isObject ||
-      (value.isArray && leaf != null && leaf.isObject) ||
-      (isEmptyArray && value.typeId != null && ns0BinaryEncodingId(value.typeId!) != null);
+  // A structure the bundled open62541 knows (an NS0 DataType such as Range,
+  // i=884): it travels as an ExtensionObject with that type's binary encoding
+  // id. An empty array has no leaf to inspect; its typeId tells.
+  final isNs0Struct = value.typeId != null && ns0BinaryEncodingId(value.typeId!) != null;
+  final isStruct = value.isObject || (value.isArray && leaf != null && leaf.isObject) || (isEmptyArray && isNs0Struct);
 
   // Can throw, so it comes before serialize: what serialize allocates natively
-  // for a struct is only freed through the variant created below. A struct
-  // needs no entry: its typeId is a DataType such as Range (i=884) or a custom
-  // one, and it travels as an ExtensionObject whatever that is.
+  // for a struct is only freed through the variant created below. A known NS0
+  // structure's id has no entry in the enum and needs none; any other numeric
+  // id is checked as before.
   Namespace0Id? id;
-  if (!isStruct && value.typeId != null && value.typeId!.isNumeric()) {
+  if (value.typeId != null && value.typeId!.isNumeric() && !(isStruct && isNs0Struct)) {
     id = Namespace0Id.fromInt(value.typeId!.numeric);
   }
 
