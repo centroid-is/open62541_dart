@@ -9,6 +9,11 @@ on:
     branches: [ main ]
     paths-ignore:
       - '**.md'
+  workflow_dispatch:
+    inputs:
+      windows_repeats:
+        description: 'Run the Windows test this many times (flake hunting)'
+        default: '1'
 
 concurrency:
   group: flutter-${{ github.workflow }}-${{ github.ref }}
@@ -62,9 +67,50 @@ jobs:
         working-directory: flutter_example
         run: flutter pub get
 
+      # Windows keeps no record of a crashed flutter_tester unless asked:
+      # register a WER LocalDumps minidump for it (the runner is admin).
+      - name: Enable crash dumps for flutter_tester
+        shell: pwsh
+        run: |
+          $dumps = "$env:RUNNER_TEMP\dumps"
+          New-Item -ItemType Directory -Force $dumps | Out-Null
+          foreach ($exe in 'flutter_tester.exe', 'dart.exe') {
+            $k = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\$exe"
+            New-Item -Path $k -Force | Out-Null
+            Set-ItemProperty -Path $k -Name DumpFolder -Value $dumps -Type ExpandString
+            Set-ItemProperty -Path $k -Name DumpType -Value 2 -Type DWord
+            Set-ItemProperty -Path $k -Name DumpCount -Value 10 -Type DWord
+          }
+          "DUMP_DIR=$dumps" >> $env:GITHUB_ENV
+
       - name: Run tests
         working-directory: flutter_example
-        run: flutter test test/library_test.dart
+        shell: pwsh
+        run: |
+          $repeats = [int]('${{ github.event.inputs.windows_repeats || 1 }}')
+          $failed = 0
+          for ($i = 1; $i -le $repeats; $i++) {
+            if ($repeats -gt 1) { "===== run $i of $repeats =====" }
+            flutter test test/library_test.dart
+            if ($LASTEXITCODE -ne 0) { $failed++; "===== run $i FAILED (exit $LASTEXITCODE) =====" }
+          }
+          if ($failed -gt 0) { "$failed of $repeats runs failed"; exit 1 }
+
+      - name: Crash dumps and the native library
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem $env:DUMP_DIR -ErrorAction SilentlyContinue | Format-Table Name, Length, LastWriteTime
+          $dll = Get-ChildItem -Recurse -Filter open62541.dll flutter_example\.dart_tool, .dart_tool -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($dll) { Copy-Item $dll.FullName $env:DUMP_DIR; "copied $($dll.FullName)" }
+
+      - name: Upload crash dumps
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-flutter-crash-dumps
+          path: ${{ env.DUMP_DIR }}
+          if-no-files-found: ignore
 
       # On Windows flutter_tools discards flutter_tester's exit code
       # (flutter_tester_device.dart, `finished`: "On Windows, the [exitCode]
