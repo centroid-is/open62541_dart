@@ -4,7 +4,7 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
+## 1.5.9
 
 - **Example: redundant METAR servers with ServiceLevel failover.**
   `example/metar_redundant_server.dart` publishes live BIRK (Reykjavík
@@ -17,7 +17,18 @@ changes that ship the same native library version.
   client that ranks servers by ServiceLevel, discovers its peers from
   `ServerUriArray` and fails over. See `example/README.md`.
 
-## 1.5.9
+- **`Server(applicationName:, applicationUri:, productName:, manufacturerName:)`:
+  the identity a server announces.** open62541's minimal config names every
+  server `open62541-based OPC UA Application` with the ApplicationUri
+  `urn:open62541.unconfigured.application`, which is what OPC UA browsers
+  list it under (GetEndpoints/FindServers) and what `ServerArray[0]`,
+  `NamespaceArray[1]` and `Server/ServerStatus/BuildInfo` report. The new
+  constructor parameters replace those defaults on the config before the
+  server is created (the defaults are freed, the copies are owned by the
+  config and freed with it); `Server.applicationName` / `Server.applicationUri`
+  read them back. Each one is opt-in: `Server()` still announces the defaults.
+  Once security is configured the ApplicationUri must match the URI in the
+  server certificate.
 
 - **`Server.port`: the port the server listens on, for `Server(port: 0)`.**
   open62541 supports dynamic port assignment (the listen socket binds port 0
