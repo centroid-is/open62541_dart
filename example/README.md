@@ -150,7 +150,9 @@ instead of trying to dial a URI.
 * **Watch the quality path.** Cut the machine's network, or point a server at
   a station that reports nothing (`--station ZZZZ`). Its fetches start failing:
   it keeps serving the last observation, now `Bad_NoCommunication`, and its
-  ServiceLevel walks down 250 → 190 → 130 → … until the other server wins.
+  ServiceLevel walks down 250 → 190 → 130 → … → 2. The first step already
+  leaves the Healthy band, so the client moves to the other server if that
+  one is Healthy; if both are Degraded, the hysteresis margin decides.
 * **Browse it in UaExpert.** Besides the structure node
   (`ns=1;s=BIRK.Metar`) each server exposes plain scalar mirrors
   `ns=1;s=BIRK.TemperatureC` and `ns=1;s=BIRK.WindSpeedKt`, which carry the
@@ -161,12 +163,25 @@ publishes an endpoint URL clients can actually reach (it also goes into the
 default ApplicationUri; `--uri` sets that explicitly, and `--peer` names the
 other member by *its* ApplicationUri).
 
-### Failback policy
+### Switching policy
 
-The client fails **back**, but only when the returning server beats the active
-one by more than the hysteresis margin (`--hysteresis`, default 10). Two
-equally healthy servers therefore never ping-pong the subscription: a recovered
-peer at the same ServiceLevel leaves the current server in place.
+The client follows Table 105 band by band rather than chasing the highest
+number:
+
+* **Initial selection:** the highest ServiceLevel in the set (it waits, up to
+  a settle timeout, for every configured endpoint to answer first).
+* **Active server Healthy (200-255):** no failover, whatever the others
+  report — a 255 appearing next to an active 240 changes nothing. The client
+  leaves only when the server becomes unreachable, reports 0 (Maintenance) or
+  drops out of the Healthy band.
+* **Active server Degraded (2-199) or NoData (1):** switch to the best
+  Healthy server if there is one, margin or no margin (195 → 200 switches).
+  With no Healthy server in the set, switch to a higher Degraded one only if
+  it clears the hysteresis margin (`--hysteresis`, default 10), so two
+  similarly degraded servers do not ping-pong the subscription.
+
+The client therefore does fail **back**, but only because the server it is on
+has left the Healthy band — a recovered peer alone never causes a switch.
 
 ### Data source
 

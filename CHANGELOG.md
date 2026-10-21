@@ -17,8 +17,9 @@ changes that ship the same native library version.
   `Server.setVariableValueSource`. `example/metar_redundant_client.dart` is a
   Part 4 non-transparent redundant client that is given the members'
   endpoints, identifies each by its ApplicationUri (`ServerArray[0]`),
-  matches them against `ServerUriArray`, ranks servers by ServiceLevel and
-  fails over. See `example/README.md`.
+  matches them against `ServerUriArray` and fails over by the ServiceLevel
+  bands of OPC 10000-4 Table 105 (no failover from a Healthy server; a
+  Degraded one is left for any Healthy one). See `example/README.md`.
 
 - **`Server(applicationName:, applicationUri:, productName:, manufacturerName:)`:
   the identity a server announces.** open62541's minimal config names every

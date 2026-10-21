@@ -22,10 +22,14 @@
       endpoint for.
    3. Read `Server/ServiceLevel` (ns=0;i=2267) from each connected server on
       every tick. An unreachable server ranks below every reachable one.
-   4. Use the server with the HIGHEST ServiceLevel for data: subscribe to its
-      METAR structure node. A switch happens when the ranking changes by more
-      than a hysteresis margin, or when the active server drops to 0 (out of
-      service) or becomes unreachable.
+   4. Subscribe to the METAR structure node of the server chosen by the
+      band-aware rule of Part 4 §6.6.2.4.2 (Table 105): the initial selection
+      is the highest ServiceLevel; while the active server is Healthy
+      (200-255) the client stays with it, switching only when it becomes
+      unreachable, reports 0 (Maintenance) or leaves the Healthy band; from
+      Degraded (2-199) or NoData (1) it moves to the best Healthy server if
+      there is one, otherwise to a higher Degraded one that clears a
+      hysteresis margin.
 */
 
 import 'dart:async';
@@ -34,7 +38,7 @@ import 'dart:io';
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 
-import 'metar_redundant_server.dart' show parseFlags;
+import 'metar_redundant_server.dart' show isHealthyServiceLevel, parseFlags, serviceLevelMaintenance;
 
 /// `ns=0;i=2267` — Server/ServiceLevel.
 final NodeId serviceLevelNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVICELEVEL);
@@ -132,10 +136,11 @@ class MetarFailoverClient {
   /// How often every server's ServiceLevel is re-read.
   final Duration pollInterval;
 
-  /// A rival server must beat the active one by more than this to win. Keeps
-  /// two equally healthy servers from ping-ponging the subscription. A drop
-  /// to 0 (out of service) or an unreachable active server always fails over,
-  /// regardless of the margin.
+  /// Between two servers outside the Healthy band, a rival must beat the
+  /// active one by more than this to win, so two similarly degraded servers
+  /// do not ping-pong the subscription. The margin plays no part while the
+  /// active server is Healthy (the client stays regardless) or when a Healthy
+  /// server is available to a Degraded one (the client switches regardless).
   final int hysteresis;
 
   /// How long a single ServiceLevel / ServerArray / ServerUriArray read may
@@ -289,16 +294,22 @@ class MetarFailoverClient {
       }
       if (identical(active, best)) return;
 
-      // An active server that is unreachable or has declared itself out of
-      // service (ServiceLevel 0) is abandoned immediately; otherwise the
-      // challenger has to clear the hysteresis margin.
+      // OPC 10000-4 §6.6.2.4.2, Table 105. An active server that is
+      // unreachable or has declared Maintenance (ServiceLevel 0) is abandoned
+      // at once. A Healthy one is kept whatever the others report. A Degraded
+      // or NoData one is left for any Healthy server; failing that, for a
+      // higher Degraded one that clears the hysteresis margin.
       final String? reason;
       if (!active.reachable) {
         reason = 'connection lost';
-      } else if (active.serviceLevel == 0) {
+      } else if (active.serviceLevel == serviceLevelMaintenance) {
         reason = 'server reported ServiceLevel 0 (out of service)';
+      } else if (isHealthyServiceLevel(active.serviceLevel)) {
+        reason = null;
+      } else if (isHealthyServiceLevel(best.serviceLevel)) {
+        reason = 'active server is ${_band(active.serviceLevel)}; Healthy server available';
       } else if (best.serviceLevel > active.serviceLevel + hysteresis) {
-        reason = 'higher ServiceLevel available';
+        reason = 'no Healthy server; higher ServiceLevel available';
       } else {
         reason = null;
       }
@@ -306,6 +317,13 @@ class MetarFailoverClient {
     } finally {
       _arbitrating = false;
     }
+  }
+
+  /// The Table 105 band of a ServiceLevel, for log lines.
+  static String _band(int level) {
+    if (level == serviceLevelMaintenance) return 'Maintenance';
+    if (level == 1) return 'NoData';
+    return isHealthyServiceLevel(level) ? 'Healthy' : 'Degraded';
   }
 
   Future<void> _refresh(_Link link) async {
@@ -532,8 +550,9 @@ Usage: dart run example/metar_redundant_client.dart [options]
                      the members by ApplicationUri, which cannot be dialled.
   --station <ICAO>   Station node to subscribe to (default: BIRK)
   --poll <ms>        ServiceLevel poll interval (default: 2000)
-  --hysteresis <n>   Margin a rival server must beat the active one by
-                     (default: 10)
+  --hysteresis <n>   Margin a Degraded rival must beat a Degraded active
+                     server by (default: 10). Not used while the active
+                     server is Healthy, nor when a Healthy one is available.
   --no-identify      Do not read ServerArray / ServerUriArray; rank the
                      --endpoint servers without matching them to the set
   --help

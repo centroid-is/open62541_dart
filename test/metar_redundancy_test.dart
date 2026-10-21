@@ -217,7 +217,7 @@ void main() {
         expect(
           await waitUntil(() => client.serviceLevels[endpointOf(portB)] == 250),
           isTrue,
-          reason: 'B is healthy too, but A is already active and B does not beat the hysteresis margin',
+          reason: 'B is Healthy too, but A is active and Healthy, so there is no failover',
         );
         expect(client.activeEndpoint, endpointOf(portA));
         expect(client.activeApplicationUri, uriA);
@@ -228,13 +228,16 @@ void main() {
         expect(
           await waitUntil(() => client.activeEndpoint == endpointOf(portB)),
           isTrue,
-          reason: 'A loses ServiceLevel on every failed fetch and must lose the arbitration',
+          reason: 'one failed fetch takes A to 190, out of the Healthy band, and B is Healthy',
         );
         expect(events, hasLength(2));
         expect(events.last.from, endpointOf(portA));
         expect(events.last.to, endpointOf(portB));
-        expect(events.last.reason, 'higher ServiceLevel available');
-        expect(events.last.fromLevel, lessThan(events.last.toLevel));
+        expect(events.last.fromUri, uriA);
+        expect(events.last.toUri, uriB);
+        expect(events.last.reason, contains('Healthy'));
+        expect(isHealthyServiceLevel(events.last.fromLevel), isFalse);
+        expect(isHealthyServiceLevel(events.last.toLevel), isTrue);
         expect(serverA.serviceLevel, lessThan(serverB.serviceLevel));
 
         // Data still flows, now from B.
@@ -254,16 +257,18 @@ void main() {
         expect(client.activeEndpoint, endpointOf(portB));
         expect(events, hasLength(2), reason: 'losing the server it already left is not a failover');
 
-        // --- 5. A returns healthier than B: the client comes back. ---------
+        // --- 5. A returns Healthy while B degrades: the client comes back. --
         //
-        // DOCUMENTED BEHAVIOUR: this client does fail BACK, but only when the
-        // returning server beats the active one by more than the hysteresis
-        // margin. A tie (both at 250) keeps the current server, so a recovered
-        // peer alone never causes a switch — see step 2.
+        // DOCUMENTED BEHAVIOUR: this client does fail BACK, but only because
+        // B has left the Healthy band. A recovered peer alone never causes a
+        // switch: while the active server is Healthy the client stays, even
+        // if the returning one rates higher — see step 2 and the band-aware
+        // switching group.
         fakeB.failing = true;
         fakeA.failing = false;
-        // Restarted on the port A had: that is the endpoint B advertises and
-        // the client knows (see the port note in test/common.dart).
+        // Restarted on the port A had, under A's identity: that is the
+        // endpoint the client is configured with (see test/common.dart) and
+        // the member B advertises.
         final restartedA = buildServer('metar-a2', portA, fakeA, peers: [uriB], applicationUri: uriA);
         await restartedA.start();
         cleanup.add(() => restartedA.stop());
@@ -271,11 +276,13 @@ void main() {
         expect(
           await waitUntil(() => client.activeEndpoint == endpointOf(portA), timeout: const Duration(seconds: 60)),
           isTrue,
-          reason: 'the restarted A is healthy and B is now degraded, so the client must switch back',
+          reason: 'B is Degraded and the restarted A is Healthy, so the client must switch back',
         );
         expect(events.last.from, endpointOf(portB));
         expect(events.last.to, endpointOf(portA));
-        expect(events.last.toLevel, greaterThan(events.last.fromLevel + client.hysteresis));
+        expect(isHealthyServiceLevel(events.last.fromLevel), isFalse);
+        expect(isHealthyServiceLevel(events.last.toLevel), isTrue);
+        expect(events.last.reason, contains('Healthy'));
       },
       timeout: const Timeout(Duration(minutes: 3)),
     );
@@ -309,6 +316,67 @@ void main() {
       expect(events.last.fromLevel, 0);
       expect(events.last.toLevel, 250);
     }, timeout: const Timeout(Duration(minutes: 2)));
+
+    // Table 105 (OPC 10000-4 §6.6.2.4.2) prescribes the client's behaviour
+    // per band: while the active server is Healthy (200-255) the client
+    // shall not fail over; a Degraded (2-199) or NoData (1) server is left
+    // for any Healthy one; otherwise the hysteresis margin applies.
+    group('band-aware switching', () {
+      test('the initial selection is the highest ServiceLevel in the set', () async {
+        serverA.forceServiceLevel(100);
+        await client.start();
+        expect(client.activeEndpoint, endpointOf(portB), reason: 'B (250) beats A (100) even though A is listed first');
+        expect(events.single.toLevel, 250);
+      }, timeout: const Timeout(Duration(minutes: 2)));
+
+      test('stays on a Healthy server while a higher Healthy one appears', () async {
+        await client.start();
+        expect(client.activeEndpoint, endpointOf(portA));
+        expect(await waitUntil(() => client.serviceLevels[endpointOf(portB)] == 250), isTrue);
+
+        // 240 -> 255 clears the hysteresis margin, but both are Healthy.
+        serverA.forceServiceLevel(240);
+        serverB.forceServiceLevel(255);
+        expect(await waitUntil(() => client.serviceLevels[endpointOf(portB)] == 255), isTrue);
+        await Future.delayed(clientPoll * 6);
+        expect(client.activeEndpoint, endpointOf(portA), reason: 'no failover from a Healthy server');
+        expect(client.activeServiceLevel, 240);
+        expect(events, hasLength(1));
+      }, timeout: const Timeout(Duration(minutes: 2)));
+
+      test('leaves a Degraded server for a Healthy one without the hysteresis margin', () async {
+        await client.start();
+        expect(client.activeEndpoint, endpointOf(portA));
+        serverB.forceServiceLevel(200);
+        expect(await waitUntil(() => client.serviceLevels[endpointOf(portB)] == 200), isTrue);
+        expect(client.activeEndpoint, endpointOf(portA), reason: 'A is still Healthy');
+
+        // 195 -> 200 is within the margin of 10, but 195 is Degraded and 200
+        // is Healthy: Table 105 says switch.
+        serverA.forceServiceLevel(195);
+        expect(await waitUntil(() => client.activeEndpoint == endpointOf(portB)), isTrue);
+        expect(events.last.fromLevel, 195);
+        expect(events.last.toLevel, 200);
+        expect(events.last.reason, contains('Healthy'));
+      }, timeout: const Timeout(Duration(minutes: 2)));
+
+      test('between Degraded servers the hysteresis margin still applies', () async {
+        await client.start();
+        expect(client.activeEndpoint, endpointOf(portA));
+        serverB.forceServiceLevel(105);
+        serverA.forceServiceLevel(100);
+        expect(await waitUntil(() => client.serviceLevels[endpointOf(portA)] == 100), isTrue);
+        await Future.delayed(clientPoll * 6);
+        expect(client.activeEndpoint, endpointOf(portA), reason: '105 does not beat 100 by more than 10');
+        expect(events, hasLength(1));
+
+        serverB.forceServiceLevel(150);
+        expect(await waitUntil(() => client.activeEndpoint == endpointOf(portB)), isTrue);
+        expect(events.last.fromLevel, 100);
+        expect(events.last.toLevel, 150);
+        expect(events.last.reason, contains('higher ServiceLevel'));
+      }, timeout: const Timeout(Duration(minutes: 2)));
+    });
 
     test('the redundancy surface sits on the standard NS0 nodes', () async {
       final probe = await setupClient(portA);
