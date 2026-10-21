@@ -47,24 +47,28 @@ class MetarRedundantServer {
     required this.port,
     required this.source,
     this.host = 'localhost',
-    this.peerEndpoints = const [],
+    List<String> peerEndpoints = const [],
     this.pollInterval = const Duration(minutes: 5),
     this.staleAfter = const Duration(hours: 2),
     this.logLevel = LogLevel.UA_LOGLEVEL_ERROR,
     void Function(String message)? log,
-  }) : _log = log ?? print;
+  }) : _peerEndpoints = List.of(peerEndpoints),
+       _log = log ?? print;
 
   /// Human-readable name of this instance, used in log lines only.
   final String instance;
 
   final String host;
+
+  /// The port to listen on; `0` lets the OS pick one (see [listenPort]).
   final int port;
 
   /// Where the observation comes from. Injected so tests can supply a fake.
   final MetarSource source;
 
   /// The other members of the redundant set, as `opc.tcp://` endpoint URLs.
-  final List<String> peerEndpoints;
+  List<String> get peerEndpoints => List.unmodifiable(_peerEndpoints);
+  List<String> _peerEndpoints;
 
   /// How often to re-fetch the observation.
   final Duration pollInterval;
@@ -76,8 +80,12 @@ class MetarRedundantServer {
   final LogLevel logLevel;
   final void Function(String message) _log;
 
+  /// The port the server listens on: [port], or, for `port: 0`, the one the
+  /// OS picked once [start] has returned.
+  int get listenPort => _server?.port ?? port;
+
   /// `opc.tcp://` URL clients use to reach this instance.
-  String get endpoint => 'opc.tcp://$host:$port';
+  String get endpoint => 'opc.tcp://$host:$listenPort';
 
   /// DataType node of the published structure.
   NodeId get metarTypeId => NodeId.fromString(1, 'MetarObservationType');
@@ -186,7 +194,25 @@ class MetarRedundantServer {
     }
   }
 
-  List<String> _serverUriArray() => [endpoint, ...peerEndpoints];
+  List<String> _serverUriArray() => [endpoint, ..._peerEndpoints];
+
+  /// Replaces the peer list and, once started, republishes `ServerUriArray`.
+  ///
+  /// Servers started on port 0 (the integration test) only know their
+  /// endpoints once they are up, so the set can only be wired together
+  /// afterwards; the CLI passes `--peer` up front and never needs this.
+  void setPeers(List<String> peers) {
+    _peerEndpoints = List.of(peers);
+    _server?.write(_serverUriArrayNodeId, _serverUriArrayValue());
+  }
+
+  static final NodeId _serverUriArrayNodeId = NodeId.fromNumeric(
+    0,
+    raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERURIARRAY,
+  );
+
+  DynamicValue _serverUriArrayValue() =>
+      DynamicValue.fromList(_serverUriArray(), typeId: NodeId.uastring, name: 'ServerUriArray');
 
   void _publishMetarNodes(Server server) {
     server.addCustomType(metarTypeId, _metarSchema());
@@ -251,8 +277,8 @@ class MetarRedundantServer {
     // client that reaches either instance learns how to reach the other one
     // without a discovery server and without both URLs on its command line.
     server.addVariableNode(
-      NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERURIARRAY),
-      DynamicValue.fromList(_serverUriArray(), typeId: NodeId.uastring, name: 'ServerUriArray'),
+      _serverUriArrayNodeId,
+      _serverUriArrayValue(),
       accessLevel: const AccessLevelMask(read: true),
       parentNodeId: NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY),
       parentReferenceNodeId: NodeId.fromNumeric(0, raw.UA_NS0ID_HASPROPERTY),

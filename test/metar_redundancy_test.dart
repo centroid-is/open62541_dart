@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-
 import '../example/metar_common.dart';
 import '../example/metar_redundant_client.dart';
 import '../example/metar_redundant_server.dart';
@@ -124,14 +123,17 @@ void main() {
     final events = <FailoverEvent>[];
     final cleanup = <Future<void> Function()>[];
 
-    String endpointOf(int port) => 'opc.tcp://localhost:$port';
+    // 127.0.0.1, not localhost: the servers start on port 0 and it is the
+    // IPv4 listen socket that owns the OS-picked port (see test/common.dart).
+    String endpointOf(int port) => 'opc.tcp://127.0.0.1:$port';
 
-    MetarRedundantServer buildServer(String instance, int port, MetarSource source, int peerPort) =>
+    MetarRedundantServer buildServer(String instance, int port, MetarSource source, {List<String> peers = const []}) =>
         MetarRedundantServer(
           instance: instance,
+          host: '127.0.0.1',
           port: port,
           source: source,
-          peerEndpoints: [endpointOf(peerPort)],
+          peerEndpoints: peers,
           pollInterval: serverPoll,
           log: (_) {},
         );
@@ -139,15 +141,20 @@ void main() {
     setUp(() async {
       events.clear();
       cleanup.clear();
-      portA = await freeTcpPort();
-      portB = await freeTcpPort();
       fakeA = FakeMetarSource('BIRK', recent());
       fakeB = FakeMetarSource('BIRK', recent());
 
-      serverA = buildServer('metar-a', portA, fakeA, portB);
-      serverB = buildServer('metar-b', portB, fakeB, portA);
+      // Both servers start on port 0 and learn each other's endpoint only
+      // once the OS has picked their ports; the peers are wired up before
+      // the client (which discovers B from A's ServerUriArray) starts.
+      serverA = buildServer('metar-a', 0, fakeA);
+      serverB = buildServer('metar-b', 0, fakeB);
       await serverA.start();
       await serverB.start();
+      portA = serverA.listenPort;
+      portB = serverB.listenPort;
+      serverA.setPeers([endpointOf(portB)]);
+      serverB.setPeers([endpointOf(portA)]);
       cleanup.add(() => serverA.stop());
       cleanup.add(() => serverB.stop());
 
@@ -235,7 +242,9 @@ void main() {
       // peer alone never causes a switch — see step 2.
       fakeB.failing = true;
       fakeA.failing = false;
-      final restartedA = buildServer('metar-a2', portA, fakeA, portB);
+      // Restarted on the port A had: that is the endpoint B advertises and
+      // the client knows (see the port note in test/common.dart).
+      final restartedA = buildServer('metar-a2', portA, fakeA, peers: [endpointOf(portB)]);
       await restartedA.start();
       cleanup.add(() => restartedA.stop());
 
@@ -293,19 +302,19 @@ void main() {
     late DateTime observationTime;
 
     setUp(() async {
-      port = await freeTcpPort();
       // Five minutes ago: comfortably inside the two-hour staleness window
       // whenever the suite runs.
       observationTime = DateTime.now().toUtc().subtract(const Duration(minutes: 5));
       fake = FakeMetarSource('BIRK', observedAt(observationTime));
       server = MetarRedundantServer(
         instance: 'quality',
-        port: port,
+        port: 0,
         source: fake,
         pollInterval: const Duration(milliseconds: 200),
         log: (_) {},
       );
       await server.start();
+      port = server.listenPort;
       probe = await setupClient(port);
     });
 
@@ -369,18 +378,17 @@ void main() {
       // Same server, but the feed keeps returning an observation from six
       // hours ago: fetches succeed, yet the DATA is untrustworthy. The example
       // must report that honestly rather than serve stale numbers as Good.
-      final stalePort = await freeTcpPort();
       final staleFake = FakeMetarSource('BIRK', recent(ago: const Duration(hours: 6)));
       final staleServer = MetarRedundantServer(
         instance: 'stale',
-        port: stalePort,
+        port: 0,
         source: staleFake,
         pollInterval: const Duration(milliseconds: 200),
         staleAfter: const Duration(hours: 2),
         log: (_) {},
       );
       await staleServer.start();
-      final staleProbe = await setupClient(stalePort);
+      final staleProbe = await setupClient(staleServer.listenPort);
       addTearDown(() async {
         await staleProbe.delete();
         await staleServer.stop();
@@ -397,17 +405,16 @@ void main() {
     }, timeout: const Timeout(Duration(minutes: 2)));
 
     test('a server that has never fetched anything reports ServiceLevel 0 and no value', () async {
-      final coldPort = await freeTcpPort();
       final coldFake = FakeMetarSource('BIRK', recent())..failing = true;
       final coldServer = MetarRedundantServer(
         instance: 'cold',
-        port: coldPort,
+        port: 0,
         source: coldFake,
         pollInterval: const Duration(seconds: 30),
         log: (_) {},
       );
       await coldServer.start();
-      final coldProbe = await setupClient(coldPort);
+      final coldProbe = await setupClient(coldServer.listenPort);
       addTearDown(() async {
         await coldProbe.delete();
         await coldServer.stop();
@@ -427,7 +434,6 @@ void main() {
 
   group('the custom METAR structure', () {
     test('every modelled field survives the round trip, including the missing-value sentinels', () async {
-      final port = await freeTcpPort();
       // A report with plenty of holes: no wind reading, no visibility, no
       // cloud, no dew point. Those must arrive as the documented sentinels
       // (NaN for doubles, -1 for the integers), not as zeros.
@@ -435,13 +441,13 @@ void main() {
       final fake = FakeMetarSource('BIRK', sparse);
       final server = MetarRedundantServer(
         instance: 'struct',
-        port: port,
+        port: 0,
         source: fake,
         pollInterval: const Duration(seconds: 30),
         log: (_) {},
       );
       await server.start();
-      final probe = await setupClient(port);
+      final probe = await setupClient(server.listenPort);
       addTearDown(() async {
         await probe.delete();
         await server.stop();
@@ -481,17 +487,16 @@ void main() {
     }, timeout: const Timeout(Duration(minutes: 2)));
 
     test('a fully populated report maps every field', () async {
-      final port = await freeTcpPort();
       final storm = recent(raw: 'METAR BIRK 011200Z 09025G40KT 1200 +SN BLSN VV005 M04/M06 Q0978');
       final server = MetarRedundantServer(
         instance: 'struct-full',
-        port: port,
+        port: 0,
         source: FakeMetarSource('BIRK', storm),
         pollInterval: const Duration(seconds: 30),
         log: (_) {},
       );
       await server.start();
-      final probe = await setupClient(port);
+      final probe = await setupClient(server.listenPort);
       addTearDown(() async {
         await probe.delete();
         await server.stop();
