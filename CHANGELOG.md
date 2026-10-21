@@ -4,8 +4,25 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
+## 1.5.9
 
+- **`Server(applicationName:, applicationUri:, productName:, manufacturerName:, productUri:)`:
+  the identity a server announces.** open62541's minimal config names every
+  server `open62541-based OPC UA Application` with the ApplicationUri
+  `urn:open62541.unconfigured.application`, which is what OPC UA browsers
+  list it under (GetEndpoints/FindServers) and what `ServerArray[0]`,
+  `NamespaceArray[1]` and `Server/ServerStatus/BuildInfo` report. The new
+  constructor parameters replace those defaults on the config before the
+  server is created (the defaults are freed, the copies are owned by the
+  config and freed with it); `Server.applicationName` / `Server.applicationUri`
+  / `Server.productUri` read them back. `productUri` sets both places
+  open62541 keeps it, `ApplicationDescription.productUri` and
+  `BuildInfo.productUri` (`Server/ServerStatus/BuildInfo/ProductUri`); left
+  out it stays open62541's `http://open62541.org` even when `productName` /
+  `manufacturerName` are set. Each one is opt-in: `Server()` still announces
+  the defaults.
+  Once security is configured the ApplicationUri must match the URI in the
+  server certificate.
 - **Fixed: a second `Client.keepConnected()` doubled the pump.** The call
   reset its stop flag and set it again synchronously, so the pump and the
   reconnect supervisor already running never observed the stop and kept
@@ -13,9 +30,6 @@ changes that ship the same native library version.
   two supervisors reconnecting. Each call now starts a new generation and the
   previous loops end on their next turn. `stopKeepConnected()` behaviour is
   unchanged.
-
-## 1.5.9
-
 - **Monitoring with quality: `monitorDataValue` / `monitoredDataValues`.**
   `Client` and `ClientIsolate` implement the new `DataValueMonitoringApi`,
   two methods mirroring `monitor` / `monitoredItems` that emit every sample
