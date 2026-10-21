@@ -25,8 +25,8 @@ class LargeArrayServer {
   /// Number of payload bytes in the array value (8 bytes / Double).
   int get byteLength => data.length * 8;
 
-  static Future<LargeArrayServer> start({required int port, int length = 8000}) async {
-    final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+  static Future<LargeArrayServer> start({int length = 8000}) async {
+    final server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
     server.start();
     var running = true;
     unawaited(() async {
@@ -37,7 +37,7 @@ class LargeArrayServer {
     final nodeId = NodeId.fromString(1, 'chaos.big.array');
     final data = List<double>.generate(length, (i) => i * 1.5 + 0.25);
     server.addVariableNode(nodeId, DynamicValue.fromList(data, typeId: NodeId.double, name: 'chaos.big.array'));
-    return LargeArrayServer._(server, port, nodeId, data, () => running = false);
+    return LargeArrayServer._(server, server.port, nodeId, data, () => running = false);
   }
 
   Future<void> stop() async {

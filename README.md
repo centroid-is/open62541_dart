@@ -50,17 +50,17 @@ flag.
 
 ```yaml
 dependencies:
-  open62541: ^1.5.7
+  open62541: ^1.5.9
 ```
 
 Then run `dart pub get` (allow extra time for the first native build).
 
 ## Versioning
 
-The package version mirrors the bundled open62541 release exactly: `1.5.7` wraps
-open62541 `v1.5.7`. Dart-side fixes that ship the **same** native library version
-use a build-metadata suffix — `1.5.7+1`, `1.5.7+2`, … — which pub.dev orders
-after `1.5.7`. So `open62541: ^1.5.7` accepts `1.5.7`, any binding-only `+N`
+The package version mirrors the bundled open62541 release exactly: `1.5.9` wraps
+open62541 `v1.5.9`. Dart-side fixes that ship the **same** native library version
+use a build-metadata suffix — `1.5.9+1`, `1.5.9+2`, … — which pub.dev orders
+after `1.5.9`. So `open62541: ^1.5.9` accepts `1.5.9`, any binding-only `+N`
 revision, and later `1.x` upstream releases.
 
 ## Usage

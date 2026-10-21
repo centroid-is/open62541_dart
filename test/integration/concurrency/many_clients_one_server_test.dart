@@ -99,8 +99,7 @@ void main() {
   group('N clients -> 1 Dart server: deterministic subscription cross-talk', () {
     test('each client only sees its own node updates', () async {
       const clientCount = 4;
-      final port = await freePort();
-      final server = await startDartServer(port, seed: (s) => seedPerClientNodes(s, clientCount));
+      final server = await startDartServer(seed: (s) => seedPerClientNodes(s, clientCount));
       List<DrivenClient> clients = const [];
       try {
         clients = await connectFleet(server.endpoint, clientCount);

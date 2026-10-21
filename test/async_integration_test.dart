@@ -18,7 +18,7 @@ Future<ClientApi> createClient(String clientType, int port) async {
       // Start event loop BEFORE connect - needed for async operations
       // Catch errors since runIterate fails when connection is closed (expected in tearDown)
       unawaited(client.runIterate().catchError((_) {}));
-      unawaited(client.connect("opc.tcp://localhost:$port"));
+      unawaited(client.connect("opc.tcp://127.0.0.1:$port"));
       await client.awaitConnect();
       return client;
     case 'direct':
@@ -30,7 +30,7 @@ Future<ClientApi> createClient(String clientType, int port) async {
           await Future.delayed(Duration(milliseconds: 5));
         }
       }());
-      await client.connect("opc.tcp://localhost:$port");
+      await client.connect("opc.tcp://127.0.0.1:$port");
       return client;
     default:
       throw ArgumentError('Unknown client type: $clientType');
@@ -50,8 +50,8 @@ void main() async {
       Server? server;
 
       setUp(() async {
-        port = await freeTcpPort();
-        server = setupServer(port);
+        server = setupServer();
+        port = server!.port;
         client = await createClient(clientType, port);
       });
 

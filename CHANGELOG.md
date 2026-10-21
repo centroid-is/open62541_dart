@@ -4,8 +4,167 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
+## 1.5.9
 
+- **`Server.port`: the port the server listens on, for `Server(port: 0)`.**
+  open62541 supports dynamic port assignment (the listen socket binds port 0
+  and `getsockname` reads what the OS picked), but on a dual-stack host its
+  IPv4 and IPv6 listen sockets each got their own OS-picked port and the
+  server advertised both. The bundled source is patched
+  (`hook/dynamic_port.patch`) to bind the IPv4 addresses first and reuse the
+  port the OS picked for them for the other address families, so a server has
+  ONE port; `Server.port` reads it back once `start()` has returned
+  (`StateError` before). The test suite starts every server on port 0 now
+  instead of probing for a free port and handing it over, which raced across
+  the suites `dart test` runs in parallel (two servers given one port both
+  bound it, since open62541's listen sockets are `SO_REUSEPORT`).
+- **Fixed: VM abort (`Callback invoked after it has been deleted`) after a
+  lost DeleteMonitoredItems response.** Cancelling a monitored-item stream
+  closed the stream's native callback as soon as the delete request was
+  answered, whatever the answer. When the response is lost with the secure
+  channel (a frozen or dropped link while the cancel is in flight), the
+  request is answered locally with `BadSecureChannelClosed`; the item still
+  exists in the native client and, because the session outlives the channel,
+  on the server. After the reconnect it published into the closed callback
+  and aborted the process. The callback is now closed on a delete response
+  only when the items are really gone (Good service result, every item Good
+  or `BadMonitoredItemIdInvalid`); otherwise it stays open and is released
+  by `Client.delete()`, as for a delete that could not be sent.
+- **Fixed: `ClientIsolate.delete()` failed with `Concurrent modification
+  during iteration` when a stream ended during the teardown.** The worker
+  cancelled its streams while iterating the map a finishing stream removes
+  itself from (for example a refused monitored-item create answered at that
+  moment). The delete then failed before the worker deleted its client, so
+  the server kept the session and its subscriptions.
+- **Requests on a dead connection fail instead of hanging.** When the secure
+  channel is down, open62541 refuses a request before sending it and never
+  calls back. `Client.write()` and `Client.subscriptionCreate()` ignored that
+  status, so the future they returned never completed; both now throw
+  `UaStatusException(BadServerNotConnected)`, and
+  `UA_STATUSCODE_BADSERVERNOTCONNECTED` is exported to match on. Cancelling a
+  monitored-item stream hung the same way on the refused
+  DeleteMonitoredItems request; `cancel()` on a dead connection now
+  completes.
+- **Fixed: native callbacks leaked by refused requests.** Each of these left
+  a native callback open for the lifetime of the isolate, together with what
+  its closure captured, and an isolate with an open native callback cannot
+  exit:
+  - a monitored-item create the server refuses (`BadNodeIdUnknown`, ...)
+    never closed the item's data callback, which holds the item's last
+    value. A caller that rebuilds a refused item leaked one per attempt;
+  - `Client.write()` closed its callback only when the write succeeded, so
+    a write the server rejected (`BadNotWritable`, ...) leaked it;
+  - a `write()` or `subscriptionCreate()` refused on a dead connection
+    leaked the callbacks it had registered, and the write its variant.
+- **Fixed: a monitored item torn down on a dead connection kept its native
+  callback open for good.** With the secure channel down, DeleteMonitoredItems
+  cannot be sent. The item's native callback has to stay open at that point:
+  the item survives on the server with its session, and publishes into the
+  callback again once the client has reconnected. It is now closed when
+  `Client.delete()` has freed the native client, so an isolate that cancelled
+  an item (or deleted its client with the stream still active) on a dead
+  connection can exit. Known limitation: the delete is not retried when the
+  session comes back, so the server keeps sampling the cancelled item until
+  the session or the subscription ends.
+- **Fixed: tearing down a `monitoredItems` stream that has no monitored
+  item.** When the server refuses every item of a create with a tolerated
+  status (`BadAttributeIdInvalid`, e.g. the Value attribute of an Object
+  node), the stream stays open with nothing behind it. Cancelling it, or
+  deleting the client while it was active, treated the already answered
+  create as still in flight: it read the freed request id, sent a Cancel for
+  whatever that slot held and never closed the stream's native callback, so
+  an isolate that did this could not exit. The teardown now releases the
+  callback and completes.
+- **Fixed: `ClientIsolate.delete()` left the worker isolate running when the
+  worker answered the delete with an error.** The error was rethrown before
+  the worker was killed and the two receive ports were closed, so the worker
+  stayed alive and the open ports kept the calling isolate (and with it a CLI
+  process) from exiting. `delete()` now always kills the worker and closes
+  its ports; the error is still reported to the caller.
+- **Fixed a 48-byte native leak per struct-valued variant decoded (and per
+  struct written).** `OpcUaDynamicValueSerializer.deserialize` calloc'd a
+  `UA_ExtensionObject` to read the header of every struct-valued variant --
+  every struct notification, every struct read, and once per element of an
+  array of structs -- and never freed it; `serialize` did the same for every
+  struct written. Both now read/build the header through a `Struct.create`
+  view on the Dart heap, so the garbage collector owns it. Present in 1.5.7
+  through 1.5.7+3.
+- **A struct write that fails no longer leaks.** When serialising a struct
+  threw part-way (a field without a value, for example), the type id string
+  already allocated for it was never freed, nor were the bodies and type ids
+  of the elements before it in an array of structs. The whole value is now
+  encoded on the Dart heap first, and the native memory the variant takes
+  ownership of is allocated only once nothing can throw any more.
+- Bump bundled open62541 from `v1.5.7` to `v1.5.9` (v1.5.8 was never shipped
+  by this package; both upstream releases land here).
+  - Upstream v1.5.8 is a maintenance release focused on hardening and
+    stability: overflow/bounds checks across the binary, JSON and XML
+    decoders and the SecureChannel chunk/OPN handling; server MonitoredItem
+    fixes (items follow a node on replacement, reentrant/local deletion from
+    callbacks, O(1) removal and a lookup tree instead of quadratic scans);
+    the client validates the service result before reading result arrays and
+    no longer runs the connectivity check before the Session is activated;
+    and a batch of PubSub transport/encoding fixes (UADP security headers,
+    oversized DataSetMessages, RawData metadata, MQTT/Ethernet). See
+    https://github.com/open62541/open62541/releases/tag/v1.5.8.
+  - Upstream v1.5.9 continues the hardening: SecureChannel TokenId and OPN
+    renewal SequenceNumber checks; the server validates HEL messages
+    (trailing data, EndpointUrl length), endpoint security modes, event
+    filter operators, attribute ids, GetMonitoredItems / ConditionRefresh /
+    GDS method arguments and session user identity changes, bounds
+    diagnostics member names, and sends a PublishResponse when cancelling a
+    queued Publish; the client deep-copies owned `UA_ClientConfig` members
+    (`UA_ClientConfig_copy`), frees the OpenSecureChannelResponse on every
+    exit path, initialises async responses before decoding and keeps
+    previous SecurityPolicy arrays alive while open channels reference them;
+    plugins validate RSA-PSS / ECDSA signature lengths and use constant-time
+    MAC comparison; plus a large batch of PubSub/SKS fixes and thread-safety
+    fixes in `arch` (no `gmtime` / `inet_ntoa`). See
+    https://github.com/open62541/open62541/releases/tag/v1.5.9.
+  - Regenerated the amalgamated header
+    (`third_party/open62541/open62541_modified.h`) and the ffigen bindings
+    (`lib/src/third_party/open62541.g.dart`) against v1.5.9.
+    `remove_bitfields.patch` applies unchanged. One struct-layout change:
+    `UA_ClientConfig` gained the internal `securityPolicyHistory` pointer
+    after `authSecurityPolicies` (888 -> 896 bytes on 64-bit;
+    `verify_sizes_test` updated). The Dart wrappers access the config only
+    through the generated struct fields and `UA_Client_newWithConfig` still
+    takes the struct by value, so nothing in `lib/` changes. The new
+    `UA_ClientConfig_PolicyHistory` type is bound as opaque (internal
+    ownership). The only other public-header addition across both releases
+    is `UA_Node_moveMonitoredItems` (custom-nodestore API, not bound).
+  - All build-time source patches (subscription cleanup, bounded send,
+    session-recreate race, delete-by-client-handle, single-threaded
+    AsyncManager) still apply to v1.5.9; none has landed upstream yet
+    (`ua_client_subscriptions.c` and `eventloop_posix_tcp.c` are unchanged
+    between v1.5.8 and v1.5.9, and the v1.5.9 edits to `ua_client.c`,
+    `ua_client_connect.c` and `ua_server.c` do not touch the patched code).
+- **Build: the hook re-downloads open62541 when the pinned version changes.**
+  The extracted source tree in the shared hook output directory was reused
+  whenever it existed, whatever version it held, so a project upgraded with
+  a warm `.dart_tool` kept building the previous open62541 release under the
+  new bindings. The tree is now stamped with its version and discarded on a
+  mismatch (an unstamped tree from an older package revision is discarded
+  once). `verify_version_test` additionally checks the version the native
+  library reports, not only the constant in the generated bindings.
+- **Build: the hook re-downloads and rebuilds mbedTLS when the pinned version
+  changes.** The same flaw as above for the bundled mbedTLS: the extracted
+  source and the per-target install prefixes under `tls/` were reused whenever
+  they existed, so a warm `.dart_tool` would have kept linking the previous
+  mbedTLS release across a version bump. The tree is now stamped with its
+  version and discarded, together with every install built from it, on a
+  mismatch or a missing stamp. One-time cost: a checkout or consumer whose
+  cache predates the stamp re-downloads and rebuilds mbedTLS once on the next
+  build (well under a minute on a fast workstation, a couple of minutes on CI
+  or a laptop); later builds reuse the stamped tree as before.
+- **Dev tooling: `ffigen` 22 / 23.** The binding generator (`tool/ffigen.dart`)
+  is ported to ffigen 22's visitor-based config API, which replaced the one it
+  was written against; ffigen 23 keeps that API. The generated bindings are
+  unchanged by the port and identical under 22.0.0, 22.1.0 and 23.0.0.
+  ffigen 22 depends on `code_assets` 2.x, so development now resolves
+  `code_assets` 2.x. Nothing changes for consumers: `ffigen` is a dev
+  dependency and the runtime constraint (`code_assets: >=1.0.0 <3.0.0`) is
+  the same.
 - **`Client.call` (and `readAttribute` / monitored-item creation) surface the
   real service status.** The async response handlers checked `resultsSize`
   before `responseHeader.serviceResult`, so an infrastructure failure (session
@@ -102,6 +261,41 @@ changes that ship the same native library version.
   errors of that type now cross to the caller as typed exceptions with their
   status code intact (`on UaStatusException catch (e) => e.statusCode`);
   every other error type still arrives as the stringified fallback.
+- **Fixed: `Server.addVariableTypeNode` killed the process.** It freed the
+  value's variant and then the attributes holding a shallow copy of it, so
+  the payload was freed twice on every call (glibc:
+  `free(): double free detected in tcache 2`).
+- **Fixed: `Client.browse` killed the process when the server paged its
+  answer.** A server may return the references of a node a few at a time,
+  with a continuation point to fetch the rest. Following it (BrowseNext)
+  freed the continuation point by hand and then again with the request that
+  owned it (glibc: `free(): invalid pointer`). Nothing in this package made
+  a server page, so the new `Server.maxReferencesPerNode` (getter/setter,
+  default 0: no limit) sets how many references it returns per response.
+- **Fixed: native memory that was allocated and never freed.** Each of these
+  stayed on the C heap for the lifetime of the process:
+  - every `Server` left its 1.2 kB `UA_ServerConfig` struct behind.
+    `UA_Server_newWithConfig` moves the contents into the server but leaves
+    the struct itself to the caller.
+  - every node added to a `Server` left a copy of its browse name behind
+    (`addVariableNode`, `addDataSourceVariableNode`, `addVariableTypeNode`,
+    `addMethodNode`, `addObjectNode`, `addFolderNode`, `addDataTypeNode`).
+  - an add that threw left more: `addVariableNode` for a value without a
+    name leaked the attributes and the value (about 300 bytes),
+    `addMethodNode` the attributes and the arguments marshalled so far when
+    an argument could not be marshalled, and `addObjectNode`,
+    `addFolderNode` and `addDataTypeNode` the attributes whenever the server
+    refused the node (`BadNodeIdExists`, ...).
+  - a `Client` created with a `username` left a copy of the username and of
+    the password behind.
+  - every `Client.connect()` left a copy of the endpoint URL behind, as did
+    every reconnect attempt of `keepConnected()`.
+  - every `Client.write()` to a node with a string NodeId left a copy of the
+    identifier behind.
+  - every `Client.call()` left its argument array behind, and a copy of the
+    identifier of each string NodeId. A call that failed before it was sent
+    (an argument that cannot be encoded, a client that is not connected) also
+    left the arguments encoded so far.
 
 ## 1.5.7+3
 

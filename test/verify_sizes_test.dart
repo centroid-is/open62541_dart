@@ -10,8 +10,9 @@ import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 void main() {
   test("Verify sizes", () {
     // UA_ClientConfig is unchanged by enabling PubSub (the PubSub subscriber
-    // hangs off UA_Server, not UA_Client).
-    expect(sizeOf<raw.UA_ClientConfig>(), 888);
+    // hangs off UA_Server, not UA_Client). open62541 v1.5.9 appended the
+    // internal `securityPolicyHistory` pointer (888 -> 896 on 64-bit).
+    expect(sizeOf<raw.UA_ClientConfig>(), 896);
     expect(sizeOf<raw.UA_DataType>(), 96);
     // Statistics structs (Server.statistics). UA_ServerStatistics is returned
     // by value from UA_Server_getStatistics; the diagnostics data types are

@@ -27,8 +27,8 @@ void main() {
   bool running = false;
 
   setUp(() async {
-    port = await freeTcpPort();
-    server = setupServer(port);
+    server = setupServer();
+    port = server.port;
     addBasicVariables(server);
     client = Client();
     running = true;
@@ -37,7 +37,7 @@ void main() {
         await Future.delayed(const Duration(milliseconds: 5));
       }
     }();
-    await client.connect("opc.tcp://localhost:$port");
+    await client.connect("opc.tcp://127.0.0.1:$port");
   });
 
   tearDown(() async {

@@ -406,10 +406,15 @@ $indent}''';
 
 // ignore: camel_case_extensions
 extension UA_StringExtension on raw.UA_String {
-  void set(String value) {
+  /// Points this string at a copy of [value] allocated from [allocator].
+  ///
+  /// The default `ua_calloc` suits a string that open62541 frees, or that is
+  /// released with [free]. With an [Arena] the copy is scratch that goes with
+  /// the arena's scope: do not [free] or [set] such a string again.
+  void set(String value, {Allocator allocator = ua_calloc}) {
     free();
     final bytes = utf8.encode(value);
-    final dataPtr = ua_calloc<Uint8>(bytes.length);
+    final dataPtr = allocator<Uint8>(bytes.length);
 
     final byteList = dataPtr.asTypedList(bytes.length);
     byteList.setAll(0, bytes);

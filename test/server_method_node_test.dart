@@ -10,8 +10,8 @@ void main() {
     late Client client;
 
     setUp(() async {
-      port = await freeTcpPort();
-      server = setupServer(port);
+      server = setupServer();
+      port = server.port;
       client = await setupClient(port);
     });
 
@@ -112,7 +112,7 @@ void main() {
           await Future.delayed(Duration(milliseconds: 5));
         }
       }();
-      await identifiedClient.connect('opc.tcp://localhost:$port');
+      await identifiedClient.connect('opc.tcp://127.0.0.1:$port');
 
       MethodSessionInfo? captured;
       final methodId = NodeId.fromString(1, 'method.whoami');

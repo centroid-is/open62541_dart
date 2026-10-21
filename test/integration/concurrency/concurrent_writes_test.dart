@@ -18,7 +18,6 @@ import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import '../harness/dart_client.dart';
-import '../harness/net.dart';
 import 'concurrency_support.dart';
 
 void main() {
@@ -26,8 +25,7 @@ void main() {
     test('N clients hammer a shared double: no corruption, then convergence', () async {
       const clientCount = 4;
       const writesPerClient = 25;
-      final port = await freePort();
-      final server = await startDartServer(port, seed: (s) => seedPerClientNodes(s, clientCount));
+      final server = await startDartServer(seed: (s) => seedPerClientNodes(s, clientCount));
       List<DrivenClient> clients = const [];
       try {
         clients = await connectFleet(server.endpoint, clientCount);

@@ -17,6 +17,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'net.dart';
 import 'paths.dart';
 
 class Toxiproxy {
@@ -32,7 +33,7 @@ class Toxiproxy {
     if (!File(bin).existsSync()) {
       throw StateError('toxiproxy-server not found at $bin. Run test/integration/setup_local.sh');
     }
-    final port = apiPort ?? await _freePort();
+    final port = apiPort ?? await freePort();
     final process = await Process.start(bin, ['-host', '127.0.0.1', '-port', '$port']);
     // Surface toxiproxy logs to stderr for debugging, prefixed.
     process.stderr.transform(utf8.decoder).listen((l) => stderr.write('[toxiproxy] $l'));
@@ -56,19 +57,18 @@ class Toxiproxy {
     throw StateError('toxiproxy API did not come up on port $apiPort');
   }
 
-  /// Creates a proxy: listens on 127.0.0.1:[listenPort] (auto if null) and
-  /// forwards to [upstreamHost]:[upstreamPort].
+  /// Creates a proxy: listens on 127.0.0.1:[listenPort] (a port toxiproxy
+  /// gets from the OS if null) and forwards to [upstreamHost]:[upstreamPort].
   Future<ToxiProxyHandle> createProxy({
     required String upstreamHost,
     required int upstreamPort,
     int? listenPort,
     String? name,
   }) async {
-    final port = listenPort ?? await _freePort();
-    final proxyName = name ?? 'p_${port}_$upstreamPort';
+    final proxyName = name ?? 'p_${_proxyNames.length}_$upstreamPort';
     final body = {
       'name': proxyName,
-      'listen': '127.0.0.1:$port',
+      'listen': '127.0.0.1:${listenPort ?? 0}',
       'upstream': '$upstreamHost:$upstreamPort',
       'enabled': true,
     };
@@ -77,6 +77,9 @@ class Toxiproxy {
       throw StateError('createProxy failed (${r.statusCode}): ${r.body}');
     }
     _proxyNames.add(proxyName);
+    // The reply carries the address the proxy actually listens on.
+    final listen = (json.decode(r.body) as Map<String, dynamic>)['listen'] as String;
+    final port = int.parse(listen.substring(listen.lastIndexOf(':') + 1));
     return ToxiProxyHandle._(this, proxyName, port);
   }
 
@@ -106,13 +109,6 @@ class Toxiproxy {
     final resp = await req.close();
     final text = await resp.transform(utf8.decoder).join();
     return _Resp(resp.statusCode, text);
-  }
-
-  static Future<int> _freePort() async {
-    final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-    final p = s.port;
-    await s.close();
-    return p;
   }
 }
 

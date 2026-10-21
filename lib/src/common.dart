@@ -58,13 +58,15 @@ final ffi.Pointer<ffi.Void> _uaEmptyArraySentinel = ffi.Pointer.fromAddress(0x01
 ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
   final isEmptyArray = value.isArray && value.asArray.isEmpty;
 
-  binarize.ByteWriter wr = binarize.ByteWriter();
-  OpcUaDynamicValueSerializer.serialize(value, wr, value, Endian.little, false, true);
-
+  // Can throw, so it comes before serialize: what serialize allocates natively
+  // for a struct is only freed through the variant created below.
   Namespace0Id? id;
   if (value.typeId != null && value.typeId!.isNumeric()) {
     id = Namespace0Id.fromInt(value.typeId!.numeric);
   }
+
+  binarize.ByteWriter wr = binarize.ByteWriter();
+  OpcUaDynamicValueSerializer.serialize(value, wr, value, Endian.little, false, true);
 
   List<int> getDimensions(DynamicValue value) {
     if (!value.isArray) {

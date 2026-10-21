@@ -13,11 +13,11 @@ class _Server {
   final Server server;
   bool _running = false;
 
-  static _Server start(int port) {
-    final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+  static _Server start() {
+    final server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
     server.start();
     addBasicVariables(server);
-    final managed = _Server._(port, server);
+    final managed = _Server._(server.port, server);
     managed._running = true;
     () async {
       final s = server;
@@ -177,7 +177,7 @@ void main() {
   late _Proxy proxy;
 
   setUp(() async {
-    server = _Server.start(await freeTcpPort());
+    server = _Server.start();
     proxy = await _Proxy.start(server.port);
   });
   tearDown(() async {

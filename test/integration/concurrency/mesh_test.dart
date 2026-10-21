@@ -17,7 +17,6 @@ import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import '../harness/dart_client.dart';
-import '../harness/net.dart';
 import 'concurrency_support.dart';
 
 final _markerNode = NodeId.fromString(1, 'server.marker');
@@ -37,10 +36,8 @@ void main() {
         // Bring up N servers; each seeds a distinct marker plus one writable
         // cell node per client.
         for (var n = 0; n < serverCount; n++) {
-          final port = await freePort();
           final marker = 1000.0 + n;
           final srv = await startDartServer(
-            port,
             seed: (s) {
               s.addVariableNode(
                 _markerNode,
