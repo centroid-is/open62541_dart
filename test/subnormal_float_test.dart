@@ -17,7 +17,6 @@ Matcher bitEquals(double expected) => predicate<Object?>((actual) {
 double asFloat32(double v) => (ByteData(8)..setFloat32(0, v)).getFloat32(0);
 
 void main() {
-  const port = 4855;
   late Server server;
   late Client client;
 
@@ -25,10 +24,10 @@ void main() {
   final floatNode = NodeId.fromString(1, 'the.subnormal.float');
 
   setUpAll(() async {
-    server = setupServer(port);
+    server = setupServer();
     server.addVariableNode(doubleNode, DynamicValue(value: 0.0, typeId: NodeId.double, name: 'the.subnormal.double'));
     server.addVariableNode(floatNode, DynamicValue(value: 0.0, typeId: NodeId.float, name: 'the.subnormal.float'));
-    client = await setupClient(port);
+    client = await setupClient(server.port);
   });
 
   tearDownAll(() async {

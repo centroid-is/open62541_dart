@@ -49,8 +49,8 @@ void main() {
   late Server server;
 
   setUp(() async {
-    port = await freeTcpPort();
-    server = setupServer(port);
+    server = setupServer();
+    port = server.port;
     server.addDataSourceVariableNode(
       gatedNodeId,
       browseName: 'Gated',

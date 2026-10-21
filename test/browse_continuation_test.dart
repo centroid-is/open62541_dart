@@ -25,7 +25,6 @@
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'common.dart' show freeTcpPort;
 
 void main() {
   late Server server;
@@ -48,9 +47,9 @@ void main() {
   }
 
   setUp(() async {
-    final port = await freeTcpPort();
-    server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+    server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
     server.start();
+    final port = server.port;
     server.addFolderNode(folderId, 'PagedFolder');
     for (final name in childNames) {
       server.addVariableNode(

@@ -188,8 +188,8 @@ void main() {
   bool running = false;
 
   setUp(() async {
-    serverPort = await freeTcpPort();
-    server = setupServer(serverPort);
+    server = setupServer();
+    serverPort = server.port;
     for (var i = 0; i < nodeCount; i++) {
       server.addVariableNode(
         NodeId.fromString(1, "race.int$i"),

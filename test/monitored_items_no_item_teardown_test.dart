@@ -73,9 +73,9 @@ void main() {
   late Timer serverTimer;
 
   setUp(() async {
-    serverPort = await freeTcpPort();
-    server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+    server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
     server.start();
+    serverPort = server.port;
     addBasicVariables(server);
     serverTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
       server.runIterate();

@@ -37,8 +37,7 @@ void main() {
       final clients = <DrivenClient>[];
       try {
         for (var i = 0; i < serverCount; i++) {
-          final port = await freePort();
-          final srv = await startDartServer(port, seed: (s) => seedPerClientNodes(s, 1));
+          final srv = await startDartServer(seed: (s) => seedPerClientNodes(s, 1));
           servers.add(srv);
           clients.add(await connect1(srv.endpoint));
         }
@@ -66,8 +65,7 @@ void main() {
     // The other reading of "multi-client": many clients on ONE server.
     test('1 server x N clients: each client write/reads its own node', () async {
       const clientCount = 4;
-      final port = await freePort();
-      final server = await startDartServer(port, seed: (s) => seedPerClientNodes(s, clientCount));
+      final server = await startDartServer(seed: (s) => seedPerClientNodes(s, clientCount));
       List<DrivenClient> clients = const [];
       try {
         clients = await connectFleet(server.endpoint, clientCount);

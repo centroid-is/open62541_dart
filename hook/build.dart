@@ -266,6 +266,51 @@ Future<void> _applyPatches(Uri sourceDir, Uri packageRoot) async {
   await _patchSessionRecreateRace(sourceDir, packageRoot);
   await _patchDeleteByClientHandle(sourceDir, packageRoot);
   await _patchAsyncManagerSingleThread(sourceDir);
+  await _patchDynamicPort(sourceDir, packageRoot);
+}
+
+/// Gives a server started on port 0 ONE port for every address family.
+///
+/// open62541 supports dynamic port assignment (`UA_ServerConfig_setMinimal`
+/// with port 0: the listen socket binds port 0, `getsockname` reads the port
+/// the OS picked, and the binary protocol manager advertises it as a
+/// DiscoveryUrl). But `TCP_registerListenSockets` in
+/// `arch/posix/eventloop_posix_tcp.c` passes the configured port (0) to every
+/// `getaddrinfo` result separately, so on a dual-stack host the IPv4 and the
+/// IPv6 listen socket each get their own OS-picked port and the server
+/// advertises two DiscoveryUrls that differ only in the port. The patch binds
+/// the IPv4 addresses first and reuses the port the OS picked for them for the
+/// remaining families, so `Server.port` is THE port. Same delivery mechanism
+/// as [_patchSessionRecreateRace].
+Future<void> _patchDynamicPort(Uri sourceDir, Uri packageRoot) async {
+  final targetFile = File.fromUri(sourceDir.resolve('arch/posix/eventloop_posix_tcp.c'));
+  if (!await targetFile.exists()) {
+    throw Exception('Cannot apply dynamic-port patch: arch/posix/eventloop_posix_tcp.c not found under $sourceDir.');
+  }
+
+  // Idempotent: the patch injects a uniquely-worded comment (warm shared
+  // source dir reused across builds).
+  const marker = 'reuse the port the OS picked for them for the';
+  if ((await targetFile.readAsString()).contains(marker)) {
+    return;
+  }
+
+  final patchFile = File.fromUri(packageRoot.resolve('hook/dynamic_port.patch'));
+  if (!await patchFile.exists()) {
+    throw Exception(
+      'Cannot apply dynamic-port patch: patch file not found at ${patchFile.path}. '
+      'It must ship with the package (check .pubignore does not exclude hook/).',
+    );
+  }
+
+  await _applyUnifiedDiff(sourceDir: sourceDir, patchFile: patchFile, what: 'dynamic-port');
+
+  if (!(await targetFile.readAsString()).contains(marker)) {
+    throw Exception(
+      'dynamic-port patch tool reported success but the fix is absent from '
+      'eventloop_posix_tcp.c. The upstream source likely changed shape; re-verify the patch.',
+    );
+  }
 }
 
 /// Runs the server's AsyncManager lifecycle in single-threaded builds too.

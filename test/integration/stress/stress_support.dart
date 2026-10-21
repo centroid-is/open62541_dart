@@ -93,12 +93,11 @@ class ServerClient {
   Future<void> dispose() => _stop();
 }
 
-Future<ServerClient> startServerClient(
-  int port, {
+Future<ServerClient> startServerClient({
   LogLevel serverLog = LogLevel.UA_LOGLEVEL_ERROR,
   LogLevel clientLog = LogLevel.UA_LOGLEVEL_FATAL,
 }) async {
-  final server = Server(port: port, logLevel: serverLog);
+  final server = Server(port: 0, logLevel: serverLog);
   server.start();
   var running = true;
   unawaited(() async {
@@ -113,7 +112,7 @@ Future<ServerClient> startServerClient(
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
   }());
-  await client.connect('opc.tcp://localhost:$port').timeout(const Duration(seconds: 20));
+  await client.connect('opc.tcp://127.0.0.1:${server.port}').timeout(const Duration(seconds: 20));
 
   Future<void> stop() async {
     running = false;

@@ -439,6 +439,37 @@ class Server {
     }
   }
 
+  /// The TCP port the server listens on. Known once [start] has returned.
+  ///
+  /// Pass `port: 0` to the constructor to let the OS pick a free port, and read
+  /// it here: the server holds the port from the moment it is picked, so two
+  /// servers never get the same one, however many start at once.
+  ///
+  /// ```dart
+  /// final server = Server(port: 0)..start();
+  /// final client = Client();
+  /// await client.connect('opc.tcp://127.0.0.1:${server.port}');
+  /// ```
+  ///
+  /// Throws a [StateError] before [start]: open62541 binds its listen sockets
+  /// during startup, and with `port: 0` the number does not exist before that.
+  int get port {
+    // Startup registers each listen socket in the ApplicationDescription's
+    // DiscoveryUrls as `opc.tcp://<hostname>:<bound port>`. The bundled
+    // open62541 is patched to bind every address family on the same port
+    // (hook/dynamic_port.patch), so the first URL carries THE port.
+    final description = _config.ref.applicationDescription;
+    if (description.discoveryUrlsSize == 0) {
+      throw StateError('Server.port is known only after start()');
+    }
+    final url = description.discoveryUrls[0].value;
+    final match = RegExp(r':(\d+)/?$').firstMatch(url);
+    if (match == null) {
+      throw StateError('Server.port: cannot parse the port of DiscoveryUrl "$url"');
+    }
+    return int.parse(match.group(1)!);
+  }
+
   /// Adds a variable node to the OPC UA server.
   ///
   /// This method creates a new variable node in the server's address space with the

@@ -26,10 +26,10 @@ void main() {
     late int udpPort;
 
     setUp(() async {
-      publisher = setupServer(await freeTcpPort());
-      subscriber = setupServer(await freeTcpPort());
+      publisher = setupServer();
+      subscriber = setupServer();
       // Random high port so parallel test runs never clash. (UDP multicast has
-      // no bind-port-0 equivalent of freeTcpPort, so this stays randomized.)
+      // no bind-port-0 equivalent of Server.port, so this stays randomized.)
       udpPort = Random().nextInt(10000) + 25000;
     });
 

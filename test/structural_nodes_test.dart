@@ -33,8 +33,8 @@ void main() {
   final looseVar = NodeId.fromString(1, 'loose.var');
 
   setUpAll(() async {
-    port = await freeTcpPort();
-    server = setupServer(port);
+    server = setupServer();
+    port = server.port;
 
     // Folder under the Objects folder (default parent).
     server.addFolderNode(plantFolder, 'Plant');

@@ -9,7 +9,6 @@ library;
 import 'package:test/test.dart';
 
 import '../harness/dart_client.dart';
-import '../harness/net.dart';
 import '../harness/paths.dart';
 import '../harness/toxiproxy.dart';
 import 'chaos_support.dart';
@@ -22,7 +21,7 @@ void main() {
 
     setUp(() async {
       // 8000 doubles ≈ 64 KB of payload (plus OPC UA framing).
-      server = await LargeArrayServer.start(port: await freePort(), length: 8000);
+      server = await LargeArrayServer.start(length: 8000);
       toxiproxy = await Toxiproxy.start();
       proxy = await toxiproxy.createProxy(upstreamHost: '127.0.0.1', upstreamPort: server.port);
     });

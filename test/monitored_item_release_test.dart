@@ -35,7 +35,7 @@ import 'dart:isolate';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'common.dart' show TcpProxy, freeTcpPort, waitForChannelDown, waitForStats;
+import 'common.dart' show TcpProxy, waitForChannelDown, waitForStats;
 
 final intNodeId = NodeId.fromString(1, "the.int");
 final unknownNodeId = NodeId.fromString(1, "does.not.exist");
@@ -274,9 +274,9 @@ void main() {
   }
 
   setUp(() async {
-    serverPort = await freeTcpPort();
-    server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+    server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
     server.start();
+    serverPort = server.port;
     server.addVariableNode(intNodeId, DynamicValue(value: 42, typeId: NodeId.int32, name: "the.int"));
     serverTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
       server.runIterate();

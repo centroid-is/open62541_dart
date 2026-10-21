@@ -1,0 +1,75 @@
+--- a/arch/posix/eventloop_posix_tcp.c
++++ b/arch/posix/eventloop_posix_tcp.c
+@@ -501,12 +501,13 @@
+ 
+ static UA_StatusCode
+ TCP_registerListenSocket(UA_POSIXConnectionManager *pcm, struct addrinfo *ai,
+-                         const char *hostname, UA_UInt16 port,
++                         const char *hostname, UA_UInt16 *portp,
+                          void *application, void *context,
+                          UA_ConnectionManager_connectionCallback connectionCallback,
+                          UA_Boolean validate, UA_Boolean reuseaddr) {
+     UA_EventLoopPOSIX *el = (UA_EventLoopPOSIX*)pcm->cm.eventSource.eventLoop;
+     UA_LOCK_ASSERT(&el->elMutex);
++    UA_UInt16 port = *portp;
+ 
+     /* Check that the maximum number of sockets has not been exceeded */
+     const UA_UInt32 *maxSockets = (const UA_UInt32 *)UA_KeyValueMap_getScalar(
+@@ -592,6 +593,18 @@
+         return UA_STATUSCODE_BADINTERNALERROR;
+     }
+ 
++    /* open62541_dart patch: the addresses were resolved with the configured
++     * port. When that was 0 and an earlier socket of this call already got a
++     * port from the OS, bind that port instead of asking for another one. */
++    if(port != 0) {
++        if(ai->ai_family == AF_INET)
++            ((struct sockaddr_in*)ai->ai_addr)->sin_port = htons(port);
++#if UA_IPV6
++        else if(ai->ai_family == AF_INET6)
++            ((struct sockaddr_in6*)ai->ai_addr)->sin6_port = htons(port);
++#endif
++    }
++
+     /* Bind socket to address */
+     UA_RESET_ERRNO;
+     int ret = UA_bind(listenSocket, ai->ai_addr, (socklen_t)ai->ai_addrlen);
+@@ -603,6 +616,10 @@
+         socklen_t len = sizeof(sin);
+         UA_getsockname(listenSocket, (struct sockaddr *)&sin, &len);
+         port = ntohs(sin.sin_port);
++        /* open62541_dart patch: hand the port the OS picked back to the
++         * caller, so the listen sockets of the other address families bind
++         * the same port instead of each getting their own. */
++        *portp = port;
+     }
+ 
+     /* If the INADDR_ANY is used, use the local hostname */
+@@ -751,11 +768,22 @@
+     /* Add listen sockets. Aggregate the results to see if at least one
+      * listen-socket was established. */
+     UA_StatusCode total_result = UA_INT32_MAX;
+-    struct addrinfo *ai = res;
+-    while(ai) {
+-        total_result &= TCP_registerListenSocket(pcm, ai, hostname, port, application, context,
+-                                                 connectionCallback, validate, reuseaddr);
+-        ai = ai->ai_next;
++
++    /* open62541_dart patch: with dynamic port assignment (port 0) every listen
++     * socket got its own OS-picked port, so a dual-stack host listened on one
++     * port for IPv4 and on another for IPv6 and advertised both. Bind the
++     * IPv4 addresses first and reuse the port the OS picked for them for the
++     * remaining address families, so the server has one port. A later bind
++     * that finds the port taken in its own family fails the way a busy fixed
++     * port does: a warning, and the sockets already bound stay up. */
++    for(int pass = 0; pass < 2; pass++) {
++        for(struct addrinfo *ai = res; ai; ai = ai->ai_next) {
++            if((ai->ai_family == AF_INET) != (pass == 0))
++                continue;
++            total_result &= TCP_registerListenSocket(pcm, ai, hostname, &port, application,
++                                                     context, connectionCallback, validate,
++                                                     reuseaddr);
++        }
+     }
+     UA_freeaddrinfo(res);
+ 

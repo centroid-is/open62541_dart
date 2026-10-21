@@ -38,24 +38,13 @@ const bool useBlockingDefault = false;
 void main() {
   const serverCount = 3;
 
-  final serverPorts = <int>[];
-
-  setUp(() async {
-    // Pick distinct OS-allocated free ports.
-    serverPorts.clear();
-    while (serverPorts.length != serverCount) {
-      final port = await freeTcpPort();
-      if (!serverPorts.contains(port)) serverPorts.add(port);
-    }
-  });
-
   final servers = <Server>[];
   final clients = <Client>[];
 
   // Drive a server on the shared isolate. Mirrors common.dart setupServer but
   // lets us force the blocking default for the demonstration path.
-  Server startServer(int port) {
-    final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+  Server startServer() {
+    final server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
     server.start();
     addBasicVariables(server);
     () async {
@@ -84,16 +73,16 @@ void main() {
   test('N cooperatively-pumped servers all accept a client and serve a read', () async {
     final stopwatch = Stopwatch()..start();
 
-    for (final port in serverPorts) {
-      servers.add(startServer(port));
+    for (var i = 0; i < serverCount; i++) {
+      servers.add(startServer());
     }
 
     // Connect one client to EACH server, all on this same isolate. Under the
     // old blocking default the second/third connect would starve; here every
     // one must complete within the bound.
     final readValues = <bool>[];
-    for (final port in serverPorts) {
-      final client = setupClient(port, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+    for (final server in servers) {
+      final client = setupClient(server.port, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
       clients.add(await client);
     }
 

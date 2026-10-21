@@ -123,9 +123,9 @@ void main() {
     tearDownAll(() => watch.stop());
 
     test('delete() with two live streams and a refused create in flight leaves nothing behind', () async {
-      final port = await freeTcpPort();
-      final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+      final server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
       server.start();
+      final port = server.port;
       addBasicVariables(server);
       final serverTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
         server.runIterate();

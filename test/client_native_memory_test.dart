@@ -1,7 +1,6 @@
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'common.dart' show freeTcpPort;
 import 'heap_growth.dart';
 
 /// Regression tests for native memory a [Client] allocated and never freed.
@@ -48,9 +47,9 @@ void main() {
     }
 
     setUpAll(() async {
-      final port = await freeTcpPort();
-      server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+      server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
       server.start();
+      final port = server.port;
       server.addVariableNode(variableId, DynamicValue(value: 0, typeId: NodeId.int32, name: 'variable'));
       server.addObjectNode(objectId, browseName: 'object');
       for (final (id, parent) in [(methodId, objectId), (numericMethodId, NodeId.objectsFolder)]) {

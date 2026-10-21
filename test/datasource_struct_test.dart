@@ -41,8 +41,8 @@ void main() {
     late DynamicValue backing;
 
     setUp(() async {
-      port = await freeTcpPort();
-      server = setupServer(port);
+      server = setupServer();
+      port = server.port;
       client = await setupClient(port);
 
       server.addCustomType(structType, makeSchema());
