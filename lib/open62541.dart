@@ -42,6 +42,7 @@ export 'src/server.dart'
     show
         Server,
         Argument,
+        RedundancySupport,
         DataSourceValue,
         ServerStatistics,
         MethodSessionInfo,

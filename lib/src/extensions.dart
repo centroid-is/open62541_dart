@@ -250,7 +250,9 @@ enum UaTypes {
   browseNextRequest(raw.UA_TYPES_BROWSENEXTREQUEST),
   browseNextResponse(raw.UA_TYPES_BROWSENEXTRESPONSE),
   dataTypeAttributes(raw.UA_TYPES_DATATYPEATTRIBUTES),
-  objectAttributes(raw.UA_TYPES_OBJECTATTRIBUTES);
+  objectAttributes(raw.UA_TYPES_OBJECTATTRIBUTES),
+  objectTypeAttributes(raw.UA_TYPES_OBJECTTYPEATTRIBUTES),
+  browseResult(raw.UA_TYPES_BROWSERESULT);
 
   final int value;
   const UaTypes(this.value);
