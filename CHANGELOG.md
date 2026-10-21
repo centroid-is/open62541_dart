@@ -4,7 +4,7 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
+## 1.5.9
 
 - **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the
   owning isolate.** By default the supervisor's pump calls
@@ -20,9 +20,6 @@ changes that ship the same native library version.
   keep their exact behaviour. `runIterate` is documented as a timeout, with
   `Duration.zero` as the non-blocking poll. `tool/bench_pump.dart` measures
   the cost.
-
-## 1.5.9
-
 - **`Server.port`: the port the server listens on, for `Server(port: 0)`.**
   open62541 supports dynamic port assignment (the listen socket binds port 0
   and `getsockname` reads what the OS picked), but on a dual-stack host its
