@@ -13,14 +13,14 @@ import 'heap_growth.dart';
 /// listening socket, so nothing depends on a port.
 void main() {
   test('a server leaves nothing on the C heap once deleted', () async {
-    // Creating a server builds the whole namespace 0, about 100 ms: a few
-    // servers per round have to do. One leaked UA_ServerConfig is 1184 bytes;
-    // the heap still settles by a hundred or two per server this early on.
+    // Creating a server builds the whole namespace 0, about 100 ms, so every
+    // round is a single server: the shorter the round, the fewer of them see
+    // another suite move the heap. One leaked UA_ServerConfig is 1184 bytes.
     await expectNoHeapGrowth(
       () => Server(logLevel: LogLevel.UA_LOGLEVEL_FATAL).delete(),
       warmUp: 6,
-      iterations: 4,
-      rounds: 5,
+      iterations: 1,
+      rounds: 21,
       maxGrowth: 600,
       attempts: 3,
     );

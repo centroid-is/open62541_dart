@@ -19,7 +19,9 @@ import 'package:open62541/src/ua_allocation.dart';
 /// or torn down. A leak grows the heap by the same amount in every round, so
 /// the median over the rounds discards the odd disturbed round, and a
 /// measurement that still comes out too high is repeated a little later: a
-/// suite being loaded passes, a leak does not.
+/// suite being loaded passes, a leak does not. What malloc itself keeps aside
+/// between readings is made the same for every reading, see
+/// [_fillThreadCache].
 
 final class _Mallinfo2 extends ffi.Struct {
   @ffi.Size()
@@ -53,11 +55,34 @@ int _heapInUse() {
   return info.uordblks + info.hblkhd;
 }
 
-/// [_heapInUse] without what the VM's own threads hold for a moment. The JIT
-/// compiler and the garbage collector work out of malloc'd memory, megabytes
-/// of it, that they hand back within milliseconds. The lowest of a few
-/// readings, a millisecond apart, is the heap without them.
+/// Fills the malloc cache of the calling thread, the one the test runs on.
+///
+/// glibc parks the chunks a thread frees in a per-thread cache (tcache), up to
+/// 7 of each size up to 1032 bytes, and `mallinfo2` counts a parked chunk as
+/// in use. How much is parked depends on what was freed before: with nothing
+/// leaked, a server's lifecycle pushed the reading up by 1 to 3 kB per server
+/// for a hundred servers on glibc 2.39, and by exactly 0 with the cache off
+/// (`GLIBC_TUNABLES=glibc.malloc.tcache_count=0`). Allocating more chunks of
+/// every cached size than the cache holds and freeing them leaves every bin
+/// full, so every reading carries the same parked amount.
+void _fillThreadCache() {
+  const perSize = 32; // More than tcache_count, 7 by default.
+  final chunks = <ffi.Pointer<ffi.Uint8>>[];
+  for (var size = 24; size <= 1032; size += 16) {
+    for (var i = 0; i < perSize; i++) {
+      chunks.add(ua_malloc<ffi.Uint8>(size));
+    }
+  }
+  chunks.forEach(ua_malloc.free);
+}
+
+/// [_heapInUse] with the thread cache full (see [_fillThreadCache]) and
+/// without what the VM's own threads hold for a moment. The JIT compiler and
+/// the garbage collector work out of malloc'd memory, megabytes of it, that
+/// they hand back within milliseconds. The lowest of a few readings, a
+/// millisecond apart, is the heap without them.
 int _settledHeapInUse() {
+  _fillThreadCache();
   var lowest = _heapInUse();
   for (var i = 0; i < 10; i++) {
     sleep(const Duration(milliseconds: 1));
