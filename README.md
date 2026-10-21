@@ -100,6 +100,32 @@ More examples are in the [`example/`](example/) directory: a minimal client
 > client/server event loop must be driven periodically by calling `runIterate`
 > as shown above.
 
+### Monitoring with quality
+
+`monitor` / `monitoredItems` deliver the value alone: a notification with a
+non-Good status becomes a `UaStatusException` *error* event on the stream and
+nothing is delivered for it. To get every sample with the status code and the
+timestamps the server attached to it, use `monitorDataValue` /
+`monitoredDataValues`, which emit the same `DataValue` that `readValue`
+returns:
+
+```dart
+final subscriptionId = await client.subscriptionCreate();
+client.monitorDataValue(nodeId, subscriptionId).listen((sample) {
+  // statusCode 0 is Good; isGood / isUncertain / isBad read the severity.
+  // sourceTimestamp and serverTimestamp are null when the server sent none.
+  print('${sample.value.value} ${statusCodeToString(sample.statusCode)} at ${sample.sourceTimestamp}');
+});
+```
+
+A Bad sample is delivered with the value it carries, or else the last known
+one; a Good sample without a value is a null value. Every event is a fresh
+`DataValue` (the value copied), on `Client` and on `ClientIsolate` alike, so
+it is safe to keep. The two methods are declared on `DataValueMonitoringApi`,
+which both clients implement next to `ClientApi`; code that holds a
+`ClientApi` checks `is DataValueMonitoringApi` to reach them. `ClientApi`
+itself is unchanged, so a class written against it keeps compiling.
+
 ### PubSub (UDP multicast)
 
 Both PubSub roles are configured on a `Server` (per OPC UA Part 14 the
@@ -180,11 +206,14 @@ struct size is unchanged) so the generator does not drop the surrounding members
   (v1.5.x), so they do not surface from a remote server. For an in-process Dart
   `Server` + `Client`, descriptions are restored from the locally registered
   schema.
-- Monitored-item notifications do not surface per-notification status codes or
+- `monitor` / `monitoredItems` do not surface per-notification status codes or
   timestamps on the value stream: a notification with a non-Good status is
   delivered as an *error* event on the stream (carrying the status), and its
-  value/timestamps are dropped. Use `Client.readValue` to observe a node's
-  value together with its status code and source/server timestamps.
+  value/timestamps are dropped. Use `monitorDataValue` / `monitoredDataValues`
+  (see [Monitoring with quality](#monitoring-with-quality)) or, for a one-off
+  read, `Client.readValue`. The status and timestamps are those of the Value
+  attribute's notification; `read` / `readAttribute` / `call` return a
+  `DynamicValue` without them.
 - `Server.statistics` exposes aggregate counters only (sessions, secure
   channels, subscriptions, total monitored items). Per-session and
   per-subscription diagnostic detail (client identity, publish rates, queue
