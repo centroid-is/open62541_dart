@@ -52,11 +52,24 @@ changes that ship the same native library version.
   Guid is its text, a NodeId a `NodeId`, a LocalizedText a `LocalizedText`,
   a ByteString a `Uint8List`, an ExpandedNodeId / QualifiedName / DataValue
   / DiagnosticInfo an object of their fields, a nested Variant recursively,
-  a nested ExtensionObject recursively when it is decoded (or a schema for it
-  is at hand) and as its encoded bytes otherwise. `typeId` is the type's id
-  and `extObjEncodingId` its binary encoding id. An enum open62541 knows with
-  no schema at hand (a method output, `Server.read`) decodes the same way
-  instead of throwing.
+  a nested ExtensionObject recursively when it is decoded, through its schema
+  when one is at hand, and as its encoded bytes only for a type nobody knows.
+  `typeId` is the type's id and `extObjEncodingId` its binary encoding id.
+  An enum open62541 knows with no schema at hand (a method output,
+  `Server.read`) decodes the same way instead of throwing.
+- **An encoded ExtensionObject of a known structure decodes without a wire
+  trip.** A value the Dart server published as a binary ExtensionObject (a
+  `NetworkGroupDataType[]`, a `Range`) stays encoded in the server's own
+  nodestore, and `Server.read` of it threw `Unsupported nodeId type:
+  ns=0;i=22`, as did a nested encoded body with no schema. The encoding id is
+  now looked up in `UA_TYPES`, the body decoded with `UA_decodeBinary` into a
+  native struct in a scratch buffer, walked as above, and cleared and freed
+  on every path; a body that does not decode is a `UaStatusException` with
+  open62541's status. Bindings: `UA_decodeBinary`, `UA_clear` and
+  `UA_DecodeBinaryOptions` added by hand in ffigen's form and listed in
+  `tool/ffigen.dart` for the next regeneration; the options struct's size is
+  pinned in `verify_sizes_test`. A custom type with no schema at hand keeps
+  the previous behaviour.
 - **A `DynamicValue` with an NS0 structure `typeId` can be written.**
   `valueToVariant` rejected a struct whose numeric `typeId` is not in the
   `Namespace0Id` enum (`Unknown Namespace0Id value: 884`), and an
