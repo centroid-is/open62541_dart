@@ -19,6 +19,9 @@ void main() {
   final numericType = NodeId.fromNumeric(1, 4711);
   final nodeId = NodeId.fromString(1, 'enc.struct');
   final dataSourceNode = NodeId.fromString(1, 'enc.datasource');
+  // A bundled NS0 structure the reduced nodeset ships no node for.
+  final networkGroupDataType = NodeId.fromNumeric(0, 11944);
+  final networkGroupDefaultBinary = NodeId.fromNumeric(0, 11958);
 
   DynamicValue inner() {
     final s = DynamicValue(name: 'ST_Enc_Inner', typeId: nestedType);
@@ -54,6 +57,7 @@ void main() {
         server.addCustomType(numericType, numericSchema());
         server.addDataTypeNode(numericType, 'ST_Numeric');
         server.addVariableNode(nodeId, schema(), typeId: structType);
+        server.addDataTypeNode(networkGroupDataType, 'NetworkGroupDataType');
         received = null;
         server.addDataSourceVariableNode(
           dataSourceNode,
@@ -96,6 +100,22 @@ void main() {
       test('a nested struct type auto-registered by addCustomType gets its own encoding object', () async {
         final enc = await defaultBinaryOf(nestedType);
         expect(enc.nodeId, NodeId.fromString(1, 'ST_Enc_Inner_Encoding_DefaultBinary'));
+      });
+
+      test('a bundled NS0 structure published with addDataTypeNode gets its bundled Default Binary object', () async {
+        // NetworkGroupDataType i=11944 is in UA_TYPES but not in the reduced
+        // nodeset; its encoding object is the bundled i=11958, not a derived
+        // string id.
+        final enc = await defaultBinaryOf(networkGroupDataType);
+        expect(enc.nodeId, networkGroupDefaultBinary);
+        expect(enc.nodeId.isNumeric(), isTrue);
+        final back = await client.browse(enc.nodeId, direction: 1, referenceTypeId: NodeId.hasEncoding);
+        expect(back.map((r) => r.nodeId), [networkGroupDataType]);
+        // No derived-string sibling was published for it.
+        expect(
+          () => client.browse(NodeId.fromString(0, '11944_Encoding_DefaultBinary'), direction: 0),
+          throwsA(predicate((e) => '$e'.contains('BadNodeIdUnknown'))),
+        );
       });
 
       test('a numeric DataType id gets a string encoding id derived from its number', () async {

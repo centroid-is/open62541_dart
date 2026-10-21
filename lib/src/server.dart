@@ -1191,6 +1191,19 @@ class Server {
     return index;
   }
 
+  /// Publishes the DataType node [requestedNewNodeId] (by default a
+  /// HasSubtype child of Structure) and, for a structured type open62541
+  /// knows under that id, its `Default Binary` DataTypeEncoding object with
+  /// the HasEncoding reference to it (see `_publishDefaultBinaryEncoding`).
+  ///
+  /// The type is one registered with [addCustomType] (the encoding id is
+  /// the one documented there) or a bundled NS0 structure the reduced
+  /// nodeset does not ship as a node — `EndpointUrlListDataType` i=11943,
+  /// `NetworkGroupDataType` i=11944 (`ServerNetworkGroups` needs both) —
+  /// which gets its bundled encoding object, i=11957 / i=11958
+  /// (`<Type>_Encoding_DefaultBinary` as in the full nodeset), not a derived
+  /// string id. An enum, or a DataType open62541 does not know, gets the
+  /// node only.
   void addDataTypeNode(
     NodeId requestedNewNodeId,
     String browseName, {

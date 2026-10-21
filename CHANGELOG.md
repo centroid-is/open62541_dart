@@ -32,7 +32,11 @@ changes that ship the same native library version.
   fetched with `readAttribute(DATATYPEDEFINITION)` carries its
   `defaultEncodingId` as `extObjEncodingId`, so a value built from it
   (`DynamicValue.from`) writes with the encoding id the server expects.
-  `NodeId.hasEncoding` and `NodeId.dataTypeEncodingType` are new.
+  A bundled NS0 structure the reduced nodeset lacks as a node, published
+  with `addDataTypeNode` (`NetworkGroupDataType` i=11944,
+  `EndpointUrlListDataType` i=11943), gets its bundled `Default Binary`
+  object (i=11958 / i=11957) via HasEncoding too. `NodeId.hasEncoding` and
+  `NodeId.dataTypeEncodingType` are new.
 - `ServerStatistics` gained `liveDataChangeNotificationCount` and
   `liveNotificationCount`: the per-subscription `dataChangeNotificationsCount`
   / `notificationsCount` (data changes + events; keep-alives carry none) of
