@@ -245,6 +245,11 @@ class Server {
   /// * [productName] / [manufacturerName] - `BuildInfo.productName` and
   ///   `BuildInfo.manufacturerName` (`Server/ServerStatus/BuildInfo/ProductName`,
   ///   `.../ManufacturerName`).
+  /// * [productUri] - the product's URI, set on BOTH places open62541 keeps
+  ///   it: `ApplicationDescription.productUri` (GetEndpoints/FindServers) and
+  ///   `BuildInfo.productUri` (`Server/ServerStatus/BuildInfo/ProductUri`).
+  ///   Left `null` it stays `urn:open62541.open62541` even when the product
+  ///   name is set.
   ///
   /// Each one left `null` keeps open62541's default, so an existing
   /// `Server()` is unchanged.
@@ -255,6 +260,7 @@ class Server {
     String? applicationUri,
     String? productName,
     String? manufacturerName,
+    String? productUri,
   }) {
     // The config struct is scratch. UA_Server_newWithConfig moves its contents
     // into the server and zeroes the struct it was given, and a failing
@@ -293,6 +299,10 @@ class Server {
       if (manufacturerName != null) {
         buildInfo.manufacturerName.set(manufacturerName);
       }
+      if (productUri != null) {
+        description.productUri.set(productUri);
+        buildInfo.productUri.set(productUri);
+      }
 
       _server = raw.UA_Server_newWithConfig(config);
       _config = raw.UA_Server_getConfig(_server);
@@ -309,6 +319,10 @@ class Server {
   /// The `ApplicationDescription.applicationUri` this server announces, also
   /// published as `ServerArray[0]` and `NamespaceArray[1]`.
   String get applicationUri => _config.ref.applicationDescription.applicationUri.value;
+
+  /// The `ApplicationDescription.productUri` this server announces (the same
+  /// value is in `BuildInfo.productUri`).
+  String get productUri => _config.ref.applicationDescription.productUri.value;
 
   // ---- Data-source (callback) variable node plumbing -----------------------
   //
