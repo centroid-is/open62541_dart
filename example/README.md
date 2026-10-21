@@ -79,11 +79,17 @@ set on the standard NS0 nodes, and a client follows whichever one is healthiest
   the package cannot yet decode a built-in NS0 structure on the client side
   (open62541 decodes a known type into its native struct, which the Dart
   decoder does not read).
-* **Honest ServiceLevel.** Each instance computes its own 0-255 level: `250`
-  with a fresh observation, falling as the data ages, minus 60 for every
-  consecutive failed fetch (floored at 1), and `0` when it has never fetched
-  anything or is shutting down — `0` being the OPC UA way of saying *do not
-  use me*.
+* **Honest ServiceLevel, in the spec's bands.** [OPC 10000-4 §6.6.2.4.2,
+  Table 105](https://reference.opcfoundation.org/Core/Part4/v105/docs/6.6.2.4.2)
+  divides the 0-255 range into **Maintenance** (0: clients shall disconnect
+  and stay away), **NoData** (1: up, but nothing to serve), **Degraded**
+  (2-199) and **Healthy** (200-255). Each instance computes its own level
+  from its own state: `250` with a fresh observation, `100` / `5` as the data
+  ages past the staleness threshold, minus 60 for every consecutive failed
+  fetch floored at `2` (a server still serving its last-known value, however
+  Bad, is still exchanging data, so it stays Degraded rather than claiming
+  NoData), `1` while it has never fetched anything, and `0` only when it is
+  shutting down.
 * **Quality and timestamps on a data-source node.** The observation is served
   from a data-source variable node through `onReadValue`, so every read carries
   a real `StatusCode` and the **observation's own** `sourceTimestamp`. When the

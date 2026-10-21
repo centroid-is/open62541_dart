@@ -38,6 +38,21 @@ import 'metar_common.dart';
 /// picks one by ServiceLevel.
 const int redundancySupportHot = 3;
 
+/// The ServiceLevel bands of OPC 10000-4 §6.6.2.4.2, Table 105.
+///
+/// * `0` Maintenance: clients shall not connect, connected clients disconnect.
+/// * `1` NoData: not operational; only ServiceLevel, ServerStatus and the
+///   diagnostics can be read.
+/// * `2`-`199` Degraded: the server works, partly.
+/// * `200`-`255` Healthy.
+const int serviceLevelMaintenance = 0;
+const int serviceLevelNoData = 1;
+const int serviceLevelDegradedFloor = 2;
+const int serviceLevelHealthyFloor = 200;
+
+/// Whether [level] is in the Healthy band (200-255).
+bool isHealthyServiceLevel(int level) => level >= serviceLevelHealthyFloor;
+
 /// A METAR-publishing OPC UA server that advertises itself as one member of a
 /// hot-redundant set.
 ///
@@ -148,22 +163,27 @@ class MetarRedundantServer {
   /// This instance's OPC UA ServiceLevel (0-255), computed honestly from its
   /// own state — this is the number the failover client ranks servers by.
   ///
-  /// The ladder:
-  ///  * `0`   — never fetched anything, or shutting down. Per Part 4 a
-  ///            ServiceLevel of 0 means "do not use me".
-  ///  * `250` — fresh data (younger than [staleAfter]) and the last fetch
-  ///            succeeded. 250 rather than 255 leaves headroom above for an
-  ///            operator-designated preferred server.
-  ///  * `100` — data older than [staleAfter] but younger than twice that.
-  ///  * `5`   — data older than that: still alive, but nearly useless.
-  ///  * minus 60 per consecutive failed fetch, floored at 1 — a server that
-  ///    still holds a value never drops to 0, because 0 is reserved for
-  ///    "out of service".
+  /// The ladder, within the bands of OPC 10000-4 §6.6.2.4.2 (Table 105):
+  ///  * `0`   — Maintenance: shutting down. Clients shall disconnect and not
+  ///            come back.
+  ///  * `1`   — NoData: never fetched anything. The server is up and will
+  ///            have data on its next poll, so it must not claim Maintenance;
+  ///            it has nothing to serve yet, so it is not Degraded either.
+  ///  * `250` — Healthy: fresh data (younger than [staleAfter]) and the last
+  ///            fetch succeeded. 250 rather than 255 leaves headroom above for
+  ///            an operator-designated preferred server.
+  ///  * `100` — Degraded: data older than [staleAfter] but younger than twice
+  ///            that.
+  ///  * `5`   — Degraded: data older than that: still alive, nearly useless.
+  ///  * minus 60 per consecutive failed fetch, floored at 2 — the bottom of
+  ///    the Degraded band. A server that still serves its last-known value
+  ///    (flagged `Bad_NoCommunication`) is still exchanging data, so it never
+  ///    reports NoData, let alone Maintenance.
   int get serviceLevel {
-    if (_shuttingDown) return 0;
+    if (_shuttingDown) return serviceLevelMaintenance;
     final forced = _forcedServiceLevel;
     if (forced != null) return forced;
-    if (_last == null || _lastObservedAt == null) return 0;
+    if (_last == null || _lastObservedAt == null) return serviceLevelNoData;
 
     final age = dataAge!;
     var level = age <= staleAfter
@@ -172,7 +192,7 @@ class MetarRedundantServer {
         ? 100
         : 5;
     level -= 60 * _consecutiveFailures;
-    return level.clamp(1, 255);
+    return level.clamp(serviceLevelDegradedFloor, 255);
   }
 
   /// True when the value this server serves should be flagged Bad.

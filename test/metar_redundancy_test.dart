@@ -458,7 +458,25 @@ void main() {
       expect((await staleProbe.read(serviceLevelNodeId)).asInt, 5);
     }, timeout: const Timeout(Duration(minutes: 2)));
 
-    test('a server that has never fetched anything reports ServiceLevel 0 and no value', () async {
+    test('the failed-fetch floor is Degraded (2) while a last-known value is still served', () async {
+      // OPC 10000-4 §6.6.2.4.2, Table 105: 1 is NoData ("not operational,
+      // only ServiceLevel / ServerStatus available"). A server that still
+      // answers reads with its last-known value, even flagged Bad, is
+      // exchanging data and belongs in the Degraded range (2-199).
+      fake.failing = true;
+      expect(
+        await waitUntil(() => server.consecutiveFailures >= 5),
+        isTrue,
+        reason: 'five failures take 250 below the floor whatever its value',
+      );
+      expect(server.serviceLevel, serviceLevelDegradedFloor);
+      expect((await probe.read(serviceLevelNodeId)).asInt, 2);
+      final dv = await probe.readValue(server.metarNodeId);
+      expect(dv.statusCode, UA_STATUSCODE_BADNOCOMMUNICATION);
+      expect(dv.value['Station'].value, 'BIRK', reason: 'still serving the last-known value');
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('a server that has never fetched anything reports ServiceLevel 1 (NoData) and no value', () async {
       final coldFake = FakeMetarSource('BIRK', recent())..failing = true;
       final coldServer = MetarRedundantServer(
         instance: 'cold',
@@ -474,8 +492,12 @@ void main() {
         await coldServer.stop();
       });
 
-      // ServiceLevel 0 is the OPC UA way of saying "do not use me".
-      expect((await coldProbe.read(serviceLevelNodeId)).asInt, 0);
+      // Table 105: 0 is Maintenance ("clients shall disconnect and not
+      // reconnect"), which is wrong for a server that is up and will have
+      // data on its next poll. 1, NoData, is the band for "nothing to serve
+      // yet".
+      expect((await coldProbe.read(serviceLevelNodeId)).asInt, serviceLevelNoData);
+      expect(coldServer.serviceLevel, 1);
 
       // With no last-known value there is nothing honest to serve, so the read
       // fails with Bad_NoCommunication and carries no value at all.
