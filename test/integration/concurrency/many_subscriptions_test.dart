@@ -106,8 +106,7 @@ void main() {
   group('many monitored items on one Dart-server client', () {
     test('16 nodes, one subscription: each item delivers its own value', () async {
       const nodeCount = 16;
-      final port = await freePort();
-      final server = await startDartServer(port, seed: (s) => seedPerClientNodes(s, nodeCount));
+      final server = await startDartServer(seed: (s) => seedPerClientNodes(s, nodeCount));
       DrivenClient? dc;
       try {
         dc = await connect1(server.endpoint);

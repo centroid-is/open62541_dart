@@ -36,10 +36,8 @@ void main() {
       final clients = <DrivenClient>[];
       try {
         for (var i = 0; i < serverCount; i++) {
-          final port = await freePort();
           final marker = 100.0 + i; // unique per server
           final srv = await startDartServer(
-            port,
             seed: (s) => s.addVariableNode(
               _markerNode,
               DynamicValue(value: marker, typeId: NodeId.double, name: 'server.marker'),

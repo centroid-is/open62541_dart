@@ -55,7 +55,6 @@ import 'dart:typed_data';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import '../harness/net.dart';
 import '../harness/paths.dart';
 import '../harness/toxiproxy.dart';
 
@@ -119,8 +118,7 @@ class _TestServer {
 }
 
 Future<_TestServer> _startServer() async {
-  final port = await freePort();
-  final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+  final server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
   server.start();
   final node = NodeId.fromString(1, 'big');
   server.addVariableNode(node, DynamicValue(value: 'x' * 1024, typeId: NodeId.uastring, name: 'big'));
@@ -130,7 +128,7 @@ Future<_TestServer> _startServer() async {
       await Future.delayed(const Duration(milliseconds: 25));
     }
   }());
-  return _TestServer(server, port, node, () async => running = false);
+  return _TestServer(server, server.port, node, () async => running = false);
 }
 
 void main() {

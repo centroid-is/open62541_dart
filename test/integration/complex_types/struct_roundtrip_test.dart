@@ -11,7 +11,6 @@ library;
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import '../harness/net.dart';
 import 'support.dart';
 
 void main() {
@@ -19,7 +18,7 @@ void main() {
     late ServerClient sc;
 
     setUp(() async {
-      sc = await startServerClient(await freePort());
+      sc = await startServerClient();
     });
     tearDown(() async {
       await sc.dispose();

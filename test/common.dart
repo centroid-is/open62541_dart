@@ -1,27 +1,13 @@
-import 'dart:io';
-
 import 'package:open62541/open62541.dart';
 
-/// Returns a TCP port that is free right now, allocated by the OS.
-///
-/// `dart test` runs suite files in PARALLEL, so tests that picked ports with
-/// `Random().nextInt(10000) + 4840` could collide across concurrently running
-/// suites: two servers racing to bind the same port, or worse, a client
-/// connecting to another suite's server that then tears down mid-session
-/// (broken pipe -> service faults with zero results). Binding port 0 lets the
-/// OS hand out a port from its ephemeral range, which both avoids
-/// suite-vs-suite collisions and stays clear of 4840-14839, where local
-/// Docker rigs commonly publish OPC UA ports.
-///
-/// The tiny window between closing the probe socket and the server binding
-/// the port is safe in practice: the OS does not reuse an ephemeral port it
-/// just handed out while other ports remain available.
-Future<int> freeTcpPort() async {
-  final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-  final port = socket.port;
-  await socket.close();
-  return port;
-}
+// Every test server is started with `port: 0` and its port read back through
+// `Server.port`: the OS picks a free port and the server holds it from that
+// moment, so servers started at the same time by the suites `dart test` runs
+// in parallel never share one. A probe that binds port 0, closes, and hands
+// the number to a server that binds it moments later is a race: the OS may
+// hand the same number out again in between, and open62541's listen sockets
+// are SO_REUSEPORT, so two servers given one port BOTH bind it and the
+// connections are split between them. See port_allocation_test.dart.
 
 final boolNodeId = NodeId.fromString(1, "the.bool");
 final intNodeId = NodeId.fromString(1, "the.int");
@@ -45,8 +31,10 @@ void addBasicVariables(Server server) {
   server.addVariableNode(stringNodeId, stringValue);
 }
 
-Server setupServer(int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR}) {
-  final server = Server(port: port, logLevel: logLevel);
+/// Starts a server on a port the OS picks (read it from `Server.port`) and
+/// pumps it until it is shut down.
+Server setupServer({LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR}) {
+  final server = Server(port: 0, logLevel: logLevel);
   server.start();
 
   // Run the server while we test.
@@ -69,7 +57,10 @@ Future<Client> setupClient(int port, {LogLevel logLevel = LogLevel.UA_LOGLEVEL_F
       await Future.delayed(Duration(milliseconds: 5));
     }
   }();
-  await client.connect("opc.tcp://localhost:$port").onError((error, stackTrace) {
+  // 127.0.0.1, not localhost: the client connects to the first address the
+  // name resolves to (::1 on many hosts), and it is the IPv4 listen socket
+  // that owns the OS-picked port; the IPv6 socket binds that number second.
+  await client.connect("opc.tcp://127.0.0.1:$port").onError((error, stackTrace) {
     throw Exception("Failed to connect to the server: $error");
   });
 

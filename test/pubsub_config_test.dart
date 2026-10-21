@@ -11,15 +11,13 @@ import 'common.dart';
 // the value-change stream plumbing works for plain writes.
 void main() {
   group('PubSub configuration', () {
-    late int port;
     late int udpPort;
     late Server server;
 
     setUp(() async {
-      port = await freeTcpPort();
       // Non-default multicast port so parallel test runs cannot clash.
       udpPort = Random().nextInt(10000) + 20000;
-      server = setupServer(port);
+      server = setupServer();
     });
 
     tearDown(() {

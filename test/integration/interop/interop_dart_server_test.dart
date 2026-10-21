@@ -16,7 +16,6 @@ import 'dart:io';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import '../harness/net.dart';
 import '../harness/paths.dart';
 
 // The ns=1 string-id nodes seeded by `addBasicVariables` (mirrors test/common.dart).
@@ -55,9 +54,9 @@ void main() {
     var running = false;
 
     setUp(() async {
-      serverPort = await freePort();
-      server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+      server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
       server.start();
+      serverPort = server.port;
       _addBasicVariables(server);
       running = true;
       unawaited(() async {

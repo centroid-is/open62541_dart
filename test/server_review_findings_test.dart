@@ -38,8 +38,8 @@ void main() {
     final writesSeen = <int>[];
 
     setUp(() async {
-      port = await freeTcpPort();
-      server = setupServer(port);
+      server = setupServer();
+      port = server.port;
       client = await setupClient(port);
 
       backing = 42;
@@ -91,8 +91,7 @@ void main() {
 
   group('F2: delete() invalidates the server handle', () {
     test('runIterate returns false after delete()', () async {
-      final port = await freeTcpPort();
-      final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+      final server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
       server.start();
       expect(server.runIterate(), isTrue);
 
@@ -140,8 +139,8 @@ void main() {
     DynamicValue? capturedB;
 
     setUp(() async {
-      port = await freeTcpPort();
-      server = setupServer(port);
+      server = setupServer();
+      port = server.port;
       client = await setupClient(port);
 
       // Registration order matters: open62541 scans the (prepended) custom
@@ -219,8 +218,8 @@ void main() {
     final writesSeen = <List<int>>[];
 
     setUp(() async {
-      port = await freeTcpPort();
-      server = setupServer(port);
+      server = setupServer();
+      port = server.port;
 
       backing = [10, 20, 30, 40];
       writesSeen.clear();
@@ -327,8 +326,8 @@ void main() {
     DynamicValue? captured;
 
     setUp(() async {
-      port = await freeTcpPort();
-      server = setupServer(port);
+      server = setupServer();
+      port = server.port;
       client = await setupClient(port);
 
       server.addCustomType(typeId, makeSchema());
@@ -418,7 +417,7 @@ Future<ffi.Pointer<raw.UA_Client>> _connectRawClient(int port) async {
   config.ref.logging = raw.UA_Log_Stdout_new(LogLevel.UA_LOGLEVEL_FATAL);
   raw.UA_ClientConfig_setDefault(config);
   final client = raw.UA_Client_newWithConfig(config);
-  final url = 'opc.tcp://localhost:$port'.toNativeUtf8(allocator: ua_malloc);
+  final url = 'opc.tcp://127.0.0.1:$port'.toNativeUtf8(allocator: ua_malloc);
   final rc = raw.UA_Client_connectAsync(client, url.cast());
   expect(rc, raw.UA_STATUSCODE_GOOD);
 
