@@ -247,6 +247,14 @@ class NodeId {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERURIARRAY);
   }
 
+  /// `Server/ServerRedundancy/ServerNetworkGroups`, `i=14415`: a
+  /// `NetworkGroupDataType[]` mapping each ServerUri of [serverUriArray] to
+  /// its network paths (lists of endpoint URLs), Part 5 §6.3.10. Published
+  /// by `Server.setRedundancy(networkGroups:)`.
+  static NodeId get serverNetworkGroups {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERNETWORKGROUPS);
+  }
+
   /// The HierarchicalReferences reference type, `i=33`.
   static NodeId get hierarchicalReferences {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_HIERARCHICALREFERENCES);

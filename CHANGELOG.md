@@ -257,10 +257,11 @@ changes that ship the same native library version.
   an implementation import. `NodeId.server`, `serverArray`,
   `namespaceArray`, `serverStatus`, `serverStatusStartTime`,
   `serverStatusState`, `serverStatusBuildInfo`, `serviceLevel`,
-  `serverRedundancy`, `redundancySupport`, `serverUriArray`, `organizes`,
-  `hasComponent`, `hasProperty`, `hasTypeDefinition`, `baseObjectType`,
-  `folderType`, `baseDataVariableType` and `propertyType` join the existing
-  folder and reference-type statics, each backed by the generated constant
+  `serverRedundancy`, `redundancySupport`, `serverUriArray`,
+  `serverNetworkGroups`, `organizes`, `hasComponent`, `hasProperty`,
+  `hasTypeDefinition`, `baseObjectType`, `folderType`,
+  `baseDataVariableType` and `propertyType` join the existing folder and
+  reference-type statics, each backed by the generated constant
   (`serverStatusCurrentTime` was a literal `2258`).
 - **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the
   owning isolate.** By default the supervisor's pump calls
