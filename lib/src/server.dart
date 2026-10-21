@@ -1952,7 +1952,8 @@ class Server {
   /// not possible through this call.
   ///
   /// [RedundancySupport.none] puts `ServerRedundancy` back on the base type,
-  /// deletes `ServerUriArray` and reports `None`; it takes no [serverUris].
+  /// deletes `ServerUriArray` (and `ServerNetworkGroups`) and reports `None`;
+  /// it takes no [serverUris] and no [networkGroups].
   /// Every other mode requires a non-empty [serverUris]: Part 5 specifies
   /// the *server URIs* (the `applicationUri` of each member) in the order a
   /// client should try them. §6.3.9 requires the local server among them,
@@ -1965,8 +1966,29 @@ class Server {
   /// ([ArgumentError]): it calls for `TransparentRedundancyType`, which this
   /// does not model.
   ///
+  /// A ServerUri is an identity, not an address. With [networkGroups] the
+  /// set is published the way Part 5 §6.3.10 lets a client find the members
+  /// from one of them: `ServerRedundancy` is typed
+  /// `NonTransparentNetworkRedundancyType` (`i=11945`, a subtype of `i=2039`
+  /// with the mandatory `ServerNetworkGroups` property `i=11948`), and
+  /// `ServerNetworkGroups` (`i=14415`, a `NetworkGroupDataType[]`) lists, in
+  /// the order of `ServerUriArray`, one `NetworkGroupDataType` per member:
+  /// its ServerUri and, as its single network path, an
+  /// `EndpointUrlListDataType` holding the endpoint URLs the map gives for it
+  /// (a member mapped to an empty list has no path). §6.3.10 wants the
+  /// ServerUris of the groups to be those of `ServerUriArray`, so the map's
+  /// keys must be exactly the members, the local server's ApplicationUri
+  /// ([applicationUri]) included; a stranger or a missing member is an
+  /// [ArgumentError]. The DataType nodes `EndpointUrlListDataType`
+  /// (`i=11943`) and `NetworkGroupDataType` (`i=11944`), which the reduced
+  /// NS0 lacks although open62541 knows both types, are added as `Structure`
+  /// subtypes, so a client can read the property's DataType and its
+  /// DataTypeDefinition. A call without [networkGroups] on a server that had
+  /// them removes `ServerNetworkGroups` and types the object
+  /// `NonTransparentRedundancyType` again.
+  ///
   /// Callable before or after [start], and again at any time: the mode and
-  /// the array are updated in place (a member joining or leaving the set).
+  /// the arrays are updated in place (a member joining or leaving the set).
   /// A configuration made before [start] survives it: open62541 deletes the
   /// standard `ServerUriArray` when the server is *created*
   /// (`UA_Server_init` → `initNS0` → `configureNS0`), and
@@ -1979,9 +2001,18 @@ class Server {
   /// server.setRedundancy(
   ///   RedundancySupport.hot,
   ///   serverUris: ['urn:plant:opcua:a', 'urn:plant:opcua:b'],
+  ///   networkGroups: {
+  ///     server.applicationUri: ['opc.tcp://me:4840'],
+  ///     'urn:plant:opcua:a': ['opc.tcp://a:4840'],
+  ///     'urn:plant:opcua:b': ['opc.tcp://b:4840', 'opc.tcp://b-alt:4840'],
+  ///   },
   /// );
   /// ```
-  void setRedundancy(RedundancySupport support, {List<String> serverUris = const []}) {
+  void setRedundancy(
+    RedundancySupport support, {
+    List<String> serverUris = const [],
+    Map<String, List<String>>? networkGroups,
+  }) {
     if (support == RedundancySupport.transparent) {
       throw ArgumentError.value(
         support,
@@ -1992,29 +2023,73 @@ class Server {
     if (support == RedundancySupport.none && serverUris.isNotEmpty) {
       throw ArgumentError.value(serverUris, 'serverUris', 'RedundancySupport.none publishes no ServerUriArray');
     }
+    if (support == RedundancySupport.none && networkGroups != null) {
+      throw ArgumentError.value(
+        networkGroups,
+        'networkGroups',
+        'RedundancySupport.none publishes no ServerNetworkGroups',
+      );
+    }
     if (support != RedundancySupport.none && serverUris.isEmpty) {
       throw ArgumentError.value(serverUris, 'serverUris', 'a redundant set needs at least one server URI');
     }
+    // Part 5 §6.3.9: the array shall contain the local server.
+    final ownUri = _config.ref.applicationDescription.applicationUri.value;
+    final members = serverUris.contains(ownUri) ? serverUris : [ownUri, ...serverUris];
+    if (networkGroups != null) {
+      // §6.3.10: the ServerUris of the groups are those of ServerUriArray.
+      final strangers = networkGroups.keys.where((uri) => !members.contains(uri)).toList();
+      final missing = members.where((uri) => !networkGroups.containsKey(uri)).toList();
+      if (strangers.isNotEmpty || missing.isNotEmpty) {
+        throw ArgumentError.value(
+          networkGroups,
+          'networkGroups',
+          'the keys must be exactly the members of the set (ServerUriArray: $members)'
+              '${strangers.isEmpty ? '' : '; not members: $strangers'}'
+              '${missing.isEmpty ? '' : '; without a group: $missing'}',
+        );
+      }
+    }
 
+    final serverNetworkGroups = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERNETWORKGROUPS);
     if (support == RedundancySupport.none) {
       setTypeDefinition(NodeId.serverRedundancy, NodeId.fromNumeric(0, raw.UA_NS0ID_SERVERREDUNDANCYTYPE));
-      if (_nodeExists(NodeId.serverUriArray)) {
-        deleteNode(NodeId.serverUriArray);
+      for (final property in [NodeId.serverUriArray, serverNetworkGroups]) {
+        if (_nodeExists(property)) {
+          deleteNode(property);
+        }
       }
     } else {
       final nonTransparentType = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANSPARENTREDUNDANCYTYPE);
       if (!_nodeExists(nonTransparentType)) {
         _addNonTransparentRedundancyType(nonTransparentType);
       }
-      setTypeDefinition(NodeId.serverRedundancy, nonTransparentType);
-      // Part 5 §6.3.9: the array shall contain the local server.
-      final ownUri = _config.ref.applicationDescription.applicationUri.value;
-      final members = serverUris.contains(ownUri) ? serverUris : [ownUri, ...serverUris];
+      if (networkGroups != null) {
+        final networkType = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANSPARENTNETWORKREDUNDANCYTYPE);
+        _ensureNetworkGroupDataTypes();
+        if (!_nodeExists(networkType)) {
+          _addNonTransparentNetworkRedundancyType(networkType, parentType: nonTransparentType);
+        }
+        setTypeDefinition(NodeId.serverRedundancy, networkType);
+      } else {
+        setTypeDefinition(NodeId.serverRedundancy, nonTransparentType);
+        if (_nodeExists(serverNetworkGroups)) {
+          deleteNode(serverNetworkGroups);
+        }
+      }
       final uris = DynamicValue.fromList(members, typeId: NodeId.uastring, name: 'ServerUriArray');
       if (_nodeExists(NodeId.serverUriArray)) {
         write(NodeId.serverUriArray, uris);
       } else {
         _addNs0Property(NodeId.serverUriArray, NodeId.serverRedundancy, uris);
+      }
+      if (networkGroups != null) {
+        final groups = _networkGroupsValue([for (final uri in members) (uri, networkGroups[uri]!)]);
+        if (_nodeExists(serverNetworkGroups)) {
+          write(serverNetworkGroups, groups);
+        } else {
+          _addNs0Property(serverNetworkGroups, NodeId.serverRedundancy, groups);
+        }
       }
     }
 
@@ -2023,6 +2098,86 @@ class Server {
     setVariableValueSource(
       NodeId.redundancySupport,
       onRead: () => DynamicValue(value: _redundancySupport.value, typeId: NodeId.int32, name: 'RedundancySupport'),
+    );
+  }
+
+  /// A `NetworkGroupDataType[]` named `ServerNetworkGroups`: one group per
+  /// `(serverUri, endpointUrls)` of [groups], each with one network path (an
+  /// `EndpointUrlListDataType`) holding its URLs, or no path for an empty
+  /// list. The NS0 struct type ids are enough: `valueToVariant` encodes a
+  /// struct of a type open62541 knows with its DefaultBinary encoding id.
+  static DynamicValue _networkGroupsValue(List<(String, List<String>)> groups) {
+    final networkGroupType = NodeId.fromNumeric(0, raw.UA_NS0ID_NETWORKGROUPDATATYPE);
+    final endpointUrlListType = NodeId.fromNumeric(0, raw.UA_NS0ID_ENDPOINTURLLISTDATATYPE);
+    return DynamicValue.fromList(
+      [
+        for (final (uri, urls) in groups)
+          DynamicValue(typeId: networkGroupType)
+            ..['ServerUri'] = DynamicValue(value: uri, typeId: NodeId.uastring)
+            ..['NetworkPaths'] = DynamicValue.fromList([
+              if (urls.isNotEmpty)
+                DynamicValue(typeId: endpointUrlListType)
+                  ..['EndpointUrlList'] = DynamicValue.fromList(urls, typeId: NodeId.uastring),
+            ], typeId: endpointUrlListType),
+      ],
+      typeId: networkGroupType,
+      name: 'ServerNetworkGroups',
+    );
+  }
+
+  /// Adds the DataType nodes `EndpointUrlListDataType` (`i=11943`) and
+  /// `NetworkGroupDataType` (`i=11944`) as subtypes of `Structure` when the
+  /// address space lacks them. open62541's reduced NS0 nodeset has neither,
+  /// although its `UA_TYPES` table knows both types, so once the nodes exist
+  /// it serves their DataTypeDefinition from the table. Their
+  /// `_Encoding_DefaultBinary` objects cannot be added (the nodeset has no
+  /// `HasEncoding` reference type); harmless on the wire, where the encoding
+  /// id travels in the value.
+  void _ensureNetworkGroupDataTypes() {
+    for (final (id, name) in [
+      (raw.UA_NS0ID_ENDPOINTURLLISTDATATYPE, 'EndpointUrlListDataType'),
+      (raw.UA_NS0ID_NETWORKGROUPDATATYPE, 'NetworkGroupDataType'),
+    ]) {
+      final typeId = NodeId.fromNumeric(0, id);
+      if (_nodeExists(typeId)) continue;
+      // As in addDataTypeNode: the attributes are scratch in the arena.
+      using((arena) {
+        final attr = arena<raw.UA_DataTypeAttributes>();
+        attr.ref.displayName.text.set(name, allocator: arena);
+        _addNode(
+          raw.UA_NodeClass.UA_NODECLASS_DATATYPE,
+          typeId,
+          NodeId.structure,
+          NodeId.hasSubtype,
+          name,
+          NodeId.nullId,
+          attr.cast(),
+          getType(UaTypes.dataTypeAttributes),
+          browseNameNs: 0,
+        );
+      }, ua_calloc);
+    }
+  }
+
+  /// Adds `NonTransparentNetworkRedundancyType` (Part 5 §6.3.10) as [typeId]:
+  /// a subtype of `NonTransparentRedundancyType` ([parentType]) with the
+  /// mandatory `ServerNetworkGroups` property (`i=11948`, an empty
+  /// `NetworkGroupDataType[]`), with `0:` browse names like the rest of NS0.
+  void _addNonTransparentNetworkRedundancyType(NodeId typeId, {required NodeId parentType}) {
+    _addObjectTypeNode(
+      typeId,
+      0,
+      'NonTransparentNetworkRedundancyType',
+      parentType: parentType,
+      displayName: LocalizedText('NonTransparentNetworkRedundancyType', ''),
+      isAbstract: false,
+    );
+    final declaration = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANSPARENTNETWORKREDUNDANCYTYPE_SERVERNETWORKGROUPS);
+    _addNs0Property(declaration, typeId, _networkGroupsValue(const []));
+    addReference(
+      declaration,
+      NodeId.fromNumeric(0, raw.UA_NS0ID_HASMODELLINGRULE),
+      NodeId.fromNumeric(0, raw.UA_NS0ID_MODELLINGRULE_MANDATORY),
     );
   }
 
@@ -2094,8 +2249,9 @@ class Server {
     String browseName,
     NodeId typeDefinition,
     ffi.Pointer<raw.UA_NodeAttributes> attr,
-    ffi.Pointer<raw.UA_DataType> attributeType,
-  ) {
+    ffi.Pointer<raw.UA_DataType> attributeType, {
+    int browseNameNs = 1,
+  }) {
     // open62541 deep-copies the NodeId arguments and the browse name (both
     // begin and finish use copies), so they are scratch in the arena, released
     // whether or not the calls succeed.
@@ -2109,7 +2265,7 @@ class Server {
         requestedRaw,
         parentNodeId.toRaw(allocator: arena),
         referenceTypeId.toRaw(allocator: arena),
-        raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: arena).cast()),
+        raw.UA_QUALIFIEDNAME(browseNameNs, browseName.toNativeUtf8(allocator: arena).cast()),
         typeDefinition.toRaw(allocator: arena),
         attr.cast(),
         attributeType,

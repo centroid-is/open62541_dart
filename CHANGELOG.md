@@ -141,6 +141,29 @@ changes that ship the same native library version.
     next regeneration; their sizes are pinned in `verify_sizes_test`.
   - `Client.readAttribute` reads `ValueRank` and `ArrayDimensions` (one of
     them per call; both land in the value).
+  - **`setRedundancy(..., networkGroups:)` publishes `ServerNetworkGroups`**
+    (Part 5 §6.3.10), so a client can find every member of the set from one
+    of them: a ServerUri is an identity, and this property is the spec's map
+    from it to endpoints. Given `Map<String serverUri, List<String>
+    endpointUrls>`, the call types `ServerRedundancy` as
+    `NonTransparentNetworkRedundancyType` (`i=11945`, created as a subtype of
+    `NonTransparentRedundancyType` with the mandatory `ServerNetworkGroups`
+    declaration `i=11948`) and adds `ServerNetworkGroups` (`i=14415`, a
+    `NetworkGroupDataType[]` of `PropertyType`, ValueRank 1): one group per
+    `ServerUriArray` entry, in its order, with that member's URLs as its
+    single network path (an `EndpointUrlListDataType`; a member mapped to
+    `[]` has no path). The map's keys must be exactly the members, the local
+    ApplicationUri included (`ArgumentError` naming the stranger or the
+    missing member, before anything changes). The DataType nodes
+    `EndpointUrlListDataType` (`i=11943`) and `NetworkGroupDataType`
+    (`i=11944`), absent from the reduced NS0 though open62541 knows both
+    types, are added as `Structure` subtypes with `0:` names, so the
+    property's DataType and DataTypeDefinition read as Part 5 says. Calling
+    again updates the groups in place; a call without `networkGroups` removes
+    the property and types the object `NonTransparentRedundancyType` again;
+    `none` removes both properties. The value is read back decoded on both
+    client types and by `Server.read`, which the native-layout decoding
+    above makes possible.
 - **Orderly shutdown: `Server.shutdown(delay:)` and `Server.shutdownDelay`.**
   With a delay the server first announces the shutdown, keeps serving for
   the delay, then shuts down: during the delay `ServerStatus.State`
