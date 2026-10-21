@@ -6,6 +6,7 @@ import 'package:ffi/ffi.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/types/create_type.dart';
+import 'package:open62541/src/types/native_decode.dart';
 import 'extensions.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
@@ -150,6 +151,15 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
     return DynamicValue(value: <DynamicValue>[], typeId: typeId);
   }
 
+  // A structure open62541 knows (every NS0 DataType, or a registered custom
+  // type) arrives decoded into the native struct, not as an encoded
+  // ExtensionObject: `data` is struct memory laid out by the type's member
+  // table. Walk it. The variant's own type is the concrete one, so it wins
+  // over a declared DataType (which may be an abstract supertype).
+  if (isNativeStructKind(data.type.ref.typeKind)) {
+    return decodeNativeVariant(data, defs: defs);
+  }
+
   NodeId? extObjEncodingId;
   if (data.type.ref.typeKind == raw.UA_DataTypeKind.UA_DATATYPEKIND_EXTENSIONOBJECT) {
     final ext = data.data.cast<raw.UA_ExtensionObject>();
@@ -176,6 +186,11 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
     final wireTypeId = data.type.ref.typeId.toNodeId();
     if (wireTypeId != typeId && nodeIdToPayloadType(wireTypeId) != null) {
       return DynamicValue(typeId: wireTypeId);
+    }
+    // An enum open62541 knows and no schema for it (a method output, a
+    // Server.read): Int32 with the fields of the native enum type.
+    if (data.type.ref.typeKind == raw.UA_DataTypeKind.UA_DATATYPEKIND_ENUM) {
+      return DynamicValue(typeId: NodeId.int32)..enumFields = nativeEnumFields(data.type);
     }
     throw 'Unsupported nodeId type: $typeId';
   }

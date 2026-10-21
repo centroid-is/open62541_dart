@@ -13,6 +13,7 @@ import 'extensions.dart';
 import 'node_id.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
+import 'types/native_decode.dart';
 import 'types/opcua_serializer.dart';
 import 'ua_allocation.dart';
 
@@ -2550,6 +2551,14 @@ class Client implements ClientApi, DataValueMonitoringApi {
       return DynamicValue();
     }
     var typeId = data.type.ref.typeId.toNodeId();
+    if (isNativeStructKind(data.type.ref.typeKind)) {
+      // A structure open62541 knows (every NS0 DataType) came decoded into the
+      // native struct: variantToValue walks the type's member table, which
+      // also names the fields and the enum values. No DataTypeDefinition to
+      // fetch, and buildSchema would fail on a member such as a LocalizedText
+      // that has no definition of its own.
+      return variantToValue(data, defs: defs);
+    }
     if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null) {
       if (!defs.containsKey(dataTypeId)) {
         defs.addAll(await buildSchema(dataTypeId));
