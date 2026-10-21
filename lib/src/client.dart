@@ -436,12 +436,14 @@ class Client implements ClientApi {
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
   }) {
-    // Restart cleanly if already supervising.
-    _keepConnected = false;
+    // Restart cleanly if already supervising: the running pump and supervisor
+    // check this generation on every turn and stop as soon as it has moved on,
+    // so a second call replaces them instead of starting a second pair.
+    final generation = ++_keepConnectedGeneration;
     final firstActivation = Completer<void>();
     _keepConnected = true;
-    _startPump(iterateInterval);
-    _superviseConnection(url, retryInterval, maxBackoff, firstActivation);
+    _startPump(iterateInterval, generation);
+    _superviseConnection(url, retryInterval, maxBackoff, firstActivation, generation);
     return firstActivation.future;
   }
 
@@ -452,9 +454,9 @@ class Client implements ClientApi {
     _keepConnected = false;
   }
 
-  void _startPump(Duration iterateInterval) {
+  void _startPump(Duration iterateInterval, int generation) {
     () async {
-      while (_keepConnected && _client != ffi.nullptr) {
+      while (_keepConnected && generation == _keepConnectedGeneration && _client != ffi.nullptr) {
         // Deliberately ignore the return value: unlike a typical drive loop we
         // must NOT stop pumping when the status goes non-GOOD, otherwise the
         // event loop dies and the client can never recover.
@@ -469,13 +471,14 @@ class Client implements ClientApi {
     Duration retryInterval,
     Duration maxBackoff,
     Completer<void> firstActivation,
+    int generation,
   ) async {
     const pollInterval = Duration(milliseconds: 100);
     var backoff = retryInterval;
     var everActivated = false;
     var wasActivated = false;
 
-    while (_keepConnected && _client != ffi.nullptr) {
+    while (_keepConnected && generation == _keepConnectedGeneration && _client != ffi.nullptr) {
       final snapshot = state;
       final activated = snapshot.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED;
 
@@ -2362,5 +2365,9 @@ class Client implements ClientApi {
 
   // Auto-reconnect (opt-in via [keepConnected]) state.
   bool _keepConnected = false;
+
+  /// Bumped by every [keepConnected] call; the pump and supervisor it started
+  /// stop when a later call has moved it on.
+  int _keepConnectedGeneration = 0;
   final StreamController<void> _reconnectController = StreamController<void>.broadcast();
 }
