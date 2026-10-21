@@ -59,10 +59,33 @@ final ffi.Pointer<ffi.Void> _uaEmptyArraySentinel = ffi.Pointer.fromAddress(0x01
 ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
   final isEmptyArray = value.isArray && value.asArray.isEmpty;
 
+  // Determine the element type from the innermost element: for a multi-dimensional
+  // array the first element is itself an array, so peel arrays until a leaf is
+  // reached. A struct leaf means the whole (possibly nested) array is encoded as
+  // an array of extension objects.
+  DynamicValue? innermostLeaf(DynamicValue v) {
+    var cur = v;
+    while (cur.isArray) {
+      if (cur.asArray.isEmpty) return null;
+      cur = cur.asArray.first;
+    }
+    return cur;
+  }
+
+  final leaf = innermostLeaf(value);
+  // An empty array has no leaf to inspect; its typeId tells when it is an
+  // array of a structure the bundled open62541 knows (NS0, e.g. Range).
+  final isStruct =
+      value.isObject ||
+      (value.isArray && leaf != null && leaf.isObject) ||
+      (isEmptyArray && value.typeId != null && ns0BinaryEncodingId(value.typeId!) != null);
+
   // Can throw, so it comes before serialize: what serialize allocates natively
-  // for a struct is only freed through the variant created below.
+  // for a struct is only freed through the variant created below. A struct
+  // needs no entry: its typeId is a DataType such as Range (i=884) or a custom
+  // one, and it travels as an ExtensionObject whatever that is.
   Namespace0Id? id;
-  if (value.typeId != null && value.typeId!.isNumeric()) {
+  if (!isStruct && value.typeId != null && value.typeId!.isNumeric()) {
     id = Namespace0Id.fromInt(value.typeId!.numeric);
   }
 
@@ -98,22 +121,7 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
     variant.ref.data = pointer.cast();
   }
 
-  // Determine the element type from the innermost element: for a multi-dimensional
-  // array the first element is itself an array, so peel arrays until a leaf is
-  // reached. A struct leaf means the whole (possibly nested) array is encoded as
-  // an array of extension objects.
-  DynamicValue? innermostLeaf(DynamicValue v) {
-    var cur = v;
-    while (cur.isArray) {
-      if (cur.asArray.isEmpty) return null;
-      cur = cur.asArray.first;
-    }
-    return cur;
-  }
-
-  final leaf = innermostLeaf(value);
-  final hasObjectElement = value.isArray && leaf != null && leaf.isObject;
-  if (value.isObject || hasObjectElement) {
+  if (isStruct) {
     variant.ref.type = getType(UaTypes.extensionObject);
   } else if (id != null) {
     variant.ref.type = getType(id.toUaTypes()); //TODO: This is not really the correct.
