@@ -68,9 +68,10 @@ changes that ship the same native library version.
   cache predates the stamp re-downloads and rebuilds mbedTLS once on the next
   build (well under a minute on a fast workstation, a couple of minutes on CI
   or a laptop); later builds reuse the stamped tree as before.
-- **Dev tooling: `ffigen` 22.** The binding generator (`tool/ffigen.dart`) is
-  ported to ffigen 22's visitor-based config API, which replaced the one it
-  was written against; the generated bindings are unchanged by the port.
+- **Dev tooling: `ffigen` 22 / 23.** The binding generator (`tool/ffigen.dart`)
+  is ported to ffigen 22's visitor-based config API, which replaced the one it
+  was written against; ffigen 23 keeps that API. The generated bindings are
+  unchanged by the port and identical under 22.0.0, 22.1.0 and 23.0.0.
   ffigen 22 depends on `code_assets` 2.x, so development now resolves
   `code_assets` 2.x. Nothing changes for consumers: `ffigen` is a dev
   dependency and the runtime constraint (`code_assets: >=1.0.0 <3.0.0`) is
