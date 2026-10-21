@@ -29,6 +29,10 @@ void main() {
       expect(initial.currentSubscriptionCount, 0);
       expect(initial.cumulatedSubscriptionCount, 0);
       expect(initial.currentMonitoredItemCount, 0);
+      // No subscription yet -> nothing delivered, but the counters are
+      // available (0, not null) because the diagnostics array reads fine.
+      expect(initial.cumulatedDataChangeNotificationCount, 0);
+      expect(initial.cumulatedNotificationCount, 0);
 
       // Two clients connect -> two sessions (and at least two secure channels).
       final client1 = await setupClient(port);
@@ -55,6 +59,24 @@ void main() {
       );
       expect(server.statistics.cumulatedSubscriptionCount, greaterThanOrEqualTo(1));
 
+      // Every data change the server publishes is counted, summed over the
+      // live subscriptions: write the monitored node a few times and the
+      // data-change counter climbs (the all-notifications counter is at
+      // least as large — keep-alives land there too).
+      for (var i = 1; i <= 3; i++) {
+        server.write(intNodeId, DynamicValue(value: 100 + i, typeId: NodeId.int32));
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+      final published = await waitForStats(
+        server,
+        (s) => (s.cumulatedDataChangeNotificationCount ?? 0) >= 1,
+        reason: 'data-change notifications counted',
+      );
+      expect(
+        published.cumulatedNotificationCount,
+        greaterThanOrEqualTo(published.cumulatedDataChangeNotificationCount!),
+      );
+
       // Tearing the monitored item down empties the monitored-item counter.
       await monitored.cancel();
       await waitForStats(server, (s) => s.currentMonitoredItemCount == 0, reason: 'monitored items back to 0');
@@ -64,8 +86,11 @@ void main() {
       await waitForStats(server, (s) => s.currentSessionCount == 1, reason: 'currentSessionCount == 1');
       await client1.delete();
       final drained = await waitForStats(server, (s) => s.currentSessionCount == 0, reason: 'currentSessionCount == 0');
-      // Subscriptions died with their session.
+      // Subscriptions died with their session — and took their notification
+      // counts with them (the sums cover LIVE subscriptions only).
       expect(drained.currentSubscriptionCount, 0);
+      expect(drained.cumulatedDataChangeNotificationCount, 0);
+      expect(drained.cumulatedNotificationCount, 0);
       expect(drained.cumulatedSessionCount, greaterThanOrEqualTo(2));
     });
   });

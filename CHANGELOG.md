@@ -4,6 +4,16 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## Unreleased
+
+- `ServerStatistics` gained `cumulatedDataChangeNotificationCount` and
+  `cumulatedNotificationCount`: the per-subscription
+  `dataChangeNotificationsCount` / `notificationsCount` of the NS0
+  SubscriptionDiagnosticsArray summed over the live subscriptions (`null`
+  without diagnostics). Lets a server derive its notification rate without
+  hooking the publish path; a deleted subscription takes its share of the
+  sum with it, so consumers clamp negative deltas.
+
 ## 1.5.9
 
 - **`Server.port`: the port the server listens on, for `Server(port: 0)`.**

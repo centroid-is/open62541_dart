@@ -58,6 +58,8 @@ class ServerStatistics {
     required this.currentSubscriptionCount,
     required this.cumulatedSubscriptionCount,
     required this.currentMonitoredItemCount,
+    this.cumulatedDataChangeNotificationCount,
+    this.cumulatedNotificationCount,
   });
 
   // Secure-channel layer.
@@ -88,12 +90,27 @@ class ServerStatistics {
   /// SubscriptionDiagnosticsArray), or `null` when unavailable.
   final int? currentMonitoredItemCount;
 
+  /// Data-change notifications delivered since server start, summed over
+  /// the subscriptions currently alive (each entry's
+  /// `dataChangeNotificationsCount` in the NS0 SubscriptionDiagnosticsArray),
+  /// or `null` when unavailable. A deleted subscription takes its share of
+  /// the sum with it, so the value is monotonic only while the subscription
+  /// set is stable — rate consumers should clamp a negative delta to zero.
+  final int? cumulatedDataChangeNotificationCount;
+
+  /// All notifications (data changes + events + keep-alives as counted by
+  /// open62541's `notificationsCount`) delivered since server start, summed
+  /// the same way, or `null` when unavailable.
+  final int? cumulatedNotificationCount;
+
   @override
   String toString() =>
       'ServerStatistics(sessions: $currentSessionCount (cumulated $cumulatedSessionCount), '
       'channels: $currentChannelCount (cumulated $cumulatedChannelCount), '
       'subscriptions: $currentSubscriptionCount (cumulated $cumulatedSubscriptionCount), '
-      'monitoredItems: $currentMonitoredItemCount)';
+      'monitoredItems: $currentMonitoredItemCount, '
+      'dataChangeNotifications: $cumulatedDataChangeNotificationCount, '
+      'notifications: $cumulatedNotificationCount)';
 }
 
 /// The activation identity of the session that invoked a method callback —
@@ -1713,6 +1730,8 @@ class Server {
     // (i=2290) serves one UA_SubscriptionDiagnosticsDataType per live
     // subscription; the total is the sum of their monitoredItemCount fields.
     int? currentMonitoredItems;
+    int? dataChangeNotifications;
+    int? notifications;
     final subsVariant = raw.UA_Variant_new();
     final subsNodeId = NodeId.fromNumeric(
       0,
@@ -1722,13 +1741,20 @@ class Server {
     if (subsStatus == raw.UA_STATUSCODE_GOOD &&
         subsVariant.ref.type == getTypeByIndex(raw.UA_TYPES_SUBSCRIPTIONDIAGNOSTICSDATATYPE)) {
       var total = 0;
+      var dataChanges = 0;
+      var all = 0;
       // An empty array uses open62541's non-null empty-array sentinel for
       // `data`; arrayLength 0 keeps the loop from touching it either way.
       final entries = subsVariant.ref.data.cast<raw.UA_SubscriptionDiagnosticsDataType>();
       for (var i = 0; i < subsVariant.ref.arrayLength; i++) {
-        total += (entries + i).ref.monitoredItemCount;
+        final entry = (entries + i).ref;
+        total += entry.monitoredItemCount;
+        dataChanges += entry.dataChangeNotificationsCount;
+        all += entry.notificationsCount;
       }
       currentMonitoredItems = total;
+      dataChangeNotifications = dataChanges;
+      notifications = all;
     }
     raw.UA_Variant_delete(subsVariant);
 
@@ -1748,6 +1774,8 @@ class Server {
       currentSubscriptionCount: currentSubscriptions,
       cumulatedSubscriptionCount: cumulatedSubscriptions,
       currentMonitoredItemCount: currentMonitoredItems,
+      cumulatedDataChangeNotificationCount: dataChangeNotifications,
+      cumulatedNotificationCount: notifications,
     );
   }
 
