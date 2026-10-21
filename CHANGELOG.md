@@ -16,6 +16,41 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **Known structures decode from their native layout.** A value whose
+  DataType is a structure the bundled open62541 knows (every NS0 DataType in
+  `UA_TYPES`: `ServerStatusDataType`, `BuildInfo`, `Argument`, `Range`,
+  `EUInformation`, `NetworkGroupDataType`, ...) arrives decoded into the
+  native struct, and `variantToValue` read that memory as an ExtensionObject
+  header: `read`, `readValue`, `readAttribute`, `monitor` /
+  `monitorDataValue`, `Client.call` outputs and `Server.read` of such a value
+  failed (`Unknown value for UA_ExtensionObjectEncoding`, `Unsupported nodeId
+  type: ns=0;i=862`, or a null check in `buildSchema`). The value is now
+  walked by the type's `UA_DataTypeMember` table and comes out in the shape a
+  custom type's ExtensionObject path produces: an object whose keys are the
+  members' names (`StartTime`, `BuildInfo`, ... as in the type's
+  DataTypeDefinition), nested objects, arrays (of structs and
+  multi-dimensional ones too), optional fields (`isOptional`, null when
+  absent), unions (an object holding the selected member), enums as Int32
+  with the native enum's `enumFields`. Built-in members decode as before; a
+  Guid is its text, a NodeId a `NodeId`, a LocalizedText a `LocalizedText`,
+  a ByteString a `Uint8List`, an ExpandedNodeId / QualifiedName / DataValue
+  / DiagnosticInfo an object of their fields, a nested Variant recursively,
+  a nested ExtensionObject recursively when it is decoded (or a schema for it
+  is at hand) and as its encoded bytes otherwise. `typeId` is the type's id
+  and `extObjEncodingId` its binary encoding id. An enum open62541 knows with
+  no schema at hand (a method output, `Server.read`) decodes the same way
+  instead of throwing.
+- **A `DynamicValue` with an NS0 structure `typeId` can be written.**
+  `valueToVariant` rejected a struct whose numeric `typeId` is not in the
+  `Namespace0Id` enum (`Unknown Namespace0Id value: 884`), and an
+  ExtensionObject encoded with the DataType id instead of the binary encoding
+  id is not recognised by a receiver. A struct whose `typeId` is an NS0
+  DataType the bundled open62541 knows (`Range` i=884, `NetworkGroupDataType`
+  i=11944) is now encoded with that type's `_Encoding_DefaultBinary` id when
+  `extObjEncodingId` is not set, so the Dart server can publish one (and a
+  method return one) and a client reads it back decoded; an empty array of
+  such a type travels as an empty ExtensionObject array. Custom types are
+  encoded exactly as before.
 - **Monitoring with quality: `monitorDataValue` / `monitoredDataValues`.**
   `Client` and `ClientIsolate` implement the new `DataValueMonitoringApi`,
   two methods mirroring `monitor` / `monitoredItems` that emit every sample
