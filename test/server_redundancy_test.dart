@@ -46,6 +46,15 @@ void main() {
   Future<List<String>> readServerUris() async =>
       (await client.read(NodeId.serverUriArray)).asArray.map((v) => v.asString).toList();
 
+  /// This server's ApplicationUri, as a client learns it: ServerArray[0].
+  Future<String> ownUri() async => (await client.read(NodeId.serverArray)).asArray.first.asString;
+
+  /// One attribute of [node] (`readAttribute` merges the attributes of a node
+  /// into one DynamicValue, so ValueRank and ArrayDimensions are read apart).
+  Future<DynamicValue> attribute(NodeId node, AttributeId id) async => (await client.readAttribute({
+    node: [id],
+  }))[node]!;
+
   /// Adds a mandatory Property [nodeId] named [name] with [value] under [parent].
   void addMandatoryProperty(NodeId nodeId, NodeId parent, String name, DynamicValue value) {
     server.addVariableNode(
@@ -194,7 +203,11 @@ void main() {
 
       expect(await typeDefinitionOf(NodeId.serverRedundancy), [nonTransparentRedundancyType]);
       expect((await client.read(NodeId.redundancySupport)).asInt, 3);
-      expect(await readServerUris(), uris);
+      // Part 5 §6.3.9: the local server is in the array; it was not in the
+      // caller's list, so it leads.
+      final own = await ownUri();
+      expect(own, isNotEmpty);
+      expect(await readServerUris(), [own, ...uris]);
 
       // The property is a 0:ServerUriArray of PropertyType under ServerRedundancy.
       final properties = await client.browse(NodeId.serverRedundancy, referenceTypeId: NodeId.hasProperty);
@@ -223,11 +236,12 @@ void main() {
 
     test('calling again updates the mode and the array; none takes the set down again', () async {
       server.setRedundancy(RedundancySupport.hot, serverUris: uris);
+      final own = await ownUri();
       server.setRedundancy(RedundancySupport.warm, serverUris: [...uris, 'urn:plant:opcua:c']);
 
       expect(await typeDefinitionOf(NodeId.serverRedundancy), [nonTransparentRedundancyType]);
       expect((await client.read(NodeId.redundancySupport)).asInt, 2);
-      expect(await readServerUris(), [...uris, 'urn:plant:opcua:c']);
+      expect(await readServerUris(), [own, ...uris, 'urn:plant:opcua:c']);
       // Still one type and one property, not a second copy of either.
       expect(await client.browse(serverRedundancyType, referenceTypeId: NodeId.hasSubtype), hasLength(1));
       expect(
@@ -248,8 +262,31 @@ void main() {
       server.setRedundancy(RedundancySupport.cold, serverUris: ['urn:plant:opcua:a']);
       expect(await typeDefinitionOf(NodeId.serverRedundancy), [nonTransparentRedundancyType]);
       expect((await client.read(NodeId.redundancySupport)).asInt, 1);
-      expect(await readServerUris(), ['urn:plant:opcua:a']);
+      expect(await readServerUris(), [own, 'urn:plant:opcua:a']);
     });
+
+    test('the local server is in ServerUriArray: prepended when absent, kept in place when given', () async {
+      final own = await ownUri();
+      server.setRedundancy(RedundancySupport.hot, serverUris: ['urn:peer']);
+      expect(await readServerUris(), [own, 'urn:peer']);
+
+      // Given by the caller, in its position, and not twice.
+      server.setRedundancy(RedundancySupport.hot, serverUris: ['urn:peer', own]);
+      expect(await readServerUris(), ['urn:peer', own]);
+    });
+
+    test(
+      'ServerUriArray is a one-dimensional String array: ValueRank 1, ArrayDimensions [0], on the instance and the declaration',
+      () async {
+        server.setRedundancy(RedundancySupport.hot, serverUris: uris);
+        for (final node in [NodeId.serverUriArray, ns0(raw.UA_NS0ID_NONTRANSPARENTREDUNDANCYTYPE_SERVERURIARRAY)]) {
+          expect((await attribute(node, AttributeId.UA_ATTRIBUTEID_VALUERANK)).asInt, 1, reason: '$node');
+          final dimensions = await attribute(node, AttributeId.UA_ATTRIBUTEID_ARRAYDIMENSIONS);
+          expect(dimensions.asArray.map((d) => d.asInt), [0], reason: '$node');
+          expect((await attribute(node, AttributeId.UA_ATTRIBUTEID_DATATYPE)).typeId, NodeId.uastring, reason: '$node');
+        }
+      },
+    );
 
     test('an unusable argument throws ArgumentError and changes nothing', () async {
       expect(() => server.setRedundancy(RedundancySupport.hot, serverUris: []), throwsArgumentError);
@@ -260,7 +297,12 @@ void main() {
       expect((await client.read(NodeId.redundancySupport)).asInt, 0);
     });
 
-    test('configured before start(), as a server normally is', () async {
+    test('configured before start(), as a server normally is, and startup keeps it', () async {
+      // open62541 deletes the standard ServerUriArray when the server is
+      // created (UA_Server_init -> initNS0 -> configureNS0, ua_server.c:575,
+      // ua_server_ns0.c:1037), not in UA_Server_run_startup, which touches
+      // only ServerArray and ServerStatus.StartTime. So what setRedundancy
+      // adds after the constructor is still there after start().
       final early = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
       early.setRedundancy(RedundancySupport.hotAndMirrored, serverUris: uris);
       early.start();
@@ -274,7 +316,8 @@ void main() {
         final refs = await earlyClient.browse(NodeId.serverRedundancy, referenceTypeId: NodeId.hasTypeDefinition);
         expect(refs.map((r) => r.nodeId), [nonTransparentRedundancyType]);
         expect((await earlyClient.read(NodeId.redundancySupport)).asInt, 5);
-        expect((await earlyClient.read(NodeId.serverUriArray)).asArray.map((v) => v.asString), uris);
+        final own = (await earlyClient.read(NodeId.serverArray)).asArray.first.asString;
+        expect((await earlyClient.read(NodeId.serverUriArray)).asArray.map((v) => v.asString), [own, ...uris]);
       } finally {
         await earlyClient.delete();
         early.shutdown();

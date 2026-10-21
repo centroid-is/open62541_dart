@@ -1859,17 +1859,24 @@ class Server {
   /// [RedundancySupport.none] puts `ServerRedundancy` back on the base type,
   /// deletes `ServerUriArray` and reports `None`; it takes no [serverUris].
   /// Every other mode requires a non-empty [serverUris]: Part 5 specifies
-  /// the *server URIs* (the `applicationUri` of each member, this server's
-  /// included) in the order a client should try them. This server's own URI
-  /// is `UA_ServerConfig.applicationDescription.applicationUri`, by default
-  /// `urn:open62541.server.application`; include it. A deployment without a
-  /// discovery server can publish `opc.tcp://` endpoint URLs instead; say so
-  /// to your clients. [RedundancySupport.transparent] is refused
+  /// the *server URIs* (the `applicationUri` of each member) in the order a
+  /// client should try them. §6.3.9 requires the local server among them,
+  /// so this server's ApplicationUri
+  /// (`UA_ServerConfig.applicationDescription.applicationUri`, by default
+  /// `urn:open62541.server.application`) is prepended when [serverUris] does
+  /// not contain it; a list that has it is published as given. A deployment
+  /// without a discovery server can publish `opc.tcp://` endpoint URLs
+  /// instead; say so to your clients. [RedundancySupport.transparent] is refused
   /// ([ArgumentError]): it calls for `TransparentRedundancyType`, which this
   /// does not model.
   ///
   /// Callable before or after [start], and again at any time: the mode and
   /// the array are updated in place (a member joining or leaving the set).
+  /// A configuration made before [start] survives it: open62541 deletes the
+  /// standard `ServerUriArray` when the server is *created*
+  /// (`UA_Server_init` → `initNS0` → `configureNS0`), and
+  /// `UA_Server_run_startup` touches no NS0 node but `ServerArray` and
+  /// `ServerStatus.StartTime`.
   /// Throws [ArgumentError] for an unusable argument before touching the
   /// address space, a [UaStatusException] when open62541 refuses a step.
   ///
@@ -1905,7 +1912,10 @@ class Server {
         _addNonTransparentRedundancyType(nonTransparentType);
       }
       setTypeDefinition(NodeId.serverRedundancy, nonTransparentType);
-      final uris = DynamicValue.fromList(serverUris, typeId: NodeId.uastring, name: 'ServerUriArray');
+      // Part 5 §6.3.9: the array shall contain the local server.
+      final ownUri = _config.ref.applicationDescription.applicationUri.value;
+      final members = serverUris.contains(ownUri) ? serverUris : [ownUri, ...serverUris];
+      final uris = DynamicValue.fromList(members, typeId: NodeId.uastring, name: 'ServerUriArray');
       if (_nodeExists(NodeId.serverUriArray)) {
         write(NodeId.serverUriArray, uris);
       } else {
@@ -1956,6 +1966,12 @@ class Server {
       final attr = _defaultVariableAttributes();
       attr.value = arena.using(valueToVariant(value), raw.UA_Variant_delete).ref;
       attr.accessLevel = raw.UA_ACCESSLEVELMASK_READ;
+      // A one-dimensional array of any length (ArrayDimensions [0]): the
+      // default attributes say ValueRank Any, which strict browsers flag on
+      // an array property. The arena's UInt32 is zeroed; open62541 copies it.
+      attr.valueRank = 1; // UA_VALUERANK_ONEDIMENSION
+      attr.arrayDimensionsSize = 1;
+      attr.arrayDimensions = arena<ffi.Uint32>(1);
       attr.dataType = value.typeId!.toRaw(allocator: arena);
       attr.displayName.text.set(value.name!, allocator: arena);
       return raw.UA_Server_addVariableNode(
