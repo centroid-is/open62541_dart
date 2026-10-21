@@ -6,6 +6,18 @@ changes that ship the same native library version.
 
 ## Unreleased
 
+- **`Server.port`: the port the server listens on, for `Server(port: 0)`.**
+  open62541 supports dynamic port assignment (the listen socket binds port 0
+  and `getsockname` reads what the OS picked), but on a dual-stack host its
+  IPv4 and IPv6 listen sockets each got their own OS-picked port and the
+  server advertised both. The bundled source is patched
+  (`hook/dynamic_port.patch`) to bind the IPv4 addresses first and reuse the
+  port the OS picked for them for the other address families, so a server has
+  ONE port; `Server.port` reads it back once `start()` has returned
+  (`StateError` before). The test suite starts every server on port 0 now
+  instead of probing for a free port and handing it over, which raced across
+  the suites `dart test` runs in parallel (two servers given one port both
+  bound it, since open62541's listen sockets are `SO_REUSEPORT`).
 - **`Client.call` (and `readAttribute` / monitored-item creation) surface the
   real service status.** The async response handlers checked `resultsSize`
   before `responseHeader.serviceResult`, so an infrastructure failure (session
