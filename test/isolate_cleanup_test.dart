@@ -4,6 +4,9 @@ import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/isolate.dart' show ClientIsolateClosedException;
+import 'common.dart';
+
+final unknownNodeId = NodeId.fromString(1, "does.not.exist");
 
 void main() {
   group('ClientIsolate cleanup', () {
@@ -107,5 +110,72 @@ void main() {
         expect(error, isA<ClientIsolateClosedException>());
       }
     });
+  });
+
+  // Guards the worker race found in the PR #119 review: a stream that ended
+  // while the worker was cancelling its streams made delete() fail with
+  // "Concurrent modification during iteration", and the worker never deleted
+  // its client, so the server kept the session and the subscription.
+  group('ClientIsolate cleanup while a stream ends', () {
+    late IsolateWatch watch;
+
+    setUpAll(() async => watch = await IsolateWatch.start());
+    tearDownAll(() => watch.stop());
+
+    test('delete() with two live streams and a refused create in flight leaves nothing behind', () async {
+      final port = await freeTcpPort();
+      final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+      server.start();
+      addBasicVariables(server);
+      final serverTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
+        server.runIterate();
+      });
+      addTearDown(() {
+        serverTimer.cancel();
+        server.shutdown();
+        server.delete();
+      });
+
+      final before = await watch.isolates();
+      final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+      final worker = (await watch.isolates()).difference(before).single;
+      await client.keepConnected('opc.tcp://127.0.0.1:$port');
+      final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
+
+      // The refused create is answered while the worker is cancelling the
+      // first live stream, and its stream ends while the worker waits for the
+      // second one: that is the stream ending in the middle of the teardown.
+      for (final nodeId in [intNodeId, boolNodeId]) {
+        client
+            .monitoredItems({
+              nodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+            }, subscriptionId)
+            .listen((_) {}, onError: (_) {});
+      }
+      await waitForStats(server, (s) => s.currentMonitoredItemCount == 2, reason: 'two live monitored items');
+      client
+          .monitoredItems({
+            unknownNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+          }, subscriptionId)
+          .listen((_) {}, onError: (_) {});
+
+      Object? deleteError;
+      try {
+        await client.delete();
+      } catch (e) {
+        deleteError = e;
+      }
+      expect(
+        deleteError,
+        isNull,
+        reason: 'ClientIsolate.delete() must complete without an error when a stream ends during the teardown',
+      );
+      await watch.expectGone(worker, reason: 'the ClientIsolate worker isolate is still alive after delete()');
+      await waitForStats(
+        server,
+        (s) => s.currentSessionCount == 0 && s.currentSubscriptionCount == 0,
+        reason: 'no session and no subscription left on the server after ClientIsolate.delete()',
+      );
+    }, timeout: Timeout(Duration(seconds: 30)));
   });
 }
