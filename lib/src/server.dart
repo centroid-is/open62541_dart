@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -226,19 +227,25 @@ class DataSourceValue {
 
 class Server {
   Server({LogLevel? logLevel, int? port}) {
-    final config = ua_calloc<raw.UA_ServerConfig>();
+    // The config struct is scratch. UA_Server_newWithConfig moves its contents
+    // into the server and zeroes the struct it was given, and a failing
+    // UA_ServerConfig_setMinimal clears it, so either way only the struct
+    // itself is left, for the arena to free.
+    using((arena) {
+      final config = arena<raw.UA_ServerConfig>();
 
-    if (logLevel != null) {
-      config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
-    }
-    // setMinimal sets the logging level if not set.
-    int res = raw.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
-    if (res != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to set default server config ${statusCodeToString(res)}';
-    }
+      if (logLevel != null) {
+        config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
+      }
+      // setMinimal sets the logging level if not set.
+      int res = raw.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
+      if (res != raw.UA_STATUSCODE_GOOD) {
+        throw 'Failed to set default server config ${statusCodeToString(res)}';
+      }
 
-    _server = raw.UA_Server_newWithConfig(config);
-    _config = raw.UA_Server_getConfig(_server);
+      _server = raw.UA_Server_newWithConfig(config);
+      _config = raw.UA_Server_getConfig(_server);
+    }, ua_calloc);
   }
 
   late ffi.Pointer<raw.UA_Server> _server;
@@ -363,6 +370,16 @@ class Server {
     _config.ref.asyncOperationTimeout = timeout.inMilliseconds.toDouble();
   }
 
+  /// The most references the server returns for one node in a single Browse
+  /// or BrowseNext response — `0`, the default, means no limit. A node with
+  /// more references is answered in pages: each response carries a
+  /// continuation point for the next BrowseNext, which `Client.browse`
+  /// follows on its own.
+  int get maxReferencesPerNode => _config.ref.maxReferencesPerNode;
+  set maxReferencesPerNode(int limit) {
+    _config.ref.maxReferencesPerNode = limit;
+  }
+
   /// Releases the UTF-8 identifier buffer that [NodeId.toRaw] allocates (via
   /// `ua_malloc`) for a **string** NodeId. Numeric NodeIds own no heap memory,
   /// so this is a no-op for them.
@@ -383,6 +400,14 @@ class Server {
         ua_malloc.free(data);
       }
     }
+  }
+
+  /// A copy of open62541's default variable attributes on the Dart heap, for
+  /// attributes that are filled in and then passed to open62541 by value.
+  raw.UA_VariableAttributes _defaultVariableAttributes() {
+    final defaults = ffi.Native.addressOf<raw.UA_VariableAttributes>(raw.UA_VariableAttributes_default);
+    final bytes = defaults.cast<ffi.Uint8>().asTypedList(ffi.sizeOf<raw.UA_VariableAttributes>());
+    return ffi.Struct.create<raw.UA_VariableAttributes>(Uint8List.fromList(bytes));
   }
 
   /// Initializes and starts the OPC UA server.
@@ -453,80 +478,70 @@ class Server {
     NodeId? baseDataVariableType,
     NodeId? typeId,
   }) {
-    ffi.Pointer<raw.UA_VariableAttributes> attr = raw.UA_VariableAttributes_new();
-    attr.ref = raw.UA_VariableAttributes_default;
+    final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
+    final resolvedType = baseDataVariableType ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
 
-    final variant = valueToVariant(value);
-    typeId ??= value.typeId;
+    // Everything native here is scratch: the attributes are passed by value and
+    // open62541 copies what it keeps of them, of the NodeIds and of the browse
+    // name. The arena releases it however this returns.
+    using((arena) {
+      final attr = _defaultVariableAttributes();
 
-    // Enum metadata: when the value carries enum field definitions, publish a
-    // custom enum DataType so a client can read back an EnumDefinition (field
-    // value + name). open62541 derives the DataTypeDefinition attribute of a
-    // DataType node from the registered custom `UA_DataType`, so we register an
-    // enum-kind type and point this node's DataType attribute at it. The stored
-    // value stays Int32 on the wire; open62541 relabels it to the enum type on
-    // write via `adjustType` (an enum is Int32-equivalent).
-    if (value.enumFields != null && value.enumFields!.isNotEmpty) {
-      typeId = _addEnumType(value, typeId);
-    }
+      final variant = arena.using(valueToVariant(value), raw.UA_Variant_delete);
+      typeId ??= value.typeId;
 
-    // For a structured value, `valueToVariant` returns a variant wrapping a
-    // binary-encoded UA_ExtensionObject. Store it as such and keep the node's
-    // DataType attribute (set below) pointing at the concrete custom type.
-    //
-    // Historically this branch instead re-labelled the variant as the native
-    // custom type and copied the *binary-encoded* body into `value.data`. That
-    // only happens to work for structs whose members are all fixed-size,
-    // pointer-free primitives (int/bool/double), where the encoded layout
-    // coincides with the in-memory layout. For any member that is a pointer type
-    // in native memory - notably UA_String, which is `{size_t length; UA_Byte*
-    // data}` in memory but `[int32 length][utf8 bytes]` on the wire - open62541
-    // would later walk the members and dereference the encoded bytes as a
-    // pointer, corrupting the heap and aborting the process (e.g. during the
-    // UA_Variant_copy performed by UA_Server_addVariableNode). Storing the value
-    // as an ExtensionObject lets open62541 keep it opaque, and the client read
-    // path already decodes the encoded body via variantToValue/deserialize.
-    attr.ref.value = variant.ref;
-    attr.ref.accessLevel = accessLevel.value;
-    attr.ref.dataType = typeId!.toRaw();
+      // Enum metadata: when the value carries enum field definitions, publish a
+      // custom enum DataType so a client can read back an EnumDefinition (field
+      // value + name). open62541 derives the DataTypeDefinition attribute of a
+      // DataType node from the registered custom `UA_DataType`, so we register an
+      // enum-kind type and point this node's DataType attribute at it. The stored
+      // value stays Int32 on the wire; open62541 relabels it to the enum type on
+      // write via `adjustType` (an enum is Int32-equivalent).
+      if (value.enumFields != null && value.enumFields!.isNotEmpty) {
+        typeId = _addEnumType(value, typeId);
+      }
 
-    if (value.name == null) {
-      throw 'Value name must be provided to use as a browse name';
-    }
-    final name = raw.UA_QUALIFIEDNAME(1, value.name!.toNativeUtf8(allocator: ua_malloc).cast());
+      // For a structured value, `valueToVariant` returns a variant wrapping a
+      // binary-encoded UA_ExtensionObject. Store it as such and keep the node's
+      // DataType attribute (set below) pointing at the concrete custom type.
+      //
+      // Historically this branch instead re-labelled the variant as the native
+      // custom type and copied the *binary-encoded* body into `value.data`. That
+      // only happens to work for structs whose members are all fixed-size,
+      // pointer-free primitives (int/bool/double), where the encoded layout
+      // coincides with the in-memory layout. For any member that is a pointer type
+      // in native memory - notably UA_String, which is `{size_t length; UA_Byte*
+      // data}` in memory but `[int32 length][utf8 bytes]` on the wire - open62541
+      // would later walk the members and dereference the encoded bytes as a
+      // pointer, corrupting the heap and aborting the process (e.g. during the
+      // UA_Variant_copy performed by UA_Server_addVariableNode). Storing the value
+      // as an ExtensionObject lets open62541 keep it opaque, and the client read
+      // path already decodes the encoded body via variantToValue/deserialize.
+      attr.value = variant.ref;
+      attr.accessLevel = accessLevel.value;
+      attr.dataType = typeId!.toRaw(allocator: arena);
 
-    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
-    parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
-    baseDataVariableType ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
+      if (value.name == null) {
+        throw 'Value name must be provided to use as a browse name';
+      }
+      final name = raw.UA_QUALIFIEDNAME(1, value.name!.toNativeUtf8(allocator: arena).cast());
 
-    final variableNodeIdRaw = variableNodeId.toRaw();
-    final parentNodeIdRaw = parentNodeId.toRaw();
-    final parentReferenceNodeIdRaw = parentReferenceNodeId.toRaw();
-    final baseDataVariableTypeRaw = baseDataVariableType.toRaw();
-
-    var returnCode = raw.UA_Server_addVariableNode(
-      _server,
-      variableNodeIdRaw,
-      parentNodeIdRaw,
-      parentReferenceNodeIdRaw,
-      name,
-      baseDataVariableTypeRaw,
-      attr.ref,
-      ffi.nullptr,
-      ffi.nullptr,
-    );
-    // open62541 deep-copied the NodeId arguments; free our copies. The
-    // `attr.ref.dataType` NodeId is owned by `attr` and released by
-    // `UA_VariableAttributes_delete` below, so it is not freed here.
-    _freeRawNodeId(variableNodeIdRaw);
-    _freeRawNodeId(parentNodeIdRaw);
-    _freeRawNodeId(parentReferenceNodeIdRaw);
-    _freeRawNodeId(baseDataVariableTypeRaw);
-    raw.UA_VariableAttributes_delete(attr);
-    ua_calloc.free(variant);
-    if (returnCode != raw.UA_STATUSCODE_GOOD) {
-      throw 'Failed to add variable node ${statusCodeToString(returnCode)}, nodeId: $variableNodeId';
-    }
+      var returnCode = raw.UA_Server_addVariableNode(
+        _server,
+        variableNodeId.toRaw(allocator: arena),
+        resolvedParent.toRaw(allocator: arena),
+        resolvedRef.toRaw(allocator: arena),
+        name,
+        resolvedType.toRaw(allocator: arena),
+        attr,
+        ffi.nullptr,
+        ffi.nullptr,
+      );
+      if (returnCode != raw.UA_STATUSCODE_GOOD) {
+        throw 'Failed to add variable node ${statusCodeToString(returnCode)}, nodeId: $variableNodeId';
+      }
+    }, ua_calloc);
   }
 
   /// Lazily creates the shared native read/write dispatchers used by every
@@ -801,44 +816,34 @@ class Server {
 
     final effectiveAccess = accessLevel ?? AccessLevelMask(read: true, write: onWrite != null);
 
-    // 1) Create a plain variable node (no stored value). Its value comes from
-    //    the callback source attached in step 2.
-    final attr = raw.UA_VariableAttributes_new();
-    attr.ref = raw.UA_VariableAttributes_default;
-    attr.ref.accessLevel = effectiveAccess.value;
-    if (typeId != null) {
-      // Owned by `attr`; released by UA_VariableAttributes_delete below.
-      attr.ref.dataType = typeId.toRaw();
-      attr.ref.valueRank = raw.UA_VALUERANK_SCALAR;
-    }
-
-    final name = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
-
     final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
     final resolvedType = baseDataVariableType ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
 
-    final nodeIdRaw = nodeId.toRaw();
-    final parentRaw = resolvedParent.toRaw();
-    final refRaw = resolvedRef.toRaw();
-    final typeRaw = resolvedType.toRaw();
+    // 1) Create a plain variable node (no stored value). Its value comes from
+    //    the callback source attached in step 2. The attributes are passed by
+    //    value and open62541 copies what it keeps of them, of the NodeIds and
+    //    of the browse name, so everything native is scratch in the arena.
+    final addStatus = using((arena) {
+      final attr = _defaultVariableAttributes();
+      attr.accessLevel = effectiveAccess.value;
+      if (typeId != null) {
+        attr.dataType = typeId.toRaw(allocator: arena);
+        attr.valueRank = raw.UA_VALUERANK_SCALAR;
+      }
 
-    final addStatus = raw.UA_Server_addVariableNode(
-      _server,
-      nodeIdRaw,
-      parentRaw,
-      refRaw,
-      name,
-      typeRaw,
-      attr.ref,
-      ffi.nullptr,
-      ffi.nullptr,
-    );
-    _freeRawNodeId(nodeIdRaw);
-    _freeRawNodeId(parentRaw);
-    _freeRawNodeId(refRaw);
-    _freeRawNodeId(typeRaw);
-    raw.UA_VariableAttributes_delete(attr);
+      return raw.UA_Server_addVariableNode(
+        _server,
+        nodeId.toRaw(allocator: arena),
+        resolvedParent.toRaw(allocator: arena),
+        resolvedRef.toRaw(allocator: arena),
+        raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: arena).cast()),
+        resolvedType.toRaw(allocator: arena),
+        attr,
+        ffi.nullptr,
+        ffi.nullptr,
+      );
+    }, ua_calloc);
     if (addStatus != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add data source variable node ${statusCodeToString(addStatus)}, nodeId: $nodeId';
     }
@@ -950,44 +955,37 @@ class Server {
     NodeId? parentNodeId,
     NodeId? referenceTypeId,
   }) {
-    var dattr = raw.UA_VariableTypeAttributes_new();
-    if (displayName != null) {
-      dattr.ref.displayName.locale.set(displayName.locale);
-      dattr.ref.displayName.text.set(displayName.value);
-    }
-    dattr.ref.dataType = variableTypeId.toRaw();
-    dattr.ref.valueRank = raw.UA_VALUERANK_SCALAR;
-    final variant = valueToVariant(schema);
-    dattr.ref.value = variant.ref;
+    final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
+    final resolvedRef = referenceTypeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
 
-    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
-    referenceTypeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
+    // The attributes are passed by value and open62541 copies what it keeps of
+    // them, of the NodeIds and of the browse name. So the struct is on the Dart
+    // heap (zeroed, like UA_VariableTypeAttributes_new) and owns nothing: what
+    // it points at is scratch in the arena.
+    final res = using((arena) {
+      final dattr = ffi.Struct.create<raw.UA_VariableTypeAttributes>();
+      if (displayName != null) {
+        dattr.displayName.locale.set(displayName.locale, allocator: arena);
+        dattr.displayName.text.set(displayName.value, allocator: arena);
+      }
+      dattr.dataType = variableTypeId.toRaw(allocator: arena);
+      dattr.valueRank = raw.UA_VALUERANK_SCALAR;
+      // A shallow copy: the payload stays the variant's, freed with it.
+      dattr.value = arena.using(valueToVariant(schema), raw.UA_Variant_delete).ref;
 
-    final variableTypeIdRaw = variableTypeId.toRaw();
-    final parentNodeIdRaw = parentNodeId.toRaw();
-    final referenceTypeIdRaw = referenceTypeId.toRaw();
-    final qualifiedName = raw.UA_QUALIFIEDNAME(1, name.toNativeUtf8(allocator: ua_malloc).cast());
-
-    int res = raw.UA_Server_addVariableTypeNode(
-      _server,
-      variableTypeIdRaw,
-      parentNodeIdRaw,
-      referenceTypeIdRaw,
-      qualifiedName,
-      parentNodeIdRaw,
-      dattr.ref,
-      ffi.nullptr,
-      ffi.nullptr,
-    );
-
-    // open62541 deep-copied the NodeId arguments; free our copies. The
-    // `dattr.ref.dataType` NodeId is owned by `dattr` and released by
-    // `UA_VariableTypeAttributes_delete` below.
-    _freeRawNodeId(variableTypeIdRaw);
-    _freeRawNodeId(parentNodeIdRaw);
-    _freeRawNodeId(referenceTypeIdRaw);
-    raw.UA_Variant_delete(variant);
-    raw.UA_VariableTypeAttributes_delete(dattr);
+      final parentRaw = resolvedParent.toRaw(allocator: arena);
+      return raw.UA_Server_addVariableTypeNode(
+        _server,
+        variableTypeId.toRaw(allocator: arena),
+        parentRaw,
+        resolvedRef.toRaw(allocator: arena),
+        raw.UA_QUALIFIEDNAME(1, name.toNativeUtf8(allocator: arena).cast()),
+        parentRaw,
+        dattr,
+        ffi.nullptr,
+        ffi.nullptr,
+      );
+    }, ua_calloc);
 
     if (res != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to add variable type node ${statusCodeToString(res)}';
@@ -1022,28 +1020,27 @@ class Server {
     NodeId? parentNodeId,
     NodeId? referenceTypeId,
   }) {
-    var attr = raw.UA_DataTypeAttributes_new();
+    // open62541 reads the attributes through a pointer and copies them into
+    // the node, so they are scratch in the arena (zeroed, like
+    // UA_DataTypeAttributes_new), released also when the add throws.
+    using((arena) {
+      final attr = arena<raw.UA_DataTypeAttributes>();
+      if (displayName != null) {
+        attr.ref.displayName.locale.set(displayName.locale, allocator: arena);
+        attr.ref.displayName.text.set(displayName.value, allocator: arena);
+      }
 
-    if (displayName != null) {
-      attr.ref.displayName.locale.set(displayName.locale);
-      attr.ref.displayName.text.set(displayName.value);
-    }
-
-    parentNodeId ??= NodeId.structure;
-    referenceTypeId ??= NodeId.hasSubtype;
-
-    _addNode(
-      raw.UA_NodeClass.UA_NODECLASS_DATATYPE,
-      requestedNewNodeId,
-      parentNodeId,
-      referenceTypeId,
-      browseName,
-      NodeId.nullId,
-      attr.cast(),
-      getType(UaTypes.dataTypeAttributes),
-    );
-
-    raw.UA_DataTypeAttributes_delete(attr);
+      _addNode(
+        raw.UA_NodeClass.UA_NODECLASS_DATATYPE,
+        requestedNewNodeId,
+        parentNodeId ?? NodeId.structure,
+        referenceTypeId ?? NodeId.hasSubtype,
+        browseName,
+        NodeId.nullId,
+        attr.cast(),
+        getType(UaTypes.dataTypeAttributes),
+      );
+    }, ua_calloc);
   }
 
   /// Resolves the identity of the session behind a native callback's
@@ -1196,29 +1193,16 @@ class Server {
     NodeId? parentReferenceNodeId,
     String? browseName,
   }) {
-    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
-    parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
-    if (browseName == null) {
-      if (!methodNodeId.isString()) {
-        throw 'A browseName must be provided for a method node with a numeric NodeId';
-      }
-      browseName = methodNodeId.string;
+    final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
+    if (browseName == null && !methodNodeId.isString()) {
+      throw 'A browseName must be provided for a method node with a numeric NodeId';
     }
+    final resolvedName = browseName ?? methodNodeId.string;
 
     // Async method calls need the cancel hook so a timed-out/cancelled call
     // retires its in-flight entry (see [_asyncCancelDispatcher]).
     _ensureAsyncCancelDispatcher();
-
-    // Method attributes. calloc zero-initializes; open62541's high-level
-    // addMethodNode uses the struct directly (no attribute-mask filtering), so
-    // we only set the fields we care about.
-    final attr = ua_calloc<raw.UA_MethodAttributes>();
-    attr.ref.displayName.text.set(browseName);
-    attr.ref.executable = true;
-    attr.ref.userExecutable = true;
-
-    final inputArgsPtr = _buildArguments(inputArguments);
-    final outputArgsPtr = _buildArguments(outputArguments);
 
     // The native method callback. isolateLocal: it runs on this isolate,
     // synchronously, from within runIterate.
@@ -1310,37 +1294,41 @@ class Server {
           }
         }, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
 
-    final browse = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
+    // Everything native here is scratch: open62541 deep-copies the attributes,
+    // the argument arrays, the NodeIds and the browse name into the node. The
+    // attributes are passed by value, so the struct is on the Dart heap; it is
+    // zeroed, and open62541's high-level addMethodNode uses it directly (no
+    // attribute-mask filtering), so only the fields we care about are set.
+    // The arena releases the rest however this ends, also when an argument
+    // cannot be marshalled.
+    final int retCode;
+    try {
+      retCode = using((arena) {
+        final attr = ffi.Struct.create<raw.UA_MethodAttributes>();
+        attr.displayName.text.set(resolvedName, allocator: arena);
+        attr.executable = true;
+        attr.userExecutable = true;
 
-    final methodNodeIdRaw = methodNodeId.toRaw();
-    final parentNodeIdRaw = parentNodeId.toRaw();
-    final parentReferenceNodeIdRaw = parentReferenceNodeId.toRaw();
-
-    final retCode = raw.UA_Server_addMethodNode(
-      _server,
-      methodNodeIdRaw,
-      parentNodeIdRaw,
-      parentReferenceNodeIdRaw,
-      browse,
-      attr.ref,
-      nativeCallback.nativeFunction,
-      inputArguments.length,
-      inputArgsPtr,
-      outputArguments.length,
-      outputArgsPtr,
-      ffi.nullptr,
-      ffi.nullptr,
-    );
-
-    // open62541 has deep-copied the attributes, argument arrays and NodeId
-    // arguments into the node; release our copies.
-    _freeRawNodeId(methodNodeIdRaw);
-    _freeRawNodeId(parentNodeIdRaw);
-    _freeRawNodeId(parentReferenceNodeIdRaw);
-    _freeArguments(inputArgsPtr, inputArguments.length);
-    _freeArguments(outputArgsPtr, outputArguments.length);
-    attr.ref.displayName.text.free();
-    ua_calloc.free(attr);
+        return raw.UA_Server_addMethodNode(
+          _server,
+          methodNodeId.toRaw(allocator: arena),
+          resolvedParent.toRaw(allocator: arena),
+          resolvedRef.toRaw(allocator: arena),
+          raw.UA_QUALIFIEDNAME(1, resolvedName.toNativeUtf8(allocator: arena).cast()),
+          attr,
+          nativeCallback.nativeFunction,
+          inputArguments.length,
+          _buildArguments(inputArguments, arena),
+          outputArguments.length,
+          _buildArguments(outputArguments, arena),
+          ffi.nullptr,
+          ffi.nullptr,
+        );
+      }, ua_calloc);
+    } catch (_) {
+      nativeCallback.close();
+      rethrow;
+    }
 
     if (retCode != raw.UA_STATUSCODE_GOOD) {
       nativeCallback.close();
@@ -1351,47 +1339,30 @@ class Server {
     _methodCallbacks[methodNodeId] = nativeCallback;
   }
 
-  /// Allocates and populates a native `UA_Argument` array from [args].
-  /// Returns `nullptr` for an empty list.
-  ffi.Pointer<raw.UA_Argument> _buildArguments(List<Argument> args) {
+  /// Populates a native `UA_Argument` array from [args], allocated in [arena]
+  /// together with everything it points at. Returns `nullptr` for an empty
+  /// list.
+  ffi.Pointer<raw.UA_Argument> _buildArguments(List<Argument> args, Arena arena) {
     if (args.isEmpty) return ffi.nullptr;
-    final ptr = ua_calloc<raw.UA_Argument>(args.length);
+    final ptr = arena<raw.UA_Argument>(args.length);
     for (var i = 0; i < args.length; i++) {
       final a = args[i];
-      (ptr + i).ref.name.set(a.name);
-      (ptr + i).ref.dataType = a.dataType.toRaw();
+      (ptr + i).ref.name.set(a.name, allocator: arena);
+      (ptr + i).ref.dataType = a.dataType.toRaw(allocator: arena);
       (ptr + i).ref.valueRank = a.valueRank;
       final description = a.description;
       if (description != null) {
-        (ptr + i).ref.description.locale.set(description.locale);
-        (ptr + i).ref.description.text.set(description.value);
+        (ptr + i).ref.description.locale.set(description.locale, allocator: arena);
+        (ptr + i).ref.description.text.set(description.value, allocator: arena);
       }
       if (a.arrayDimensions.isNotEmpty) {
-        final dims = ua_calloc<ffi.Uint32>(a.arrayDimensions.length);
+        final dims = arena<ffi.Uint32>(a.arrayDimensions.length);
         dims.asTypedList(a.arrayDimensions.length).setRange(0, a.arrayDimensions.length, a.arrayDimensions);
         (ptr + i).ref.arrayDimensions = dims;
         (ptr + i).ref.arrayDimensionsSize = a.arrayDimensions.length;
       }
     }
     return ptr;
-  }
-
-  /// Frees the strings/arrays allocated by [_buildArguments] and the array
-  /// itself.
-  void _freeArguments(ffi.Pointer<raw.UA_Argument> ptr, int length) {
-    if (ptr == ffi.nullptr) return;
-    for (var i = 0; i < length; i++) {
-      (ptr + i).ref.name.free();
-      // The dataType NodeId's string identifier (if any) was allocated by
-      // NodeId.toRaw(); open62541 has copied it into the node, so free ours.
-      _freeRawNodeId((ptr + i).ref.dataType);
-      (ptr + i).ref.description.locale.free();
-      (ptr + i).ref.description.text.free();
-      if ((ptr + i).ref.arrayDimensions != ffi.nullptr) {
-        ua_calloc.free((ptr + i).ref.arrayDimensions);
-      }
-    }
-    ua_calloc.free(ptr);
   }
 
   /// Adds a generic Object node to the server's address space.
@@ -1427,31 +1398,34 @@ class Server {
     NodeId? parentReferenceNodeId,
     NodeId? typeDefinition,
   }) {
-    parentNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
-    parentReferenceNodeId ??= NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
-    typeDefinition ??= NodeId.fromNumeric(0, raw.UA_NS0ID_BASEOBJECTTYPE);
+    final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
+    final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
+    final resolvedType = typeDefinition ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEOBJECTTYPE);
 
     final effectiveBrowseName = browseName ?? displayName ?? '';
     final effectiveDisplayName = displayName ?? browseName ?? '';
 
-    final attr = raw.UA_ObjectAttributes_new();
-    attr.ref = raw.UA_ObjectAttributes_default;
-    if (effectiveDisplayName.isNotEmpty) {
-      attr.ref.displayName.text.set(effectiveDisplayName);
-    }
+    // open62541 reads the attributes through a pointer and copies them into
+    // the node, so they are scratch in the arena, released also when the add
+    // throws.
+    using((arena) {
+      final attr = arena<raw.UA_ObjectAttributes>();
+      attr.ref = raw.UA_ObjectAttributes_default;
+      if (effectiveDisplayName.isNotEmpty) {
+        attr.ref.displayName.text.set(effectiveDisplayName, allocator: arena);
+      }
 
-    _addNode(
-      raw.UA_NodeClass.UA_NODECLASS_OBJECT,
-      nodeId,
-      parentNodeId,
-      parentReferenceNodeId,
-      effectiveBrowseName,
-      typeDefinition,
-      attr.cast(),
-      getType(UaTypes.objectAttributes),
-    );
-
-    raw.UA_ObjectAttributes_delete(attr);
+      _addNode(
+        raw.UA_NodeClass.UA_NODECLASS_OBJECT,
+        nodeId,
+        resolvedParent,
+        resolvedRef,
+        effectiveBrowseName,
+        resolvedType,
+        attr.cast(),
+        getType(UaTypes.objectAttributes),
+      );
+    }, ua_calloc);
   }
 
   /// Adds an Object node of type `FolderType` - a convenience over
@@ -1580,23 +1554,21 @@ class Server {
     ffi.Pointer<raw.UA_NodeAttributes> attr,
     ffi.Pointer<raw.UA_DataType> attributeType,
   ) {
-    final browse = raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: ua_malloc).cast());
+    // open62541 deep-copies the NodeId arguments and the browse name (both
+    // begin and finish use copies), so they are scratch in the arena, released
+    // whether or not the calls succeed.
+    using((arena) {
+      final requestedRaw = requestedNewNodeId.toRaw(allocator: arena);
 
-    final requestedRaw = requestedNewNodeId.toRaw();
-    final parentRaw = parentNodeId.toRaw();
-    final referenceRaw = referenceTypeId.toRaw();
-    final typeDefinitionRaw = typeDefinition.toRaw();
-
-    try {
       //TODO: It seems this method has been removed.
       var retCode = raw.UA_Server_addNode_begin(
         _server,
         nodeClass,
         requestedRaw,
-        parentRaw,
-        referenceRaw,
-        browse,
-        typeDefinitionRaw,
+        parentNodeId.toRaw(allocator: arena),
+        referenceTypeId.toRaw(allocator: arena),
+        raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: arena).cast()),
+        typeDefinition.toRaw(allocator: arena),
         attr.cast(),
         attributeType,
         ffi.nullptr,
@@ -1612,14 +1584,7 @@ class Server {
       if (retCode != raw.UA_STATUSCODE_GOOD) {
         throw 'Failed to add node finish ${statusCodeToString(retCode)}';
       }
-    } finally {
-      // open62541 deep-copied the NodeId arguments (both begin and finish use
-      // copies); free ours whether or not the calls succeeded.
-      _freeRawNodeId(requestedRaw);
-      _freeRawNodeId(parentRaw);
-      _freeRawNodeId(referenceRaw);
-      _freeRawNodeId(typeDefinitionRaw);
-    }
+    }, ua_calloc);
   }
 
   /// Writes a description to a variable node in the OPC UA server.
