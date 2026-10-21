@@ -6,7 +6,6 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
-<<<<<<< HEAD
 - **`Server.port`: the port the server listens on, for `Server(port: 0)`.**
   open62541 supports dynamic port assignment (the listen socket binds port 0
   and `getsockname` reads what the OS picked), but on a dual-stack host its
@@ -19,7 +18,6 @@ changes that ship the same native library version.
   instead of probing for a free port and handing it over, which raced across
   the suites `dart test` runs in parallel (two servers given one port both
   bound it, since open62541's listen sockets are `SO_REUSEPORT`).
-=======
 - **Fixed a 48-byte native leak per struct-valued variant decoded (and per
   struct written).** `OpcUaDynamicValueSerializer.deserialize` calloc'd a
   `UA_ExtensionObject` to read the header of every struct-valued variant --
@@ -34,7 +32,6 @@ changes that ship the same native library version.
   of the elements before it in an array of structs. The whole value is now
   encoded on the Dart heap first, and the native memory the variant takes
   ownership of is allocated only once nothing can throw any more.
->>>>>>> origin/main
 - Bump bundled open62541 from `v1.5.7` to `v1.5.9` (v1.5.8 was never shipped
   by this package; both upstream releases land here).
   - Upstream v1.5.8 is a maintenance release focused on hardening and
