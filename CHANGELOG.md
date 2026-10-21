@@ -4,7 +4,7 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
+## 1.5.9
 
 - **`ua_malloc` is gone; the package allocates with `ua_calloc` only
   (#45).** Every buffer handed to open62541 or freed with `free()` came from
@@ -43,9 +43,6 @@ changes that ship the same native library version.
   `folderType`, `baseDataVariableType` and `propertyType` join the existing
   folder and reference-type statics, each backed by the generated constant
   (`serverStatusCurrentTime` was a literal `2258`).
-
-## 1.5.9
-
 - **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the
   owning isolate.** By default the supervisor's pump calls
   `runIterate(iterateInterval)`, which sits in open62541's `select()` for up
