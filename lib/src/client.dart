@@ -2176,9 +2176,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
               }
             }
             if (failures.isNotEmpty) {
-              controller.addError(
-                "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value)}").join(", ")}",
-              );
+              controller.addError(MonitoredItemsRefused(failures));
               // This is the path a caller that rebuilds a refused item (a
               // hard BadNodeIdUnknown, forever, on a backoff ladder) walks on
               // every attempt, so it must leave nothing behind. It used to

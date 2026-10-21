@@ -1,4 +1,6 @@
 import '../common.dart' show statusCodeToString;
+import '../extensions.dart' show AttributeId;
+import '../node_id.dart' show NodeId;
 
 /// An OPC UA status code carried as a typed exception, so the exact code is
 /// programmatically extractable (rather than only a formatted message).
@@ -22,6 +24,25 @@ class UaStatusException implements Exception {
   @override
   String toString() =>
       'UaStatusException(0x${statusCode.toRadixString(16).padLeft(8, '0')}: ${statusCodeToString(statusCode)})';
+}
+
+/// The server refused one or more of the items a `monitoredItems` stream
+/// asked for (a NodeId it does not have, an attribute it will not monitor,
+/// ...): the stream's error event, in place of the `String` it used to be.
+///
+/// [failures] has the status of every refused item by `(NodeId, AttributeId)`;
+/// [statusCode] is the status of the first of them, so an `on
+/// UaStatusException` handler sees it like any other status failure.
+/// Crosses the `ClientIsolate` boundary as itself.
+class MonitoredItemsRefused extends UaStatusException {
+  MonitoredItemsRefused(this.failures) : super(failures.values.first);
+
+  /// The refused items and the status the server answered each with.
+  final Map<(NodeId, AttributeId), int> failures;
+
+  @override
+  String toString() =>
+      'Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value)}").join(", ")}';
 }
 
 class Inactivity extends Error {}

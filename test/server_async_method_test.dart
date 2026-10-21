@@ -40,7 +40,7 @@ void main() {
           // A real await — several server iterate ticks pass before the
           // result exists.
           await Future.delayed(const Duration(milliseconds: 300));
-          return [DynamicValue(value: inputs[0].asInt * 2, typeId: NodeId.int32)];
+          return [DynamicValue(value: inputs[0].asInt! * 2, typeId: NodeId.int32)];
         },
       );
 
@@ -59,7 +59,7 @@ void main() {
         inputArguments: [Argument(name: 'id', dataType: NodeId.int32)],
         outputArguments: [Argument(name: 'out', dataType: NodeId.int32)],
         callback: (inputs, session) async {
-          final id = inputs[0].asInt;
+          final id = inputs[0].asInt!;
           await completers[id]!.future;
           return [DynamicValue(value: id * 100, typeId: NodeId.int32)];
         },
@@ -109,7 +109,7 @@ void main() {
           Argument(name: 'half', dataType: NodeId.double),
         ],
         callback: (inputs, session) async {
-          final x = inputs[0].asInt;
+          final x = inputs[0].asInt!;
           return [
             DynamicValue(value: x * 2, typeId: NodeId.int32),
             DynamicValue(value: 'x=$x', typeId: NodeId.uastring),

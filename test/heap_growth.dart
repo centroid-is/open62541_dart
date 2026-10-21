@@ -11,7 +11,7 @@ import 'package:open62541/src/ua_allocation.dart';
 /// [expectNoHeapGrowth] repeats one operation that must leave the heap as it
 /// found it and fails if the bytes in use grew. Nothing in `lib/` is
 /// instrumented: what is measured is what malloc handed out and did not get
-/// back, whoever asked for it (Dart through `ua_calloc`/`ua_malloc`, or
+/// back, whoever asked for it (Dart through `ua_calloc`, or
 /// open62541).
 ///
 /// glibc only. `dart test` runs every suite in one process, so the heap also
@@ -70,10 +70,10 @@ void _fillThreadCache() {
   final chunks = <ffi.Pointer<ffi.Uint8>>[];
   for (var size = 24; size <= 1032; size += 16) {
     for (var i = 0; i < perSize; i++) {
-      chunks.add(ua_malloc<ffi.Uint8>(size));
+      chunks.add(ua_calloc<ffi.Uint8>(size));
     }
   }
-  chunks.forEach(ua_malloc.free);
+  chunks.forEach(ua_calloc.free);
 }
 
 /// [_heapInUse] with the thread cache full (see [_fillThreadCache]) and

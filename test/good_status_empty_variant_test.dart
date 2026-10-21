@@ -55,7 +55,7 @@ import 'package:open62541/open62541.dart';
 import 'package:open62541/src/common.dart' show valueToVariant;
 import 'package:open62541/src/extensions.dart' show UA_StringExtension;
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
-import 'package:open62541/src/ua_allocation.dart' show ua_calloc, ua_malloc;
+import 'package:open62541/src/ua_allocation.dart' show ua_calloc;
 import 'common.dart' show clientTypes, setupClientOfType;
 import 'data_value_rewriting_proxy.dart';
 
@@ -103,7 +103,7 @@ void main() {
     // Value reads with status Good and an empty variant.
     final attr = raw.UA_VariableAttributes_new();
     attr.ref = raw.UA_VariableAttributes_default;
-    final namePtr = "the.empty".toNativeUtf8(allocator: ua_malloc);
+    final namePtr = "the.empty".toNativeUtf8(allocator: ua_calloc);
     final nodeIdRaw = emptyNodeId.toRaw();
     final addStatus = raw.UA_Server_addVariableNode(
       server,
@@ -117,8 +117,8 @@ void main() {
       ffi.nullptr,
     );
     // open62541 deep-copied the NodeId and the browse name; free our copies.
-    ua_malloc.free(nodeIdRaw.identifier.string.data);
-    ua_malloc.free(namePtr);
+    ua_calloc.free(nodeIdRaw.identifier.string.data);
+    ua_calloc.free(namePtr);
     raw.UA_VariableAttributes_delete(attr);
     expect(addStatus, equals(UA_STATUSCODE_GOOD), reason: 'valueless variable node must be added');
 
@@ -161,7 +161,7 @@ void main() {
         : valueToVariant(DynamicValue(value: value, typeId: NodeId.int32));
     final nodeIdRaw = emptyNodeId.toRaw();
     final status = raw.UA_Server_writeValue(server, nodeIdRaw, variant.ref);
-    ua_malloc.free(nodeIdRaw.identifier.string.data);
+    ua_calloc.free(nodeIdRaw.identifier.string.data);
     raw.UA_Variant_delete(variant);
     expect(status, equals(UA_STATUSCODE_GOOD), reason: 'server-side write of $value must succeed');
   }

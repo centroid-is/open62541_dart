@@ -242,7 +242,8 @@ class IsolateResponse<T> {
 
 /// Maps an error to what crosses the isolate boundary: a [UaStatusException]
 /// travels as itself (its status code survives — callers on the main isolate
-/// can `on UaStatusException catch` and read `statusCode`); anything else is
+/// can `on UaStatusException catch` and read `statusCode`), and so does a
+/// [MonitoredItemsRefused], with its per-item statuses; anything else is
 /// stringified, because arbitrary exception types (native handles, closures)
 /// are not reliably sendable.
 Object sendableError(Object e) => e is UaStatusException ? e : e.toString();

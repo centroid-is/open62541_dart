@@ -49,6 +49,48 @@ changes that ship the same native library version.
   (`Description`, `DisplayName`, `DataType`, `DataTypeDefinition`) answered
   Good and empty is treated as absent, like the already tolerated
   `BadAttributeIdInvalid`.
+- **`ua_malloc` is gone; the package allocates with `ua_calloc` only
+  (#45).** Every buffer handed to open62541 or freed with `free()` came from
+  one of two allocators that differed only in zero-filling; the malloc one is
+  removed (`UaMallocAllocator`, `ua_malloc`, never exported), `NodeId.toRaw`
+  defaults to `ua_calloc`, and the heap-growth tests measure through it.
+
+- **BREAKING: `DynamicValue.asInt`, `asDouble` and `asBool` are nullable
+  (#115).** They returned `0`, `0.0` and `false` for a value that is missing
+  or of another type, which in process data is a plausible reading rather
+  than a failure, so a node that was not read or a member that did not
+  decode looked like a zero downstream. They are `int?`, `double?` and
+  `bool?` now and return null there, like `asDateTime` always did; the
+  coercions stay (a num reads as int or double, a numeric string parses, a
+  non-zero num is true, `'true'`/`'1'` and `'false'`/`'0'` are bools). A
+  caller that did arithmetic on the result or passed it where a non-null
+  number is expected has to check for null (or `!` where the value is known
+  present). Also: a `DateTime` value reported `DynamicType.unknown`; `type`
+  now reports `DynamicType.datetime`, `isDateTime` goes with it, and
+  `DynamicType` is exported.
+
+- **A refused monitored item fails the stream with `MonitoredItemsRefused`,
+  not a `String` (#38).** When the server refuses an item of a
+  `monitoredItems` create (`BadNodeIdUnknown` for a node it does not have,
+  ...), the stream's error was the formatted message, so a caller could match
+  neither the type nor the status; the service-level failure of the same
+  create was already a `UaStatusException`. The error is now a
+  `MonitoredItemsRefused`, a `UaStatusException` with the first refused item's
+  status as `statusCode` and every refused item's status in `failures`
+  (`(NodeId, AttributeId)` to status). `toString()` is the old message, and
+  `ClientIsolate` forwards it typed.
+
+- **The well-known NS0 nodes are `NodeId` statics (#110).** Reading the
+  server's status, service level, namespace array or redundancy surface, or
+  adding a standard property, needed the generated `UA_NS0ID_*` constants,
+  an implementation import. `NodeId.server`, `serverArray`,
+  `namespaceArray`, `serverStatus`, `serverStatusStartTime`,
+  `serverStatusState`, `serverStatusBuildInfo`, `serviceLevel`,
+  `serverRedundancy`, `redundancySupport`, `serverUriArray`, `organizes`,
+  `hasComponent`, `hasProperty`, `hasTypeDefinition`, `baseObjectType`,
+  `folderType`, `baseDataVariableType` and `propertyType` join the existing
+  folder and reference-type statics, each backed by the generated constant
+  (`serverStatusCurrentTime` was a literal `2258`).
 - **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the
   owning isolate.** By default the supervisor's pump calls
   `runIterate(iterateInterval)`, which sits in open62541's `select()` for up
