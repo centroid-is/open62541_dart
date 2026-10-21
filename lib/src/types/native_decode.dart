@@ -94,6 +94,22 @@ DynamicValue? decodeEncodedExtensionObjects(raw.UA_Variant data, {Schema? defs})
   );
 }
 
+/// Decodes a variant of ExtensionObjects with whatever is at hand and never
+/// fails on an unknown type: each body is decoded by the schema [defs] holds
+/// under its encoding id, or as the bundled type it is the encoding of, and
+/// otherwise kept as its bytes (`typeId` Structure, `extObjEncodingId` the
+/// wire id) so nothing is lost. For a client whose address space describes
+/// the ExtensionObject's type nowhere (a relayed value under a foreign
+/// encoding id, a type without a DataType node).
+DynamicValue decodeExtensionObjectsOpaque(raw.UA_Variant data, {Schema? defs}) {
+  return _decodeElements(
+    data,
+    ffi.sizeOf<raw.UA_ExtensionObject>(),
+    (element) => _decodeExtensionObject(element.cast<raw.UA_ExtensionObject>().ref, defs),
+    listTypeId: NodeId.structure,
+  );
+}
+
 /// The variant's payload as a scalar, a list or nested lists (row-major over
 /// `arrayDimensions`), each element [elementSize] bytes apart.
 DynamicValue _decodeElements(

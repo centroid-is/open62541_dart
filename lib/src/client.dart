@@ -288,6 +288,16 @@ class ClientConfig {
 
 typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
 
+/// The Bad status of the one BrowseResult of a Browse. Surfaces from
+/// [Client.browse] with the message it always had; typed so the client's own
+/// lookups can tell "no such node" from a failed service.
+class _BrowseResultError implements Exception {
+  const _BrowseResultError(this.statusCode);
+  final int statusCode;
+  @override
+  String toString() => 'Browse result error: ${statusCodeToString(statusCode)}';
+}
+
 class Client implements ClientApi, DataValueMonitoringApi {
   Client({
     Duration? secureChannelLifeTime,
@@ -1203,7 +1213,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
 
           final browseResult = response.ref.results[0];
           if (browseResult.statusCode != raw.UA_STATUSCODE_GOOD) {
-            completer.completeError('Browse result error: ${statusCodeToString(browseResult.statusCode)}');
+            completer.completeError(_BrowseResultError(browseResult.statusCode));
             return;
           }
 
@@ -2555,7 +2565,6 @@ class Client implements ClientApi, DataValueMonitoringApi {
     if (data.type == ffi.nullptr) {
       return DynamicValue();
     }
-    var typeId = data.type.ref.typeId.toNodeId();
     if (isNativeStructKind(data.type.ref.typeKind)) {
       // A structure open62541 knows (every NS0 DataType) came decoded into the
       // native struct: variantToValue walks the type's member table, which
@@ -2564,29 +2573,48 @@ class Client implements ClientApi, DataValueMonitoringApi {
       // that has no definition of its own.
       return variantToValue(data, defs: defs);
     }
-    if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null) {
-      if (!defs.containsKey(dataTypeId)) {
-        defs.addAll(await buildSchema(dataTypeId));
-      }
-    } else if (typeId == NodeId.structure) {
-      // No DataType at hand (readValue, call outputs): the ExtensionObject's
-      // typeId is the type's DefaultBinary encoding id, a DataTypeEncoding
-      // object, not the DataType. Resolve it the way a browser does, by its
-      // inverse HasEncoding reference, and fetch the schema of THAT node.
+    if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null && !defs.containsKey(dataTypeId)) {
+      defs.addAll(await buildSchema(dataTypeId));
+    }
+    final isExtensionObject = data.type.ref.typeKind == raw.UA_DataTypeKind.UA_DATATYPEKIND_EXTENSIONOBJECT;
+    if (isExtensionObject && (dataTypeId == null || !defs.containsKey(dataTypeId))) {
+      // No usable DataType at hand: none (readValue, call outputs) or one
+      // without a definition (BaseDataType i=24, as a relay serves a value
+      // under). The ExtensionObject's typeId is the type's DefaultBinary
+      // encoding id, a DataTypeEncoding object, not the DataType. Resolve it
+      // the way a browser does, by its inverse HasEncoding reference; a
+      // server that encodes under the DataType id has no such reference, and
+      // the wire id is then tried as the DataType itself.
       final ext = data.data.cast<raw.UA_ExtensionObject>();
       final encodingId = ext.ref.content.encoded.typeId.toNodeId();
-      final resolved = _dataTypeByEncoding[encodingId] ?? await _dataTypeOfEncoding(encodingId) ?? encodingId;
-      _dataTypeByEncoding[encodingId] = resolved;
-      if (!defs.containsKey(resolved)) {
-        defs.addAll(await buildSchema(resolved));
+      var resolved = _dataTypeByEncoding[encodingId];
+      if (resolved == null) {
+        final resolution = await _resolveEncoding(encodingId);
+        resolved = resolution.dataType;
+        if (resolved == null && resolution.nodeExists && !defs.containsKey(encodingId)) {
+          defs.addAll(await buildSchema(encodingId));
+        }
+        if (resolved == null && defs.containsKey(encodingId)) {
+          resolved = encodingId;
+        }
+        if (resolved != null && !defs.containsKey(resolved)) {
+          defs.addAll(await buildSchema(resolved));
+        }
+        if (resolved != null && defs.containsKey(resolved)) {
+          _dataTypeByEncoding[encodingId] = resolved;
+        } else {
+          resolved = null;
+        }
+      }
+      if (resolved == null) {
+        // Nothing in the address space describes this ExtensionObject: keep
+        // its body with the wire id rather than fail the read.
+        return decodeExtensionObjectsOpaque(data, defs: defs);
       }
       // Alias the schema under the encoding id, which is what a nested
       // ExtensionObject is looked up by.
-      final schema = defs[resolved];
-      if (schema != null) {
-        defs[encodingId] ??= schema;
-      }
-      dataTypeId ??= resolved;
+      defs[encodingId] ??= defs[resolved]!;
+      dataTypeId = resolved;
     }
     final retValue = variantToValue(data, defs: defs, dataTypeId: dataTypeId);
     return retValue;
@@ -2595,12 +2623,15 @@ class Client implements ClientApi, DataValueMonitoringApi {
   /// DataType id per DefaultBinary encoding id resolved so far.
   final Map<NodeId, NodeId> _dataTypeByEncoding = {};
 
-  /// The DataType whose `Default Binary` DataTypeEncoding object is
-  /// [encodingId]: the target of the object's inverse HasEncoding reference.
-  /// Null when the server has no such object (a server that encodes a value
-  /// under its DataType id, as this package's own did before 1.5.9) or the
-  /// node cannot be browsed.
-  Future<NodeId?> _dataTypeOfEncoding(NodeId encodingId) async {
+  /// Resolves a DefaultBinary encoding id to its DataType: the target of
+  /// the encoding object's inverse HasEncoding reference.
+  ///
+  /// `dataType` is null when the node has no such reference or does not
+  /// exist (`nodeExists` tells which; a server that encodes under the
+  /// DataType id publishes no encoding object). A Browse that fails for any
+  /// other reason (the service, the connection) is thrown, never taken for
+  /// "no such node".
+  Future<({NodeId? dataType, bool nodeExists})> _resolveEncoding(NodeId encodingId) async {
     try {
       final refs = await browse(
         encodingId,
@@ -2609,9 +2640,17 @@ class Client implements ClientApi, DataValueMonitoringApi {
         includeSubtypes: false,
         nodeClassMask: NodeClass.UA_NODECLASS_DATATYPE.value,
       );
-      return refs.isEmpty ? null : refs.first.nodeId;
-    } catch (_) {
-      return null;
+      return (dataType: refs.isEmpty ? null : refs.first.nodeId, nodeExists: true);
+    } on _BrowseResultError catch (e) {
+      const noSuchNode = {
+        raw.UA_STATUSCODE_BADNODEIDUNKNOWN,
+        raw.UA_STATUSCODE_BADNODEIDINVALID,
+        raw.UA_STATUSCODE_BADNOTFOUND,
+      };
+      if (noSuchNode.contains(e.statusCode)) {
+        return (dataType: null, nodeExists: false);
+      }
+      rethrow;
     }
   }
 

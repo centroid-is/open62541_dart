@@ -22,6 +22,10 @@ void main() {
   // A bundled NS0 structure the reduced nodeset ships no node for.
   final networkGroupDataType = NodeId.fromNumeric(0, 11944);
   final networkGroupDefaultBinary = NodeId.fromNumeric(0, 11958);
+  // A value under BaseDataType whose encoding id exists nowhere (what a relay
+  // serves when it forwards an upstream custom struct verbatim).
+  final phantomNode = NodeId.fromString(1, 'enc.phantom');
+  final phantomEncodingId = NodeId.fromString(1, 'Phantom_Encoding_DefaultBinary');
 
   DynamicValue inner() {
     final s = DynamicValue(name: 'ST_Enc_Inner', typeId: nestedType);
@@ -34,6 +38,13 @@ void main() {
     s['Id'] = DynamicValue(value: 7, typeId: NodeId.int32);
     s['Label'] = DynamicValue(value: 'seven', typeId: NodeId.uastring);
     s['Inner'] = inner();
+    return s;
+  }
+
+  DynamicValue phantom() {
+    final s = DynamicValue(name: 'Phantom', typeId: NodeId.fromString(1, 'Phantom'));
+    s['A'] = DynamicValue(value: 0x01020304, typeId: NodeId.int32);
+    s.extObjEncodingId = phantomEncodingId;
     return s;
   }
 
@@ -58,6 +69,7 @@ void main() {
         server.addDataTypeNode(numericType, 'ST_Numeric');
         server.addVariableNode(nodeId, schema(), typeId: structType);
         server.addDataTypeNode(networkGroupDataType, 'NetworkGroupDataType');
+        server.addVariableNode(phantomNode, phantom(), typeId: NodeId.fromNumeric(0, 24));
         received = null;
         server.addDataSourceVariableNode(
           dataSourceNode,
@@ -116,6 +128,25 @@ void main() {
           () => client.browse(NodeId.fromString(0, '11944_Encoding_DefaultBinary'), direction: 0),
           throwsA(predicate((e) => '$e'.contains('BadNodeIdUnknown'))),
         );
+      });
+
+      test('readValue of an ExtensionObject whose encoding id resolves to no DataType is opaque, not thrown', () async {
+        // No DataType at hand; the inverse HasEncoding browse finds no node
+        // at the wire id, and nothing else describes the type.
+        final dv = await client.readValue(phantomNode);
+        expect(dv.statusCode, 0);
+        expect(dv.value.typeId, NodeId.structure);
+        expect(dv.value.extObjEncodingId, phantomEncodingId);
+        expect(dv.value.value, [4, 3, 2, 1], reason: 'the body, untouched (Int32 0x01020304 little-endian)');
+      });
+
+      test('read of a BaseDataType variable holding such an ExtensionObject is opaque, not thrown', () async {
+        // The DataType attribute is BaseDataType i=24, which has no
+        // definition; the wire id decides, and it resolves to nothing.
+        final v = await client.read(phantomNode);
+        expect(v.typeId, NodeId.fromNumeric(0, 24), reason: 'read reports the DataType attribute it fetched');
+        expect(v.extObjEncodingId, phantomEncodingId);
+        expect(v.value, [4, 3, 2, 1]);
       });
 
       test('a numeric DataType id gets a string encoding id derived from its number', () async {

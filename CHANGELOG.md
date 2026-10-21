@@ -35,7 +35,13 @@ changes that ship the same native library version.
   A bundled NS0 structure the reduced nodeset lacks as a node, published
   with `addDataTypeNode` (`NetworkGroupDataType` i=11944,
   `EndpointUrlListDataType` i=11943), gets its bundled `Default Binary`
-  object (i=11958 / i=11957) via HasEncoding too. `NodeId.hasEncoding` and
+  object (i=11958 / i=11957) via HasEncoding too. An ExtensionObject whose
+  encoding id resolves to no DataType in the address space (a relayed value
+  under a foreign id, a variable typed `BaseDataType`) is returned as its
+  body with `extObjEncodingId` set by `readValue`, `read` and `Client.call`
+  instead of failing (`Failed to read attribute: BadNodeIdUnknown` with the
+  encoding id, or `Unsupported nodeId type: ns=0;i=24`); a Browse that
+  fails for any other reason still throws. `NodeId.hasEncoding` and
   `NodeId.dataTypeEncodingType` are new.
 - `ServerStatistics` gained `liveDataChangeNotificationCount` and
   `liveNotificationCount`: the per-subscription `dataChangeNotificationsCount`
