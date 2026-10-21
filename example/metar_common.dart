@@ -583,19 +583,82 @@ DateTime _resolveObservationTime({
   return candidates.first;
 }
 
+/// One METAR-reporting aerodrome, by ICAO identifier.
+class MetarStation {
+  const MetarStation(this.icao, this.name, {this.silent = false});
+
+  /// Four-letter ICAO location indicator, e.g. `BIRK`.
+  final String icao;
+
+  /// Human-readable name of the aerodrome.
+  final String name;
+
+  /// True for a station the feed knows but that was not issuing METARs at
+  /// the time of writing. It is listed so that the "never reported" path
+  /// (`Bad_NoData`) is exercised live, not because reports are expected.
+  final bool silent;
+
+  @override
+  String toString() => '$icao $name';
+}
+
+/// Every Icelandic aerodrome with a METAR on the Aviation Weather Center
+/// feed (`https://aviationweather.gov/api/data/metar?ids=...`), checked
+/// against the feed with `&hours=240` in October 2026.
+///
+/// Thirteen of them report; the small airfields only during their opening
+/// hours (a few reports a day, none at night or at the weekend), so at any
+/// given poll several are silent. `BIRG` and `BIST` are known to the feed
+/// but had no report at all in the ten days before this was written.
+const List<MetarStation> icelandMetarStations = [
+  MetarStation('BIAR', 'Akureyri'),
+  MetarStation('BIBD', 'Bíldudalur'),
+  MetarStation('BIEG', 'Egilsstaðir'),
+  MetarStation('BIGJ', 'Gjögur'),
+  MetarStation('BIGR', 'Grímsey'),
+  MetarStation('BIHN', 'Höfn / Hornafjörður'),
+  MetarStation('BIHU', 'Húsavík'),
+  MetarStation('BIIS', 'Ísafjörður'),
+  MetarStation('BIKF', 'Keflavík'),
+  MetarStation('BIRK', 'Reykjavík'),
+  MetarStation('BITN', 'Þórshöfn'),
+  MetarStation('BIVM', 'Vestmannaeyjar'),
+  MetarStation('BIVO', 'Vopnafjörður'),
+  MetarStation('BIRG', 'Raufarhöfn', silent: true),
+  MetarStation('BIST', 'Stykkishólmur', silent: true),
+];
+
+/// The name of the [icelandMetarStations] entry [icao], or the identifier
+/// itself for a station outside the list.
+String metarStationName(String icao) {
+  for (final station in icelandMetarStations) {
+    if (station.icao == icao) return station.name;
+  }
+  return icao;
+}
+
 /// Where a server gets its METAR from.
 ///
 /// The whole point of this interface is that the servers never construct an
 /// HTTP client themselves: the examples inject [AviationWeatherMetarSource]
 /// (real network) and the tests inject a fake, so the test suite runs offline.
+///
+/// A source covers a *set* of stations and answers one poll with whatever
+/// subset of them has a report. A station missing from the answer is not an
+/// error: small airfields only observe during opening hours, and the server
+/// keeps serving their last report (flagged as such) until the next one.
 abstract class MetarSource {
-  /// The ICAO station this source reports for.
-  String get station;
+  /// The ICAO stations this source reports for, in publication order.
+  List<String> get stations;
 
-  /// Fetches the latest observation. Throws on any failure (network,
-  /// HTTP status, unparseable body, station reporting nothing) — the server
-  /// turns a throw into `Bad_NoCommunication` over its last known value.
-  Future<MetarObservation> fetch();
+  /// Fetches the latest observation of every station that has one, keyed by
+  /// ICAO identifier. Stations without a current report are simply absent.
+  ///
+  /// Throws only when the *feed* failed (network, HTTP status, unparseable
+  /// body) — the server turns a throw into `Bad_NoCommunication` over every
+  /// station's last known value and lowers its ServiceLevel. A silent
+  /// station never does either.
+  Future<Map<String, MetarObservation>> fetch();
 
   /// Releases any underlying resources.
   void close() {}
@@ -603,29 +666,35 @@ abstract class MetarSource {
 
 /// The NOAA / Aviation Weather Center public METAR API.
 ///
-/// `https://aviationweather.gov/api/data/metar?ids=<ICAO>&format=json` — US
-/// government public-domain data, no API key, no registration. Their published
-/// guidelines ask for a custom User-Agent and at most 100 requests/minute; the
-/// examples poll every few minutes, which is well inside that (METARs are only
-/// issued every 30-60 minutes anyway).
+/// `https://aviationweather.gov/api/data/metar?ids=<ICAO>,<ICAO>,...&format=json`
+/// — US government public-domain data, no API key, no registration. The
+/// `ids` parameter takes a comma-separated list, so one request per poll
+/// covers every station. Their published guidelines ask for a custom
+/// User-Agent and at most 100 requests/minute; the examples poll every few
+/// minutes, which is well inside that (METARs are only issued every 30-60
+/// minutes anyway).
 ///
 /// [useRawTextEndpoint] switches to the plain-text mirror
 /// `https://tgftp.nws.noaa.gov/data/observations/metar/stations/<ICAO>.TXT`,
-/// which serves the same report as a two-line text file. Both paths end up in
-/// the same [parseMetar], which is exactly why the parser reads the raw report
-/// rather than the JSON convenience fields.
+/// which serves one station per file as a two-line text, so that path fetches
+/// the stations concurrently, one request each. Both paths end up in the same
+/// [parseMetar], which is exactly why the parser reads the raw report rather
+/// than the JSON convenience fields.
 class AviationWeatherMetarSource implements MetarSource {
   AviationWeatherMetarSource(
-    this.station, {
+    List<String> stations, {
     http.Client? httpClient,
     this.useRawTextEndpoint = false,
     this.timeout = const Duration(seconds: 15),
     this.userAgent = 'open62541_dart-metar-example/1.0 (+https://github.com/centroid-is/open62541_dart)',
-  }) : _http = httpClient ?? http.Client(),
-       _ownsClient = httpClient == null;
+  }) : stations = List.unmodifiable(stations.map((s) => s.toUpperCase())),
+       _http = httpClient ?? http.Client(),
+       _ownsClient = httpClient == null {
+    if (stations.isEmpty) throw ArgumentError.value(stations, 'stations', 'at least one station');
+  }
 
   @override
-  final String station;
+  final List<String> stations;
 
   final bool useRawTextEndpoint;
   final Duration timeout;
@@ -634,35 +703,78 @@ class AviationWeatherMetarSource implements MetarSource {
   final bool _ownsClient;
 
   @override
-  Future<MetarObservation> fetch() async {
-    final uri = useRawTextEndpoint
-        ? Uri.parse('https://tgftp.nws.noaa.gov/data/observations/metar/stations/$station.TXT')
-        : Uri.https('aviationweather.gov', '/api/data/metar', {'ids': station, 'format': 'json'});
+  Future<Map<String, MetarObservation>> fetch() => useRawTextEndpoint ? _fetchText() : _fetchJson();
 
+  /// One request for the whole set. The API answers 200 with a (possibly
+  /// empty) array; a station with no current report has no entry.
+  Future<Map<String, MetarObservation>> _fetchJson() async {
+    final uri = Uri.https('aviationweather.gov', '/api/data/metar', {'ids': stations.join(','), 'format': 'json'});
     final response = await _http.get(uri, headers: {'User-Agent': userAgent}).timeout(timeout);
-    if (response.statusCode == 204) {
-      throw MetarParseException('station $station is reporting nothing (HTTP 204)', '');
-    }
+    if (response.statusCode == 204) return const {};
     if (response.statusCode != 200) {
       throw HttpException('${uri.host} answered HTTP ${response.statusCode}');
     }
-
-    if (useRawTextEndpoint) return parseMetar(response.body);
-
     final decoded = jsonDecode(response.body);
-    if (decoded is! List || decoded.isEmpty) {
-      throw MetarParseException('station $station is reporting nothing', response.body);
+    if (decoded is! List) throw MetarParseException('expected a JSON array', response.body);
+
+    final out = <String, MetarObservation>{};
+    for (final entry in decoded) {
+      if (entry is! Map<String, dynamic>) continue;
+      final rawOb = entry['rawOb'];
+      if (rawOb is! String || rawOb.trim().isEmpty) continue;
+      // `reportTime` gives an unambiguous calendar date for the DDHHMMZ group.
+      final reportTime = entry['reportTime'] is String
+          ? DateTime.tryParse('${entry['reportTime']}Z'.replaceAll('ZZ', 'Z'))
+          : null;
+      final observation = parseMetar(rawOb, referenceTime: reportTime?.toUtc());
+      if (!stations.contains(observation.station)) continue;
+      // Should the API ever answer with several reports for one station,
+      // keep the newest.
+      final previous = out[observation.station];
+      if (previous != null && _isOlder(observation, previous)) continue;
+      out[observation.station] = observation;
     }
-    final entry = decoded.first as Map<String, dynamic>;
-    final rawOb = entry['rawOb'];
-    if (rawOb is! String || rawOb.trim().isEmpty) {
-      throw MetarParseException('no rawOb in the API response', response.body);
+    return out;
+  }
+
+  static bool _isOlder(MetarObservation a, MetarObservation b) {
+    final ta = a.observationTime, tb = b.observationTime;
+    return ta != null && tb != null && ta.isBefore(tb);
+  }
+
+  /// One file per station, fetched concurrently. A station the mirror has no
+  /// file for (HTTP 404) is silent, not an error; the fetch as a whole fails
+  /// only when every station failed, so one flaky file cannot take the feed
+  /// down.
+  Future<Map<String, MetarObservation>> _fetchText() async {
+    final results = await Future.wait(stations.map(_fetchTextStation));
+    final out = <String, MetarObservation>{};
+    Object? firstError;
+    for (final result in results) {
+      switch (result) {
+        case MetarObservation():
+          out[result.station] = result;
+        case null:
+          break;
+        default:
+          firstError ??= result;
+      }
     }
-    // `reportTime` gives an unambiguous calendar date for the DDHHMMZ group.
-    final reportTime = entry['reportTime'] is String
-        ? DateTime.tryParse('${entry['reportTime']}Z'.replaceAll('ZZ', 'Z'))
-        : null;
-    return parseMetar(rawOb, referenceTime: reportTime?.toUtc());
+    if (out.isEmpty && firstError != null) throw firstError;
+    return out;
+  }
+
+  /// The observation, `null` for a silent station, or the error.
+  Future<Object?> _fetchTextStation(String station) async {
+    final uri = Uri.parse('https://tgftp.nws.noaa.gov/data/observations/metar/stations/$station.TXT');
+    try {
+      final response = await _http.get(uri, headers: {'User-Agent': userAgent}).timeout(timeout);
+      if (response.statusCode == 404 || response.statusCode == 204) return null;
+      if (response.statusCode != 200) throw HttpException('${uri.host} answered HTTP ${response.statusCode}');
+      return parseMetar(response.body);
+    } catch (error) {
+      return error;
+    }
   }
 
   @override

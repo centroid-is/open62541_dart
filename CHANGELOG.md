@@ -38,12 +38,24 @@ changes that ship the same native library version.
   two supervisors reconnecting. Each call now starts a new generation and the
   previous loops end on their next turn. `stopKeepConnected()` behaviour is
   unchanged.
+- **Exported `UA_STATUSCODE_BADNODATA`, `UA_STATUSCODE_BADNODEIDUNKNOWN` and
+  `UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE`** from the package, next to the
+  codes it already exported, so a data-source proxy can serve a quiet
+  device's last usable value as Uncertain, or report "never had data", and
+  a client can test a read for an unknown node, without reaching for the raw
+  bindings.
 - **Example: redundant METAR servers with ServiceLevel failover.**
-  `example/metar_redundant_server.dart` publishes live BIRK (Reykjavík
-  Airport) weather as a custom structured type on a data-source node
-  (`onReadValue` — real status codes and source timestamps, last-known value
-  served with `Bad_NoCommunication` when the feed is down), computes its
-  `ServiceLevel` in the bands of OPC 10000-4 Table 105 (served through
+  `example/metar_redundant_server.dart` publishes live weather for every
+  Icelandic METAR station (`icelandMetarStations` in `metar_common.dart`,
+  `--station` filters it) as a custom structured type, one data-source node
+  per station named by its ICAO id (`ns=1;s=BIRK`) with every field of the
+  structure as a HasComponent child generated from the schema
+  (`ns=1;s=BIRK.TemperatureC`, ...), each carrying the struct's status and
+  source timestamp (`onReadValue` — the last-known value is served
+  `Bad_NoCommunication` when the feed is down, `Uncertain_LastUsableValue`
+  when only the station has gone quiet, and a station that never reported
+  reads `Bad_NoData`; none of which touches the ServiceLevel). It computes
+  its `ServiceLevel` in the bands of OPC 10000-4 Table 105 (served through
   `Server.setVariableValueSource`), and publishes the hot-redundant set the
   Part 5 way through `Server.setRedundancy(RedundancySupport.hot,
   serverUris:, networkGroups:)`: `ServerRedundancy` typed

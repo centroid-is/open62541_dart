@@ -1,5 +1,6 @@
 /*
-  One half of a redundant OPC UA server pair publishing live METAR weather.
+  One half of a redundant OPC UA server pair publishing live METAR weather
+  for the Icelandic aerodromes.
 
   Run the same file twice to get the pair (see example/README.md):
 
@@ -11,9 +12,18 @@
   What each instance demonstrates:
 
    * A custom structured DataType (`addCustomType` + `addDataTypeNode`) holding
-     the decoded observation, served from a DATA-SOURCE variable node through
-     `onReadValue` so every read carries a real OPC UA StatusCode and the
-     observation's own sourceTimestamp.
+     a decoded observation, served for every station from a DATA-SOURCE
+     variable node named by the station's ICAO identifier (`ns=1;s=BIRK`)
+     through `onReadValue`, so every read carries a real OPC UA StatusCode and
+     the observation's own sourceTimestamp. Under each struct node, one
+     HasComponent child per struct field (`ns=1;s=BIRK.TemperatureC`, ...),
+     generated from the schema, carries the same value, status and
+     timestamp for clients without custom-struct support.
+   * Per-station quality: a station the feed has no current report for keeps
+     its last observation, `Uncertain_LastUsableValue` once it is older than
+     the staleness threshold, and `Bad_NoData` if it never reported. Only a
+     failure of the feed itself makes the data `Bad_NoCommunication` and
+     lowers the ServiceLevel.
    * The Part 4 / Part 5 non-transparent redundancy surface on the STANDARD
      NS0 nodes: ServiceLevel (i=2267) computed live from this instance's own
      health and reported in the Part 4 bands (Maintenance / NoData / Degraded
@@ -87,7 +97,7 @@ class MetarRedundantServer {
   /// The port to listen on; `0` lets the OS pick one (see [listenPort]).
   final int port;
 
-  /// Where the observation comes from. Injected so tests can supply a fake.
+  /// Where the observations come from. Injected so tests can supply a fake.
   final MetarSource source;
 
   /// This instance's ApplicationUri: its identity as a member of the redundant
@@ -104,11 +114,12 @@ class MetarRedundantServer {
   Map<String, List<String>> get peers => Map.unmodifiable(_peers);
   final Map<String, List<String>> _peers;
 
-  /// How often to re-fetch the observation.
+  /// How often to re-fetch the observations.
   final Duration pollInterval;
 
-  /// How old an observation may get before this server declares its data
-  /// untrustworthy (Bad_NoCommunication + a falling ServiceLevel).
+  /// How old a station's observation may get before it is served as
+  /// `Uncertain_LastUsableValue`, and how old the newest observation of the
+  /// whole feed may get before this server's ServiceLevel starts falling.
   final Duration staleAfter;
 
   final LogLevel logLevel;
@@ -128,29 +139,42 @@ class MetarRedundantServer {
   /// disconnect closes the channel at once.
   int? get connectionCount => _server?.statistics.currentChannelCount;
 
+  /// The stations this server publishes, in the order of their nodes.
+  List<String> get stations => source.stations;
+
   /// DataType node of the published structure.
   NodeId get metarTypeId => NodeId.fromString(1, 'MetarObservationType');
 
-  /// The struct-valued data-source node carrying the whole observation.
-  NodeId get metarNodeId => NodeId.fromString(1, '${source.station}.Metar');
+  /// The struct-valued data-source node carrying a station's whole
+  /// observation: `ns=1;s=<ICAO>`, BrowseName `<ICAO>`.
+  NodeId stationNodeId(String station) => NodeId.fromString(1, station);
 
-  /// Plain scalar mirrors, for clients (and UaExpert sessions) without custom
-  /// struct support.
-  NodeId get temperatureNodeId => NodeId.fromString(1, '${source.station}.TemperatureC');
-  NodeId get windSpeedNodeId => NodeId.fromString(1, '${source.station}.WindSpeedKt');
+  /// The scalar child of a station's struct node that mirrors one field:
+  /// `ns=1;s=<ICAO>.<Field>`, BrowseName `<Field>`, a HasComponent of
+  /// [stationNodeId]. There is one per entry of [fieldNames].
+  NodeId fieldNodeId(String station, String field) => NodeId.fromString(1, '$station.$field');
+
+  /// The field names of the structure, in declaration order — the same
+  /// list the child nodes are generated from, so the two cannot drift apart.
+  List<String> get fieldNames => [for (final e in _metarSchema().entries) e.key];
 
   Server? _server;
   Timer? _pollTimer;
   bool _pumping = false;
 
-  MetarObservation? _last;
-  DateTime? _lastObservedAt;
+  final Map<String, MetarObservation> _last = {};
+  final Map<String, DateTime> _lastObservedAt = {};
+  DateTime? _lastFeedSuccess;
   int _consecutiveFailures = 0;
   bool _shuttingDown = false;
   int? _forcedServiceLevel;
 
-  /// The most recent successfully decoded observation, if any.
-  MetarObservation? get lastObservation => _last;
+  /// The most recent successfully decoded observation of [station], if any.
+  MetarObservation? lastObservation(String station) => _last[station];
+
+  /// Every station that has reported at least once, with its newest
+  /// observation.
+  Map<String, MetarObservation> get lastObservations => Map.unmodifiable(_last);
 
   /// Number of consecutive failed fetches since the last success.
   int get consecutiveFailures => _consecutiveFailures;
@@ -163,38 +187,54 @@ class MetarRedundantServer {
     _log('[$instance] ServiceLevel override: ${_forcedServiceLevel ?? 'cleared'} (now $serviceLevel)');
   }
 
-  /// Age of the newest observation this server holds, or `null` if it has none.
+  /// Age of the newest observation this server holds, over all stations, or
+  /// `null` if it has none. This is the feed's age: one station that has
+  /// gone quiet for the night does not make the feed stale, a feed whose
+  /// newest report is hours old does.
   Duration? get dataAge {
-    final at = _lastObservedAt;
+    DateTime? newest;
+    for (final at in _lastObservedAt.values) {
+      if (newest == null || at.isAfter(newest)) newest = at;
+    }
+    return newest == null ? null : DateTime.now().toUtc().difference(newest);
+  }
+
+  /// Age of [station]'s newest observation, or `null` if it never reported.
+  Duration? stationDataAge(String station) {
+    final at = _lastObservedAt[station];
     return at == null ? null : DateTime.now().toUtc().difference(at);
   }
 
   /// This instance's OPC UA ServiceLevel (0-255), computed honestly from its
   /// own state — this is the number the failover client ranks servers by.
   ///
-  /// The ladder, within the bands of OPC 10000-4 §6.6.2.4.2 (Table 105):
+  /// It describes the FEED, not any one station: a small airfield that
+  /// reports only in opening hours is silent most of the day, and that
+  /// silence is not a fault of this server. The ladder, within the bands of
+  /// OPC 10000-4 §6.6.2.4.2 (Table 105):
   ///  * `0`   — Maintenance: shutting down. Clients shall disconnect and not
   ///            come back.
-  ///  * `1`   — NoData: never fetched anything. The server is up and will
-  ///            have data on its next poll, so it must not claim Maintenance;
-  ///            it has nothing to serve yet, so it is not Degraded either.
-  ///  * `250` — Healthy: fresh data (younger than [staleAfter]) and the last
-  ///            fetch succeeded. 250 rather than 255 leaves headroom above for
-  ///            an operator-designated preferred server.
-  ///  * `100` — Degraded: data older than [staleAfter] but younger than twice
-  ///            that.
-  ///  * `5`   — Degraded: data older than that: still alive, nearly useless.
+  ///  * `1`   — NoData: no station has ever reported. The server is up and
+  ///            will have data on its next poll, so it must not claim
+  ///            Maintenance; it has nothing to serve yet, so it is not
+  ///            Degraded either.
+  ///  * `250` — Healthy: the newest observation is younger than [staleAfter]
+  ///            and the last fetch succeeded. 250 rather than 255 leaves
+  ///            headroom above for an operator-designated preferred server.
+  ///  * `100` — Degraded: the newest observation is older than [staleAfter]
+  ///            but younger than twice that.
+  ///  * `5`   — Degraded: older than that: still alive, nearly useless.
   ///  * minus 60 per consecutive failed fetch, floored at 2 — the bottom of
-  ///    the Degraded band. A server that still serves its last-known value
+  ///    the Degraded band. A server that still serves its last-known values
   ///    (flagged `Bad_NoCommunication`) is still exchanging data, so it never
   ///    reports NoData, let alone Maintenance.
   int get serviceLevel {
     if (_shuttingDown) return serviceLevelMaintenance;
     final forced = _forcedServiceLevel;
     if (forced != null) return forced;
-    if (_last == null || _lastObservedAt == null) return serviceLevelNoData;
+    final age = dataAge;
+    if (age == null) return serviceLevelNoData;
 
-    final age = dataAge!;
     var level = age <= staleAfter
         ? 250
         : age <= staleAfter * 2
@@ -202,13 +242,6 @@ class MetarRedundantServer {
         : 5;
     level -= 60 * _consecutiveFailures;
     return level.clamp(serviceLevelDegradedFloor, 255);
-  }
-
-  /// True when the value this server serves should be flagged Bad.
-  bool get _dataIsBad {
-    if (_consecutiveFailures > 0) return true;
-    final age = dataAge;
-    return age == null || age > staleAfter;
   }
 
   /// Starts the server, publishes the address space and performs the first
@@ -233,7 +266,10 @@ class MetarRedundantServer {
     _publishMetarNodes(server);
     _publishRedundancySurface(server);
 
-    _log('[$instance] listening on $endpoint as $applicationUri (set: ${_serverUriArray().join(', ')})');
+    _log(
+      '[$instance] listening on $endpoint as $applicationUri (set: ${_serverUriArray().join(', ')}); '
+      'publishing ${stations.length} stations: ${stations.map((s) => '$s ${metarStationName(s)}').join(', ')}',
+    );
 
     await _poll();
     _pollTimer = Timer.periodic(pollInterval, (_) => _poll());
@@ -258,32 +294,36 @@ class MetarRedundantServer {
       displayName: LocalizedText('METAR Observation', 'en-US'),
     );
 
-    // The flagship node. `onReadValue` (rather than `onRead`) is what lets the
-    // server answer with a value AND a status AND the observation's own
-    // source timestamp — so a client can tell "this is 3 minutes old and
-    // Good" from "this is the same number, but it is 4 hours old and the
-    // upstream feed is down".
-    server.addDataSourceVariableNode(
-      metarNodeId,
-      browseName: '${source.station} METAR',
-      typeId: metarTypeId,
-      onReadValue: _readObservation,
-    );
+    for (final station in stations) {
+      // The flagship node, one per station, named by its ICAO identifier.
+      // `onReadValue` (rather than `onRead`) is what lets the server answer
+      // with a value AND a status AND the observation's own source timestamp
+      // — so a client can tell "this is 3 minutes old and Good" from "this
+      // is the same number, but it is 4 hours old and the station has not
+      // reported since".
+      server.addDataSourceVariableNode(
+        stationNodeId(station),
+        browseName: station,
+        typeId: metarTypeId,
+        onReadValue: () => _readObservation(station),
+      );
 
-    // Scalar mirrors so the example is browsable without custom-struct
-    // support. They carry the same quality as the struct.
-    server.addDataSourceVariableNode(
-      temperatureNodeId,
-      browseName: '${source.station} Temperature',
-      typeId: NodeId.double,
-      onReadValue: () => _mirror('TemperatureC', NodeId.double, (o) => o.temperatureC ?? double.nan),
-    );
-    server.addDataSourceVariableNode(
-      windSpeedNodeId,
-      browseName: '${source.station} Wind Speed',
-      typeId: NodeId.double,
-      onReadValue: () => _mirror('WindSpeedKt', NodeId.double, (o) => o.windSpeedKt ?? double.nan),
-    );
+      // One scalar child per struct field, so the example is browsable
+      // without custom-struct support. Generated from the schema: a field
+      // added to the structure gets its child node for free, and the two can
+      // never list different fields. Each child carries the same status and
+      // source timestamp as the struct it mirrors.
+      for (final field in _metarSchema().entries) {
+        server.addDataSourceVariableNode(
+          fieldNodeId(station, field.key),
+          browseName: field.key,
+          typeId: field.value.typeId,
+          parentNodeId: stationNodeId(station),
+          parentReferenceNodeId: NodeId.hasComponent,
+          onReadValue: () => _mirror(station, field.key),
+        );
+      }
+    }
   }
 
   /// Publishes this instance's health and its place in the set on the
@@ -323,62 +363,102 @@ class MetarRedundantServer {
     );
   }
 
-  /// The data-source read for the struct node.
+  /// The status a read of [station] carries, given that it has an
+  /// observation.
+  ///
+  /// * `Bad_NoCommunication` while the feed itself is failing: the value is
+  ///   the last one received before the feed went down, and nothing newer
+  ///   can be known until it is back.
+  /// * `Uncertain_LastUsableValue` when the feed is fine but this station's
+  ///   newest report is older than [staleAfter]: the station has not
+  ///   reported since (closed for the night, sensor out), the value is the
+  ///   last usable one and is served with its original timestamp so the
+  ///   client can judge for itself.
+  /// * `Good` otherwise.
+  int _statusOf(String station) {
+    if (_consecutiveFailures > 0) return UA_STATUSCODE_BADNOCOMMUNICATION;
+    final age = stationDataAge(station);
+    if (age == null || age > staleAfter) return UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE;
+    return UA_STATUSCODE_GOOD;
+  }
+
+  /// What a read of a station that has never reported fails with: there is
+  /// no last-known value to serve, so the read fails outright rather than
+  /// inventing a zeroed struct. `Bad_NoData` when the feed answers and simply
+  /// has nothing for this station (a station closed for the season, or one
+  /// that is listed but does not observe); `Bad_NoCommunication` when the
+  /// feed has never answered at all, so nothing is known about anything.
+  UaStatusException _neverReported() =>
+      UaStatusException(_lastFeedSuccess == null ? UA_STATUSCODE_BADNOCOMMUNICATION : UA_STATUSCODE_BADNODATA);
+
+  /// The data-source read for a station's struct node.
   ///
   /// This is the behaviour PR #99 made possible and the whole reason the node
-  /// uses `onReadValue`: when the upstream feed is unreachable, or the newest
-  /// observation has aged past [staleAfter], the server keeps serving the LAST
-  /// KNOWN value but flags it `Bad_NoCommunication` and keeps its ORIGINAL
-  /// source timestamp. A client therefore sees stale-but-useful data with
-  /// honest quality, instead of either a hole or a silent lie.
-  DataSourceValue _readObservation() {
-    final last = _last;
-    if (last == null) {
-      // Nothing was ever fetched: there is no last-known value to serve, so
-      // fail the read outright rather than inventing a zeroed struct.
-      throw const UaStatusException(UA_STATUSCODE_BADNOCOMMUNICATION);
-    }
+  /// uses `onReadValue`: when the upstream feed is unreachable, or the
+  /// station's newest observation has aged past [staleAfter], the server
+  /// keeps serving the LAST KNOWN value but flags it ([_statusOf]) and keeps
+  /// its ORIGINAL source timestamp. A client therefore sees stale-but-useful
+  /// data with honest quality, instead of either a hole or a silent lie.
+  DataSourceValue _readObservation(String station) {
+    final last = _last[station];
+    if (last == null) throw _neverReported();
     return DataSourceValue(
       value: _project(last),
-      statusCode: _dataIsBad ? UA_STATUSCODE_BADNOCOMMUNICATION : UA_STATUSCODE_GOOD,
-      sourceTimestamp: _lastObservedAt,
+      statusCode: _statusOf(station),
+      sourceTimestamp: _lastObservedAt[station],
     );
   }
 
-  DataSourceValue _mirror(String name, NodeId typeId, double Function(MetarObservation) pick) {
-    final last = _last;
-    if (last == null) throw const UaStatusException(UA_STATUSCODE_BADNOCOMMUNICATION);
+  /// The data-source read for one field child of a station: the matching
+  /// member of the projected struct, with the struct's status and timestamp.
+  DataSourceValue _mirror(String station, String field) {
+    final last = _last[station];
+    if (last == null) throw _neverReported();
     return DataSourceValue(
-      value: DynamicValue(value: pick(last), typeId: typeId, name: name),
-      statusCode: _dataIsBad ? UA_STATUSCODE_BADNOCOMMUNICATION : UA_STATUSCODE_GOOD,
-      sourceTimestamp: _lastObservedAt,
+      value: _project(last)[field],
+      statusCode: _statusOf(station),
+      sourceTimestamp: _lastObservedAt[station],
     );
   }
 
   Future<void> _poll() async {
     try {
-      final observation = await source.fetch();
-      _last = observation;
-      _lastObservedAt = (observation.observationTime ?? DateTime.now()).toUtc();
+      final observations = await source.fetch();
+      final now = DateTime.now().toUtc();
       _consecutiveFailures = 0;
+      _lastFeedSuccess = now;
+      final reported = <String>[];
+      for (final station in stations) {
+        final observation = observations[station];
+        if (observation == null) continue;
+        _last[station] = observation;
+        _lastObservedAt[station] = (observation.observationTime ?? now).toUtc();
+        reported.add('$station ${_hhmm(_lastObservedAt[station]!)}');
+      }
+      final silent = stations.where((s) => !observations.containsKey(s));
       _log(
-        '[$instance] ${observation.rawText.split(RegExp(r"\s+")).take(12).join(" ")} '
-        '-> ServiceLevel $serviceLevel',
+        '[$instance] feed ok: ${reported.length} of ${stations.length} stations reported'
+        '${reported.isEmpty ? '' : ' (${reported.join(', ')})'}'
+        '${silent.isEmpty ? '' : '; silent: ${silent.join(', ')}'}'
+        ' -> ServiceLevel $serviceLevel',
       );
     } catch (error) {
       _consecutiveFailures++;
       _log(
         '[$instance] fetch failed ($_consecutiveFailures in a row): $error '
-        '-> serving last known value with Bad_NoCommunication, ServiceLevel $serviceLevel',
+        '-> serving last known values with Bad_NoCommunication, ServiceLevel $serviceLevel',
       );
     }
   }
+
+  static String _hhmm(DateTime t) => '${t.hour.toString().padLeft(2, '0')}${t.minute.toString().padLeft(2, '0')}Z';
 
   /// Field schema of the published structure.
   ///
   /// OPC UA struct members cannot be null, so "not reported" is encoded with
   /// documented sentinels: `NaN` for the doubles and `-1` for the integers.
   /// Consumers should test for them rather than treating -1 as a heading.
+  /// The child nodes under each station are generated from this very list.
   DynamicValue _metarSchema() {
     final s = DynamicValue(name: 'MetarObservationType', typeId: metarTypeId);
     s['Station'] = DynamicValue(value: '', typeId: NodeId.uastring);
@@ -406,7 +486,7 @@ class MetarRedundantServer {
   DynamicValue _project(MetarObservation o) {
     final s = _metarSchema();
     s['Station'].value = o.station;
-    s['ObservationTime'].value = (o.observationTime ?? _lastObservedAt ?? DateTime.utc(1970)).toUtc();
+    s['ObservationTime'].value = (o.observationTime ?? _lastObservedAt[o.station] ?? DateTime.utc(1970)).toUtc();
     s['ReportType'].value = o.reportType;
     s['Automatic'].value = o.automatic;
     s['TemperatureC'].value = o.temperatureC ?? double.nan;
@@ -494,7 +574,7 @@ Future<void> main(List<String> args) async {
     peers: options.peers,
     pollInterval: options.pollInterval,
     staleAfter: options.staleAfter,
-    source: AviationWeatherMetarSource(options.station, useRawTextEndpoint: options.useText),
+    source: AviationWeatherMetarSource(options.stations, useRawTextEndpoint: options.useText),
   );
   if (options.serviceLevel != null) server.forceServiceLevel(options.serviceLevel);
 
@@ -525,14 +605,21 @@ Usage: dart run example/metar_redundant_server.dart [options]
                         ServerUriArray after this server's own, and in
                         ServerNetworkGroups, which is where a client seeded
                         with this server's endpoint learns the peer's.
-  --station <ICAO>      Station to publish (default: BIRK, Reykjavik Airport)
+  --station <ICAO>      Publish only these stations: repeatable, or a comma
+                        list (`--station BIRK,BIKF`). Default: every Icelandic
+                        METAR station (see icelandMetarStations in
+                        metar_common.dart). An identifier outside that list is
+                        accepted and fetched from the same feed.
   --poll <seconds>      Fetch interval (default: 300)
-  --stale <seconds>     Age at which data is flagged Bad_NoCommunication
+  --stale <seconds>     Age at which a station's observation is served as
+                        Uncertain_LastUsableValue, and at which the feed's
+                        newest observation starts lowering the ServiceLevel
                         (default: 7200)
   --service-level <n>   Force ServiceLevel to a fixed 0-255 value instead of
                         computing it. Use this to demonstrate failover without
                         killing a process.
-  --text                Use the NOAA plain-text endpoint instead of the JSON API
+  --text                Use the NOAA plain-text endpoint (one request per
+                        station) instead of the JSON API (one for all)
   --help
 ''';
 
@@ -543,7 +630,7 @@ class _Options {
     required this.host,
     required this.applicationUri,
     required this.peers,
-    required this.station,
+    required this.stations,
     required this.pollInterval,
     required this.staleAfter,
     required this.serviceLevel,
@@ -556,7 +643,7 @@ class _Options {
   final String host;
   final String? applicationUri;
   final Map<String, List<String>> peers;
-  final String station;
+  final List<String> stations;
   final Duration pollInterval;
   final Duration staleAfter;
   final int? serviceLevel;
@@ -571,7 +658,7 @@ class _Options {
       host: flags['host']?.last ?? 'localhost',
       applicationUri: flags['uri']?.last,
       peers: parsePeers(flags['peer'] ?? const []),
-      station: (flags['station']?.last ?? 'BIRK').toUpperCase(),
+      stations: parseStations(flags['station'] ?? const []),
       pollInterval: Duration(seconds: int.parse(flags['poll']?.last ?? '300')),
       staleAfter: Duration(seconds: int.parse(flags['stale']?.last ?? '7200')),
       serviceLevel: flags['service-level'] == null ? null : int.parse(flags['service-level']!.last),
@@ -579,6 +666,20 @@ class _Options {
       help: flags.containsKey('help'),
     );
   }
+}
+
+/// `--station` values — each one an ICAO identifier or a comma-separated
+/// list of them, in any case — as an upper-cased, de-duplicated list in the
+/// order given. With no value at all: every station of [icelandMetarStations].
+List<String> parseStations(List<String> values) {
+  final out = <String>[];
+  for (final value in values) {
+    for (final id in value.split(',')) {
+      final station = id.trim().toUpperCase();
+      if (station.isNotEmpty && !out.contains(station)) out.add(station);
+    }
+  }
+  return out.isEmpty ? [for (final s in icelandMetarStations) s.icao] : out;
 }
 
 /// `--peer` values, `<uri>` or `<uri>=<endpoint url>`, as a map from the

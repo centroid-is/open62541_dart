@@ -36,17 +36,32 @@ final nonTransparentNetworkRedundancyType = NodeId.fromNumeric(0, raw.UA_NS0ID_N
 ///
 /// A separate group pins the data-quality contract: a failing feed must still
 /// serve the LAST KNOWN value, flagged `Bad_NoCommunication`, with the
-/// ORIGINAL source timestamp.
+/// ORIGINAL source timestamp; and the last group pins the node layout: one
+/// struct node per station named by its ICAO id (`ns=1;s=BIRK`), every
+/// struct field mirrored as a HasComponent child (`ns=1;s=BIRK.TemperatureC`)
+/// with the struct's value, status and timestamp, a station that never
+/// reported reading `Bad_NoData` and one gone quiet
+/// `Uncertain_LastUsableValue`, neither touching the ServiceLevel.
 
 /// A [MetarSource] with a switch on it. No HTTP, no timers, no clock reads.
 class FakeMetarSource implements MetarSource {
-  FakeMetarSource(this.station, this.observation);
+  /// A single-station source.
+  FakeMetarSource(String station, MetarObservation observation)
+    : stations = [station],
+      observations = {station: observation};
+
+  /// A multi-station source: [stations] are published, [observations] is
+  /// what the next [fetch] answers with. A station in [stations] but not in
+  /// [observations] is silent — exactly what the feed does for a small
+  /// airfield outside its opening hours.
+  FakeMetarSource.stations(this.stations, this.observations);
 
   @override
-  final String station;
+  final List<String> stations;
 
-  /// What the next [fetch] returns.
-  MetarObservation observation;
+  /// What the next [fetch] returns, by station. Mutable: remove a station to
+  /// silence it, replace an entry to issue a new report.
+  final Map<String, MetarObservation> observations;
 
   /// When true, [fetch] throws — the "upstream feed is down" case.
   bool failing = false;
@@ -55,10 +70,10 @@ class FakeMetarSource implements MetarSource {
   bool closed = false;
 
   @override
-  Future<MetarObservation> fetch() async {
+  Future<Map<String, MetarObservation>> fetch() async {
     fetches++;
     if (failing) throw StateError('fake METAR feed is down');
-    return observation;
+    return Map.of(observations);
   }
 
   @override
@@ -98,10 +113,15 @@ MetarObservation observedAt(DateTime at, {String raw = 'METAR BIRK 011900Z 30003
   );
 }
 
-/// A fresh observation: [ago] old, so it counts as current everywhere.
-MetarObservation recent({String? raw, Duration ago = const Duration(minutes: 5)}) {
+/// A fresh observation: [ago] old, so it counts as current everywhere. Give
+/// [station] for a report from somewhere other than BIRK (the raw report
+/// then carries that identifier, which is what the struct's `Station` field
+/// and the per-station nodes are keyed by).
+MetarObservation recent({String? raw, Duration ago = const Duration(minutes: 5), String station = 'BIRK'}) {
   final at = DateTime.now().toUtc().subtract(ago);
-  return raw == null ? observedAt(at) : observedAt(at, raw: raw);
+  if (raw != null) return observedAt(at, raw: raw);
+  if (station == 'BIRK') return observedAt(at);
+  return observedAt(at, raw: 'METAR $station 011900Z 18012KT 9999 FEW020 BKN040 05/01 Q0998');
 }
 
 /// A [MetarRedundantServer] on its own isolate, for the orderly-shutdown
@@ -745,7 +765,7 @@ void main() {
           reason: 'ServerStatus.State = Shutdown (4) during the delay, Part 5 §12.6',
         );
         expect((await probe.read(NodeId.serviceLevel)).asInt, 0, reason: 'Table 105: 0 tells the clients to leave');
-        final data = await probe.readValue(NodeId.fromString(1, 'BIRK.Metar'));
+        final data = await probe.readValue(NodeId.fromString(1, 'BIRK'));
         expect(data.isGood, isTrue, reason: 'the hand-off happens while the data is still Good');
         expect(data.value['Station'].value, 'BIRK');
 
@@ -814,7 +834,7 @@ void main() {
     test('a failing feed keeps serving the last value with Bad_NoCommunication and its original timestamp', () async {
       // Healthy: Good, and the source timestamp is the OBSERVATION time, not
       // "now" — that is the whole point of onReadValue.
-      final good = await probe.readValue(server.metarNodeId);
+      final good = await probe.readValue(server.stationNodeId('BIRK'));
       expect(good.statusCode, UA_STATUSCODE_GOOD);
       expect(good.isGood, isTrue);
       expect(good.sourceTimestamp, observationTime);
@@ -828,7 +848,7 @@ void main() {
       final failuresBefore = server.consecutiveFailures;
       expect(await waitUntil(() => server.consecutiveFailures > failuresBefore), isTrue);
 
-      final bad = await probe.readValue(server.metarNodeId);
+      final bad = await probe.readValue(server.stationNodeId('BIRK'));
       expect(bad.statusCode, UA_STATUSCODE_BADNOCOMMUNICATION, reason: 'exactly Bad_NoCommunication');
       expect(bad.isBad, isTrue);
       // The LAST KNOWN value is still delivered alongside the Bad status...
@@ -841,8 +861,8 @@ void main() {
       expect(bad.serverTimestamp, isNotNull);
       expect(bad.serverTimestamp!.isAfter(bad.sourceTimestamp!), isTrue);
 
-      // The scalar mirrors carry the same quality.
-      final mirror = await probe.readValue(server.temperatureNodeId);
+      // The field children under the struct node carry the same quality.
+      final mirror = await probe.readValue(server.fieldNodeId('BIRK', 'TemperatureC'));
       expect(mirror.statusCode, UA_STATUSCODE_BADNOCOMMUNICATION);
       expect((mirror.value.value as num).toDouble(), 10.0);
       expect(mirror.sourceTimestamp, observationTime);
@@ -856,7 +876,7 @@ void main() {
       // Recovery: the very next successful fetch flips the status back.
       fake.failing = false;
       expect(await waitUntil(() => server.consecutiveFailures == 0), isTrue);
-      final recovered = await probe.readValue(server.metarNodeId);
+      final recovered = await probe.readValue(server.stationNodeId('BIRK'));
       expect(recovered.statusCode, UA_STATUSCODE_GOOD);
       expect(recovered.sourceTimestamp, observationTime);
       expect((await probe.read(NodeId.serviceLevel)).asInt, 250);
@@ -885,9 +905,14 @@ void main() {
       expect(staleFake.fetches, greaterThan(0));
       expect(staleServer.consecutiveFailures, 0, reason: 'the fetch itself succeeded');
 
-      final dv = await staleProbe.readValue(staleServer.metarNodeId);
-      expect(dv.statusCode, UA_STATUSCODE_BADNOCOMMUNICATION);
+      // The feed answers, so this is not a communication failure: the value
+      // is the last usable one, served as such, with its own timestamp.
+      final dv = await staleProbe.readValue(staleServer.stationNodeId('BIRK'));
+      expect(dv.statusCode, UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE);
+      expect(dv.isGood, isFalse);
+      expect(dv.isBad, isFalse);
       expect(dv.value['Station'].value, 'BIRK');
+      expect(dv.sourceTimestamp, staleFake.observations['BIRK']!.observationTime);
       // 6 h old with a 2 h threshold: past 2x staleAfter, so the lowest rung.
       expect((await staleProbe.read(NodeId.serviceLevel)).asInt, 5);
     }, timeout: const Timeout(Duration(minutes: 2)));
@@ -905,7 +930,7 @@ void main() {
       );
       expect(server.serviceLevel, serviceLevelDegradedFloor);
       expect((await probe.read(NodeId.serviceLevel)).asInt, 2);
-      final dv = await probe.readValue(server.metarNodeId);
+      final dv = await probe.readValue(server.stationNodeId('BIRK'));
       expect(dv.statusCode, UA_STATUSCODE_BADNOCOMMUNICATION);
       expect(dv.value['Station'].value, 'BIRK', reason: 'still serving the last-known value');
     }, timeout: const Timeout(Duration(minutes: 2)));
@@ -935,10 +960,10 @@ void main() {
 
       // With no last-known value there is nothing honest to serve, so the read
       // fails with Bad_NoCommunication and carries no value at all.
-      final dv = await coldProbe.readValue(coldServer.metarNodeId);
+      final dv = await coldProbe.readValue(coldServer.stationNodeId('BIRK'));
       expect(dv.statusCode, UA_STATUSCODE_BADNOCOMMUNICATION);
       expect(dv.value.value, isNull);
-      await expectLater(coldProbe.read(coldServer.metarNodeId), throwsA(anything));
+      await expectLater(coldProbe.read(coldServer.stationNodeId('BIRK')), throwsA(anything));
     }, timeout: const Timeout(Duration(minutes: 2)));
   });
 
@@ -963,10 +988,11 @@ void main() {
         await server.stop();
       });
 
-      final v = await probe.read(server.metarNodeId);
+      final v = await probe.read(server.stationNodeId('BIRK'));
       expect(v.isObject, isTrue);
       expect(v.typeId, server.metarTypeId);
       expect(v.asObject.keys, hasLength(19));
+      expect(v.asObject.keys.toList(), server.fieldNames, reason: 'the schema the child nodes are generated from');
 
       expect(v['Station'].value, 'BIRK');
       expect(v['ReportType'].value, 'METAR');
@@ -1012,7 +1038,7 @@ void main() {
         await server.stop();
       });
 
-      final v = await probe.read(server.metarNodeId);
+      final v = await probe.read(server.stationNodeId('BIRK'));
       expect(v['WindDirectionDeg'].value, 90);
       expect((v['WindSpeedKt'].value as num).toDouble(), 25.0);
       expect((v['WindGustKt'].value as num).toDouble(), 40.0);
@@ -1024,9 +1050,261 @@ void main() {
       expect((v['RelativeHumidityPct'].value as num).toDouble(), closeTo(86.0, 0.5));
       expect((v['AltimeterHPa'].value as num).toDouble(), 978.0);
 
-      // The scalar mirrors track the struct.
-      expect((await probe.read(server.temperatureNodeId)).asDouble, -4.0);
-      expect((await probe.read(server.windSpeedNodeId)).asDouble, 25.0);
+      // The field children track the struct.
+      expect((await probe.read(server.fieldNodeId('BIRK', 'TemperatureC'))).asDouble, -4.0);
+      expect((await probe.read(server.fieldNodeId('BIRK', 'WindSpeedKt'))).asDouble, 25.0);
+    }, timeout: const Timeout(Duration(minutes: 2)));
+  });
+
+  group('station nodes: one struct per ICAO id, every field a child', () {
+    late FakeMetarSource fake;
+    late MetarRedundantServer server;
+    late Client probe;
+    late MetarObservation birk;
+    late MetarObservation bikf;
+
+    setUp(() async {
+      // Three stations: two reporting, one (BIRG, Raufarhöfn) that the feed
+      // knows but that never reports. BIKF's report is already old: the
+      // airfield observed four hours ago and has been quiet since.
+      birk = recent(ago: const Duration(minutes: 5));
+      bikf = recent(station: 'BIKF', ago: const Duration(hours: 4));
+      fake = FakeMetarSource.stations(['BIRK', 'BIKF', 'BIRG'], {'BIRK': birk, 'BIKF': bikf});
+      server = MetarRedundantServer(
+        instance: 'stations',
+        port: 0,
+        source: fake,
+        pollInterval: const Duration(milliseconds: 200),
+        staleAfter: const Duration(hours: 2),
+        log: (_) {},
+      );
+      await server.start();
+      probe = await setupClient(server.listenPort);
+    });
+
+    tearDown(() async {
+      await probe.delete();
+      await server.stop();
+    });
+
+    test('the struct node of a station is ns=1;s=<ICAO> under Objects, BrowseName and DisplayName <ICAO>', () async {
+      expect(server.stations, ['BIRK', 'BIKF', 'BIRG']);
+      expect(server.stationNodeId('BIRK'), NodeId.fromString(1, 'BIRK'));
+
+      final objects = await probe.browse(NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER));
+      for (final station in server.stations) {
+        final node = objects.singleWhere((r) => r.nodeId == NodeId.fromString(1, station));
+        expect(node.browseName, station);
+        expect(node.displayName, station);
+        expect(node.referenceTypeId, NodeId.organizes);
+        expect(node.nodeClass, NodeClass.UA_NODECLASS_VARIABLE);
+      }
+
+      // The struct's own Station field carries the same identifier.
+      final v = await probe.readValue(server.stationNodeId('BIKF'));
+      expect(v.value.typeId, server.metarTypeId);
+      expect(v.value['Station'].value, 'BIKF');
+      expect(v.value['RawText'].value, contains('METAR BIKF'));
+      expect((v.value['TemperatureC'].value as num).toDouble(), 5.0);
+      expect((await probe.readValue(server.stationNodeId('BIRK'))).value['Station'].value, 'BIRK');
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('every schema field is a HasComponent child with the struct\'s value, status and timestamp', () async {
+      for (final station in ['BIRK', 'BIKF']) {
+        final struct = await probe.readValue(server.stationNodeId(station));
+        final fields = struct.value.asObject.keys.toList();
+        expect(fields, server.fieldNames);
+        expect(fields, hasLength(19));
+
+        // Browse: exactly the schema fields, as HasComponent (open62541
+        // returns references in its own order, not insertion order), each at
+        // ns=1;s=<ICAO>.<Field> with BrowseName <Field>.
+        final children = await probe.browse(server.stationNodeId(station), referenceTypeId: NodeId.hasComponent);
+        expect(children.map((c) => c.browseName), unorderedEquals(fields), reason: 'generated from the schema');
+        expect(children, hasLength(fields.length));
+        for (final child in children) {
+          expect(child.nodeId, server.fieldNodeId(station, child.browseName));
+          expect(child.nodeId, NodeId.fromString(1, '$station.${child.browseName}'));
+          expect(child.displayName, child.browseName);
+          expect(child.isForward, isTrue);
+          expect(child.nodeClass, NodeClass.UA_NODECLASS_VARIABLE);
+        }
+        // And nothing else hangs off the struct node.
+        final all = await probe.browse(server.stationNodeId(station), referenceTypeId: NodeId.hierarchicalReferences);
+        expect(all.map((c) => c.nodeId).toSet(), children.map((c) => c.nodeId).toSet());
+
+        // Read: the child's value is the struct member's; the status and the
+        // source timestamp are the struct's, whatever they are.
+        for (final field in fields) {
+          final child = await probe.readValue(server.fieldNodeId(station, field));
+          final member = struct.value[field];
+          expect(child.statusCode, struct.statusCode, reason: '$station.$field status');
+          expect(child.sourceTimestamp, struct.sourceTimestamp, reason: '$station.$field source timestamp');
+          expect(child.value.typeId, member.typeId, reason: '$station.$field DataType');
+          expect(child.value.isObject, isFalse);
+          final actual = child.value.value, expected = member.value;
+          if (expected is double && expected.isNaN) {
+            expect((actual as num).toDouble().isNaN, isTrue, reason: '$station.$field');
+          } else {
+            expect(actual, expected, reason: '$station.$field');
+          }
+        }
+        // The DataType attribute of a child is the field's scalar type.
+        final types = await probe.readAttribute({
+          server.fieldNodeId(station, 'TemperatureC'): [AttributeId.UA_ATTRIBUTEID_DATATYPE],
+          server.fieldNodeId(station, 'ObservationTime'): [AttributeId.UA_ATTRIBUTEID_DATATYPE],
+          server.fieldNodeId(station, 'WindDirectionDeg'): [AttributeId.UA_ATTRIBUTEID_DATATYPE],
+        });
+        expect(types[server.fieldNodeId(station, 'TemperatureC')]!.typeId, NodeId.double);
+        expect(types[server.fieldNodeId(station, 'ObservationTime')]!.typeId, NodeId.datetime);
+        expect(types[server.fieldNodeId(station, 'WindDirectionDeg')]!.typeId, NodeId.int32);
+      }
+
+      // Concretely, for the quiet station: Uncertain, four hours old, and the
+      // children say exactly the same.
+      final struct = await probe.readValue(server.stationNodeId('BIKF'));
+      expect(struct.statusCode, UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE);
+      expect(struct.sourceTimestamp, bikf.observationTime);
+      final temperature = await probe.readValue(server.fieldNodeId('BIKF', 'TemperatureC'));
+      expect(temperature.statusCode, UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE);
+      expect(temperature.sourceTimestamp, bikf.observationTime);
+      expect((temperature.value.value as num).toDouble(), 5.0);
+      expect(
+        (await probe.readValue(server.fieldNodeId('BIKF', 'ObservationTime'))).value.asDateTime,
+        bikf.observationTime,
+      );
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('the old node ids are gone', () async {
+      for (final old in ['BIRK.Metar', 'BIKF.Metar']) {
+        final dv = await probe.readValue(NodeId.fromString(1, old));
+        expect(dv.statusCode, UA_STATUSCODE_BADNODEIDUNKNOWN, reason: 'ns=1;s=$old');
+      }
+      // `<ICAO>.TemperatureC` still exists, but as a child of the struct
+      // node, not as a top-level node under Objects.
+      final objects = await probe.browse(NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER));
+      expect(objects.map((r) => r.nodeId), isNot(contains(NodeId.fromString(1, 'BIRK.TemperatureC'))));
+      expect(objects.map((r) => r.nodeId), isNot(contains(NodeId.fromString(1, 'BIRK.WindSpeedKt'))));
+      expect(objects.map((r) => r.browseName), isNot(contains('BIRK METAR')));
+      expect(objects.map((r) => r.browseName), contains('BIRK'));
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('a station that never reported reads Bad_NoData, a quiet one Uncertain_LastUsableValue, '
+        'and neither lowers the ServiceLevel', () async {
+      expect(fake.fetches, greaterThan(0));
+      expect(server.consecutiveFailures, 0);
+
+      // BIRG: known, never reported. No last-known value exists, so the read
+      // fails outright — with NoData, not NoCommunication: the feed answered.
+      final never = await probe.readValue(server.stationNodeId('BIRG'));
+      expect(never.statusCode, UA_STATUSCODE_BADNODATA);
+      expect(never.value.value, isNull);
+      expect((await probe.readValue(server.fieldNodeId('BIRG', 'TemperatureC'))).statusCode, UA_STATUSCODE_BADNODATA);
+      expect(server.lastObservation('BIRG'), isNull);
+      expect(server.stationDataAge('BIRG'), isNull);
+
+      // BIKF: last report four hours ago with a two-hour threshold.
+      final quiet = await probe.readValue(server.stationNodeId('BIKF'));
+      expect(quiet.statusCode, UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE);
+      expect(quiet.value['Station'].value, 'BIKF');
+      expect(quiet.sourceTimestamp, bikf.observationTime);
+
+      // BIRK: fresh.
+      final fresh = await probe.readValue(server.stationNodeId('BIRK'));
+      expect(fresh.statusCode, UA_STATUSCODE_GOOD);
+
+      // ServiceLevel is the FEED's: fetches succeed and the newest report is
+      // fresh, so the silent and the quiet station cost nothing.
+      expect((await probe.read(NodeId.serviceLevel)).asInt, 250);
+      expect(server.serviceLevel, 250);
+      expect(server.dataAge, lessThan(const Duration(hours: 1)));
+
+      // A station that falls silent AT A POLL keeps its last observation as
+      // Good while it is fresh: BIRK stops reporting; the fetches go on
+      // succeeding without it.
+      fake.observations.remove('BIRK');
+      final before = fake.fetches;
+      expect(await waitUntil(() => fake.fetches > before + 1), isTrue);
+      final kept = await probe.readValue(server.stationNodeId('BIRK'));
+      expect(kept.statusCode, UA_STATUSCODE_GOOD, reason: 'silence is not a failure, and the value is still fresh');
+      expect(kept.value['RawText'].value, birk.rawText);
+      expect(kept.sourceTimestamp, birk.observationTime);
+      expect(server.serviceLevel, 250);
+
+      // A fresh report for the quiet station brings it back to Good at once.
+      final late = recent(station: 'BIKF', ago: const Duration(minutes: 1));
+      fake.observations['BIKF'] = late;
+      // (Same raw text as before, a minute old: the observation time is what
+      // distinguishes the new report.)
+      expect(await waitUntil(() => server.lastObservation('BIKF')?.observationTime == late.observationTime), isTrue);
+      final back = await probe.readValue(server.stationNodeId('BIKF'));
+      expect(back.statusCode, UA_STATUSCODE_GOOD);
+      expect(back.sourceTimestamp, late.observationTime);
+
+      // Only the feed failing is Bad_NoCommunication, for every station that
+      // has a value; the one that never had one stays NoData, and now the
+      // ServiceLevel does fall.
+      fake.failing = true;
+      expect(await waitUntil(() => server.consecutiveFailures > 0), isTrue);
+      expect((await probe.readValue(server.stationNodeId('BIRK'))).statusCode, UA_STATUSCODE_BADNOCOMMUNICATION);
+      expect((await probe.readValue(server.stationNodeId('BIKF'))).statusCode, UA_STATUSCODE_BADNOCOMMUNICATION);
+      expect(
+        (await probe.readValue(server.fieldNodeId('BIKF', 'WindSpeedKt'))).statusCode,
+        UA_STATUSCODE_BADNOCOMMUNICATION,
+      );
+      expect((await probe.readValue(server.stationNodeId('BIRG'))).statusCode, UA_STATUSCODE_BADNODATA);
+      expect(server.serviceLevel, lessThan(serviceLevelHealthyFloor));
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('every station of the list is published when the source covers it', () async {
+      final all = [for (final s in icelandMetarStations) s.icao];
+      expect(all, hasLength(15));
+      expect(all.toSet(), hasLength(15), reason: 'no duplicate ICAO ids');
+      expect(all.where((s) => !RegExp(r'^BI[A-Z]{2}$').hasMatch(s)), isEmpty, reason: 'Icelandic indicators');
+      expect(icelandMetarStations.where((s) => s.silent).map((s) => s.icao), ['BIRG', 'BIST']);
+      expect(metarStationName('BIRK'), 'Reykjavík');
+      expect(metarStationName('ZZZZ'), 'ZZZZ');
+
+      // Default --station: the whole list; a comma list and repeats filter it.
+      expect(parseStations(const []), all);
+      expect(parseStations(['birk,BIKF', 'BIAR', 'bikf']), ['BIRK', 'BIKF', 'BIAR']);
+
+      final wide = FakeMetarSource.stations(all, {
+        for (final s in all)
+          if (s != 'BIRG' && s != 'BIST') s: recent(station: s),
+      });
+      final wideServer = MetarRedundantServer(
+        instance: 'iceland',
+        port: 0,
+        source: wide,
+        pollInterval: const Duration(seconds: 30),
+        log: (_) {},
+      );
+      await wideServer.start();
+      final wideProbe = await setupClient(wideServer.listenPort);
+      addTearDown(() async {
+        await wideProbe.delete();
+        await wideServer.stop();
+      });
+
+      final objects = await wideProbe.browse(NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER));
+      final published = objects.map((r) => r.browseName).where(all.contains).toList();
+      expect(published, all, reason: 'one struct node per station, in list order');
+      for (final station in all) {
+        final dv = await wideProbe.readValue(wideServer.stationNodeId(station));
+        if (station == 'BIRG' || station == 'BIST') {
+          expect(dv.statusCode, UA_STATUSCODE_BADNODATA, reason: station);
+        } else {
+          expect(dv.statusCode, UA_STATUSCODE_GOOD, reason: station);
+          expect(dv.value['Station'].value, station);
+        }
+        final children = await wideProbe.browse(
+          wideServer.stationNodeId(station),
+          referenceTypeId: NodeId.hasComponent,
+        );
+        expect(children.map((c) => c.browseName), unorderedEquals(wideServer.fieldNames), reason: station);
+      }
+      expect(wideServer.serviceLevel, 250, reason: 'two silent stations do not degrade the feed');
     }, timeout: const Timeout(Duration(minutes: 2)));
   });
 }

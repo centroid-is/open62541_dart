@@ -164,7 +164,9 @@ class MetarFailoverClient {
   }) : _log = log ?? print,
        _seed = List.of(endpoints);
 
-  /// Station whose METAR node is subscribed to (`ns=1;s=<station>.Metar`).
+  /// ICAO identifier of the station whose METAR node is subscribed to
+  /// (`ns=1;s=<station>`, the struct node; its field children are
+  /// `ns=1;s=<station>.<Field>`).
   final String station;
 
   /// How often every server's ServiceLevel is re-read.
@@ -217,8 +219,19 @@ class MetarFailoverClient {
   bool _everSelected = false;
   bool _reportedNoneQualifies = false;
 
-  /// The METAR structure node published by the servers.
-  NodeId get metarNodeId => NodeId.fromString(1, '$station.Metar');
+  /// The station's METAR structure node published by the servers:
+  /// `ns=1;s=<ICAO>`.
+  NodeId get metarNodeId => NodeId.fromString(1, station);
+
+  /// One of the scalar field children the servers publish under
+  /// [metarNodeId] (`ns=1;s=<ICAO>.<Field>`, a HasComponent of the struct
+  /// node): the same value as the struct member, with the same status and
+  /// source timestamp, for clients without custom-struct support.
+  NodeId fieldNodeId(String field) => NodeId.fromString(1, '$station.$field');
+
+  /// The field children printed next to every struct notification, to show
+  /// that they match the struct's members.
+  static const List<String> sampledFields = ['TemperatureC', 'WindSpeedKt', 'FlightCategory'];
 
   /// Endpoint currently serving data, or `null` before the first selection.
   String? get activeEndpoint => _active?.endpoint;
@@ -629,7 +642,9 @@ class MetarFailoverClient {
           .listen(
             (values) {
               final v = values[metarNodeId];
-              if (v != null) _log('[${link.endpoint}] ${_format(v)}');
+              if (v == null) return;
+              _log('[${link.endpoint}] ${_format(v)}');
+              unawaited(_reportFieldChildren(link, v));
             },
             // A notification with a non-Good status arrives as a STREAM ERROR
             // and its value/timestamps are dropped (see the package's known
@@ -639,6 +654,34 @@ class MetarFailoverClient {
           );
     } catch (e) {
       _log('[client] ${link.endpoint}: could not subscribe: $e');
+    }
+  }
+
+  /// Reads a few of the struct node's field children and prints them next to
+  /// the struct's own members: the same numbers, the same status, the same
+  /// source timestamp, which is what a client without custom-struct support
+  /// gets from them.
+  Future<void> _reportFieldChildren(_Link link, DynamicValue struct) async {
+    final client = link.client;
+    if (client == null || !struct.isObject) return;
+    try {
+      final children = await Future.wait([
+        for (final field in sampledFields) client.readValue(fieldNodeId(field)),
+      ]).timeout(readTimeout);
+      final parts = <String>[];
+      for (var i = 0; i < sampledFields.length; i++) {
+        final field = sampledFields[i];
+        final child = children[i];
+        final same = '${child.value.value}' == '${struct[field].value}' ? '' : ' (struct: ${struct[field].value})';
+        parts.add('$station.$field=${child.value.value}$same');
+      }
+      final first = children.first;
+      _log(
+        '[${link.endpoint}] children ${parts.join('  ')}  '
+        '${statusCodeToString(first.statusCode)} @ ${first.sourceTimestamp?.toIso8601String()}',
+      );
+    } catch (e) {
+      _log('[${link.endpoint}] could not read the field children: $e');
     }
   }
 
@@ -749,7 +792,9 @@ Usage: dart run example/metar_redundant_client.dart [options]
                      One member is enough: the others are found through its
                      ServerNetworkGroups. Give every member's endpoint for a
                      set that does not publish them (or with --no-discover).
-  --station <ICAO>   Station node to subscribe to (default: BIRK)
+  --station <ICAO>   Station whose node (ns=1;s=<ICAO>) is subscribed to
+                     (default: BIRK). Its field children (ns=1;s=<ICAO>.<Field>)
+                     are read and printed next to every notification.
   --poll <ms>        ServiceLevel poll interval (default: 2000)
   --hysteresis <n>   Margin a Degraded rival must beat a Degraded active
                      server by (default: 10). Not used while the active
