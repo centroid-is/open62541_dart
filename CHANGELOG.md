@@ -4,7 +4,7 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
+## 1.5.9
 
 - **Fixed: VM abort (`Callback invoked after it has been deleted`) after a
   lost DeleteMonitoredItems response.** Cancelling a monitored-item stream
@@ -69,6 +69,76 @@ changes that ship the same native library version.
   stayed alive and the open ports kept the calling isolate (and with it a CLI
   process) from exiting. `delete()` now always kills the worker and closes
   its ports; the error is still reported to the caller.
+- Bump bundled open62541 from `v1.5.7` to `v1.5.9` (v1.5.8 was never shipped
+  by this package; both upstream releases land here).
+  - Upstream v1.5.8 is a maintenance release focused on hardening and
+    stability: overflow/bounds checks across the binary, JSON and XML
+    decoders and the SecureChannel chunk/OPN handling; server MonitoredItem
+    fixes (items follow a node on replacement, reentrant/local deletion from
+    callbacks, O(1) removal and a lookup tree instead of quadratic scans);
+    the client validates the service result before reading result arrays and
+    no longer runs the connectivity check before the Session is activated;
+    and a batch of PubSub transport/encoding fixes (UADP security headers,
+    oversized DataSetMessages, RawData metadata, MQTT/Ethernet). See
+    https://github.com/open62541/open62541/releases/tag/v1.5.8.
+  - Upstream v1.5.9 continues the hardening: SecureChannel TokenId and OPN
+    renewal SequenceNumber checks; the server validates HEL messages
+    (trailing data, EndpointUrl length), endpoint security modes, event
+    filter operators, attribute ids, GetMonitoredItems / ConditionRefresh /
+    GDS method arguments and session user identity changes, bounds
+    diagnostics member names, and sends a PublishResponse when cancelling a
+    queued Publish; the client deep-copies owned `UA_ClientConfig` members
+    (`UA_ClientConfig_copy`), frees the OpenSecureChannelResponse on every
+    exit path, initialises async responses before decoding and keeps
+    previous SecurityPolicy arrays alive while open channels reference them;
+    plugins validate RSA-PSS / ECDSA signature lengths and use constant-time
+    MAC comparison; plus a large batch of PubSub/SKS fixes and thread-safety
+    fixes in `arch` (no `gmtime` / `inet_ntoa`). See
+    https://github.com/open62541/open62541/releases/tag/v1.5.9.
+  - Regenerated the amalgamated header
+    (`third_party/open62541/open62541_modified.h`) and the ffigen bindings
+    (`lib/src/third_party/open62541.g.dart`) against v1.5.9.
+    `remove_bitfields.patch` applies unchanged. One struct-layout change:
+    `UA_ClientConfig` gained the internal `securityPolicyHistory` pointer
+    after `authSecurityPolicies` (888 -> 896 bytes on 64-bit;
+    `verify_sizes_test` updated). The Dart wrappers access the config only
+    through the generated struct fields and `UA_Client_newWithConfig` still
+    takes the struct by value, so nothing in `lib/` changes. The new
+    `UA_ClientConfig_PolicyHistory` type is bound as opaque (internal
+    ownership). The only other public-header addition across both releases
+    is `UA_Node_moveMonitoredItems` (custom-nodestore API, not bound).
+  - All build-time source patches (subscription cleanup, bounded send,
+    session-recreate race, delete-by-client-handle, single-threaded
+    AsyncManager) still apply to v1.5.9; none has landed upstream yet
+    (`ua_client_subscriptions.c` and `eventloop_posix_tcp.c` are unchanged
+    between v1.5.8 and v1.5.9, and the v1.5.9 edits to `ua_client.c`,
+    `ua_client_connect.c` and `ua_server.c` do not touch the patched code).
+- **Build: the hook re-downloads open62541 when the pinned version changes.**
+  The extracted source tree in the shared hook output directory was reused
+  whenever it existed, whatever version it held, so a project upgraded with
+  a warm `.dart_tool` kept building the previous open62541 release under the
+  new bindings. The tree is now stamped with its version and discarded on a
+  mismatch (an unstamped tree from an older package revision is discarded
+  once). `verify_version_test` additionally checks the version the native
+  library reports, not only the constant in the generated bindings.
+- **Build: the hook re-downloads and rebuilds mbedTLS when the pinned version
+  changes.** The same flaw as above for the bundled mbedTLS: the extracted
+  source and the per-target install prefixes under `tls/` were reused whenever
+  they existed, so a warm `.dart_tool` would have kept linking the previous
+  mbedTLS release across a version bump. The tree is now stamped with its
+  version and discarded, together with every install built from it, on a
+  mismatch or a missing stamp. One-time cost: a checkout or consumer whose
+  cache predates the stamp re-downloads and rebuilds mbedTLS once on the next
+  build (well under a minute on a fast workstation, a couple of minutes on CI
+  or a laptop); later builds reuse the stamped tree as before.
+- **Dev tooling: `ffigen` 22 / 23.** The binding generator (`tool/ffigen.dart`)
+  is ported to ffigen 22's visitor-based config API, which replaced the one it
+  was written against; ffigen 23 keeps that API. The generated bindings are
+  unchanged by the port and identical under 22.0.0, 22.1.0 and 23.0.0.
+  ffigen 22 depends on `code_assets` 2.x, so development now resolves
+  `code_assets` 2.x. Nothing changes for consumers: `ffigen` is a dev
+  dependency and the runtime constraint (`code_assets: >=1.0.0 <3.0.0`) is
+  the same.
 - **`Client.call` (and `readAttribute` / monitored-item creation) surface the
   real service status.** The async response handlers checked `resultsSize`
   before `responseHeader.serviceResult`, so an infrastructure failure (session
