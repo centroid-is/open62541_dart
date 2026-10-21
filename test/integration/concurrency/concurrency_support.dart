@@ -22,18 +22,18 @@ class DrivenServer {
   final int port;
   final Future<void> Function() _stop;
 
-  String get endpoint => 'opc.tcp://localhost:$port';
+  String get endpoint => 'opc.tcp://127.0.0.1:$port';
 
   Future<void> stop() => _stop();
 }
 
-/// Brings up a Dart [Server] on [port], pumped by a fire-and-forget loop.
-Future<DrivenServer> startDartServer(
-  int port, {
+/// Brings up a Dart [Server] on a port the OS picks ([DrivenServer.port]),
+/// pumped by a fire-and-forget loop.
+Future<DrivenServer> startDartServer({
   LogLevel logLevel = LogLevel.UA_LOGLEVEL_ERROR,
   void Function(Server server)? seed,
 }) async {
-  final server = Server(port: port, logLevel: logLevel);
+  final server = Server(port: 0, logLevel: logLevel);
   server.start();
   seed?.call(server);
   var running = true;
@@ -58,7 +58,7 @@ Future<DrivenServer> startDartServer(
     server.delete();
   }
 
-  return DrivenServer(server, port, stop);
+  return DrivenServer(server, server.port, stop);
 }
 
 /// NodeId for a per-client writable double node (`client.<i>.value`).
