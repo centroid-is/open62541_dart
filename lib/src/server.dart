@@ -2165,9 +2165,12 @@ class Server {
     raw.UA_Server_readValue(_server, variableNodeIdRaw, variant);
     // readValue uses the NodeId transiently for a lookup; free ours.
     _freeRawNodeId(variableNodeIdRaw);
-    final value = variantToValue(variant.ref, defs: schema);
-    raw.UA_Variant_delete(variant);
-    return value;
+    try {
+      return variantToValue(variant.ref, defs: schema);
+    } finally {
+      // Also when the value cannot be decoded: the variant is ours to free.
+      raw.UA_Variant_delete(variant);
+    }
   }
 
   /// Writes [value] to the Value attribute of [variableNodeId].
