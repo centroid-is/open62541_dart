@@ -41,7 +41,7 @@ void main() {
         onWrite: (value) async {
           // Simulates the downstream (device) write finishing later.
           await gate.future;
-          stored = value.asInt;
+          stored = value.asInt!;
         },
       );
 
@@ -90,7 +90,7 @@ void main() {
         onRead: () => DynamicValue(value: seen, typeId: NodeId.int32),
         onWrite: (value) async {
           await Future.delayed(const Duration(milliseconds: 50));
-          seen = value.asInt;
+          seen = value.asInt!;
         },
       );
 

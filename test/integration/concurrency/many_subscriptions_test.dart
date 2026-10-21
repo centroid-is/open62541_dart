@@ -128,7 +128,7 @@ void main() {
         final sub = client.monitoredItems(param, subId, samplingInterval: const Duration(milliseconds: 20)).listen((
           batch,
         ) {
-          batch.forEach((k, v) => latest[k] = v.asDouble);
+          batch.forEach((k, v) => latest[k] = v.asDouble!);
           final converged = want.entries.every((e) => (latest[e.key] ?? -1) == e.value);
           if (converged && !done.isCompleted) done.complete();
         });

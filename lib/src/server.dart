@@ -440,7 +440,7 @@ class Server {
   }
 
   /// Releases the UTF-8 identifier buffer that [NodeId.toRaw] allocates (via
-  /// `ua_malloc`) for a **string** NodeId. Numeric NodeIds own no heap memory,
+  /// `ua_calloc`) for a **string** NodeId. Numeric NodeIds own no heap memory,
   /// so this is a no-op for them.
   ///
   /// open62541's `UA_Server_add*Node` / `addReference` / `deleteNode` /
@@ -456,7 +456,7 @@ class Server {
     if (rawNodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
       final data = rawNodeId.identifier.string.data;
       if (data != ffi.nullptr) {
-        ua_malloc.free(data);
+        ua_calloc.free(data);
       }
     }
   }
@@ -1095,11 +1095,11 @@ class Server {
   /// 0-based, so a freshly added application namespace has an index `>= 2`
   /// (index 0 is the OPC UA namespace, index 1 the local application URI).
   int addNamespace(String uri) {
-    final cstr = uri.toNativeUtf8(allocator: ua_malloc);
+    final cstr = uri.toNativeUtf8(allocator: ua_calloc);
     // open62541 copies the name into its namespace array (UA_String_fromChars),
     // so the temporary C string can be freed immediately after the call.
     final index = raw.UA_Server_addNamespace(_server, cstr.cast());
-    ua_malloc.free(cstr);
+    ua_calloc.free(cstr);
     return index;
   }
 
@@ -1149,7 +1149,7 @@ class Server {
     // and copied to Dart inside [decode]). Returns null if the session is
     // unknown (e.g. the internal admin session) or the type does not match.
     T? readAttr<T>(String name, T? Function(raw.UA_Variant) decode) {
-      final chars = name.toNativeUtf8(allocator: ua_malloc).cast<ffi.Char>();
+      final chars = name.toNativeUtf8(allocator: ua_calloc).cast<ffi.Char>();
       final variant = raw.UA_Variant_new();
       T? result;
       final status = raw.UA_Server_getSessionAttribute(_server, sessionIdPtr, raw.UA_QUALIFIEDNAME(0, chars), variant);
@@ -1159,7 +1159,7 @@ class Server {
       // The shallow get marks the variant's storage NODELETE, so this frees
       // only the variant itself, not the session-owned attribute data.
       raw.UA_Variant_delete(variant);
-      ua_malloc.free(chars);
+      ua_calloc.free(chars);
       return result;
     }
 
@@ -1879,7 +1879,7 @@ class Server {
       if (memberType == ffi.nullptr) {
         throw 'Unable to resolve data type for member "$memberName" (${member.typeId}) of $typeId';
       }
-      array.ref.types[0].members[i].memberName = memberName.toNativeUtf8(allocator: ua_malloc).cast();
+      array.ref.types[0].members[i].memberName = memberName.toNativeUtf8(allocator: ua_calloc).cast();
       array.ref.types[0].members[i].memberType = memberType;
       array.ref.types[0].members[i].isOptional = member.isOptional;
       array.ref.types[0].members[i].isArray = member.isArray;
@@ -1928,7 +1928,7 @@ class Server {
     array.ref.types[0].members = ua_calloc<raw.UA_DataTypeMember>(memberCount);
     var i = 0;
     for (final field in fields.values) {
-      array.ref.types[0].members[i].memberName = field.name.toNativeUtf8(allocator: ua_malloc).cast();
+      array.ref.types[0].members[i].memberName = field.name.toNativeUtf8(allocator: ua_calloc).cast();
       array.ref.types[0].members[i].memberType = ffi.Pointer.fromAddress(field.value);
       i++;
     }
@@ -2089,7 +2089,7 @@ class Server {
     // array allocated by open62541's malloc; release it if present. Guard the
     // empty-array sentinel (0x1), which must never be freed.
     if (result.fieldAddResults != ffi.nullptr && result.fieldAddResults.address != 0x1) {
-      ua_malloc.free(result.fieldAddResults);
+      ua_calloc.free(result.fieldAddResults);
     }
 
     final nodeId = _takeOutNodeId(out);

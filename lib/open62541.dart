@@ -4,7 +4,7 @@ export 'src/access_level.dart' show AccessLevelMask;
 export 'src/client.dart'
     show Client, ClientState, DataValue, BrowseResultItem, BrowseTreeItem, NodeClass, BrowseResultMask;
 export 'src/common.dart' show statusCodeToString;
-export 'src/dynamic_value.dart' show DynamicValue, LocalizedText, EnumField, Schema;
+export 'src/dynamic_value.dart' show DynamicValue, DynamicType, LocalizedText, EnumField, Schema;
 export 'src/extensions.dart'
     show
         UaTypes,
@@ -49,7 +49,8 @@ export 'src/server.dart'
         AnonymousSessionIdentity,
         UsernameSessionIdentity,
         CertificateSessionIdentity;
-export 'src/types/errors.dart' show Inactivity, SecureChannelClosed, SubscriptionDeleted, UaStatusException;
+export 'src/types/errors.dart'
+    show Inactivity, MonitoredItemsRefused, SecureChannelClosed, SubscriptionDeleted, UaStatusException;
 export 'src/isolate.dart' show ClientIsolate;
-export 'src/client_api.dart' show ClientApi;
+export 'src/client_api.dart' show ClientApi, DataValueMonitoringApi;
 export 'src/types/opcua_serializer.dart' show OpcUaDynamicValueSerializer;

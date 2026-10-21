@@ -4,6 +4,16 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## Unreleased
+
+- **Fixed: a second `Client.keepConnected()` doubled the pump.** The call
+  reset its stop flag and set it again synchronously, so the pump and the
+  reconnect supervisor already running never observed the stop and kept
+  going alongside the new pair: twice the `runIterate` calls per interval and
+  two supervisors reconnecting. Each call now starts a new generation and the
+  previous loops end on their next turn. `stopKeepConnected()` behaviour is
+  unchanged.
+
 ## 1.5.9
 
 - **Example: redundant METAR servers with ServiceLevel failover.**
@@ -34,6 +44,95 @@ changes that ship the same native library version.
   Once security is configured the ApplicationUri must match the URI in the
   server certificate.
 
+- **Monitoring with quality: `monitorDataValue` / `monitoredDataValues`.**
+  `Client` and `ClientIsolate` implement the new `DataValueMonitoringApi`,
+  two methods mirroring `monitor` / `monitoredItems` that emit every sample
+  as a `DataValue` (the type `readValue` returns): the value, the server's
+  status code and the source/server timestamps of the notification. A sample
+  with a non-Good status is delivered with its code (`DataValue.isGood` /
+  `isUncertain` / `isBad`) and the value it carries, or else the last known
+  one; a Good sample without a value is a null value; a timestamp the
+  notification does not carry (or carries as the null timestamp, tick 0) is
+  null, never the previous sample's. A Bad sample of a monitored attribute
+  other than Value has no field to travel in and is a `UaStatusException`
+  error on the stream. Every event is a fresh map of fresh `DataValue`
+  objects over copies of the values, on both client types. The existing
+  `monitor` / `monitoredItems` are unchanged (value only; a non-Good status
+  is a `UaStatusException` error and nothing is delivered for that sample),
+  and so are `ClientApi` and `DynamicValue`: the new methods live on their
+  own interface because Dart requires an `implements` class to define every
+  member of its interface, so a class written against `ClientApi` keeps
+  compiling. Code holding a `ClientApi` checks `is DataValueMonitoringApi`.
+- **Fixed: a Good answer carrying an empty variant killed the process.** A
+  server may answer an attribute read, a data-change notification or a method
+  output with status Good and an empty variant ("the attribute exists and has
+  no value" — python-asyncua does this for the `DataTypeDefinition` of its
+  base DataType nodes). `Client.readAttribute`, the monitored-item callback
+  and the decode behind `Client.call` dereferenced the empty variant's NULL
+  type/data pointers natively: a SIGSEGV, not a catchable Dart error. An
+  empty **Value** now reads as a null `DynamicValue`: `readAttribute` returns
+  the node with a null value, `read` and `call` return a null `DynamicValue`,
+  and a monitored item emits null — also when a node that had a value goes
+  empty (the previous value is not re-emitted). Any other attribute
+  (`Description`, `DisplayName`, `DataType`, `DataTypeDefinition`) answered
+  Good and empty is treated as absent, like the already tolerated
+  `BadAttributeIdInvalid`.
+- **`ua_malloc` is gone; the package allocates with `ua_calloc` only
+  (#45).** Every buffer handed to open62541 or freed with `free()` came from
+  one of two allocators that differed only in zero-filling; the malloc one is
+  removed (`UaMallocAllocator`, `ua_malloc`, never exported), `NodeId.toRaw`
+  defaults to `ua_calloc`, and the heap-growth tests measure through it.
+
+- **BREAKING: `DynamicValue.asInt`, `asDouble` and `asBool` are nullable
+  (#115).** They returned `0`, `0.0` and `false` for a value that is missing
+  or of another type, which in process data is a plausible reading rather
+  than a failure, so a node that was not read or a member that did not
+  decode looked like a zero downstream. They are `int?`, `double?` and
+  `bool?` now and return null there, like `asDateTime` always did; the
+  coercions stay (a num reads as int or double, a numeric string parses, a
+  non-zero num is true, `'true'`/`'1'` and `'false'`/`'0'` are bools). A
+  caller that did arithmetic on the result or passed it where a non-null
+  number is expected has to check for null (or `!` where the value is known
+  present). Also: a `DateTime` value reported `DynamicType.unknown`; `type`
+  now reports `DynamicType.datetime`, `isDateTime` goes with it, and
+  `DynamicType` is exported.
+
+- **A refused monitored item fails the stream with `MonitoredItemsRefused`,
+  not a `String` (#38).** When the server refuses an item of a
+  `monitoredItems` create (`BadNodeIdUnknown` for a node it does not have,
+  ...), the stream's error was the formatted message, so a caller could match
+  neither the type nor the status; the service-level failure of the same
+  create was already a `UaStatusException`. The error is now a
+  `MonitoredItemsRefused`, a `UaStatusException` with the first refused item's
+  status as `statusCode` and every refused item's status in `failures`
+  (`(NodeId, AttributeId)` to status). `toString()` is the old message, and
+  `ClientIsolate` forwards it typed.
+
+- **The well-known NS0 nodes are `NodeId` statics (#110).** Reading the
+  server's status, service level, namespace array or redundancy surface, or
+  adding a standard property, needed the generated `UA_NS0ID_*` constants,
+  an implementation import. `NodeId.server`, `serverArray`,
+  `namespaceArray`, `serverStatus`, `serverStatusStartTime`,
+  `serverStatusState`, `serverStatusBuildInfo`, `serviceLevel`,
+  `serverRedundancy`, `redundancySupport`, `serverUriArray`, `organizes`,
+  `hasComponent`, `hasProperty`, `hasTypeDefinition`, `baseObjectType`,
+  `folderType`, `baseDataVariableType` and `propertyType` join the existing
+  folder and reference-type statics, each backed by the generated constant
+  (`serverStatusCurrentTime` was a literal `2258`).
+- **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the
+  owning isolate.** By default the supervisor's pump calls
+  `runIterate(iterateInterval)`, which sits in open62541's `select()` for up
+  to `iterateInterval`, so a `Client` has needed an isolate of its own (or a
+  `ClientIsolate`). With `nonBlocking: true` the pump calls
+  `runIterate(Duration.zero)`, a zero-timeout poll that still fires due timers
+  and drains ready sockets, and then yields for `iterateInterval` like any
+  other timer; `iterateInterval` becomes the poll cadence (and the floor on
+  notification latency; 1 ms is reasonable for a fan-in). The client can then
+  share the isolate that consumes its data: several clients on one isolate,
+  or a client on a UI isolate. The default is `false`, so existing callers
+  keep their exact behaviour. `runIterate` is documented as a timeout, with
+  `Duration.zero` as the non-blocking poll. `tool/bench_pump.dart` measures
+  the cost.
 - **`Server.port`: the port the server listens on, for `Server(port: 0)`.**
   open62541 supports dynamic port assignment (the listen socket binds port 0
   and `getsockname` reads what the OS picked), but on a dual-stack host its

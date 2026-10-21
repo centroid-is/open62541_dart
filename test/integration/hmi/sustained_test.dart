@@ -63,6 +63,10 @@ void main() {
               final tag = byId[entry.key];
               if (tag == null) continue;
               final v = entry.value.asDouble;
+              if (v == null) {
+                rangeViolations.add('${tag.label}=null');
+                continue;
+              }
               if (!inRange(tag.sensor, v)) rangeViolations.add('${tag.label}=$v');
               final prev = lastValue[tag.label];
               if (prev == null || prev != v) {

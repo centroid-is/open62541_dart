@@ -33,7 +33,7 @@ void main() {
         ],
         outputArguments: [Argument(name: 'sum', dataType: NodeId.int32)],
         callback: (inputs, session) async {
-          final sum = inputs[0].asInt + inputs[1].asInt;
+          final sum = inputs[0].asInt! + inputs[1].asInt!;
           return [DynamicValue(value: sum, typeId: NodeId.int32)];
         },
       );

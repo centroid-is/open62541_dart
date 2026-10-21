@@ -3,8 +3,12 @@ name: Flutter Test
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
 
 concurrency:
   group: flutter-${{ github.workflow }}-${{ github.ref }}

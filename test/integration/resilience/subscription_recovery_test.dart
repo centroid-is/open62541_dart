@@ -47,7 +47,7 @@ void main() {
         var done = false;
         final firstError = Completer<Object>();
         final sub = stream.listen(
-          (v) => values.add(v.asDouble),
+          (v) => values.add(v.asDouble!),
           onError: (Object e) {
             errors.add(e);
             if (!firstError.isCompleted) firstError.complete(e);
@@ -96,7 +96,7 @@ void main() {
         final pre = <double>[];
         final err1 = Completer<Object>();
         final sub1 = stream1.listen(
-          (v) => pre.add(v.asDouble),
+          (v) => pre.add(v.asDouble!),
           onError: (Object e) {
             if (!err1.isCompleted) err1.complete(e);
           },
@@ -121,7 +121,7 @@ void main() {
         final post = <double>[];
         final got = Completer<void>();
         final sub2 = stream2.listen((v) {
-          post.add(v.asDouble);
+          post.add(v.asDouble!);
           if (!got.isCompleted) got.complete();
         });
 

@@ -2,7 +2,7 @@ import 'dart:collection' show LinkedHashMap;
 
 import 'node_id.dart';
 
-enum DynamicType { object, array, string, boolean, nullValue, unknown, integer, double }
+enum DynamicType { object, array, string, boolean, nullValue, unknown, integer, double, datetime }
 
 class LocalizedText {
   final String value;
@@ -119,6 +119,7 @@ class DynamicValue {
     if (value is int) return DynamicType.integer;
     if (value is double) return DynamicType.double;
     if (value is bool) return DynamicType.boolean;
+    if (value is DateTime) return DynamicType.datetime;
     return DynamicType.unknown;
   }
 
@@ -130,11 +131,24 @@ class DynamicValue {
   bool get isInteger => type == DynamicType.integer;
   bool get isDouble => type == DynamicType.double;
   bool get isBoolean => type == DynamicType.boolean;
+  bool get isDateTime => type == DynamicType.datetime;
 
-  double get asDouble => _parseDouble(value) ?? 0.0;
-  int get asInt => _parseInt(value) ?? 0;
+  /// The value as a double: a `double`, a num, or a `String` that parses as
+  /// one; null when there is no value or it is of another type. A missing
+  /// reading never looks like `0.0`.
+  double? get asDouble => _parseDouble(value);
+
+  /// The value as an int: an `int`, a num, or a `String` that parses as one;
+  /// null when there is no value or it is of another type. A missing reading
+  /// never looks like `0`.
+  int? get asInt => _parseInt(value);
   String get asString => value?.toString() ?? '';
-  bool get asBool => _parseBool(value) ?? false;
+
+  /// The value as a bool: a `bool`, a num (non-zero is true), or the
+  /// `String`s `'true'`/`'1'` and `'false'`/`'0'`; null when there is no
+  /// value or it is of another type. A missing reading never looks like
+  /// `false`.
+  bool? get asBool => _parseBool(value);
   DateTime? get asDateTime => _parseDateTime(value);
 
   List<DynamicValue> get asArray =>
@@ -248,7 +262,8 @@ class DynamicValue {
     if (val is num) return val != 0;
     if (val is String) {
       final lc = val.trim().toLowerCase();
-      return (lc == 'true' || lc == '1');
+      if (lc == 'true' || lc == '1') return true;
+      if (lc == 'false' || lc == '0') return false;
     }
     return null;
   }

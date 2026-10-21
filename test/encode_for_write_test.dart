@@ -20,14 +20,16 @@ void main() {
       expect(decoded.asArray.length, value.asArray.length);
       for (int i = 0; i < value.asArray.length; i++) {
         if (value[i].isDouble) {
-          expect(value[i].asDouble, closeTo(decoded[i].asDouble, 1e-5));
+          expect(decoded[i].asDouble, isNotNull);
+          expect(value[i].asDouble, closeTo(decoded[i].asDouble!, 1e-5));
         } else {
           expect(value[i].value, decoded[i].value);
         }
       }
     } else {
       if (value.isDouble) {
-        expect(value.asDouble, closeTo(decoded.asDouble, 1e-5));
+        expect(decoded.asDouble, isNotNull);
+        expect(value.asDouble, closeTo(decoded.asDouble!, 1e-5));
       } else {
         expect(value.value, decoded.value);
       }

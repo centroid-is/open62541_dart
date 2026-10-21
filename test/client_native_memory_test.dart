@@ -60,7 +60,7 @@ void main() {
           inputArguments: [Argument(name: 'terms', dataType: NodeId.int32, valueRank: 1)],
           outputArguments: [Argument(name: 'sum', dataType: NodeId.int32)],
           callback: (inputs, session) async => [
-            DynamicValue(value: inputs[0].asArray.fold<int>(0, (sum, term) => sum + term.asInt), typeId: NodeId.int32),
+            DynamicValue(value: inputs[0].asArray.fold<int>(0, (sum, term) => sum + term.asInt!), typeId: NodeId.int32),
           ],
         );
       }
