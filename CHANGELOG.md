@@ -4,6 +4,16 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## Unreleased
+
+- **Fixed: a second `Client.keepConnected()` doubled the pump.** The call
+  reset its stop flag and set it again synchronously, so the pump and the
+  reconnect supervisor already running never observed the stop and kept
+  going alongside the new pair: twice the `runIterate` calls per interval and
+  two supervisors reconnecting. Each call now starts a new generation and the
+  previous loops end on their next turn. `stopKeepConnected()` behaviour is
+  unchanged.
+
 ## 1.5.9
 
 - **Monitoring with quality: `monitorDataValue` / `monitoredDataValues`.**
