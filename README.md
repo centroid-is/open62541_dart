@@ -13,7 +13,11 @@ including subscriptions, custom types and encrypted (mbedTLS) connections.
   subscriptions and monitored items, and secure connections with certificates
   (`SignAndEncrypt`).
 - **Server**: expose scalar, array and structure (custom type) variable nodes,
-  data-type nodes, and monitor variables via streams.
+  data-type nodes, custom object types, and monitor variables via streams.
+  Redundant sets are published with `setRedundancy` (Part 5
+  `NonTransparentRedundancyType`, `ServerUriArray`), and `shutdown(delay:)`
+  announces an orderly shutdown (`ServerStatus.State` = Shutdown,
+  `SecondsTillShutdown`) while serving for the delay.
 - **PubSub** (OPC UA Part 14, UDP + UADP): publish variable nodes via
   PublishedDataSets / WriterGroups / DataSetWriters, and subscribe with
   ReaderGroups / DataSetReaders that map received fields into local variable

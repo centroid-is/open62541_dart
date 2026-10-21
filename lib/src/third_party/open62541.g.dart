@@ -874,6 +874,17 @@ external int UA_Server_addWriterGroup(
   ffi.Pointer<UA_NodeId> wgId,
 );
 
+/// View Service Set
+/// ----------------
+/// The View Service Set allows Clients to discover Nodes by browsing the
+/// information model.
+@ffi.Native<UA_BrowseResult Function(ffi.Pointer<UA_Server>, UA_UInt32, ffi.Pointer<UA_BrowseDescription>)>()
+external UA_BrowseResult UA_Server_browse(
+  ffi.Pointer<UA_Server> server,
+  int maxReferences,
+  ffi.Pointer<UA_BrowseDescription> bd,
+);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>)>()
 external int UA_Server_delete(ffi.Pointer<UA_Server> server);
 
@@ -1166,6 +1177,9 @@ external void UA_Variant_delete(ffi.Pointer<UA_Variant> p);
 
 @ffi.Native<ffi.Pointer<UA_Variant> Function()>()
 external ffi.Pointer<UA_Variant> UA_Variant_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Pointer<UA_DataType>)>()
+external void UA_clear(ffi.Pointer<ffi.Void> p, ffi.Pointer<UA_DataType> type);
 
 const addresses = _SymbolAddresses();
 
@@ -55671,6 +55685,24 @@ final class UA_ObjectAttributes extends ffi.Struct {
 
   @UA_Byte()
   external int eventNotifier;
+}
+
+final class UA_ObjectTypeAttributes extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedAttributes;
+
+  external UA_LocalizedText displayName;
+
+  external UA_LocalizedText description;
+
+  @UA_UInt32()
+  external int writeMask;
+
+  @UA_UInt32()
+  external int userWriteMask;
+
+  @ffi.Bool()
+  external bool isAbstract;
 }
 
 enum UA_OpenFileMode {
