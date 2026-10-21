@@ -51,5 +51,5 @@ export 'src/server.dart'
         CertificateSessionIdentity;
 export 'src/types/errors.dart' show Inactivity, SecureChannelClosed, SubscriptionDeleted, UaStatusException;
 export 'src/isolate.dart' show ClientIsolate;
-export 'src/client_api.dart' show ClientApi;
+export 'src/client_api.dart' show ClientApi, DataValueMonitoringApi;
 export 'src/types/opcua_serializer.dart' show OpcUaDynamicValueSerializer;

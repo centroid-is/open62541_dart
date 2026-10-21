@@ -78,13 +78,6 @@ class BrowseTreeItem {
   }
 }
 
-/// A full OPC UA read result: the decoded [value] together with the
-/// operation's [statusCode] and the source/server timestamps.
-///
-/// Returned by [Client.readValue]. Unlike [Client.read] (which throws on any
-/// non-Good status), a [DataValue] surfaces the quality: per OPC UA a Bad
-/// status may still carry a value — e.g. a proxy serving the last-known value
-/// with `Bad_NoCommunication` while its backing device is down.
 /// The packed `UA_DataValue` flag byte. ffigen does not emit the C bitfield
 /// members individually: the generated struct ends with a single
 /// `@UA_Byte() external int substitute`, which IS their storage unit. Bit
@@ -97,6 +90,42 @@ const int _hasStatusFlag = 0x02;
 const int _hasSourceTimestampFlag = 0x04;
 const int _hasServerTimestampFlag = 0x08;
 
+/// Severity bits (the top two of a status code): 00 Good, 01 Uncertain, 10 Bad.
+bool _isGoodSeverity(int statusCode) => (statusCode >> 30) == 0x0;
+
+/// The status and timestamps of a node's latest Value notification, kept next
+/// to its [DynamicValue] by the monitored-item machinery and turned into a
+/// [DataValue] on emission.
+class _SampleQuality {
+  const _SampleQuality({required this.statusCode, this.sourceTimestamp, this.serverTimestamp});
+
+  /// No Value notification yet (the node's Value attribute is not monitored,
+  /// or its value was backfilled by a read): the status an omitted status
+  /// means, Good, and no timestamps.
+  const _SampleQuality.unknown() : this(statusCode: raw.UA_STATUSCODE_GOOD);
+
+  final int statusCode;
+  final DateTime? sourceTimestamp;
+  final DateTime? serverTimestamp;
+
+  DataValue toDataValue(DynamicValue value) => DataValue(
+    value: value,
+    statusCode: statusCode,
+    sourceTimestamp: sourceTimestamp,
+    serverTimestamp: serverTimestamp,
+  );
+}
+
+/// A full OPC UA read result: the decoded [value] together with the
+/// operation's [statusCode] and the source/server timestamps.
+///
+/// Returned by [Client.readValue] and, per sample, by
+/// [DataValueMonitoringApi.monitorDataValue] /
+/// [DataValueMonitoringApi.monitoredDataValues]. Unlike [Client.read] (which
+/// throws on any non-Good status), a [DataValue] surfaces the quality: per OPC
+/// UA a Bad status may still carry a value — e.g. a proxy serving the
+/// last-known value with `Bad_NoCommunication` while its backing device is
+/// down.
 class DataValue {
   const DataValue({required this.value, required this.statusCode, this.sourceTimestamp, this.serverTimestamp});
 
@@ -258,7 +287,7 @@ class ClientConfig {
 
 typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
 
-class Client implements ClientApi {
+class Client implements ClientApi, DataValueMonitoringApi {
   Client({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -1392,8 +1421,9 @@ class Client implements ClientApi {
 
   /// Creates a monitored item on the server.
   ///
-  /// If [prefetchTypeId] is true, the data type of the node will be read and cached.
-  /// This is useful if you are reading a value that is a structure or an enum.
+  /// A sample with a non-Good status is added to the stream as a
+  /// [UaStatusException] error and nothing is delivered for it; see
+  /// [monitoredDataValues] for the sample with its status instead.
   @override
   Stream<Map<NodeId, DynamicValue>> monitoredItems(
     ReadAttributeParam nodes,
@@ -1402,8 +1432,69 @@ class Client implements ClientApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
+  }) => _monitoredItemsCore<Map<NodeId, DynamicValue>>(
+    nodes,
+    subscriptionId,
+    monitoringMode: monitoringMode,
+    samplingInterval: samplingInterval,
+    discardOldest: discardOldest,
+    queueSize: queueSize,
+    deliverQuality: false,
+    // The one map the stream has always emitted: the same mutable object
+    // every time, updated in place between events.
+    project: (latestValues, _) => latestValues,
+  );
+
+  @override
+  Stream<Map<NodeId, DataValue>> monitoredDataValues(
+    ReadAttributeParam nodes,
+    int subscriptionId, {
+    MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    Duration samplingInterval = const Duration(milliseconds: 100),
+    bool discardOldest = true,
+    int queueSize = 1,
+  }) => _monitoredItemsCore<Map<NodeId, DataValue>>(
+    nodes,
+    subscriptionId,
+    monitoringMode: monitoringMode,
+    samplingInterval: samplingInterval,
+    discardOldest: discardOldest,
+    queueSize: queueSize,
+    deliverQuality: true,
+    // A fresh map of fresh DataValues over deep copies of the values, so an
+    // event a consumer keeps is not rewritten by the next notification. The
+    // isolate client copies anyway when it crosses the SendPort; the direct
+    // client copies here so both deliver the same thing.
+    project: (latestValues, qualities) => {
+      for (final entry in latestValues.entries)
+        entry.key: (qualities[entry.key] ?? const _SampleQuality.unknown()).toDataValue(DynamicValue.from(entry.value)),
+    },
+  );
+
+  /// The monitored-item machinery behind [monitoredItems] and
+  /// [monitoredDataValues]: one stream of events, each built by [project] from
+  /// the latest value per node and the quality of each node's latest Value
+  /// sample.
+  ///
+  /// [deliverQuality] decides what a sample with a non-Good status becomes:
+  /// `false` adds it to the stream as a [UaStatusException] error and delivers
+  /// nothing for it (what [monitoredItems] has always done); `true` records
+  /// its status and timestamps in the node's quality and lets it through like
+  /// any other sample, except that a Bad sample of an attribute other than
+  /// Value, which has no quality to travel in, is still reported as the error.
+  /// It also asks the server for both timestamps, as [readValue] does; the
+  /// request [monitoredItems] has always sent asks for the source one only.
+  Stream<T> _monitoredItemsCore<T>(
+    ReadAttributeParam nodes,
+    int subscriptionId, {
+    required MonitoringMode monitoringMode,
+    required Duration samplingInterval,
+    required bool discardOldest,
+    required int queueSize,
+    required bool deliverQuality,
+    required T Function(Map<NodeId, DynamicValue> latestValues, Map<NodeId, _SampleQuality> qualities) project,
   }) {
-    StreamController<Map<NodeId, DynamicValue>> controller = StreamController<Map<NodeId, DynamicValue>>();
+    final controller = StreamController<T>();
 
     // We define our monitor callback here so we can use it in the onListen and onCancel closures
     late ffi.NativeCallable<
@@ -1687,12 +1778,25 @@ class Client implements ClientApi {
       createRequest.ref.subscriptionId = subscriptionId;
       createRequest.ref.itemsToCreate = monRequest;
       createRequest.ref.itemsToCreateSize = nodeCount;
+      if (deliverQuality) {
+        // The zeroed default is UA_TIMESTAMPSTORETURN_SOURCE: a DataValue
+        // reports the server timestamp too, so ask for both. The request of
+        // the value-only stream is left as it has always been.
+        createRequest.ref.timestampsToReturnAsInt = raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH.value;
+      }
 
       Map<NodeId, DynamicValue> latestValues = {};
+      // The status and timestamps of each node's latest Value sample. Only
+      // the Value attribute writes here: the other attributes arrive as their
+      // own notifications, with their own status and (measured) no source
+      // timestamp, and letting them write would clobber a Bad code with the
+      // Good of a DisplayName read, and a real timestamp with none.
+      Map<NodeId, _SampleQuality> qualities = {};
       // Request-order indexes for which a notification has been processed, and
       // the subset of indexes the server actually created an item for.
       Set<int> seenIndexes = {};
       Set<int> createdIndexes = {};
+      void emit() => controller.add(project(latestValues, qualities));
 
       // Assign our monitor callback pointer, This one stays alive for the duration of the stream
       monitorCallback =
@@ -1722,12 +1826,25 @@ class Client implements ClientApi {
               controller.addError('Failed to read value, nullptr provided');
               return;
             }
-            if (value.ref.status != raw.UA_STATUSCODE_GOOD) {
+            // Read out of the C struct NOW, into Dart locals. The VALUE branch
+            // below crosses an async boundary, and this callback "returns" into
+            // open62541 at that point — after which `value` points at memory
+            // the stack has reclaimed. Every field of it must be captured on
+            // this side of the first await or it is read as garbage.
+            final flags = value.ref.substitute;
+            final sampleStatus = value.ref.status;
+            final sampleSourceTicks = value.ref.sourceTimestamp;
+            final sampleServerTicks = value.ref.serverTimestamp;
+            // Anything but a plain Good, as this stream has always judged it:
+            // Uncertain and Good-with-info-bits included.
+            final isBadSample = sampleStatus != raw.UA_STATUSCODE_GOOD;
+
+            if (isBadSample && !deliverQuality) {
               // Surface the exact notification status as a typed error so the
               // code is extractable (e.g. Bad_NoCommunication from a
               // data-source node whose backing device is down). The
               // notification's value/timestamps are not delivered.
-              controller.addError(UaStatusException(value.ref.status));
+              controller.addError(UaStatusException(sampleStatus));
               return;
             }
             // Identify the item by its request-time context (request-order index
@@ -1744,26 +1861,42 @@ class Client implements ClientApi {
               final nodeId = item.$1;
               final attributeId = item.$2;
 
+              // The quality of a sample belongs to the VALUE: that is the one
+              // attribute a DataValue reports. A Bad sample of any other
+              // attribute has no field to travel in, so it is reported as the
+              // typed error it is on the default path rather than vanish
+              // without a trace. It still counts as seen below, so it cannot
+              // hold back the Value.
+              if (isBadSample && attributeId != AttributeId.UA_ATTRIBUTEID_VALUE) {
+                controller.addError(UaStatusException(sampleStatus));
+              }
+
               var reference = latestValues[nodeId] ?? DynamicValue();
               final ref = value.ref.value;
 
               // A notification without a decodable payload must not enter the
               // switch: every case dereferences the variant's native pointers,
               // and an empty variant (type == NULL) turns that into a
-              // process-killing SIGSEGV. A GOOD sample may legally carry no
-              // value ("the attribute exists and has no value", Part 4) in two
-              // wire shapes: hasValue clear, or hasValue set around a null
-              // variant. Both leave type == NULL, so both are checked.
-              final hasNothingToDecode = (value.ref.substitute & _hasValueFlag) == 0 || ref.type == ffi.nullptr;
+              // process-killing SIGSEGV. Two spec-legal shapes arrive here:
+              //  - a sample the server marked Bad, with hasValue CLEAR — its
+              //    QUALITY is still news, so it goes on to the shared emit
+              //    below with the code recorded (reachable only under
+              //    [deliverQuality]; the default path returned above).
+              //  - a GOOD sample carrying no value ("the attribute exists and
+              //    has no value", Part 4) — hasValue clear, or set around a
+              //    null variant. Both leave type == NULL, so both are checked.
+              final hasNothingToDecode = (flags & _hasValueFlag) == 0 || ref.type == ffi.nullptr;
 
               if (hasNothingToDecode) {
                 // A GOOD sample without a payload says the Value is empty NOW,
                 // so the previously decoded value has to go: left in place it
                 // is re-emitted as current while a read of the same node
-                // answers null. Any other attribute is absent, like the
-                // tolerated BadAttributeIdInvalid of readAttribute: nothing
-                // is set, and nothing already known is unset.
-                if (attributeId == AttributeId.UA_ATTRIBUTEID_VALUE) {
+                // answers null. A sample of another severity keeps it — that
+                // is the last-known value [monitoredDataValues] documents. Any
+                // other attribute is absent, like the tolerated
+                // BadAttributeIdInvalid of readAttribute: nothing is set, and
+                // nothing already known is unset.
+                if (attributeId == AttributeId.UA_ATTRIBUTEID_VALUE && _isGoodSeverity(sampleStatus)) {
                   reference.value = null;
                 }
               } else {
@@ -1810,6 +1943,24 @@ class Client implements ClientApi {
                 }
               }
 
+              // Recorded AFTER the switch on purpose: the VALUE branch crosses
+              // an async boundary, and the quality must describe the value
+              // that is emitted with it. An ABSENT status is Good (OPC UA
+              // Part 4) and the field reads 0, so the raw status is recorded
+              // unconditionally; a sample without a timestamp records none,
+              // never the previous sample's.
+              if (attributeId == AttributeId.UA_ATTRIBUTEID_VALUE) {
+                qualities[nodeId] = _SampleQuality(
+                  statusCode: sampleStatus,
+                  sourceTimestamp: (flags & _hasSourceTimestampFlag) != 0
+                      ? uaDateTimeToDateTime(sampleSourceTicks)
+                      : null,
+                  serverTimestamp: (flags & _hasServerTimestampFlag) != 0
+                      ? uaDateTimeToDateTime(sampleServerTicks)
+                      : null,
+                );
+              }
+
               // Update the seen indexes after processing
               seenIndexes.add(index);
 
@@ -1819,7 +1970,7 @@ class Client implements ClientApi {
               }
               try {
                 if (seenIndexes.length >= nodeCount - descriptionFailureCount) {
-                  controller.add(latestValues);
+                  emit();
                 }
               } catch (e) {
                 _safeErr("Error adding data: $e");
@@ -2005,7 +2156,7 @@ class Client implements ClientApi {
             if (descriptionFailureCount > 0 &&
                 seenIndexes.length >= nodeCount - descriptionFailureCount &&
                 !controller.isClosed) {
-              controller.add(latestValues);
+              emit();
             }
 
             // Backfill initial notifications a server never published. With
@@ -2044,7 +2195,7 @@ class Client implements ClientApi {
                 }
                 seenIndexes.addAll(createdIndexes);
                 if (!controller.isClosed && seenIndexes.length >= expectedCount) {
-                  controller.add(latestValues);
+                  emit();
                 }
               } catch (e) {
                 _safeErr('Failed to backfill dropped initial notifications: $e');
@@ -2105,6 +2256,42 @@ class Client implements ClientApi {
   }) {
     final controller = StreamController<DynamicValue>();
     final stream = monitoredItems(
+      {
+        nodeId: [
+          AttributeId.UA_ATTRIBUTEID_DATATYPE,
+          AttributeId.UA_ATTRIBUTEID_VALUE,
+          AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+          AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
+        ],
+      },
+      subscriptionId,
+      monitoringMode: monitoringMode,
+      samplingInterval: samplingInterval,
+      discardOldest: discardOldest,
+      queueSize: queueSize,
+    );
+    final subscription = stream.listen((event) => controller.add(event.values.first));
+    subscription.onError((error) => controller.addError(error));
+    controller.onCancel = () {
+      subscription.cancel();
+    };
+    subscription.onDone(() {
+      controller.close();
+    });
+    return controller.stream;
+  }
+
+  @override
+  Stream<DataValue> monitorDataValue(
+    NodeId nodeId,
+    int subscriptionId, {
+    MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    Duration samplingInterval = const Duration(milliseconds: 100),
+    bool discardOldest = true,
+    int queueSize = 1,
+  }) {
+    final controller = StreamController<DataValue>();
+    final stream = monitoredDataValues(
       {
         nodeId: [
           AttributeId.UA_ATTRIBUTEID_DATATYPE,
@@ -2420,7 +2607,7 @@ class Client implements ClientApi {
   // mapped to their native teardown function. Populated on onListen, removed on
   // cancel/cleanup, and drained by delete() so that no monitored-item callback
   // can fire into freed native memory after UA_Client_delete.
-  final Map<StreamController<Map<NodeId, DynamicValue>>, Future<void> Function()> _activeMonitoredStreams = {};
+  final Map<StreamController, Future<void> Function()> _activeMonitoredStreams = {};
 
   // Auto-reconnect (opt-in via [keepConnected]) state.
   bool _keepConnected = false;
