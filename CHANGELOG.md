@@ -21,6 +21,17 @@ changes that ship the same native library version.
   `asIntOrNull`, `asDoubleOrNull` and `asBoolOrNull` return null there
   instead, like `asDateTime` already did. `DynamicType` is exported.
 
+- **A refused monitored item fails the stream with `MonitoredItemsRefused`,
+  not a `String` (#38).** When the server refuses an item of a
+  `monitoredItems` create (`BadNodeIdUnknown` for a node it does not have,
+  ...), the stream's error was the formatted message, so a caller could match
+  neither the type nor the status; the service-level failure of the same
+  create was already a `UaStatusException`. The error is now a
+  `MonitoredItemsRefused`, a `UaStatusException` with the first refused item's
+  status as `statusCode` and every refused item's status in `failures`
+  (`(NodeId, AttributeId)` to status). `toString()` is the old message, and
+  `ClientIsolate` forwards it typed.
+
 ## 1.5.9
 
 - **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the
