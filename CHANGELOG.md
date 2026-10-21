@@ -69,6 +69,20 @@ changes that ship the same native library version.
   stayed alive and the open ports kept the calling isolate (and with it a CLI
   process) from exiting. `delete()` now always kills the worker and closes
   its ports; the error is still reported to the caller.
+- **Fixed a 48-byte native leak per struct-valued variant decoded (and per
+  struct written).** `OpcUaDynamicValueSerializer.deserialize` calloc'd a
+  `UA_ExtensionObject` to read the header of every struct-valued variant --
+  every struct notification, every struct read, and once per element of an
+  array of structs -- and never freed it; `serialize` did the same for every
+  struct written. Both now read/build the header through a `Struct.create`
+  view on the Dart heap, so the garbage collector owns it. Present in 1.5.7
+  through 1.5.7+3.
+- **A struct write that fails no longer leaks.** When serialising a struct
+  threw part-way (a field without a value, for example), the type id string
+  already allocated for it was never freed, nor were the bodies and type ids
+  of the elements before it in an array of structs. The whole value is now
+  encoded on the Dart heap first, and the native memory the variant takes
+  ownership of is allocated only once nothing can throw any more.
 - Bump bundled open62541 from `v1.5.7` to `v1.5.9` (v1.5.8 was never shipped
   by this package; both upstream releases land here).
   - Upstream v1.5.8 is a maintenance release focused on hardening and
