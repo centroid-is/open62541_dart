@@ -58,8 +58,8 @@ class ServerStatistics {
     required this.currentSubscriptionCount,
     required this.cumulatedSubscriptionCount,
     required this.currentMonitoredItemCount,
-    this.cumulatedDataChangeNotificationCount,
-    this.cumulatedNotificationCount,
+    this.liveDataChangeNotificationCount,
+    this.liveNotificationCount,
   });
 
   // Secure-channel layer.
@@ -90,18 +90,23 @@ class ServerStatistics {
   /// SubscriptionDiagnosticsArray), or `null` when unavailable.
   final int? currentMonitoredItemCount;
 
-  /// Data-change notifications delivered since server start, summed over
-  /// the subscriptions currently alive (each entry's
+  /// Data-change notifications delivered by the subscriptions that are
+  /// alive right now, summed over them (each entry's
   /// `dataChangeNotificationsCount` in the NS0 SubscriptionDiagnosticsArray),
-  /// or `null` when unavailable. A deleted subscription takes its share of
-  /// the sum with it, so the value is monotonic only while the subscription
-  /// set is stable — rate consumers should clamp a negative delta to zero.
-  final int? cumulatedDataChangeNotificationCount;
+  /// or `null` when unavailable. NOT cumulative since server start: a
+  /// deleted subscription takes its share of the sum with it, so the value
+  /// only grows while the subscription set is stable — a rate consumer
+  /// differences it and clamps a negative delta to zero. (open62541 keeps no
+  /// server-wide counter and offers no subscription-delete hook, so a true
+  /// cumulative count is not cheaply available.)
+  final int? liveDataChangeNotificationCount;
 
-  /// All notifications (data changes + events + keep-alives as counted by
-  /// open62541's `notificationsCount`) delivered since server start, summed
-  /// the same way, or `null` when unavailable.
-  final int? cumulatedNotificationCount;
+  /// Data-change plus event notifications (open62541's per-subscription
+  /// `notificationsCount`, which counts exactly `dataChangeNotificationsCount
+  /// + eventNotificationsCount` — keep-alive messages carry no notifications
+  /// and are not in it), summed over the live subscriptions the same way, or
+  /// `null` when unavailable.
+  final int? liveNotificationCount;
 
   @override
   String toString() =>
@@ -109,8 +114,8 @@ class ServerStatistics {
       'channels: $currentChannelCount (cumulated $cumulatedChannelCount), '
       'subscriptions: $currentSubscriptionCount (cumulated $cumulatedSubscriptionCount), '
       'monitoredItems: $currentMonitoredItemCount, '
-      'dataChangeNotifications: $cumulatedDataChangeNotificationCount, '
-      'notifications: $cumulatedNotificationCount)';
+      'dataChangeNotifications: $liveDataChangeNotificationCount, '
+      'notifications: $liveNotificationCount)';
 }
 
 /// The activation identity of the session that invoked a method callback —
@@ -1774,8 +1779,8 @@ class Server {
       currentSubscriptionCount: currentSubscriptions,
       cumulatedSubscriptionCount: cumulatedSubscriptions,
       currentMonitoredItemCount: currentMonitoredItems,
-      cumulatedDataChangeNotificationCount: dataChangeNotifications,
-      cumulatedNotificationCount: notifications,
+      liveDataChangeNotificationCount: dataChangeNotifications,
+      liveNotificationCount: notifications,
     );
   }
 

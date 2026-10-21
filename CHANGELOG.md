@@ -4,18 +4,16 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
-
-- `ServerStatistics` gained `cumulatedDataChangeNotificationCount` and
-  `cumulatedNotificationCount`: the per-subscription
-  `dataChangeNotificationsCount` / `notificationsCount` of the NS0
-  SubscriptionDiagnosticsArray summed over the live subscriptions (`null`
-  without diagnostics). Lets a server derive its notification rate without
-  hooking the publish path; a deleted subscription takes its share of the
-  sum with it, so consumers clamp negative deltas.
-
 ## 1.5.9
 
+- `ServerStatistics` gained `liveDataChangeNotificationCount` and
+  `liveNotificationCount`: the per-subscription `dataChangeNotificationsCount`
+  / `notificationsCount` (data changes + events; keep-alives carry none) of
+  the NS0 SubscriptionDiagnosticsArray summed over the subscriptions alive
+  right now (`null` without diagnostics). Lets a server derive its
+  notification rate without hooking the publish path. Not cumulative since
+  server start: a deleted subscription takes its share of the sum with it, so
+  rate consumers difference the value and clamp a negative delta to zero.
 - **`Server.port`: the port the server listens on, for `Server(port: 0)`.**
   open62541 supports dynamic port assignment (the listen socket binds port 0
   and `getsockname` reads what the OS picked), but on a dual-stack host its
