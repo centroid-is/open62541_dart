@@ -28,7 +28,6 @@ import 'dart:isolate';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'common.dart' show freeTcpPort;
 
 final sampledNodeId = NodeId.fromString(1, 'the.sampled');
 
@@ -36,9 +35,8 @@ final sampledNodeId = NodeId.fromString(1, 'the.sampled');
 /// whose read callback reports every invocation to the main isolate.
 void serverMain(List<Object?> args) {
   final sendPort = args[0] as SendPort;
-  final port = args[1] as int;
 
-  final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+  final server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
   server.start();
 
   var reads = 0;
@@ -54,7 +52,7 @@ void serverMain(List<Object?> args) {
   );
 
   final control = ReceivePort();
-  sendPort.send(control.sendPort);
+  sendPort.send([control.sendPort, server.port]);
   var running = true;
   control.listen((msg) {
     if (msg == 'shutdown') running = false;
@@ -72,20 +70,18 @@ void serverMain(List<Object?> args) {
 
 void main() {
   test('cancelling a mid-flight CreateMonitoredItems deletes the item on the server', () async {
-    final port = await freeTcpPort();
-
     final fromServer = ReceivePort();
-    final controlReady = Completer<SendPort>();
+    final controlReady = Completer<(SendPort, int)>();
     var readCount = 0;
     fromServer.listen((msg) {
-      if (msg is SendPort) {
-        controlReady.complete(msg);
+      if (msg is List) {
+        controlReady.complete((msg[0] as SendPort, msg[1] as int));
         return;
       }
       readCount = msg as int;
     });
-    final serverIsolate = await Isolate.spawn(serverMain, <Object?>[fromServer.sendPort, port]);
-    final serverControl = await controlReady.future.timeout(const Duration(seconds: 20));
+    final serverIsolate = await Isolate.spawn(serverMain, <Object?>[fromServer.sendPort]);
+    final (serverControl, port) = await controlReady.future.timeout(const Duration(seconds: 20));
 
     final client = Client(logLevel: LogLevel.UA_LOGLEVEL_WARNING);
     final pump = Timer.periodic(const Duration(milliseconds: 10), (_) {

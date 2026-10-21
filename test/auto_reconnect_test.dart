@@ -15,11 +15,12 @@ class ManagedServer {
   Server server;
   bool _running = false;
 
-  static ManagedServer start(int port) {
+  /// Starts on a port the OS picks, or on [port] for a restart.
+  static ManagedServer start([int port = 0]) {
     final server = Server(port: port, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
     server.start();
     addBasicVariables(server);
-    final managed = ManagedServer._(port, server);
+    final managed = ManagedServer._(server.port, server);
     managed._running = true;
     managed._pump();
     return managed;
@@ -90,12 +91,12 @@ Future<T> _retry<T>(Future<T> Function() action, Duration timeout) async {
 
 void main() {
   test('client auto-recovers a read after a server crash/restart', () async {
-    final port = await freeTcpPort();
-    var srv = ManagedServer.start(port);
+    var srv = ManagedServer.start();
+    final port = srv.port;
     final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
 
     // Opt in to auto-reconnect. This owns the run_iterate pump for us.
-    await client.keepConnected('opc.tcp://localhost:$port').timeout(const Duration(seconds: 20));
+    await client.keepConnected('opc.tcp://127.0.0.1:$port').timeout(const Duration(seconds: 20));
 
     // Baseline read works.
     expect((await client.read(boolNodeId)).value, true);
@@ -122,11 +123,11 @@ void main() {
   }, timeout: const Timeout(Duration(seconds: 90)));
 
   test('a fresh subscription delivers data after recovery', () async {
-    final port = await freeTcpPort();
-    var srv = ManagedServer.start(port);
+    var srv = ManagedServer.start();
+    final port = srv.port;
     final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
 
-    await client.keepConnected('opc.tcp://localhost:$port').timeout(const Duration(seconds: 20));
+    await client.keepConnected('opc.tcp://127.0.0.1:$port').timeout(const Duration(seconds: 20));
 
     // A subscription/monitored item works before the drop.
     final sub1 = await client.subscriptionCreate(requestedPublishingInterval: const Duration(milliseconds: 20));
@@ -168,8 +169,8 @@ void main() {
   test(
     'control: without opt-in the client gives up after a drop',
     () async {
-      final port = await freeTcpPort();
-      var srv = ManagedServer.start(port);
+      var srv = ManagedServer.start();
+      final port = srv.port;
       final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
 
       // Classic stop-on-non-GOOD drive loop (like test/common.dart setupClient).
@@ -180,7 +181,7 @@ void main() {
         }
         pumpAlive = false; // loop terminated because run_iterate returned non-GOOD
       }();
-      await client.connect('opc.tcp://localhost:$port').timeout(const Duration(seconds: 20));
+      await client.connect('opc.tcp://127.0.0.1:$port').timeout(const Duration(seconds: 20));
       expect((await client.read(boolNodeId)).value, true);
 
       // Crash + restart on the same port.

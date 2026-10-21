@@ -41,6 +41,8 @@ import 'package:http/http.dart' as http;
 const Map<String, String> _open62541Sha256 = {
   'v1.5.6': 'c142bd304f7f614f570a2b8ec0a618608bc22a94b43e4e477525829ba1c69641',
   'v1.5.7': '79ded488caf7b8dc7f1ad1269d0142a80c47bab1d5725663f194f72ac8911a78',
+  'v1.5.8': 'aae5d1e6c73f8fd5a72e36e6d21afb27bf5eacbe3f20e3581dbde80d3024cadc',
+  'v1.5.9': 'e67790c33feeee660a3831fb2546a3dea070d93003c7901523cf8ed3963ef840',
 };
 
 /// mbedTLS release version and the SHA-256 of its `.tar.bz2` release asset.
@@ -88,10 +90,21 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
     'mbedtls-$_mbedtlsVersion/mbedtls-$_mbedtlsVersion.tar.bz2',
   );
 
-  // Return early if already downloaded and renamed
+  // Reuse the extracted tree only if it holds the pinned version. The shared
+  // output directory outlives a package upgrade, so an unstamped or
+  // differently-stamped tree is a previous release's source: discard it
+  // together with everything built from it (the CMake build directory inside
+  // src/ and every i-<target>/ install prefix beside it) rather than silently
+  // link the old mbedTLS into the new library.
   final srcDir = Directory.fromUri(extractDir.uri.resolve('src/'));
-  if (await srcDir.exists()) {
+  final versionStamp = File.fromUri(extractDir.uri.resolve('version'));
+  if (await srcDir.exists() &&
+      await versionStamp.exists() &&
+      (await versionStamp.readAsString()).trim() == _mbedtlsVersion) {
     return srcDir.uri;
+  }
+  if (await extractDir.exists()) {
+    await extractDir.delete(recursive: true);
   }
 
   final bytes = await _downloadVerified(url, expectedSha256: _mbedtlsSha256, what: 'mbedTLS $_mbedtlsVersion');
@@ -113,6 +126,7 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
   // Rename extracted folder (e.g. mbedtls-3.6.5) to 'src' for shorter paths
   final folder = extractDir.listSync().firstWhere((element) => element is Directory);
   await (folder as Directory).rename(srcDir.path);
+  await versionStamp.writeAsString(_mbedtlsVersion);
   return srcDir.uri;
 }
 
@@ -154,14 +168,17 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
   final mbedtlsBase = input.outputDirectoryShared.resolve('tls/');
   final installPrefix = mbedtlsBase.resolve('i-$targetKey/');
 
-  // Skip if already built
+  // Resolve the source tree before looking for an install: a tree of another
+  // version is discarded there along with every i-<target>/ prefix built from
+  // it, so an install that is still present afterwards is the pinned version.
+  final sourceDir = await _downloadMbedTLS(input.outputDirectoryShared);
+
+  // Skip if already built for this target
   final includeCheck = File.fromUri(installPrefix.resolve('include/mbedtls/ssl.h'));
   if (await includeCheck.exists()) {
     logger.info('mbedTLS already built, skipping');
     return installPrefix;
   }
-
-  final sourceDir = await _downloadMbedTLS(input.outputDirectoryShared);
 
   await _buildCmakeProject(
     input: input,
@@ -189,10 +206,18 @@ Future<Uri> download(Uri outputDirectory, String version) async {
   // Use short directory names to avoid Windows MAX_PATH (260 char) limit.
   final extractDir = Directory.fromUri(outputDirectory.resolve('dl/'));
 
-  // Return early if already downloaded and renamed
+  // Reuse the extracted tree only if it holds the pinned version. The shared
+  // output directory outlives a package upgrade, so an unstamped or
+  // differently-stamped tree is a previous release's source (and CMake build
+  // directory, which lives inside it): discard it rather than silently build
+  // the old library against the new bindings.
   final srcDir = Directory.fromUri(extractDir.uri.resolve('src/'));
-  if (await srcDir.exists()) {
+  final versionStamp = File.fromUri(extractDir.uri.resolve('version'));
+  if (await srcDir.exists() && await versionStamp.exists() && (await versionStamp.readAsString()).trim() == version) {
     return srcDir.uri;
+  }
+  if (await extractDir.exists()) {
+    await extractDir.delete(recursive: true);
   }
 
   final expectedSha256 = _open62541Sha256[version];
@@ -226,6 +251,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
     throw Exception('Error extracting open62541 version $version: extracted directory not found');
   }
   await (folder as Directory).rename(srcDir.path);
+  await versionStamp.writeAsString(version);
   return srcDir.uri;
 }
 
@@ -240,6 +266,51 @@ Future<void> _applyPatches(Uri sourceDir, Uri packageRoot) async {
   await _patchSessionRecreateRace(sourceDir, packageRoot);
   await _patchDeleteByClientHandle(sourceDir, packageRoot);
   await _patchAsyncManagerSingleThread(sourceDir);
+  await _patchDynamicPort(sourceDir, packageRoot);
+}
+
+/// Gives a server started on port 0 ONE port for every address family.
+///
+/// open62541 supports dynamic port assignment (`UA_ServerConfig_setMinimal`
+/// with port 0: the listen socket binds port 0, `getsockname` reads the port
+/// the OS picked, and the binary protocol manager advertises it as a
+/// DiscoveryUrl). But `TCP_registerListenSockets` in
+/// `arch/posix/eventloop_posix_tcp.c` passes the configured port (0) to every
+/// `getaddrinfo` result separately, so on a dual-stack host the IPv4 and the
+/// IPv6 listen socket each get their own OS-picked port and the server
+/// advertises two DiscoveryUrls that differ only in the port. The patch binds
+/// the IPv4 addresses first and reuses the port the OS picked for them for the
+/// remaining families, so `Server.port` is THE port. Same delivery mechanism
+/// as [_patchSessionRecreateRace].
+Future<void> _patchDynamicPort(Uri sourceDir, Uri packageRoot) async {
+  final targetFile = File.fromUri(sourceDir.resolve('arch/posix/eventloop_posix_tcp.c'));
+  if (!await targetFile.exists()) {
+    throw Exception('Cannot apply dynamic-port patch: arch/posix/eventloop_posix_tcp.c not found under $sourceDir.');
+  }
+
+  // Idempotent: the patch injects a uniquely-worded comment (warm shared
+  // source dir reused across builds).
+  const marker = 'reuse the port the OS picked for them for the';
+  if ((await targetFile.readAsString()).contains(marker)) {
+    return;
+  }
+
+  final patchFile = File.fromUri(packageRoot.resolve('hook/dynamic_port.patch'));
+  if (!await patchFile.exists()) {
+    throw Exception(
+      'Cannot apply dynamic-port patch: patch file not found at ${patchFile.path}. '
+      'It must ship with the package (check .pubignore does not exclude hook/).',
+    );
+  }
+
+  await _applyUnifiedDiff(sourceDir: sourceDir, patchFile: patchFile, what: 'dynamic-port');
+
+  if (!(await targetFile.readAsString()).contains(marker)) {
+    throw Exception(
+      'dynamic-port patch tool reported success but the fix is absent from '
+      'eventloop_posix_tcp.c. The upstream source likely changed shape; re-verify the patch.',
+    );
+  }
 }
 
 /// Runs the server's AsyncManager lifecycle in single-threaded builds too.
@@ -659,7 +730,7 @@ Future<ProcessResult?> _tryRun(String executable, List<String> arguments, String
 }
 
 Future<void> main(List<String> args) async {
-  final version = "v1.5.7";
+  final version = "v1.5.9";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
     await _applyPatches(extractedFiles, input.packageRoot);

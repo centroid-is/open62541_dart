@@ -10,12 +10,10 @@ import 'common.dart';
 /// isolate boundary with its status code intact.
 void main() {
   group('Server.write status (item 10)', () {
-    late int port;
     late Server server;
 
     setUp(() async {
-      port = await freeTcpPort();
-      server = setupServer(port);
+      server = setupServer();
     });
 
     tearDown(() {
@@ -47,14 +45,14 @@ void main() {
 
   group('Bare ClientIsolate.connect (item 11)', () {
     test('completes without any external pump (deadlock regression)', () async {
-      final port = await freeTcpPort();
-      final server = setupServer(port);
+      final server = setupServer();
+      final port = server.port;
       final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
       try {
         // Historically this awaited forever: nothing pumped the worker's
         // iterate loop unless keepConnected ran. The worker now pumps the
         // handshake itself. Test-level timeout guards the regression.
-        await client.connect('opc.tcp://localhost:$port').timeout(const Duration(seconds: 15));
+        await client.connect('opc.tcp://127.0.0.1:$port').timeout(const Duration(seconds: 15));
         final state = await client.state;
         expect(state.sessionState, raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
       } finally {
@@ -83,8 +81,8 @@ void main() {
 
   group('Typed errors across the isolate boundary (item 12)', () {
     test('a UaStatusException from a server callback keeps its code', () async {
-      final port = await freeTcpPort();
-      final server = setupServer(port);
+      final server = setupServer();
+      final port = server.port;
       // A read-write node whose write handler refuses with a specific code.
       server.addDataSourceVariableNode(
         NodeId.fromString(1, 'gate.value'),
@@ -96,7 +94,7 @@ void main() {
 
       final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
       try {
-        await client.keepConnected('opc.tcp://localhost:$port').timeout(const Duration(seconds: 15));
+        await client.keepConnected('opc.tcp://127.0.0.1:$port').timeout(const Duration(seconds: 15));
         await expectLater(
           client.write(NodeId.fromString(1, 'gate.value'), DynamicValue(value: 2, typeId: NodeId.int32)),
           throwsA(

@@ -30,8 +30,8 @@ void main() {
     late Client client;
 
     setUp(() async {
-      port = await freeTcpPort();
-      server = setupServer(port);
+      server = setupServer();
+      port = server.port;
       client = await setupClient(port);
     });
 

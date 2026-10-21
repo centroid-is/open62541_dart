@@ -41,7 +41,6 @@ import 'dart:async';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'common.dart' show freeTcpPort;
 
 final intNodeId = NodeId.fromString(1, "the.int");
 final int2NodeId = NodeId.fromString(1, "the.int2");
@@ -57,9 +56,9 @@ void main() {
   Timer? churnTimer;
 
   Future<void> setup() async {
-    serverPort = await freeTcpPort();
-    server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+    server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
     server.start();
+    serverPort = server.port;
 
     server.addVariableNode(intNodeId, DynamicValue(value: 0, typeId: NodeId.int32, name: "the.int"));
     server.addVariableNode(int2NodeId, DynamicValue(value: 0, typeId: NodeId.int32, name: "the.int2"));

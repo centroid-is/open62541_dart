@@ -14,7 +14,6 @@ import 'dart:async';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'common.dart' show freeTcpPort;
 
 final intNodeId = NodeId.fromString(1, "the.int");
 
@@ -28,10 +27,10 @@ void main() {
   var serverShutdown = false;
 
   setUp(() async {
-    serverPort = await freeTcpPort();
     serverShutdown = false;
-    server = Server(port: serverPort, logLevel: LogLevel.UA_LOGLEVEL_WARNING);
+    server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_WARNING);
     server.start();
+    serverPort = server.port;
 
     DynamicValue intValue = DynamicValue(value: 42, typeId: NodeId.int32, name: "the.int");
     server.addVariableNode(intNodeId, intValue);

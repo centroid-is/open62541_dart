@@ -181,9 +181,18 @@ class NodeId {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
   }
 
-  raw.UA_NodeId toRaw() {
+  /// This NodeId as a by-value `UA_NodeId`.
+  ///
+  /// A numeric or GUID identifier is inline, so the result owns no native
+  /// memory. A string identifier is copied into a buffer from [allocator], and
+  /// whoever ends up holding the struct has to release it: open62541, when the
+  /// struct is stored in something open62541 frees (a request passed to
+  /// `UA_*_delete`, a config it clears), which needs the default `ua_malloc`;
+  /// otherwise the caller. Where the NodeId is only passed by value to a call
+  /// that copies it, pass an [Arena] so the buffer goes with the scope.
+  raw.UA_NodeId toRaw({Allocator allocator = ua_malloc}) {
     if (_stringId != null) {
-      return raw.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: ua_malloc).cast());
+      return raw.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: allocator).cast());
     } else if (_numericId != null) {
       return raw.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
     } else if (_guidId != null) {
