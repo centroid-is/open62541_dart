@@ -111,6 +111,28 @@ class MonitoredItemsMessage extends IsolateMessage {
   });
 }
 
+/// [MonitoredItemsMessage] for the DataValue stream: the worker answers with
+/// `Map<NodeId, DataValue>` events ([DataValue] is closure-free data and
+/// ports across the SendPort as itself).
+class MonitoredDataValuesMessage extends IsolateMessage {
+  final ReadAttributeParam nodes;
+  final int subscriptionId;
+  final MonitoringMode monitoringMode;
+  final Duration samplingInterval;
+  final bool discardOldest;
+  final int queueSize;
+
+  const MonitoredDataValuesMessage(
+    super.requestId,
+    this.nodes,
+    this.subscriptionId, {
+    this.monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    this.samplingInterval = const Duration(milliseconds: 100),
+    this.discardOldest = true,
+    this.queueSize = 1,
+  });
+}
+
 class CallMessage extends IsolateMessage {
   final NodeId objectId;
   final NodeId methodId;
@@ -220,12 +242,13 @@ class IsolateResponse<T> {
 
 /// Maps an error to what crosses the isolate boundary: a [UaStatusException]
 /// travels as itself (its status code survives — callers on the main isolate
-/// can `on UaStatusException catch` and read `statusCode`); anything else is
+/// can `on UaStatusException catch` and read `statusCode`), and so does a
+/// [MonitoredItemsRefused], with its per-item statuses; anything else is
 /// stringified, because arbitrary exception types (native handles, closures)
 /// are not reliably sendable.
 Object sendableError(Object e) => e is UaStatusException ? e : e.toString();
 
-class ClientIsolate implements ClientApi {
+class ClientIsolate implements ClientApi, DataValueMonitoringApi {
   ClientIsolate._({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -562,6 +585,81 @@ class ClientIsolate implements ClientApi {
 
     _sendPort.send(
       MonitoredItemsMessage(
+        id,
+        nodes,
+        subscriptionId,
+        monitoringMode: monitoringMode,
+        samplingInterval: samplingInterval,
+        discardOldest: discardOldest,
+        queueSize: queueSize,
+      ),
+    );
+
+    controller.onCancel = () {
+      _streamControllers.remove(id);
+      if (!_isClosed) {
+        _sendPort.send(MonitorCancelMessage(id));
+      }
+    };
+
+    return controller.stream;
+  }
+
+  /// Monitor a node, every sample as a [DataValue]
+  @override
+  Stream<DataValue> monitorDataValue(
+    NodeId nodeId,
+    int subscriptionId, {
+    MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    Duration samplingInterval = const Duration(milliseconds: 100),
+    bool discardOldest = true,
+    int queueSize = 1,
+  }) {
+    final controller = StreamController<DataValue>();
+    final stream = monitoredDataValues(
+      {
+        nodeId: [
+          AttributeId.UA_ATTRIBUTEID_DATATYPE,
+          AttributeId.UA_ATTRIBUTEID_VALUE,
+          AttributeId.UA_ATTRIBUTEID_DESCRIPTION,
+          AttributeId.UA_ATTRIBUTEID_DISPLAYNAME,
+        ],
+      },
+      subscriptionId,
+      monitoringMode: monitoringMode,
+      samplingInterval: samplingInterval,
+      discardOldest: discardOldest,
+      queueSize: queueSize,
+    );
+    final subscription = stream.listen((event) => controller.add(event.values.first));
+    subscription.onError((error) => controller.addError(error));
+    controller.onCancel = () {
+      subscription.cancel();
+    };
+    subscription.onDone(() {
+      controller.close();
+    });
+    return controller.stream;
+  }
+
+  /// Monitor multiple nodes and attributes, every sample as a [DataValue]
+  @override
+  Stream<Map<NodeId, DataValue>> monitoredDataValues(
+    ReadAttributeParam nodes,
+    int subscriptionId, {
+    MonitoringMode monitoringMode = MonitoringMode.UA_MONITORINGMODE_REPORTING,
+    Duration samplingInterval = const Duration(milliseconds: 100),
+    bool discardOldest = true,
+    int queueSize = 1,
+  }) {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final controller = StreamController<Map<NodeId, DataValue>>();
+    final id = _generateId();
+    _streamControllers[id] = controller;
+
+    _sendPort.send(
+      MonitoredDataValuesMessage(
         id,
         nodes,
         subscriptionId,
@@ -1058,6 +1156,34 @@ void _isolateEntryPoint(_IsolateData data) {
           },
           onError: (error) {
             _safeErr("[${endpoint ?? 'unknown'}] MonitoredItems stream error: $error");
+            sendPort.send(StreamDataMessage.error(message.requestId, sendableError(error as Object)));
+          },
+          onDone: () {
+            activeStreams.remove(message.requestId);
+          },
+        );
+
+        activeStreams[message.requestId] = subscription;
+
+        sendPort.send(IsolateResponse.success(message.requestId, null));
+      } else if (message is MonitoredDataValuesMessage) {
+        final stream = client.monitoredDataValues(
+          message.nodes,
+          message.subscriptionId,
+          monitoringMode: message.monitoringMode,
+          samplingInterval: message.samplingInterval,
+          discardOldest: message.discardOldest,
+          queueSize: message.queueSize,
+        );
+
+        // Same lifecycle as a MonitoredItemsMessage stream: registered under
+        // its request id so MonitorCancelMessage and DeleteMessage find it.
+        final subscription = stream.listen(
+          (value) {
+            sendPort.send(StreamDataMessage.success(message.requestId, value));
+          },
+          onError: (error) {
+            _safeErr("[${endpoint ?? 'unknown'}] MonitoredDataValues stream error: $error");
             sendPort.send(StreamDataMessage.error(message.requestId, sendableError(error as Object)));
           },
           onDone: () {

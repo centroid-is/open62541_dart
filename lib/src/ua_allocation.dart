@@ -9,11 +9,6 @@ import 'dart:io';
 
 bool debug = false;
 
-typedef UaPosixMallocNative = Pointer Function(IntPtr);
-
-@Native<UaPosixMallocNative>(symbol: 'malloc')
-external Pointer uaPosixMalloc(int size);
-
 typedef UaPosixCallocNative = Pointer Function(IntPtr num, IntPtr size);
 
 @Native<UaPosixCallocNative>(symbol: 'calloc')
@@ -28,99 +23,12 @@ final Pointer<NativeFunction<UaPosixFreeNative>> uaPosixFreePointer = Native.add
 
 final DynamicLibrary ucrtbaselib = DynamicLibrary.open(debug ? 'ucrtbased.dll' : 'ucrtbase.dll');
 
-typedef WinMalloc = Pointer Function(int);
-final WinMalloc winMalloc = ucrtbaselib.lookupFunction<UaPosixMallocNative, WinMalloc>('malloc');
-
 typedef WinCalloc = Pointer Function(int, int);
 final WinCalloc winCalloc = ucrtbaselib.lookupFunction<UaPosixCallocNative, WinCalloc>('calloc');
 
 typedef WinFree = void Function(Pointer);
 final Pointer<NativeFunction<UaPosixFreeNative>> winFreePointer = ucrtbaselib.lookup('free');
 final WinFree winFree = winFreePointer.asFunction();
-
-/// Manages memory on the native heap.
-///
-/// Does not initialize newly allocated memory to zero. Use [CallocAllocator]
-/// for zero-initialized memory on allocation.
-///
-/// For POSIX-based & Windows systems, this uses `malloc` and `free`.
-final class UaMallocAllocator implements Allocator {
-  const UaMallocAllocator._();
-
-  /// Allocates [byteCount] bytes of of unitialized memory on the native heap.
-  ///
-  /// For POSIX-based & Windows systems, this uses `malloc`.
-  ///
-  /// Throws an [ArgumentError] if the number of bytes or alignment cannot be
-  /// satisfied.
-  // TODO: Stop ignoring alignment if it's large, for example for SSE data.
-  @override
-  Pointer<T> allocate<T extends NativeType>(int byteCount, {int? alignment}) {
-    Pointer<T> result;
-    if (Platform.isWindows) {
-      result = winMalloc(byteCount).cast();
-    } else {
-      result = uaPosixMalloc(byteCount).cast();
-    }
-    if (result.address == 0) {
-      throw ArgumentError('Could not allocate $byteCount bytes.');
-    }
-    return result;
-  }
-
-  /// Releases memory allocated on the native heap.
-  ///
-  /// For POSIX-based & Windows systems, this uses `free`.
-  /// It may only be used against pointers allocated in a
-  /// manner equivalent to [allocate].
-  @override
-  void free(Pointer pointer) {
-    if (Platform.isWindows) {
-      winFree(pointer);
-    } else {
-      uaPosixFree(pointer);
-    }
-  }
-
-  /// Returns a pointer to a native free function.
-  ///
-  /// This function can be used to release memory allocated by [allocate]
-  /// from the native side. It can also be used as a finalization callback
-  /// passed to `NativeFinalizer` constructor or `Pointer.atTypedList`
-  /// method.
-  ///
-  /// For example to automatically free native memory when the Dart object
-  /// wrapping it is reclaimed by GC:
-  ///
-  /// ```dart
-  /// class Wrapper implements Finalizable {
-  ///   static final finalizer = NativeFinalizer(malloc.nativeFree);
-  ///
-  ///   final Pointer<Uint8> data;
-  ///
-  ///   Wrapper() : data = malloc.allocate<Uint8>(length) {
-  ///     finalizer.attach(this, data);
-  ///   }
-  /// }
-  /// ```
-  ///
-  /// or to free native memory that is owned by a typed list:
-  ///
-  /// ```dart
-  /// malloc.allocate<Uint8>(n).asTypedList(n, finalizer: malloc.nativeFree)
-  /// ```
-  ///
-  Pointer<NativeFinalizerFunction> get nativeFree => Platform.isWindows ? winFreePointer : uaPosixFreePointer;
-}
-
-/// Manages memory on the native heap.
-///
-/// Does not initialize newly allocated memory to zero. Use [calloc] for
-/// zero-initialized memory allocation.
-///
-/// For POSIX-based & Windows systems, this uses `malloc` and `free`.
-// ignore: constant_identifier_names
-const UaMallocAllocator ua_malloc = UaMallocAllocator._();
 
 /// Manages memory on the native heap.
 ///
@@ -133,7 +41,7 @@ final class UaCallocAllocator implements Allocator {
   /// Allocates [byteCount] bytes of zero-initialized of memory on the native
   /// heap.
   ///
-  /// For POSIX-based & Windows systems, this uses `malloc`.
+  /// For POSIX-based & Windows systems, this uses `calloc`.
   ///
   /// Throws an [ArgumentError] if the number of bytes or alignment cannot be
   /// satisfied.
@@ -198,8 +106,9 @@ final class UaCallocAllocator implements Allocator {
 
 /// Manages memory on the native heap.
 ///
-/// Initializes newly allocated memory to zero. Use [malloc] for uninitialized
-/// memory allocation.
+/// Initializes newly allocated memory to zero. The one allocator this package
+/// uses, so every buffer it hands open62541 (which frees with `free`) and
+/// every buffer open62541 hands back comes from the same C heap.
 ///
 /// For POSIX-based & Windows systems, this uses `calloc` and `free`.
 // ignore: constant_identifier_names

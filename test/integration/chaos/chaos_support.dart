@@ -74,7 +74,7 @@ String? arrayMismatch(DynamicValue v, List<double> expected) {
   }
   for (var i = 0; i < expected.length; i++) {
     final got = v[i].asDouble;
-    if ((got - expected[i]).abs() > 1e-9) {
+    if (got == null || (got - expected[i]).abs() > 1e-9) {
       return 'element $i: got $got, expected ${expected[i]}';
     }
   }

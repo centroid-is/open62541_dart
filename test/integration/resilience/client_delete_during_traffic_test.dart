@@ -66,7 +66,7 @@ void main() {
           // Deliberately keep the monitored-item stream *active* (do not cancel
           // it before delete) so the tear-down races with incoming Publish
           // responses.
-          final sub = stream.listen((v) => values.add(v.asDouble), onError: (_) {});
+          final sub = stream.listen((v) => values.add(v.asDouble!), onError: (_) {});
 
           // Let publishes flow so responses are genuinely in flight.
           await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -133,7 +133,7 @@ void main() {
         final subId = await dc.client.subscriptionCreate(requestedPublishingInterval: const Duration(milliseconds: 50));
         final stream = dc.client.monitor(tempId, subId, samplingInterval: const Duration(milliseconds: 50));
         final values = <double>[];
-        final sub = stream.listen((v) => values.add(v.asDouble), onError: (_) {});
+        final sub = stream.listen((v) => values.add(v.asDouble!), onError: (_) {});
 
         await Future<void>.delayed(const Duration(milliseconds: 400));
         expect(values, isNotEmpty);
