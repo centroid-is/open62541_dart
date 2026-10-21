@@ -2,24 +2,30 @@
   A non-transparent redundant client (OPC UA Part 4, §6.6.2) for the METAR
   server pair in `metar_redundant_server.dart`.
 
-    dart run example/metar_redundant_client.dart --endpoint opc.tcp://localhost:4840
+    dart run example/metar_redundant_client.dart \
+        --endpoint opc.tcp://localhost:4840 --endpoint opc.tcp://localhost:4841
 
   Algorithm:
 
-   1. Connect to every known endpoint and keep every connection alive
+   1. Connect to every configured endpoint and keep every connection alive
       (`ClientIsolate.keepConnected` — the supervisor and its run_iterate pump
       live inside the worker isolate, so a bare `connect()` with no pump can
       never wedge here).
-   2. Read `Server/ServiceLevel` (ns=0;i=2267) from each connected server on
+   2. Identify each server: read `Server/ServerArray[0]` (ns=0;i=2254), its
+      ApplicationUri, and `Server/ServerRedundancy/ServerUriArray`
+      (ns=0;i=11314), the ApplicationUris of the members of the redundant set
+      it belongs to. ServerUris are identities, not addresses, so a client
+      cannot dial them: the standard way to map one to endpoints is the
+      `ServerNetworkGroups` property (Part 5, §6.3.10) or FindServers. This
+      example is handed the endpoints on the command line and matches them to
+      the set's members by ApplicationUri, reporting any member it has no
+      endpoint for.
+   3. Read `Server/ServiceLevel` (ns=0;i=2267) from each connected server on
       every tick. An unreachable server ranks below every reachable one.
-   3. Use the server with the HIGHEST ServiceLevel for data: subscribe to its
+   4. Use the server with the HIGHEST ServiceLevel for data: subscribe to its
       METAR structure node. A switch happens when the ranking changes by more
       than a hysteresis margin, or when the active server drops to 0 (out of
       service) or becomes unreachable.
-   4. Discover peers: the first server reached is asked for
-      `Server/ServerRedundancy/ServerUriArray` (ns=0;i=11314) and every
-      endpoint listed there is added to the set. Only one `--endpoint` is
-      therefore required on the command line.
 */
 
 import 'dart:async';
@@ -32,6 +38,9 @@ import 'metar_redundant_server.dart' show parseFlags;
 
 /// `ns=0;i=2267` — Server/ServiceLevel.
 final NodeId serviceLevelNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVICELEVEL);
+
+/// `ns=0;i=2254` — Server/ServerArray; `[0]` is the server's own ApplicationUri.
+final NodeId serverArrayNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERARRAY);
 
 /// `ns=0;i=11314` — Server/ServerRedundancy/ServerUriArray.
 final NodeId serverUriArrayNodeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERURIARRAY);
@@ -47,6 +56,8 @@ class FailoverEvent {
     required this.fromLevel,
     required this.toLevel,
     required this.reason,
+    this.fromUri,
+    this.toUri,
   });
 
   /// Endpoint left behind, or `null` for the initial selection.
@@ -54,6 +65,12 @@ class FailoverEvent {
 
   /// Endpoint now serving data.
   final String to;
+
+  /// ApplicationUri of the server at [from], when it had been identified.
+  final String? fromUri;
+
+  /// ApplicationUri of the server at [to], when it has been identified.
+  final String? toUri;
 
   /// ServiceLevel of [from] at the moment of the switch (`-1` = unreachable).
   final int fromLevel;
@@ -66,8 +83,10 @@ class FailoverEvent {
 
   @override
   String toString() =>
-      'switched ${from ?? '(none)'} -> $to: '
+      'switched ${from == null ? '(none)' : _describe(from!, fromUri)} -> ${_describe(to, toUri)}: '
       'ServiceLevel ${fromLevel < 0 ? 'unreachable' : fromLevel} -> $toLevel, reason: $reason';
+
+  static String _describe(String endpoint, String? uri) => uri == null ? endpoint : '$uri ($endpoint)';
 }
 
 /// One connection in the redundant set.
@@ -80,8 +99,11 @@ class _Link {
   /// Last ServiceLevel read, or `-1` when the server could not be reached.
   int serviceLevel = -1;
 
-  /// True once ServerUriArray has been read from this server.
-  bool discovered = false;
+  /// The server's ApplicationUri (`ServerArray[0]`), once identified.
+  String? applicationUri;
+
+  /// The set this server advertises in `ServerUriArray`, once identified.
+  List<String> serverUris = const [];
 
   StreamSubscription<Map<NodeId, DynamicValue>>? dataSubscription;
   StreamSubscription<void>? reconnectSubscription;
@@ -99,7 +121,7 @@ class MetarFailoverClient {
     this.readTimeout = const Duration(seconds: 2),
     this.publishingInterval = const Duration(milliseconds: 500),
     this.logLevel = LogLevel.UA_LOGLEVEL_FATAL,
-    this.discoverPeers = true,
+    this.identifyMembers = true,
     void Function(String message)? log,
   }) : _log = log ?? print,
        _seed = List.of(endpoints);
@@ -116,21 +138,25 @@ class MetarFailoverClient {
   /// regardless of the margin.
   final int hysteresis;
 
-  /// How long a single ServiceLevel / ServerUriArray read may take before the
-  /// server counts as unreachable. Kept separate from [pollInterval] so a
-  /// fast poll does not turn a merely slow server into a failover.
+  /// How long a single ServiceLevel / ServerArray / ServerUriArray read may
+  /// take before the server counts as unreachable. Kept separate from
+  /// [pollInterval] so a fast poll does not turn a merely slow server into a
+  /// failover.
   final Duration readTimeout;
 
   final Duration publishingInterval;
   final LogLevel logLevel;
 
-  /// Whether to read ServerUriArray and join the endpoints it advertises.
-  final bool discoverPeers;
+  /// Whether to read each server's ApplicationUri and ServerUriArray, so the
+  /// configured endpoints can be matched to the members of the set and a
+  /// member without an endpoint reported. Ranking works without it.
+  final bool identifyMembers;
 
   final void Function(String message) _log;
   final List<String> _seed;
 
   final Map<String, _Link> _links = {};
+  final Set<String> _reportedMissing = {};
   final StreamController<FailoverEvent> _failovers = StreamController<FailoverEvent>.broadcast();
 
   Timer? _timer;
@@ -144,36 +170,63 @@ class MetarFailoverClient {
   /// Endpoint currently serving data, or `null` before the first selection.
   String? get activeEndpoint => _active?.endpoint;
 
+  /// ApplicationUri of the server currently serving data, once identified.
+  String? get activeApplicationUri => _active?.applicationUri;
+
   /// ServiceLevel of the active server (`-1` when unreachable).
   int get activeServiceLevel => _active?.serviceLevel ?? -1;
 
-  /// Every endpoint known to the client (seeded plus discovered).
+  /// Every endpoint the client connects to. Only configured endpoints are
+  /// ever dialled: the entries of `ServerUriArray` are identities, not
+  /// addresses.
   List<String> get knownEndpoints => _links.keys.toList(growable: false);
 
   /// Last ServiceLevel read from each known endpoint.
   Map<String, int> get serviceLevels => {for (final e in _links.entries) e.key: e.value.serviceLevel};
 
+  /// The ApplicationUri read from each endpoint (`null` until identified).
+  Map<String, String?> get applicationUris => {for (final e in _links.entries) e.key: e.value.applicationUri};
+
+  /// The members of the redundant set, as the reached servers advertise them
+  /// in `ServerUriArray` (the union, in case the servers disagree).
+  Set<String> get serverUris => {for (final l in _links.values) ...l.serverUris};
+
+  /// The configured endpoint of the member with [applicationUri], if any.
+  String? endpointOf(String applicationUri) {
+    for (final link in _links.values) {
+      if (link.applicationUri == applicationUri) return link.endpoint;
+    }
+    return null;
+  }
+
+  /// Members of the set (see [serverUris]) that none of the configured
+  /// endpoints answers for. The client cannot reach them until it is given
+  /// their endpoint.
+  List<String> get membersWithoutEndpoint => serverUris.where((uri) => endpointOf(uri) == null).toList(growable: false);
+
   /// Fires on every failover, including the initial server selection.
   Stream<FailoverEvent> get failovers => _failovers.stream;
 
-  /// Connects to all seeded endpoints and starts arbitrating.
+  /// Connects to all configured endpoints and starts arbitrating.
   ///
-  /// Returns once a server has been selected, or after [settleTimeout] if no
-  /// seeded server could be reached — the client then keeps retrying in the
-  /// background and selects one as soon as it answers.
+  /// The initial selection is the highest ServiceLevel in the set, so it waits
+  /// (at most [settleTimeout]) for every configured server to answer before
+  /// choosing, rather than taking the first one to come up. A server that is
+  /// still down at [settleTimeout] is left out; the client keeps retrying it
+  /// in the background and selects one as soon as any answers.
   Future<void> start({Duration settleTimeout = const Duration(seconds: 15)}) async {
     for (final endpoint in _seed) {
       await _addEndpoint(endpoint);
     }
     // keepConnected establishes the sessions asynchronously, so an immediate
-    // arbitration would see every server as unreachable. Keep arbitrating
-    // until one is picked.
+    // read would see every server as unreachable.
     final sw = Stopwatch()..start();
     while (!_stopped) {
-      await _arbitrate();
-      if (_active != null || sw.elapsed >= settleTimeout) break;
+      await Future.wait(_links.values.toList().map(_refresh));
+      if (_links.values.every((l) => l.reachable) || sw.elapsed >= settleTimeout) break;
       await Future.delayed(const Duration(milliseconds: 100));
     }
+    await _arbitrate();
     _timer = Timer.periodic(pollInterval, (_) => _arbitrate());
   }
 
@@ -196,9 +249,13 @@ class MetarFailoverClient {
     );
 
     // open62541 drops client-side subscriptions across a reconnect, so the
-    // data subscription has to be recreated whenever a link recovers.
+    // data subscription has to be recreated whenever a link recovers. The
+    // server behind the endpoint may also be a different application now (a
+    // restart under another identity), so it is identified again.
     link.reconnectSubscription = client.reconnectStream.listen((_) async {
       _log('[client] $normalised: session recovered');
+      link.applicationUri = null;
+      link.serverUris = const [];
       if (identical(_active, link)) await _subscribe(link);
     });
 
@@ -209,21 +266,22 @@ class MetarFailoverClient {
     if (_arbitrating || _stopped) return;
     _arbitrating = true;
     try {
-      // Snapshot: a refresh can discover a peer and add a link, which would
-      // otherwise mutate the map while it is being iterated.
       await Future.wait(_links.values.toList().map(_refresh));
       if (_stopped) return;
 
       final active = _active;
-      final candidates = _links.values.where((l) => l.serviceLevel > 0).toList()
-        ..sort((a, b) => b.serviceLevel.compareTo(a.serviceLevel));
-      if (candidates.isEmpty) {
+      // The highest ServiceLevel; on a tie the first configured endpoint, so
+      // the choice is deterministic.
+      _Link? best;
+      for (final link in _links.values) {
+        if (link.serviceLevel > 0 && (best == null || link.serviceLevel > best.serviceLevel)) best = link;
+      }
+      if (best == null) {
         if (active != null && !active.reachable) {
           _log('[client] every server in the set is unreachable or out of service');
         }
         return;
       }
-      final best = candidates.first;
 
       if (active == null) {
         await _switchTo(best, 'initial selection', fromLevel: -1);
@@ -260,30 +318,52 @@ class MetarFailoverClient {
       link.serviceLevel = -1;
       return;
     }
-    if (discoverPeers && !link.discovered) {
-      link.discovered = true;
-      await _discoverFrom(link);
-    }
+    if (identifyMembers && link.applicationUri == null) await _identify(link);
   }
 
-  /// Reads ServerUriArray from [link] and joins any endpoint not already known.
-  Future<void> _discoverFrom(_Link link) async {
+  /// Reads the server's ApplicationUri and the set it advertises, then
+  /// matches the set's members against the configured endpoints.
+  Future<void> _identify(_Link link) async {
     final client = link.client;
     if (client == null) return;
     try {
-      final uris = await client.read(serverUriArrayNodeId).timeout(readTimeout);
-      final listed = uris.isArray
-          ? uris.asArray.map((v) => v.asString).where((s) => s.startsWith('opc.tcp://')).toList()
-          : const <String>[];
-      final added = listed.where((u) => !_links.containsKey(u)).toList();
-      for (final uri in added) {
-        await _addEndpoint(uri);
+      final serverArray = await client.read(serverArrayNodeId).timeout(readTimeout);
+      final uri = serverArray.isArray && serverArray.asArray.isNotEmpty ? serverArray[0].asString : '';
+      if (uri.isEmpty) {
+        _log('[client] ${link.endpoint}: empty ServerArray; cannot identify this server');
+        return;
       }
-      if (added.isNotEmpty) {
-        _log('[client] discovered ${added.length} peer(s) from ${link.endpoint}: ${added.join(', ')}');
-      }
+      link.applicationUri = uri;
     } catch (e) {
-      _log('[client] ${link.endpoint}: no ServerUriArray (${e.runtimeType}); staying with the configured endpoints');
+      _log('[client] ${link.endpoint}: no ServerArray (${e.runtimeType}); cannot identify this server');
+      return;
+    }
+    try {
+      final uris = await client.read(serverUriArrayNodeId).timeout(readTimeout);
+      link.serverUris = uris.isArray ? uris.asArray.map((v) => v.asString).toList(growable: false) : const [];
+    } catch (e) {
+      link.serverUris = const [];
+      _log('[client] ${link.endpoint}: no ServerUriArray (${e.runtimeType}); it advertises no redundant set');
+    }
+    _reportMembership(link);
+  }
+
+  void _reportMembership(_Link link) {
+    final uri = link.applicationUri;
+    _log('[client] ${link.endpoint} is $uri, set: ${link.serverUris.isEmpty ? '(none)' : link.serverUris.join(', ')}');
+    if (link.serverUris.isNotEmpty && !link.serverUris.contains(uri)) {
+      _log('[client] ${link.endpoint}: $uri is missing from its own ServerUriArray; the set is misconfigured');
+    }
+    // The ServerUris are identities: a member nobody answers for can only be
+    // reported, it cannot be dialled.
+    for (final member in membersWithoutEndpoint) {
+      if (_reportedMissing.add(member)) {
+        _log('[client] no endpoint configured for set member $member; pass --endpoint for it');
+      }
+    }
+    final duplicate = _links.values.where((l) => l.applicationUri == uri && !identical(l, link));
+    for (final other in duplicate) {
+      _log('[client] ${link.endpoint} and ${other.endpoint} both answer as $uri: the same server twice');
     }
   }
 
@@ -294,6 +374,8 @@ class MetarFailoverClient {
     final event = FailoverEvent(
       from: previous?.endpoint,
       to: next.endpoint,
+      fromUri: previous?.applicationUri,
+      toUri: next.applicationUri,
       fromLevel: fromLevel,
       toLevel: next.serviceLevel,
       reason: reason,
@@ -420,14 +502,14 @@ Future<void> main(List<String> args) async {
     stdout.write(_usage);
     return;
   }
-  final endpoints = flags['endpoint'] ?? const ['opc.tcp://localhost:4840'];
+  final endpoints = flags['endpoint'] ?? const ['opc.tcp://localhost:4840', 'opc.tcp://localhost:4841'];
 
   final client = MetarFailoverClient(
     endpoints: endpoints,
     station: (flags['station']?.last ?? 'BIRK').toUpperCase(),
     pollInterval: Duration(milliseconds: int.parse(flags['poll']?.last ?? '2000')),
     hysteresis: int.parse(flags['hysteresis']?.last ?? '10'),
-    discoverPeers: !flags.containsKey('no-discovery'),
+    identifyMembers: !flags.containsKey('no-identify'),
   );
 
   await client.start();
@@ -445,12 +527,14 @@ const String _usage = '''
 Usage: dart run example/metar_redundant_client.dart [options]
 
   --endpoint <url>   Server endpoint, repeatable. Defaults to
-                     opc.tcp://localhost:4840. Peers are discovered from
-                     ServerUriArray, so one endpoint is usually enough.
+                     opc.tcp://localhost:4840 and opc.tcp://localhost:4841.
+                     Every member of the set needs one: ServerUriArray names
+                     the members by ApplicationUri, which cannot be dialled.
   --station <ICAO>   Station node to subscribe to (default: BIRK)
   --poll <ms>        ServiceLevel poll interval (default: 2000)
   --hysteresis <n>   Margin a rival server must beat the active one by
                      (default: 10)
-  --no-discovery     Do not read ServerUriArray; use only --endpoint values
+  --no-identify      Do not read ServerArray / ServerUriArray; rank the
+                     --endpoint servers without matching them to the set
   --help
 ''';

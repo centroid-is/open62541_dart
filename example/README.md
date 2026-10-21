@@ -56,11 +56,29 @@ set on the standard NS0 nodes, and a client follows whichever one is healthiest
   value source of `Server/ServiceLevel` (`ns=0;i=2267`) and
   `Server/ServerRedundancy/RedundancySupport` (`ns=0;i=3709`, set to `Hot`)
   with `Server.setVariableValueSource`, and republishes
-  `Server/ServerRedundancy/ServerUriArray` (`ns=0;i=11314`) listing both
-  members of the set. open62541 pins ServiceLevel at 255 internally and stores
+  `Server/ServerRedundancy/ServerUriArray` (`ns=0;i=11314`) listing the
+  **ServerUris** — the ApplicationUris — of both members, its own first
+  ([OPC 10000-5 §6.3.9](https://reference.opcfoundation.org/Core/Part5/6.3.9)).
+  open62541 pins ServiceLevel at 255 internally and stores
   `RedundancySupport = None`; neither accepts a write, so replacing the value
   source is the only way to publish a real service level. No vendor nodes are
   invented — any standards-based client can discover and rank the set.
+* **One identity per member.** The members of a non-transparent set must have
+  unique ApplicationUris ([OPC 10000-4 §6.6.2.4](https://reference.opcfoundation.org/specs/OPC-10000-4/6.6.2.4)),
+  so each instance announces its own — `urn:<host>:metar:<instance>` unless
+  `--uri` says otherwise — through `Server(applicationUri:)`. Clients see it
+  in the ApplicationDescription and as `Server/ServerArray[0]`
+  (`ns=0;i=2254`). A ServerUri is an identity, not an address: the client is
+  given the endpoints and matches each one to a member by reading its
+  ApplicationUri, and reports a member it has no endpoint for. The spec's
+  way to publish that mapping is the `ServerNetworkGroups` property of a
+  `NonTransparentNetworkRedundancyType` ServerRedundancy object
+  ([OPC 10000-5 §6.3.10](https://reference.opcfoundation.org/Core/Part5/6.3.10)),
+  which this example leaves as a follow-up: the bundled reduced NS0 has no
+  `NetworkGroupDataType` / `NonTransparentNetworkRedundancyType` nodes, and
+  the package cannot yet decode a built-in NS0 structure on the client side
+  (open62541 decodes a known type into its native struct, which the Dart
+  decoder does not read).
 * **Honest ServiceLevel.** Each instance computes its own 0-255 level: `250`
   with a fresh observation, falling as the data ages, minus 60 for every
   consecutive failed fetch (floored at 1), and `0` when it has never fetched
@@ -87,25 +105,32 @@ set on the standard NS0 nodes, and a client follows whichever one is healthiest
 ```bash
 # terminal 1
 dart run example/metar_redundant_server.dart \
-    --instance metar-a --port 4840 --peer opc.tcp://localhost:4841
+    --instance metar-a --port 4840 --peer urn:localhost:metar:metar-b
 
 # terminal 2
 dart run example/metar_redundant_server.dart \
-    --instance metar-b --port 4841 --peer opc.tcp://localhost:4840
+    --instance metar-b --port 4841 --peer urn:localhost:metar:metar-a
 
-# terminal 3 — one endpoint is enough; the peer is discovered
-dart run example/metar_redundant_client.dart --endpoint opc.tcp://localhost:4840
+# terminal 3 — one endpoint per member (these two are the defaults)
+dart run example/metar_redundant_client.dart \
+    --endpoint opc.tcp://localhost:4840 --endpoint opc.tcp://localhost:4841
 ```
 
-The client reads every server's ServiceLevel on a timer, subscribes to the
-METAR structure on the highest-ranked one, and prints a line on every
-switch:
+The client identifies each server by its ApplicationUri, checks it against
+the set the servers advertise, reads every server's ServiceLevel on a timer,
+subscribes to the METAR structure on the highest-ranked one, and prints a
+line on every switch:
 
 ```
-[client] discovered 1 peer(s) from opc.tcp://localhost:4840: opc.tcp://localhost:4841
-[client] switched (none) -> opc.tcp://localhost:4840: ServiceLevel unreachable -> 250, reason: initial selection
+[client] opc.tcp://localhost:4840 is urn:localhost:metar:metar-a, set: urn:localhost:metar:metar-a, urn:localhost:metar:metar-b
+[client] opc.tcp://localhost:4841 is urn:localhost:metar:metar-b, set: urn:localhost:metar:metar-b, urn:localhost:metar:metar-a
+[client] switched (none) -> urn:localhost:metar:metar-a (opc.tcp://localhost:4840): ServiceLevel unreachable -> 250, reason: initial selection
 [opc.tcp://localhost:4840] BIRK 2026-09-01T19:00:00.000Z 10.0/2.0 C  wind 300@3.0kt  QNH 1013.0  VFR
 ```
+
+Start the client with only one `--endpoint` and it reports the member it
+cannot reach (`no endpoint configured for set member urn:localhost:metar:metar-b`)
+instead of trying to dial a URI.
 
 ### Things to try
 
@@ -126,7 +151,9 @@ switch:
   same status and timestamps.
 
 Both servers can run on one machine, or on two — pass `--host` so each
-publishes an endpoint URL the other side can actually reach.
+publishes an endpoint URL clients can actually reach (it also goes into the
+default ApplicationUri; `--uri` sets that explicitly, and `--peer` names the
+other member by *its* ApplicationUri).
 
 ### Failback policy
 

@@ -15,8 +15,9 @@ import 'common.dart';
 /// [MetarFailoverClient] then has to:
 ///
 ///   * pick the server with the highest `Server/ServiceLevel` (ns=0;i=2267),
-///   * discover its peer from `ServerUriArray` (ns=0;i=11314) rather than
-///     being told about it,
+///   * identify the members of the set by ApplicationUri (`ServerArray[0]`,
+///     ns=0;i=2254) and match them against `ServerUriArray` (ns=0;i=11314),
+///     which lists ServerUris -- identities, never dialled as endpoints,
 ///   * move when the active server's data feed degrades,
 ///   * stay put when the server it left dies outright, and
 ///   * come back when the abandoned server returns as the healthier one.
@@ -127,16 +128,28 @@ void main() {
     // IPv4 listen socket that owns the OS-picked port (see test/common.dart).
     String endpointOf(int port) => 'opc.tcp://127.0.0.1:$port';
 
-    MetarRedundantServer buildServer(String instance, int port, MetarSource source, {List<String> peers = const []}) =>
-        MetarRedundantServer(
-          instance: instance,
-          host: '127.0.0.1',
-          port: port,
-          source: source,
-          peerEndpoints: peers,
-          pollInterval: serverPoll,
-          log: (_) {},
-        );
+    // The members know each other by ApplicationUri, which does not depend
+    // on the OS-picked ports, so the set is wired up before anything starts.
+    String uriOf(String instance) => MetarRedundantServer.defaultApplicationUri('127.0.0.1', instance);
+    final uriA = uriOf('metar-a');
+    final uriB = uriOf('metar-b');
+
+    MetarRedundantServer buildServer(
+      String instance,
+      int port,
+      MetarSource source, {
+      required List<String> peers,
+      String? applicationUri,
+    }) => MetarRedundantServer(
+      instance: instance,
+      host: '127.0.0.1',
+      port: port,
+      source: source,
+      applicationUri: applicationUri,
+      peers: peers,
+      pollInterval: serverPoll,
+      log: (_) {},
+    );
 
     setUp(() async {
       events.clear();
@@ -144,24 +157,19 @@ void main() {
       fakeA = FakeMetarSource('BIRK', recent());
       fakeB = FakeMetarSource('BIRK', recent());
 
-      // Both servers start on port 0 and learn each other's endpoint only
-      // once the OS has picked their ports; the peers are wired up before
-      // the client (which discovers B from A's ServerUriArray) starts.
-      serverA = buildServer('metar-a', 0, fakeA);
-      serverB = buildServer('metar-b', 0, fakeB);
+      serverA = buildServer('metar-a', 0, fakeA, peers: [uriB]);
+      serverB = buildServer('metar-b', 0, fakeB, peers: [uriA]);
       await serverA.start();
       await serverB.start();
       portA = serverA.listenPort;
       portB = serverB.listenPort;
-      serverA.setPeers([endpointOf(portB)]);
-      serverB.setPeers([endpointOf(portA)]);
       cleanup.add(() => serverA.stop());
       cleanup.add(() => serverB.stop());
 
-      // Seeded with ONE endpoint on purpose: the peer has to be discovered
-      // from ServerUriArray.
+      // Both endpoints are configured: ServerUriArray names the members by
+      // ApplicationUri, which a client cannot dial.
       client = MetarFailoverClient(
-        endpoints: [endpointOf(portA)],
+        endpoints: [endpointOf(portA), endpointOf(portB)],
         pollInterval: clientPoll,
         hysteresis: 10,
         log: (_) {},
@@ -180,88 +188,118 @@ void main() {
       }
     });
 
-    test('picks the healthiest server, discovers its peer, fails over, stays after a kill, and comes back', () async {
-      // --- 1. Initial selection: only A is known, so A is chosen. ---------
-      await client.start();
-      expect(client.activeEndpoint, endpointOf(portA));
-      expect(events.single.from, isNull);
-      expect(events.single.reason, 'initial selection');
-      expect(events.single.toLevel, 250, reason: 'a fresh feed rates 250');
+    test(
+      'picks the healthiest server, identifies the members, fails over, stays after a kill, and comes back',
+      () async {
+        // --- 1. Initial selection: both are equally healthy, so one of them
+        // is chosen and the other must not displace it. ----------------------
+        await client.start();
+        expect(client.activeEndpoint, endpointOf(portA));
+        expect(events.single.from, isNull);
+        expect(events.single.reason, 'initial selection');
+        expect(events.single.toLevel, 250, reason: 'a fresh feed rates 250');
 
-      // --- 2. Peer discovery from the standard NS0 array. -----------------
-      expect(
-        await waitUntil(() => client.knownEndpoints.length == 2),
-        isTrue,
-        reason: 'the peer must be discovered from ServerUriArray, not configured',
-      );
-      expect(client.knownEndpoints, containsAll([endpointOf(portA), endpointOf(portB)]));
-      expect(
-        await waitUntil(() => client.serviceLevels[endpointOf(portB)] == 250),
-        isTrue,
-        reason: 'B is healthy too, but A is already active and B does not beat the hysteresis margin',
-      );
-      expect(client.activeEndpoint, endpointOf(portA));
-      expect(events, hasLength(1), reason: 'two equally healthy servers must not cause a flap');
+        // --- 2. Membership by ApplicationUri, from the standard NS0 nodes. --
+        expect(
+          await waitUntil(() => client.applicationUris.values.every((uri) => uri != null)),
+          isTrue,
+          reason: 'every endpoint is identified by its ServerArray[0]',
+        );
+        expect(client.applicationUris, {endpointOf(portA): uriA, endpointOf(portB): uriB});
+        expect(client.serverUris, {uriA, uriB}, reason: 'the set is what ServerUriArray advertises');
+        expect(client.endpointOf(uriB), endpointOf(portB));
+        expect(client.membersWithoutEndpoint, isEmpty);
+        expect(
+          client.knownEndpoints,
+          unorderedEquals([endpointOf(portA), endpointOf(portB)]),
+          reason: 'only configured endpoints are dialled; ServerUris are identities',
+        );
+        expect(
+          await waitUntil(() => client.serviceLevels[endpointOf(portB)] == 250),
+          isTrue,
+          reason: 'B is healthy too, but A is already active and B does not beat the hysteresis margin',
+        );
+        expect(client.activeEndpoint, endpointOf(portA));
+        expect(client.activeApplicationUri, uriA);
+        expect(events, hasLength(1), reason: 'two equally healthy servers must not cause a flap');
 
-      // --- 3. A's feed degrades: the client must move to B. ---------------
-      fakeA.failing = true;
-      expect(
-        await waitUntil(() => client.activeEndpoint == endpointOf(portB)),
-        isTrue,
-        reason: 'A loses ServiceLevel on every failed fetch and must lose the arbitration',
-      );
-      expect(events, hasLength(2));
-      expect(events.last.from, endpointOf(portA));
-      expect(events.last.to, endpointOf(portB));
-      expect(events.last.reason, 'higher ServiceLevel available');
-      expect(events.last.fromLevel, lessThan(events.last.toLevel));
-      expect(serverA.serviceLevel, lessThan(serverB.serviceLevel));
+        // --- 3. A's feed degrades: the client must move to B. ---------------
+        fakeA.failing = true;
+        expect(
+          await waitUntil(() => client.activeEndpoint == endpointOf(portB)),
+          isTrue,
+          reason: 'A loses ServiceLevel on every failed fetch and must lose the arbitration',
+        );
+        expect(events, hasLength(2));
+        expect(events.last.from, endpointOf(portA));
+        expect(events.last.to, endpointOf(portB));
+        expect(events.last.reason, 'higher ServiceLevel available');
+        expect(events.last.fromLevel, lessThan(events.last.toLevel));
+        expect(serverA.serviceLevel, lessThan(serverB.serviceLevel));
 
-      // Data still flows, now from B.
-      final fromB = await client.readActive();
-      expect(fromB, isNotNull);
-      expect(fromB!.isGood, isTrue);
-      expect(fromB.value['Station'].value, 'BIRK');
+        // Data still flows, now from B.
+        final fromB = await client.readActive();
+        expect(fromB, isNotNull);
+        expect(fromB!.isGood, isTrue);
+        expect(fromB.value['Station'].value, 'BIRK');
 
-      // --- 4. A dies outright: the client must STAY on B. -----------------
-      await serverA.stop();
-      await Future.delayed(clientPoll * 6);
-      expect(
-        client.serviceLevels[endpointOf(portA)],
-        -1,
-        reason: 'an unreachable server reads as -1, below every reachable one',
-      );
-      expect(client.activeEndpoint, endpointOf(portB));
-      expect(events, hasLength(2), reason: 'losing the server it already left is not a failover');
+        // --- 4. A dies outright: the client must STAY on B. -----------------
+        await serverA.stop();
+        await Future.delayed(clientPoll * 6);
+        expect(
+          client.serviceLevels[endpointOf(portA)],
+          -1,
+          reason: 'an unreachable server reads as -1, below every reachable one',
+        );
+        expect(client.activeEndpoint, endpointOf(portB));
+        expect(events, hasLength(2), reason: 'losing the server it already left is not a failover');
 
-      // --- 5. A returns healthier than B: the client comes back. ---------
-      //
-      // DOCUMENTED BEHAVIOUR: this client does fail BACK, but only when the
-      // returning server beats the active one by more than the hysteresis
-      // margin. A tie (both at 250) keeps the current server, so a recovered
-      // peer alone never causes a switch — see step 2.
-      fakeB.failing = true;
-      fakeA.failing = false;
-      // Restarted on the port A had: that is the endpoint B advertises and
-      // the client knows (see the port note in test/common.dart).
-      final restartedA = buildServer('metar-a2', portA, fakeA, peers: [endpointOf(portB)]);
-      await restartedA.start();
-      cleanup.add(() => restartedA.stop());
+        // --- 5. A returns healthier than B: the client comes back. ---------
+        //
+        // DOCUMENTED BEHAVIOUR: this client does fail BACK, but only when the
+        // returning server beats the active one by more than the hysteresis
+        // margin. A tie (both at 250) keeps the current server, so a recovered
+        // peer alone never causes a switch — see step 2.
+        fakeB.failing = true;
+        fakeA.failing = false;
+        // Restarted on the port A had: that is the endpoint B advertises and
+        // the client knows (see the port note in test/common.dart).
+        final restartedA = buildServer('metar-a2', portA, fakeA, peers: [uriB], applicationUri: uriA);
+        await restartedA.start();
+        cleanup.add(() => restartedA.stop());
 
-      expect(
-        await waitUntil(() => client.activeEndpoint == endpointOf(portA), timeout: const Duration(seconds: 60)),
-        isTrue,
-        reason: 'the restarted A is healthy and B is now degraded, so the client must switch back',
-      );
-      expect(events.last.from, endpointOf(portB));
-      expect(events.last.to, endpointOf(portA));
-      expect(events.last.toLevel, greaterThan(events.last.fromLevel + client.hysteresis));
-    }, timeout: const Timeout(Duration(minutes: 3)));
+        expect(
+          await waitUntil(() => client.activeEndpoint == endpointOf(portA), timeout: const Duration(seconds: 60)),
+          isTrue,
+          reason: 'the restarted A is healthy and B is now degraded, so the client must switch back',
+        );
+        expect(events.last.from, endpointOf(portB));
+        expect(events.last.to, endpointOf(portA));
+        expect(events.last.toLevel, greaterThan(events.last.fromLevel + client.hysteresis));
+      },
+      timeout: const Timeout(Duration(minutes: 3)),
+    );
+
+    test('a member with no configured endpoint is reported, never dialled', () async {
+      // Only A is configured. The old discovery would have joined every
+      // ServerUriArray entry as an endpoint; those are ApplicationUris.
+      final partial = MetarFailoverClient(endpoints: [endpointOf(portA)], pollInterval: clientPoll, log: (_) {});
+      cleanup.add(() => partial.stop());
+      await partial.start();
+      expect(partial.activeEndpoint, endpointOf(portA));
+      expect(await waitUntil(() => partial.applicationUris[endpointOf(portA)] == uriA), isTrue);
+      expect(partial.serverUris, {uriA, uriB});
+      expect(partial.membersWithoutEndpoint, [uriB], reason: 'B is a member, but the client has no endpoint for it');
+      expect(partial.endpointOf(uriB), isNull);
+      await Future.delayed(clientPoll * 3);
+      expect(partial.knownEndpoints, [endpointOf(portA)], reason: 'a ServerUri is not an address to dial');
+      expect(partial.serviceLevels.keys.where((e) => e.startsWith('urn:')), isEmpty);
+    }, timeout: const Timeout(Duration(minutes: 2)));
 
     test('a server that declares ServiceLevel 0 is abandoned immediately', () async {
       await client.start();
       expect(client.activeEndpoint, endpointOf(portA));
-      expect(await waitUntil(() => client.knownEndpoints.length == 2), isTrue);
+      expect(await waitUntil(() => client.serviceLevels[endpointOf(portB)] == 250), isTrue);
 
       // `--service-level 0` is the "take me out of service" switch: it is
       // honoured without waiting for the hysteresis margin.
@@ -287,10 +325,26 @@ void main() {
       expect(support.asInt, redundancySupportHot);
       expect(support.asInt, isNot(0));
 
-      // ServerUriArray lists BOTH members of the set, this server first.
+      // Each member has its own ApplicationUri (OPC 10000-4 §6.6.2.4: the
+      // members of a non-transparent set must be distinguishable by it), which
+      // the server publishes as ServerArray[0] (ns=0;i=2254).
+      final probeB = await setupClient(portB);
+      addTearDown(probeB.delete);
+      final uriA = (await probe.read(serverArrayNodeId))[0].asString;
+      final uriB = (await probeB.read(serverArrayNodeId))[0].asString;
+      expect(uriA, isNot('urn:open62541.unconfigured.application'), reason: 'open62541\'s default is not an identity');
+      expect(uriA, isNot(uriB), reason: 'the members of a redundant set need unique ApplicationUris');
+      expect(uriA, startsWith('urn:'));
+
+      // ServerUriArray (OPC 10000-5 §6.3.9) lists the ServerUris -- the
+      // ApplicationUris -- of BOTH members of the set, this server first. It
+      // is not a list of endpoint URLs.
       final uris = await probe.read(serverUriArrayNodeId);
       expect(uris.isArray, isTrue);
-      expect(uris.asArray.map((v) => v.asString).toList(), [endpointOf(portA), endpointOf(portB)]);
+      final listed = uris.asArray.map((v) => v.asString).toList();
+      expect(listed, [uriA, uriB]);
+      expect(listed.where((u) => u.startsWith('opc.tcp://')), isEmpty, reason: 'ServerUris, not endpoints');
+      expect((await probeB.read(serverUriArrayNodeId)).asArray.map((v) => v.asString).toList(), [uriB, uriA]);
     }, timeout: const Timeout(Duration(minutes: 2)));
   });
 

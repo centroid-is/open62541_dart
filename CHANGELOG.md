@@ -12,10 +12,13 @@ changes that ship the same native library version.
   (`onReadValue` — real status codes and source timestamps, last-known value
   served with `Bad_NoCommunication` when the feed is down), and advertises a
   hot-redundant set on the standard NS0 nodes (`ServiceLevel`,
-  `RedundancySupport`, `ServerUriArray`) via `Server.setVariableValueSource`.
-  `example/metar_redundant_client.dart` is a Part 4 non-transparent redundant
-  client that ranks servers by ServiceLevel, discovers its peers from
-  `ServerUriArray` and fails over. See `example/README.md`.
+  `RedundancySupport`, `ServerUriArray` holding the members' ApplicationUris,
+  each instance announcing its own through `Server(applicationUri:)`) via
+  `Server.setVariableValueSource`. `example/metar_redundant_client.dart` is a
+  Part 4 non-transparent redundant client that is given the members'
+  endpoints, identifies each by its ApplicationUri (`ServerArray[0]`),
+  matches them against `ServerUriArray`, ranks servers by ServiceLevel and
+  fails over. See `example/README.md`.
 
 - **`Server(applicationName:, applicationUri:, productName:, manufacturerName:)`:
   the identity a server announces.** open62541's minimal config names every

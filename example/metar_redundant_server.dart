@@ -4,9 +4,9 @@
   Run the same file twice to get the pair (see example/README.md):
 
     dart run example/metar_redundant_server.dart --instance metar-a --port 4840 \
-        --peer opc.tcp://localhost:4841
+        --peer urn:localhost:metar:metar-b
     dart run example/metar_redundant_server.dart --instance metar-b --port 4841 \
-        --peer opc.tcp://localhost:4840
+        --peer urn:localhost:metar:metar-a
 
   What each instance demonstrates:
 
@@ -16,10 +16,13 @@
      observation's own sourceTimestamp.
    * The Part 4 / Part 5 non-transparent redundancy surface published on the
      STANDARD NS0 nodes via `Server.setVariableValueSource`: ServiceLevel
-     (i=2267) computed live from this instance's own health,
-     RedundancySupport (i=3709) = Hot, and ServerUriArray listing both members
-     of the set. No vendor-specific nodes: any standards-based client can
-     discover and rank the set.
+     (i=2267) computed live from this instance's own health and reported in
+     the Part 4 bands (Maintenance / NoData / Degraded / Healthy),
+     RedundancySupport (i=3709) = Hot, and ServerUriArray listing the
+     ApplicationUris of both members of the set. Each instance announces its
+     own ApplicationUri (`urn:<host>:metar:<instance>` by default), as Part 4
+     requires of the members of a non-transparent set. No vendor-specific
+     nodes: any standards-based client can discover and rank the set.
 */
 
 import 'dart:async';
@@ -47,15 +50,22 @@ class MetarRedundantServer {
     required this.port,
     required this.source,
     this.host = 'localhost',
-    List<String> peerEndpoints = const [],
+    String? applicationUri,
+    List<String> peers = const [],
     this.pollInterval = const Duration(minutes: 5),
     this.staleAfter = const Duration(hours: 2),
     this.logLevel = LogLevel.UA_LOGLEVEL_ERROR,
     void Function(String message)? log,
-  }) : _peerEndpoints = List.of(peerEndpoints),
+  }) : applicationUri = applicationUri ?? defaultApplicationUri(host, instance),
+       peers = List.unmodifiable(peers),
        _log = log ?? print;
 
-  /// Human-readable name of this instance, used in log lines only.
+  /// The ApplicationUri an instance announces unless one is given:
+  /// `urn:<host>:metar:<instance>`.
+  static String defaultApplicationUri(String host, String instance) => 'urn:$host:metar:$instance';
+
+  /// Human-readable name of this instance, used in log lines and as the
+  /// ApplicationName.
   final String instance;
 
   final String host;
@@ -66,9 +76,16 @@ class MetarRedundantServer {
   /// Where the observation comes from. Injected so tests can supply a fake.
   final MetarSource source;
 
-  /// The other members of the redundant set, as `opc.tcp://` endpoint URLs.
-  List<String> get peerEndpoints => List.unmodifiable(_peerEndpoints);
-  List<String> _peerEndpoints;
+  /// This instance's ApplicationUri: its identity as a member of the redundant
+  /// set. OPC 10000-4 §6.6.2.4 requires the members of a non-transparent set
+  /// to have unique ApplicationUris; the server announces it in its
+  /// ApplicationDescription (GetEndpoints / FindServers) and as
+  /// `Server/ServerArray[0]` (ns=0;i=2254), and lists it first in
+  /// `ServerUriArray`.
+  final String applicationUri;
+
+  /// The ApplicationUris of the other members of the redundant set.
+  final List<String> peers;
 
   /// How often to re-fetch the observation.
   final Duration pollInterval;
@@ -170,7 +187,14 @@ class MetarRedundantServer {
   /// failed — it then serves Bad_NoCommunication, which is the point).
   Future<void> start() async {
     if (_server != null) throw StateError('already started');
-    final server = Server(port: port, logLevel: logLevel);
+    // The identity goes in through the constructor: open62541 copies the
+    // ApplicationUri into ServerArray[0] and NamespaceArray[1] at creation.
+    final server = Server(
+      port: port,
+      logLevel: logLevel,
+      applicationName: 'METAR $instance',
+      applicationUri: applicationUri,
+    );
     _server = server;
     server.start();
 
@@ -180,7 +204,7 @@ class MetarRedundantServer {
     _publishMetarNodes(server);
     _publishRedundancySurface(server);
 
-    _log('[$instance] listening on $endpoint (set: ${_serverUriArray().join(', ')})');
+    _log('[$instance] listening on $endpoint as $applicationUri (set: ${_serverUriArray().join(', ')})');
 
     await _poll();
     _pollTimer = Timer.periodic(pollInterval, (_) => _poll());
@@ -194,17 +218,8 @@ class MetarRedundantServer {
     }
   }
 
-  List<String> _serverUriArray() => [endpoint, ..._peerEndpoints];
-
-  /// Replaces the peer list and, once started, republishes `ServerUriArray`.
-  ///
-  /// Servers started on port 0 (the integration test) only know their
-  /// endpoints once they are up, so the set can only be wired together
-  /// afterwards; the CLI passes `--peer` up front and never needs this.
-  void setPeers(List<String> peers) {
-    _peerEndpoints = List.of(peers);
-    _server?.write(_serverUriArrayNodeId, _serverUriArrayValue());
-  }
+  /// The ServerUris of the set, this member first (OPC 10000-5 §6.3.9).
+  List<String> _serverUriArray() => [applicationUri, ...peers];
 
   static final NodeId _serverUriArrayNodeId = NodeId.fromNumeric(
     0,
@@ -271,11 +286,13 @@ class MetarRedundantServer {
     // startup ("Remove unused subtypes of ServerRedundancy"), so it has to be
     // re-added as a HasProperty child of ServerRedundancy.
     //
-    // Note: OPC UA Part 5 says this array holds server *URIs* (the identities
-    // you would resolve through a discovery server). This example publishes
-    // `opc.tcp://` endpoint URLs instead so the demo is self-contained — a
-    // client that reaches either instance learns how to reach the other one
-    // without a discovery server and without both URLs on its command line.
+    // OPC 10000-5 §6.3.9: the array holds the ServerUris (ApplicationUris) of
+    // the members, the local one included -- identities, not addresses. The
+    // spec's way to map a ServerUri to endpoints is the `ServerNetworkGroups`
+    // property of NonTransparentNetworkRedundancyType (§6.3.10) or FindServers;
+    // this package cannot publish `NetworkGroupDataType[]` yet (see the README),
+    // so the client is seeded with the endpoints and matches them to the
+    // members by reading each server's ApplicationUri (ServerArray[0]).
     server.addVariableNode(
       _serverUriArrayNodeId,
       _serverUriArrayValue(),
@@ -433,7 +450,8 @@ Future<void> main(List<String> args) async {
     instance: options.instance,
     port: options.port,
     host: options.host,
-    peerEndpoints: options.peers,
+    applicationUri: options.applicationUri,
+    peers: options.peers,
     pollInterval: options.pollInterval,
     staleAfter: options.staleAfter,
     source: AviationWeatherMetarSource(options.station, useRawTextEndpoint: options.useText),
@@ -456,10 +474,12 @@ Usage: dart run example/metar_redundant_server.dart [options]
 
   --instance <name>     Instance name used in log lines (default: metar-a)
   --port <n>            TCP port to listen on (default: 4840)
-  --host <name>         Host name published in this server's endpoint URL
-                        (default: localhost)
-  --peer <url>          Peer endpoint, repeatable. Published in ServerUriArray
-                        together with this server's own endpoint.
+  --host <name>         Host name published in this server's endpoint URL and
+                        used in the default ApplicationUri (default: localhost)
+  --uri <uri>           This server's ApplicationUri, its identity in the
+                        redundant set (default: urn:<host>:metar:<instance>)
+  --peer <uri>          A peer's ApplicationUri, repeatable. Published in
+                        ServerUriArray after this server's own.
   --station <ICAO>      Station to publish (default: BIRK, Reykjavik Airport)
   --poll <seconds>      Fetch interval (default: 300)
   --stale <seconds>     Age at which data is flagged Bad_NoCommunication
@@ -476,6 +496,7 @@ class _Options {
     required this.instance,
     required this.port,
     required this.host,
+    required this.applicationUri,
     required this.peers,
     required this.station,
     required this.pollInterval,
@@ -488,6 +509,7 @@ class _Options {
   final String instance;
   final int port;
   final String host;
+  final String? applicationUri;
   final List<String> peers;
   final String station;
   final Duration pollInterval;
@@ -502,6 +524,7 @@ class _Options {
       instance: flags['instance']?.last ?? 'metar-a',
       port: int.parse(flags['port']?.last ?? '4840'),
       host: flags['host']?.last ?? 'localhost',
+      applicationUri: flags['uri']?.last,
       peers: flags['peer'] ?? const [],
       station: (flags['station']?.last ?? 'BIRK').toUpperCase(),
       pollInterval: Duration(seconds: int.parse(flags['poll']?.last ?? '300')),
