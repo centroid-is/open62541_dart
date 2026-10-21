@@ -12,6 +12,15 @@ changes that ship the same native library version.
   removed (`UaMallocAllocator`, `ua_malloc`, never exported), `NodeId.toRaw`
   defaults to `ua_calloc`, and the heap-growth tests measure through it.
 
+- **`DynamicValue`: `DynamicType.datetime`, and accessors that say when a
+  value is missing (#115).** A `DateTime` value reported `DynamicType.unknown`;
+  `type` now reports `datetime` and `isDateTime` goes with it. `asInt`,
+  `asDouble` and `asBool` fall back to `0`, `0.0` and `false` for a value that
+  is missing or of another type, which in process data is a plausible reading
+  rather than a failure; they are unchanged (and now documented), and
+  `asIntOrNull`, `asDoubleOrNull` and `asBoolOrNull` return null there
+  instead, like `asDateTime` already did. `DynamicType` is exported.
+
 ## 1.5.9
 
 - **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the

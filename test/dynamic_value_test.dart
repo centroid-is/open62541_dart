@@ -617,6 +617,52 @@ void main() {
     expect(d[1].typeId, NodeId.fromString(4, "<StructuredDataType>:ST_SimpleStrings"));
   });
 
+  // #115: a DateTime value had no DynamicType, and the typed accessors fell
+  // back to 0 / 0.0 / false for a value that is missing or of another type,
+  // which in process data is a plausible reading rather than a failure.
+  group('DynamicValue accessors (#115)', () {
+    test('a DateTime value reports DynamicType.datetime', () {
+      final v = DynamicValue(value: DateTime.utc(2024, 1, 2, 3, 4, 5), typeId: NodeId.datetime);
+      expect(v.type, DynamicType.datetime);
+      expect(v.isDateTime, isTrue);
+      expect(v.asDateTime, DateTime.utc(2024, 1, 2, 3, 4, 5));
+      expect(DynamicValue(value: 1).isDateTime, isFalse);
+      expect(DynamicValue().isDateTime, isFalse);
+    });
+
+    test('asIntOrNull is null for a missing or non-integer value; asInt still falls back to 0', () {
+      expect(DynamicValue().asIntOrNull, isNull);
+      expect(DynamicValue(value: 'not a number').asIntOrNull, isNull);
+      expect(DynamicValue(value: true).asIntOrNull, isNull);
+      expect(DynamicValue(value: DateTime.utc(2024)).asIntOrNull, isNull);
+      expect(DynamicValue(value: 42).asIntOrNull, 42);
+      expect(DynamicValue(value: '42').asIntOrNull, 42);
+      expect(DynamicValue().asInt, 0);
+      expect(DynamicValue(value: 'not a number').asInt, 0);
+    });
+
+    test('asDoubleOrNull is null for a missing or non-numeric value; asDouble still falls back to 0.0', () {
+      expect(DynamicValue().asDoubleOrNull, isNull);
+      expect(DynamicValue(value: 'not a number').asDoubleOrNull, isNull);
+      expect(DynamicValue(value: false).asDoubleOrNull, isNull);
+      expect(DynamicValue(value: 3.5).asDoubleOrNull, 3.5);
+      expect(DynamicValue(value: 2).asDoubleOrNull, 2.0);
+      expect(DynamicValue().asDouble, 0.0);
+      expect(DynamicValue(value: 'not a number').asDouble, 0.0);
+    });
+
+    test('asBoolOrNull is null for a missing or non-boolean value; asBool still falls back to false', () {
+      expect(DynamicValue().asBoolOrNull, isNull);
+      expect(DynamicValue(value: 'maybe').asBoolOrNull, isNull);
+      expect(DynamicValue(value: DateTime.utc(2024)).asBoolOrNull, isNull);
+      expect(DynamicValue(value: true).asBoolOrNull, isTrue);
+      expect(DynamicValue(value: 'false').asBoolOrNull, isFalse);
+      expect(DynamicValue(value: 0).asBoolOrNull, isFalse);
+      expect(DynamicValue().asBool, isFalse);
+      expect(DynamicValue(value: 'maybe').asBool, isFalse);
+    });
+  });
+
   test('Memory size', () {
     // TODO: Need this
   });

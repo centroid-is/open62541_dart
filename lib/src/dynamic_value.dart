@@ -2,7 +2,7 @@ import 'dart:collection' show LinkedHashMap;
 
 import 'node_id.dart';
 
-enum DynamicType { object, array, string, boolean, nullValue, unknown, integer, double }
+enum DynamicType { object, array, string, boolean, nullValue, unknown, integer, double, datetime }
 
 class LocalizedText {
   final String value;
@@ -119,6 +119,7 @@ class DynamicValue {
     if (value is int) return DynamicType.integer;
     if (value is double) return DynamicType.double;
     if (value is bool) return DynamicType.boolean;
+    if (value is DateTime) return DynamicType.datetime;
     return DynamicType.unknown;
   }
 
@@ -130,12 +131,36 @@ class DynamicValue {
   bool get isInteger => type == DynamicType.integer;
   bool get isDouble => type == DynamicType.double;
   bool get isBoolean => type == DynamicType.boolean;
+  bool get isDateTime => type == DynamicType.datetime;
 
+  /// The value as a double, or `0.0` when there is none or it is not numeric
+  /// (a `String` that parses as a number counts). `0.0` is a plausible
+  /// reading too; [asDoubleOrNull] tells the two apart.
   double get asDouble => _parseDouble(value) ?? 0.0;
+
+  /// The value as an int, or `0` when there is none or it is not numeric (a
+  /// `String` that parses as an int counts). `0` is a plausible reading too;
+  /// [asIntOrNull] tells the two apart.
   int get asInt => _parseInt(value) ?? 0;
   String get asString => value?.toString() ?? '';
+
+  /// The value as a bool, or `false` when there is none or it is not a bool
+  /// (a number is non-zero, a `String` is `'true'`/`'1'` or `'false'`/`'0'`).
+  /// [asBoolOrNull] tells a missing value from `false`.
   bool get asBool => _parseBool(value) ?? false;
   DateTime? get asDateTime => _parseDateTime(value);
+
+  /// [asDouble] without the fallback: null where that would be `0.0` because
+  /// the value is missing or not numeric.
+  double? get asDoubleOrNull => _parseDouble(value);
+
+  /// [asInt] without the fallback: null where that would be `0` because the
+  /// value is missing or not numeric.
+  int? get asIntOrNull => _parseInt(value);
+
+  /// [asBool] without the fallback: null where that would be `false` because
+  /// the value is missing or not a bool.
+  bool? get asBoolOrNull => _parseBool(value);
 
   List<DynamicValue> get asArray =>
       isArray ? value : throw StateError('DynamicValue is not an array, ${value.runtimeType}');
@@ -248,7 +273,8 @@ class DynamicValue {
     if (val is num) return val != 0;
     if (val is String) {
       final lc = val.trim().toLowerCase();
-      return (lc == 'true' || lc == '1');
+      if (lc == 'true' || lc == '1') return true;
+      if (lc == 'false' || lc == '0') return false;
     }
     return null;
   }
