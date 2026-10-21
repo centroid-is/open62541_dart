@@ -2355,6 +2355,16 @@ class Server {
   ///
   /// A second registration of the same [typeId] is ignored (the first
   /// schema stays in force).
+  ///
+  /// The encoding-id registry is process-global, not per server: a [Client]
+  /// in the same process that writes a value built from scratch (a `typeId`
+  /// and no `extObjEncodingId`) of a DataType id some local [Server]
+  /// registered encodes it with that server's encoding id, also when the
+  /// write goes to a foreign server that uses the same DataType id with a
+  /// different encoding id. A value built from a definition fetched from
+  /// the server it is written to (`readAttribute` DATATYPEDEFINITION,
+  /// `DynamicValue.from`) carries that server's id as its
+  /// `extObjEncodingId` and is unaffected.
   void addCustomType(NodeId typeId, DynamicValue value) {
     if (!value.isObject) {
       throw 'Value must be a object';
