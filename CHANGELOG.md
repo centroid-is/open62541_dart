@@ -58,6 +58,16 @@ changes that ship the same native library version.
   mismatch (an unstamped tree from an older package revision is discarded
   once). `verify_version_test` additionally checks the version the native
   library reports, not only the constant in the generated bindings.
+- **Build: the hook re-downloads and rebuilds mbedTLS when the pinned version
+  changes.** The same flaw as above for the bundled mbedTLS: the extracted
+  source and the per-target install prefixes under `tls/` were reused whenever
+  they existed, so a warm `.dart_tool` would have kept linking the previous
+  mbedTLS release across a version bump. The tree is now stamped with its
+  version and discarded, together with every install built from it, on a
+  mismatch or a missing stamp. One-time cost: a checkout or consumer whose
+  cache predates the stamp re-downloads and rebuilds mbedTLS once on the next
+  build (well under a minute on a fast workstation, a couple of minutes on CI
+  or a laptop); later builds reuse the stamped tree as before.
 - **Dev tooling: `ffigen` 22.** The binding generator (`tool/ffigen.dart`) is
   ported to ffigen 22's visitor-based config API, which replaced the one it
   was written against; the generated bindings are unchanged by the port.

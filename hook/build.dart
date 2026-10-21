@@ -90,10 +90,21 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
     'mbedtls-$_mbedtlsVersion/mbedtls-$_mbedtlsVersion.tar.bz2',
   );
 
-  // Return early if already downloaded and renamed
+  // Reuse the extracted tree only if it holds the pinned version. The shared
+  // output directory outlives a package upgrade, so an unstamped or
+  // differently-stamped tree is a previous release's source: discard it
+  // together with everything built from it (the CMake build directory inside
+  // src/ and every i-<target>/ install prefix beside it) rather than silently
+  // link the old mbedTLS into the new library.
   final srcDir = Directory.fromUri(extractDir.uri.resolve('src/'));
-  if (await srcDir.exists()) {
+  final versionStamp = File.fromUri(extractDir.uri.resolve('version'));
+  if (await srcDir.exists() &&
+      await versionStamp.exists() &&
+      (await versionStamp.readAsString()).trim() == _mbedtlsVersion) {
     return srcDir.uri;
+  }
+  if (await extractDir.exists()) {
+    await extractDir.delete(recursive: true);
   }
 
   final bytes = await _downloadVerified(url, expectedSha256: _mbedtlsSha256, what: 'mbedTLS $_mbedtlsVersion');
@@ -115,6 +126,7 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
   // Rename extracted folder (e.g. mbedtls-3.6.5) to 'src' for shorter paths
   final folder = extractDir.listSync().firstWhere((element) => element is Directory);
   await (folder as Directory).rename(srcDir.path);
+  await versionStamp.writeAsString(_mbedtlsVersion);
   return srcDir.uri;
 }
 
@@ -156,14 +168,17 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
   final mbedtlsBase = input.outputDirectoryShared.resolve('tls/');
   final installPrefix = mbedtlsBase.resolve('i-$targetKey/');
 
-  // Skip if already built
+  // Resolve the source tree before looking for an install: a tree of another
+  // version is discarded there along with every i-<target>/ prefix built from
+  // it, so an install that is still present afterwards is the pinned version.
+  final sourceDir = await _downloadMbedTLS(input.outputDirectoryShared);
+
+  // Skip if already built for this target
   final includeCheck = File.fromUri(installPrefix.resolve('include/mbedtls/ssl.h'));
   if (await includeCheck.exists()) {
     logger.info('mbedTLS already built, skipping');
     return installPrefix;
   }
-
-  final sourceDir = await _downloadMbedTLS(input.outputDirectoryShared);
 
   await _buildCmakeProject(
     input: input,
