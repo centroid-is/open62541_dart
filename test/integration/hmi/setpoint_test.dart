@@ -44,7 +44,7 @@ void main() {
           );
           final stream = observer.client.monitor(setId, subId, samplingInterval: const Duration(milliseconds: 200));
 
-          final seen = <double>[];
+          final seen = <double?>[];
 
           // Two distinct setpoints, neither equal to the 12.0 baseline.
           const target1 = 15.5;
@@ -55,6 +55,7 @@ void main() {
           sub = stream.listen((v) {
             final d = v.asDouble;
             seen.add(d);
+            if (d == null) return;
             if ((d - target1).abs() < 1e-6 && !got1.isCompleted) got1.complete();
             if ((d - target2).abs() < 1e-6 && !got2.isCompleted) got2.complete();
           });

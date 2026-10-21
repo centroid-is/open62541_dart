@@ -103,13 +103,13 @@ void main() {
     });
 
     test('Float NaN / +Inf / -Inf', () async {
-      expect((await roundTrip('f_nan', NodeId.float, 0.0, double.nan)).asDouble.isNaN, isTrue);
+      expect((await roundTrip('f_nan', NodeId.float, 0.0, double.nan)).asDouble?.isNaN, isTrue);
       expect((await roundTrip('f_inf', NodeId.float, 0.0, double.infinity)).asDouble, double.infinity);
       expect((await roundTrip('f_ninf', NodeId.float, 0.0, double.negativeInfinity)).asDouble, double.negativeInfinity);
     });
 
     test('Double NaN / +Inf / -Inf', () async {
-      expect((await roundTrip('d_nan', NodeId.double, 0.0, double.nan)).asDouble.isNaN, isTrue);
+      expect((await roundTrip('d_nan', NodeId.double, 0.0, double.nan)).asDouble?.isNaN, isTrue);
       expect((await roundTrip('d_inf', NodeId.double, 0.0, double.infinity)).asDouble, double.infinity);
       expect(
         (await roundTrip('d_ninf', NodeId.double, 0.0, double.negativeInfinity)).asDouble,

@@ -72,7 +72,7 @@ void main() {
         final mErrors = <Object>[];
         final mSub = dc.client
             .monitor(tempId, subId, samplingInterval: const Duration(milliseconds: 200))
-            .listen((v) => got.add(v.asDouble), onError: mErrors.add);
+            .listen((v) => got.add(v.asDouble!), onError: mErrors.add);
         final delivered = await () async {
           final deadline = DateTime.now().add(const Duration(seconds: 20));
           while (DateTime.now().isBefore(deadline)) {

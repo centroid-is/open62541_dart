@@ -73,6 +73,7 @@ void main() {
         try {
           final counter = (await findByBrowseName(client, PlcFixture.counterName))!;
           final before = (await client.read(counter)).asInt;
+          expect(before, isNotNull, reason: 'Counter did not read as an int');
 
           // Drop the link (existing connection killed, new refused), then heal.
           await proxy.disable();
@@ -90,7 +91,7 @@ void main() {
             await Future<void>.delayed(const Duration(milliseconds: 300));
           }
           expect(after, isNotNull, reason: 'client did not recover after the drop');
-          expect(after, greaterThan(before), reason: 'Counter should have advanced across the outage');
+          expect(after, greaterThan(before!), reason: 'Counter should have advanced across the outage');
         } finally {
           await client.delete();
         }

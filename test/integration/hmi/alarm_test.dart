@@ -45,7 +45,7 @@ void main() {
           final resetId = await tankMethod(dc.client, 1, 'ResetAlarm');
 
           // HMI reads the whole alarm block in one service call.
-          Future<({bool active, String msg, int sev})> readBlock() async {
+          Future<({bool? active, String msg, int? sev})> readBlock() async {
             final block = await dc.client.readAttribute({
               activeId: const [AttributeId.UA_ATTRIBUTEID_VALUE],
               msgId: const [AttributeId.UA_ATTRIBUTEID_VALUE],

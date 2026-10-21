@@ -407,7 +407,7 @@ void _freeRawNodeId(raw.UA_NodeId rawNodeId) {
   if (rawNodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
     final data = rawNodeId.identifier.string.data;
     if (data != ffi.nullptr) {
-      ua_malloc.free(data);
+      ua_calloc.free(data);
     }
   }
 }
@@ -417,7 +417,7 @@ Future<ffi.Pointer<raw.UA_Client>> _connectRawClient(int port) async {
   config.ref.logging = raw.UA_Log_Stdout_new(LogLevel.UA_LOGLEVEL_FATAL);
   raw.UA_ClientConfig_setDefault(config);
   final client = raw.UA_Client_newWithConfig(config);
-  final url = 'opc.tcp://127.0.0.1:$port'.toNativeUtf8(allocator: ua_malloc);
+  final url = 'opc.tcp://127.0.0.1:$port'.toNativeUtf8(allocator: ua_calloc);
   final rc = raw.UA_Client_connectAsync(client, url.cast());
   expect(rc, raw.UA_STATUSCODE_GOOD);
 
@@ -441,7 +441,7 @@ Future<ffi.Pointer<raw.UA_Client>> _connectRawClient(int port) async {
     ua_calloc.free(channelState);
     ua_calloc.free(sessionState);
     ua_calloc.free(connectStatus);
-    ua_malloc.free(url);
+    ua_calloc.free(url);
   }
 }
 

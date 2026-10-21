@@ -51,8 +51,9 @@ void main() {
                 sharedDoubleNode,
                 DynamicValue(value: (i * 1000 + k).toDouble(), typeId: NodeId.double),
               );
-              final v = await client.read(sharedDoubleNode);
-              expect(isLegal(v.asDouble), isTrue, reason: 'client $i observed corrupt value ${v.asDouble}');
+              final v = (await client.read(sharedDoubleNode)).asDouble;
+              expect(v, isNotNull, reason: 'client $i read no double');
+              expect(isLegal(v!), isTrue, reason: 'client $i observed corrupt value $v');
             }
           }());
         }

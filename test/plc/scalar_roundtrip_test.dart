@@ -48,9 +48,10 @@ void main() {
       test('Counter is live and monotonic', () async {
         final node = await s.node(PlcFixture.counterName);
         final a = (await s.client.read(node)).asInt;
+        expect(a, isNotNull, reason: 'Counter did not read as an int');
         await Future<void>.delayed(const Duration(milliseconds: 600));
         final b = (await s.client.read(node)).asInt;
-        expect(b, greaterThan(a), reason: 'the PLC must increment Counter');
+        expect(b, greaterThan(a!), reason: 'the PLC must increment Counter');
       });
 
       test('TestArray round-trips', () async {
