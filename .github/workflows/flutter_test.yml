@@ -74,6 +74,14 @@ jobs:
         run: |
           $dumps = "$env:RUNNER_TEMP\dumps"
           New-Item -ItemType Directory -Force $dumps | Out-Null
+          # The runner image may have Windows Error Reporting switched off,
+          # which also suppresses the Application-log crash events.
+          $wer = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
+          "WER before: " + ((Get-ItemProperty $wer -ErrorAction SilentlyContinue | Select-Object Disabled, DontShowUI | Format-List | Out-String).Trim())
+          Set-ItemProperty -Path $wer -Name Disabled -Value 0 -Type DWord
+          Set-ItemProperty -Path $wer -Name DontShowUI -Value 1 -Type DWord
+          Set-Service WerSvc -StartupType Manual -ErrorAction SilentlyContinue
+          Get-Service WerSvc | Format-Table Name, Status, StartType
           foreach ($exe in 'flutter_tester.exe', 'dart.exe') {
             $k = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\$exe"
             New-Item -Path $k -Force | Out-Null
@@ -88,11 +96,21 @@ jobs:
         shell: pwsh
         run: |
           $repeats = [int]('${{ github.event.inputs.windows_repeats || 1 }}')
+          if ($repeats -le 1) {
+            flutter test test/library_test.dart
+            exit $LASTEXITCODE
+          }
+          # Flake hunting: verbose output per run (it is the only place
+          # flutter_tools reports the tester's exit code on Windows), kept
+          # for the failed runs and uploaded with the crash dumps.
           $failed = 0
           for ($i = 1; $i -le $repeats; $i++) {
-            if ($repeats -gt 1) { "===== run $i of $repeats =====" }
-            flutter test test/library_test.dart
-            if ($LASTEXITCODE -ne 0) { $failed++; "===== run $i FAILED (exit $LASTEXITCODE) =====" }
+            "===== run $i of $repeats ====="
+            $log = "$env:DUMP_DIR\run_$i.log"
+            flutter test -v test/library_test.dart 2>&1 | Out-File -FilePath $log -Encoding utf8
+            $code = $LASTEXITCODE
+            Get-Content $log | Select-String -Pattern 'tests passed|exited with code|Shell subprocess|Shell:|exception|Exception|crash' | ForEach-Object { $_.Line }
+            if ($code -ne 0) { $failed++; "===== run $i FAILED (exit $code) =====" } else { Remove-Item $log }
           }
           if ($failed -gt 0) { "$failed of $repeats runs failed"; exit 1 }
 
