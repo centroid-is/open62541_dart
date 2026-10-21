@@ -44,6 +44,8 @@ void main() {
     group('$clientType client: Default Binary encoding of a custom struct', () {
       late Server server;
       late ClientApi client;
+      // What the data-source node's onWrite received last.
+      DynamicValue? received;
 
       setUp(() async {
         server = setupServer();
@@ -52,7 +54,14 @@ void main() {
         server.addCustomType(numericType, numericSchema());
         server.addDataTypeNode(numericType, 'ST_Numeric');
         server.addVariableNode(nodeId, schema(), typeId: structType);
-        server.addDataSourceVariableNode(dataSourceNode, browseName: 'Enc', typeId: structType, onRead: schema);
+        received = null;
+        server.addDataSourceVariableNode(
+          dataSourceNode,
+          browseName: 'Enc',
+          typeId: structType,
+          onRead: schema,
+          onWrite: (value) async => received = value,
+        );
         client = await setupClientOfType(clientType, 'opc.tcp://127.0.0.1:${server.port}');
       });
 
@@ -117,6 +126,39 @@ void main() {
           expect(dv.value.typeId, structType);
           expect(dv.value.extObjEncodingId, enc.nodeId);
         }
+      });
+
+      test('DataTypeDefinition.defaultEncodingId is the Default Binary id, and a value built from the fetched '
+          'schema writes with it', () async {
+        final enc = await defaultBinaryOf(structType);
+        final definition = (await client.readAttribute({
+          structType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION],
+        }))[structType]!;
+        expect(definition.isObject, isTrue);
+        expect(definition.asObject.keys, ['Id', 'Label', 'Inner']);
+        expect(definition.extObjEncodingId, enc.nodeId, reason: 'defaultEncodingId == the HasEncoding target');
+
+        // A client that knows nothing but what the server told it: build the
+        // value from the fetched definitions (a nested field comes back as a
+        // typed placeholder; its own definition fills it in) and write it.
+        final innerDefinition = (await client.readAttribute({
+          nestedType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION],
+        }))[nestedType]!;
+        final fresh = DynamicValue.from(definition);
+        fresh.typeId = structType;
+        fresh['Id'].value = 11;
+        fresh['Label'].value = 'eleven';
+        fresh['Inner'] = DynamicValue.from(innerDefinition)..typeId = nestedType;
+        fresh['Inner']['Flag'].value = false;
+        await client.write(dataSourceNode, fresh);
+
+        // The server decoded it (open62541 matched the encoding id to the
+        // registered type; the native struct came through the write path).
+        expect(received, isNotNull);
+        expect(received!['Id'].asInt, 11);
+        expect(received!['Label'].asString, 'eleven');
+        expect(received!['Inner']['Flag'].asBool, isFalse);
+        expect(received!.extObjEncodingId, enc.nodeId, reason: 'the wire carried the Default Binary id');
       });
 
       test('a value read back writes back as it is, and one built from scratch still decodes on the server', () async {

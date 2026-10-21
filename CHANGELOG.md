@@ -28,8 +28,11 @@ changes that ship the same native library version.
   and the monitors are unchanged. A write from a client that carries the
   encoding id is now decoded natively by open62541 and reaches a data-source
   `onWrite` through the native-struct path; one built from scratch under the
-  DataType id decodes against the local schema as before. `NodeId.hasEncoding`
-  and `NodeId.dataTypeEncodingType` are new.
+  DataType id decodes against the local schema as before. A definition
+  fetched with `readAttribute(DATATYPEDEFINITION)` carries its
+  `defaultEncodingId` as `extObjEncodingId`, so a value built from it
+  (`DynamicValue.from`) writes with the encoding id the server expects.
+  `NodeId.hasEncoding` and `NodeId.dataTypeEncodingType` are new.
 - `ServerStatistics` gained `liveDataChangeNotificationCount` and
   `liveNotificationCount`: the per-subscription `dataChangeNotificationsCount`
   / `notificationsCount` (data changes + events; keep-alives carry none) of

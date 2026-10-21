@@ -335,6 +335,17 @@ class OpcUaDynamicValueSerializer {
       tree.typeId = NodeId.int32;
     } else if (binaryEncodingId == NodeId.structureDefinitionDefaultBinary) {
       final structSchema = def.data.cast<raw.UA_StructureDefinition>();
+      // The DefaultBinary DataTypeEncoding id the definition advertises: the
+      // id a value of this type must carry on the wire, so a value built from
+      // this schema (DynamicValue.from) writes with it and the receiver
+      // (open62541 matching `binaryEncodingId`, a 1.04 client matching the
+      // `defaultEncodingId` it fetched) can decode it. A definition that
+      // names none (a server that has no encoding object) leaves it unset
+      // and the value travels under its DataType id, as before.
+      final defaultEncodingId = structSchema.ref.defaultEncodingId.toNodeId();
+      if (defaultEncodingId != NodeId.nullId) {
+        tree.extObjEncodingId = defaultEncodingId;
+      }
       // Object case & Array case
       for (int i = 0; i < structSchema.ref.fieldsSize; i++) {
         final field = structSchema.ref.fields[i];
