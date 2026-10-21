@@ -403,6 +403,24 @@ class Server {
     _config.ref.asyncOperationTimeout = timeout.inMilliseconds.toDouble();
   }
 
+  /// How long [shutdown] keeps serving after announcing the shutdown to
+  /// clients, `UA_ServerConfig.shutdownDelay`; `Duration.zero`, the default,
+  /// is an immediate shutdown. [shutdown] honours it when called without a
+  /// `delay` and sets it when called with one. Whole seconds: the
+  /// announcement is `ServerStatus.SecondsTillShutdown`, a count of seconds,
+  /// so [shutdown] rounds up.
+  ///
+  /// open62541 itself reads this field only in `UA_Server_run`, the blocking
+  /// loop this binding does not use (`runIterate` drives the server), so
+  /// nothing but [shutdown] acts on it.
+  Duration get shutdownDelay => Duration(milliseconds: _config.ref.shutdownDelay.round());
+  set shutdownDelay(Duration delay) {
+    if (delay.isNegative) {
+      throw ArgumentError.value(delay, 'delay', 'must not be negative');
+    }
+    _config.ref.shutdownDelay = delay.inMilliseconds.toDouble();
+  }
+
   /// The most references the server returns for one node in a single Browse
   /// or BrowseNext response — `0`, the default, means no limit. A node with
   /// more references is answered in pages: each response carries a
@@ -2965,20 +2983,58 @@ class Server {
   /// network operations and cleaning up resources. It should be called before
   /// deleting the server instance.
   ///
+  /// With a [delay] (or a [shutdownDelay] set beforehand; [delay] sets it)
+  /// the shutdown is orderly, the Part 5 §12.6 hand-off: the server first
+  /// announces it, then keeps serving for the delay, then shuts down. During
+  /// the delay `ServerStatus.State` (`i=2259`) reads `Shutdown` (4) and
+  /// `ServerStatus.SecondsTillShutdown` (`i=2992`) counts down to 0, which is
+  /// how a client learns to move to another server of a redundant set (see
+  /// [setRedundancy]); every other read, write, call and subscription is
+  /// served as before, from this isolate. The call blocks the calling isolate
+  /// for the whole delay, rounded up to whole seconds (the announcement is a
+  /// count of seconds), pumping open62541 itself: nothing else runs on the
+  /// isolate meanwhile, and the server's `runIterate` loop, if any, simply
+  /// resumes afterwards to find the server stopped. Observers (a client, a
+  /// test) live on another isolate. Without a delay the call is immediate,
+  /// as it always was.
+  ///
   /// Throws an exception if the shutdown operation fails, with the error
   /// message including the status code.
   ///
   /// Example:
   /// ```dart
   /// try {
-  ///   server.shutdown();
+  ///   server.shutdown(delay: const Duration(seconds: 5));
   /// } catch (e) {
   ///   print('Failed to shutdown server: $e');
   /// }
   /// ```
-  void shutdown() {
+  void shutdown({Duration? delay}) {
     if (_server == ffi.nullptr) {
       throw StateError('Server has been deleted; shutdown() must be called before delete()');
+    }
+    if (delay != null) {
+      shutdownDelay = delay;
+    }
+    final seconds = (_config.ref.shutdownDelay / 1000).ceil();
+    // Only a started server can announce anything (and only it has an event
+    // loop to pump); run_shutdown reports the state as before otherwise.
+    if (seconds > 0 && raw.UA_Server_getLifecycleState(_server) == raw.UA_LifecycleState.UA_LIFECYCLESTATE_STARTED) {
+      // open62541's run_shutdown stops the listeners at once; its delayed
+      // shutdown lives in UA_Server_run, which this binding does not use.
+      // What that loop does is reachable from outside: a local (admin) write
+      // of SecondsTillShutdown sets the server's end time, from which the
+      // ServerStatus value source derives State = Shutdown and the
+      // countdown (src/server/ua_server_ns0.c, writeStatus / readStatus).
+      write(
+        NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_SECONDSTILLSHUTDOWN),
+        DynamicValue(value: seconds, typeId: NodeId.uint32),
+      );
+      final deadline = DateTime.now().add(Duration(seconds: seconds));
+      while (DateTime.now().isBefore(deadline)) {
+        // Blocks until there is work or for at most 500 ms (UA_MAXTIMEOUT).
+        raw.UA_Server_run_iterate(_server, true);
+      }
     }
     int ret = raw.UA_Server_run_shutdown(_server);
     if (ret != 0) {
