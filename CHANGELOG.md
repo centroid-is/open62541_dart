@@ -32,6 +32,18 @@ changes that ship the same native library version.
   (`(NodeId, AttributeId)` to status). `toString()` is the old message, and
   `ClientIsolate` forwards it typed.
 
+- **The well-known NS0 nodes are `NodeId` statics (#110).** Reading the
+  server's status, service level, namespace array or redundancy surface, or
+  adding a standard property, needed the generated `UA_NS0ID_*` constants,
+  an implementation import. `NodeId.server`, `serverArray`,
+  `namespaceArray`, `serverStatus`, `serverStatusStartTime`,
+  `serverStatusState`, `serverStatusBuildInfo`, `serviceLevel`,
+  `serverRedundancy`, `redundancySupport`, `serverUriArray`, `organizes`,
+  `hasComponent`, `hasProperty`, `hasTypeDefinition`, `baseObjectType`,
+  `folderType`, `baseDataVariableType` and `propertyType` join the existing
+  folder and reference-type statics, each backed by the generated constant
+  (`serverStatusCurrentTime` was a literal `2258`).
+
 ## 1.5.9
 
 - **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the

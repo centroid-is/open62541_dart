@@ -153,32 +153,150 @@ class NodeId {
     return NodeId.fromNumeric(0, Namespace0Id.localizedText.value);
   }
 
-  static NodeId get serverStatusCurrentTime {
-    return NodeId.fromNumeric(0, 2258);
-  }
+  // Well-known nodes of namespace 0 (OPC UA Part 5), each backed by the
+  // generated `UA_NS0ID_*` constant: the standard folders, the Server object
+  // and the variables under it an application reads or serves, and the
+  // reference and type nodes standard properties and components are added
+  // with. Every open62541 server has them.
 
+  /// The Root folder, `i=84`.
   static NodeId get rootFolder {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_ROOTFOLDER);
   }
 
+  /// The Objects folder, `i=85`.
   static NodeId get objectsFolder {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
   }
 
+  /// The Types folder, `i=86`.
   static NodeId get typesFolder {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_TYPESFOLDER);
   }
 
+  /// The Views folder, `i=87`.
   static NodeId get viewsFolder {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_VIEWSFOLDER);
   }
 
+  /// The Server object, `i=2253`.
+  static NodeId get server {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER);
+  }
+
+  /// `Server/ServerArray`, `i=2254`: the URIs of the servers the server
+  /// knows, index 0 its own.
+  static NodeId get serverArray {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERARRAY);
+  }
+
+  /// `Server/NamespaceArray`, `i=2255`: the namespace URIs by index.
+  static NodeId get namespaceArray {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_NAMESPACEARRAY);
+  }
+
+  /// `Server/ServerStatus`, `i=2256`: the ServerStatusDataType structure.
+  static NodeId get serverStatus {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS);
+  }
+
+  /// `Server/ServerStatus/StartTime`, `i=2257`.
+  static NodeId get serverStatusStartTime {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_STARTTIME);
+  }
+
+  /// `Server/ServerStatus/CurrentTime`, `i=2258`: the server's clock, a
+  /// `DateTime`.
+  static NodeId get serverStatusCurrentTime {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_CURRENTTIME);
+  }
+
+  /// `Server/ServerStatus/State`, `i=2259`: the ServerState enumeration
+  /// (0 is Running).
+  static NodeId get serverStatusState {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_STATE);
+  }
+
+  /// `Server/ServerStatus/BuildInfo`, `i=2260`.
+  static NodeId get serverStatusBuildInfo {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_BUILDINFO);
+  }
+
+  /// `Server/ServiceLevel`, `i=2267`: a Byte, 255 for a server fully able
+  /// to serve; a redundant set's clients pick the server with the highest.
+  static NodeId get serviceLevel {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVICELEVEL);
+  }
+
+  /// `Server/ServerRedundancy`, `i=2296`.
+  static NodeId get serverRedundancy {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY);
+  }
+
+  /// `Server/ServerRedundancy/RedundancySupport`, `i=3709`: the
+  /// RedundancySupport enumeration (0 None, 1 Cold, 2 Warm, 3 Hot, ...).
+  static NodeId get redundancySupport {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_REDUNDANCYSUPPORT);
+  }
+
+  /// `Server/ServerRedundancy/ServerUriArray`, `i=11314`: the URIs of the
+  /// servers in the redundant set. open62541 removes this property at
+  /// startup; a server that is part of a set adds it back under
+  /// [serverRedundancy] with [hasProperty].
+  static NodeId get serverUriArray {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERURIARRAY);
+  }
+
+  /// The HierarchicalReferences reference type, `i=33`.
   static NodeId get hierarchicalReferences {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_HIERARCHICALREFERENCES);
   }
 
+  /// The HasSubtype reference type, `i=45`.
   static NodeId get hasSubtype {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
+  }
+
+  /// The Organizes reference type, `i=35`: a folder to what it holds.
+  static NodeId get organizes {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
+  }
+
+  /// The HasComponent reference type, `i=47`: an object to its variables
+  /// and sub-objects.
+  static NodeId get hasComponent {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
+  }
+
+  /// The HasProperty reference type, `i=46`: a node to its properties.
+  static NodeId get hasProperty {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_HASPROPERTY);
+  }
+
+  /// The HasTypeDefinition reference type, `i=40`.
+  static NodeId get hasTypeDefinition {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_HASTYPEDEFINITION);
+  }
+
+  /// The BaseObjectType, `i=58`.
+  static NodeId get baseObjectType {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_BASEOBJECTTYPE);
+  }
+
+  /// The FolderType, `i=61`.
+  static NodeId get folderType {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_FOLDERTYPE);
+  }
+
+  /// The BaseDataVariableType, `i=63`: the type definition of a plain
+  /// variable.
+  static NodeId get baseDataVariableType {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
+  }
+
+  /// The PropertyType, `i=68`: the type definition of a property.
+  static NodeId get propertyType {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_PROPERTYTYPE);
   }
 
   /// This NodeId as a by-value `UA_NodeId`.
