@@ -7,6 +7,7 @@ import '../dynamic_value.dart';
 import '../node_id.dart';
 import '../third_party/open62541.g.dart' as raw;
 import 'create_type.dart';
+import 'custom_type_registry.dart';
 import 'native_decode.dart';
 import 'payloads.dart';
 
@@ -237,11 +238,19 @@ class OpcUaDynamicValueSerializer {
       }
     } else if (value.isObject && root) {
       // The ExtensionObject's typeId is the binary encoding id: a receiver
-      // matches it against the `binaryEncodingId` of the types it knows. A
-      // value read from open62541 carries it in `extObjEncodingId`; one built
-      // in Dart with an NS0 DataType id (Range, i=884) gets the id of the
-      // bundled type; a custom type's id is used as it is.
-      final typeId = value.extObjEncodingId ?? ns0BinaryEncodingId(value.typeId!) ?? value.typeId!;
+      // matches it against the `binaryEncodingId` of the types it knows
+      // (open62541) or the `defaultEncodingId` of the DataTypeDefinition it
+      // fetched (UaExpert, asyncua). A value read from open62541 carries it in
+      // `extObjEncodingId`; one built in Dart with an NS0 DataType id (Range,
+      // i=884) gets the id of the bundled type; one of a custom type a Server
+      // in this process registered gets that registration's encoding id. Only
+      // a type nobody registered travels under its DataType id, which a
+      // receiver cannot match to anything.
+      final typeId =
+          value.extObjEncodingId ??
+          ns0BinaryEncodingId(value.typeId!) ??
+          customBinaryEncodingIdOf(value.typeId!) ??
+          value.typeId!;
       final bodyWriter = ByteWriter();
       _serializeStructBody(value, bodyWriter, endian);
       rootStructs.add((typeId, bodyWriter.toBytes()));

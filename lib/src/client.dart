@@ -2569,18 +2569,50 @@ class Client implements ClientApi, DataValueMonitoringApi {
         defs.addAll(await buildSchema(dataTypeId));
       }
     } else if (typeId == NodeId.structure) {
-      // Cast the data to extension object
+      // No DataType at hand (readValue, call outputs): the ExtensionObject's
+      // typeId is the type's DefaultBinary encoding id, a DataTypeEncoding
+      // object, not the DataType. Resolve it the way a browser does, by its
+      // inverse HasEncoding reference, and fetch the schema of THAT node.
       final ext = data.data.cast<raw.UA_ExtensionObject>();
-      typeId = ext.ref.content.encoded.typeId.toNodeId();
-      if (!defs.containsKey(typeId)) {
-        // Copy our data before async switch
-        defs.addAll(await buildSchema(typeId));
+      final encodingId = ext.ref.content.encoded.typeId.toNodeId();
+      final resolved = _dataTypeByEncoding[encodingId] ?? await _dataTypeOfEncoding(encodingId) ?? encodingId;
+      _dataTypeByEncoding[encodingId] = resolved;
+      if (!defs.containsKey(resolved)) {
+        defs.addAll(await buildSchema(resolved));
       }
-      // TODO: Test
-      dataTypeId ??= typeId;
+      // Alias the schema under the encoding id, which is what a nested
+      // ExtensionObject is looked up by.
+      final schema = defs[resolved];
+      if (schema != null) {
+        defs[encodingId] ??= schema;
+      }
+      dataTypeId ??= resolved;
     }
     final retValue = variantToValue(data, defs: defs, dataTypeId: dataTypeId);
     return retValue;
+  }
+
+  /// DataType id per DefaultBinary encoding id resolved so far.
+  final Map<NodeId, NodeId> _dataTypeByEncoding = {};
+
+  /// The DataType whose `Default Binary` DataTypeEncoding object is
+  /// [encodingId]: the target of the object's inverse HasEncoding reference.
+  /// Null when the server has no such object (a server that encodes a value
+  /// under its DataType id, as this package's own did before 1.5.9) or the
+  /// node cannot be browsed.
+  Future<NodeId?> _dataTypeOfEncoding(NodeId encodingId) async {
+    try {
+      final refs = await browse(
+        encodingId,
+        direction: raw.UA_BrowseDirection.UA_BROWSEDIRECTION_INVERSE.value,
+        referenceTypeId: NodeId.hasEncoding,
+        includeSubtypes: false,
+        nodeClassMask: NodeClass.UA_NODECLASS_DATATYPE.value,
+      );
+      return refs.isEmpty ? null : refs.first.nodeId;
+    } catch (_) {
+      return null;
+    }
   }
 
   // ignore: unused_element

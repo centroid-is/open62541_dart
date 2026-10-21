@@ -8,6 +8,7 @@ import 'package:open62541/open62541.dart';
 import 'common.dart';
 import 'extensions.dart';
 import 'third_party/open62541.g.dart' as raw;
+import 'types/custom_type_registry.dart';
 import 'ua_allocation.dart';
 
 /// Describes a single input or output argument of a method node.
@@ -1218,6 +1219,53 @@ class Server {
         getType(UaTypes.dataTypeAttributes),
       );
     }, ua_calloc);
+    _publishDefaultBinaryEncoding(requestedNewNodeId);
+  }
+
+  /// Publishes the `Default Binary` DataTypeEncoding object of the custom
+  /// structured DataType [typeId] (registered with [addCustomType]) and the
+  /// HasEncoding reference from the DataType node to it.
+  ///
+  /// OPC 10000-3 §8.2 / 10000-6 §5.2.2.15: a structured DataType has an
+  /// Object of type DataTypeEncodingType (i=76), BrowseName `0:Default
+  /// Binary`, no parent (as NS0's own `Argument_Encoding_DefaultBinary`),
+  /// reached from the DataType node via HasEncoding (i=38); its NodeId is
+  /// the one every ExtensionObject of the type carries. open62541 derives
+  /// the DataTypeDefinition (including `defaultEncodingId`) from the
+  /// registered `UA_DataType` but never creates the node or the reference,
+  /// so a client that resolves the type by browsing HasEncoding, or that
+  /// looks the wire id up in the address space, found nothing. A DataType
+  /// that is not a registered structure (an enum from [_addEnumType], a type
+  /// whose encoding id is its own id) gets no encoding object.
+  void _publishDefaultBinaryEncoding(NodeId typeId) {
+    final type = _findDataType(typeId);
+    if (type == ffi.nullptr) return;
+    final kind = type.ref.typeKind;
+    if (kind != raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE &&
+        kind != raw.UA_DataTypeKind.UA_DATATYPEKIND_OPTSTRUCT &&
+        kind != raw.UA_DataTypeKind.UA_DATATYPEKIND_UNION) {
+      return;
+    }
+    final encodingId = type.ref.binaryEncodingId.toNodeId();
+    if (encodingId == typeId || encodingId == NodeId.nullId) return;
+    // As in addDataTypeNode: the attributes are scratch in the arena.
+    using((arena) {
+      final attr = arena<raw.UA_ObjectAttributes>();
+      attr.ref = raw.UA_ObjectAttributes_default;
+      attr.ref.displayName.text.set('Default Binary', allocator: arena);
+      _addNode(
+        raw.UA_NodeClass.UA_NODECLASS_OBJECT,
+        encodingId,
+        NodeId.nullId,
+        NodeId.nullId,
+        'Default Binary',
+        NodeId.dataTypeEncodingType,
+        attr.cast(),
+        getType(UaTypes.objectAttributes),
+        browseNameNs: 0,
+      );
+    }, ua_calloc);
+    addReference(typeId, NodeId.hasEncoding, encodingId);
   }
 
   /// Resolves the identity of the session behind a native callback's
@@ -2094,8 +2142,9 @@ class Server {
     String browseName,
     NodeId typeDefinition,
     ffi.Pointer<raw.UA_NodeAttributes> attr,
-    ffi.Pointer<raw.UA_DataType> attributeType,
-  ) {
+    ffi.Pointer<raw.UA_DataType> attributeType, {
+    int browseNameNs = 1,
+  }) {
     // open62541 deep-copies the NodeId arguments and the browse name (both
     // begin and finish use copies), so they are scratch in the arena, released
     // whether or not the calls succeed.
@@ -2109,7 +2158,7 @@ class Server {
         requestedRaw,
         parentNodeId.toRaw(allocator: arena),
         referenceTypeId.toRaw(allocator: arena),
-        raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: arena).cast()),
+        raw.UA_QUALIFIEDNAME(browseNameNs, browseName.toNativeUtf8(allocator: arena).cast()),
         typeDefinition.toRaw(allocator: arena),
         attr.cast(),
         attributeType,
@@ -2276,7 +2325,23 @@ class Server {
     );
   }
 
-  // populate structschema for out type
+  /// Registers a custom structured DataType [typeId] whose fields are the
+  /// members of the object [value] (a schema: each field's `typeId` is its
+  /// DataType, `isArray` / `isOptional` as declared, values are placeholders).
+  /// Publish its DataType node with [addDataTypeNode].
+  ///
+  /// The type's DefaultBinary DataTypeEncoding NodeId — what every
+  /// ExtensionObject of this type carries on the wire, what the DataType
+  /// node's `DataTypeDefinition.defaultEncodingId` names, and the NodeId of
+  /// the `Default Binary` object [addDataTypeNode] publishes — is derived
+  /// from [typeId]: `ns=N;s=Name` gets `ns=N;s=Name_Encoding_DefaultBinary`
+  /// (the OPC UA naming convention); a numeric or other identifier gets a
+  /// string id derived the same way from its text (`ns=N;i=42` →
+  /// `ns=N;s=42_Encoding_DefaultBinary`). The rule is stable: it is the id a
+  /// client matches the wire against.
+  ///
+  /// A second registration of the same [typeId] is ignored (the first
+  /// schema stays in force).
   void addCustomType(NodeId typeId, DynamicValue value) {
     if (!value.isObject) {
       throw 'Value must be a object';
@@ -2301,14 +2366,21 @@ class Server {
     array.ref.typesSize = 1;
     array.ref.types = ua_calloc<raw.UA_DataType>(1);
     array.ref.types[0].typeId = typeId.toRaw();
-    // Derive the DefaultBinary DataTypeEncoding NodeId from the typeId, which
-    // is unique by construction. Deriving it from `value.name` (as done
-    // previously) collides for same-namespace types with a null or duplicate
-    // name - e.g. nested auto-registered schemas - and open62541 resolves an
-    // incoming ExtensionObject by the FIRST type whose encoding id matches, so
-    // colliding ids made client writes decode against the wrong schema. Keep
-    // this derivation stable: it is part of the wire contract for this type.
-    array.ref.types[0].binaryEncodingId = NodeId.fromString(typeId.namespace, "BinaryEncoding_Default:$typeId").toRaw();
+    // The DefaultBinary DataTypeEncoding NodeId, derived from the typeId (see
+    // defaultBinaryEncodingIdOf for the rule). Deriving it from `value.name`
+    // (as done once) collides for same-namespace types with a null or
+    // duplicate name - e.g. nested auto-registered schemas - and open62541
+    // resolves an incoming ExtensionObject by the FIRST type whose encoding id
+    // matches, so colliding ids made client writes decode against the wrong
+    // schema. open62541 copies this id into the DataTypeDefinition it answers
+    // for the DataType node (`defaultEncodingId`) and matches incoming
+    // ExtensionObjects against it; the serializer puts it on every
+    // ExtensionObject this process writes for the type (which, before, carried
+    // the DataType id: a 1.04 client matching the wire against the
+    // defaultEncodingId it fetched showed an opaque ExtensionObject).
+    final binaryEncodingId = defaultBinaryEncodingIdOf(typeId);
+    array.ref.types[0].binaryEncodingId = binaryEncodingId.toRaw();
+    registerCustomBinaryEncodingId(typeId, binaryEncodingId);
 
     array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
 
