@@ -154,12 +154,13 @@ enum LostDelete {
 /// client then has to release it for the isolate to exit.
 ///
 /// Reports 'session lost' if the client came back with a new session: the
-/// item is gone with the old one, and the run shows nothing.
+/// item is gone with the old one, and the run shows nothing. The client logs
+/// at ERROR level so that a CI log says why, should that happen.
 Future<void> channelCutCancelThenReturn((int, SendPort, LostDelete) args) async {
   final (proxyPort, report, lostDelete) = args;
   final steps = ReceivePort();
   final nextStep = StreamIterator(steps);
-  final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+  final client = Client(logLevel: LogLevel.UA_LOGLEVEL_ERROR);
   await client.keepConnected('opc.tcp://127.0.0.1:$proxyPort');
   final subscriptionId = await client.subscriptionCreate(requestedPublishingInterval: Duration(milliseconds: 50));
   // open62541 drops its subscriptions when it has to create a new session.
@@ -242,12 +243,14 @@ Future<void> channelCutCancelThenReturn((int, SendPort, LostDelete) args) async 
     await nextStep.moveNext();
 
     await witness.cancel();
-    await deletions.cancel();
-    await client.delete();
   } catch (e) {
     failure = sessionLost ? 'session lost' : e;
   }
+  await deletions.cancel();
   await nextStep.cancel();
+  // Delete the client whatever happened, so that the isolate can exit and
+  // the test can run the scenario again.
+  await client.delete();
   report.send(failure?.toString() ?? 'ok');
 }
 
@@ -526,12 +529,90 @@ void main() {
     );
   }, timeout: Timeout(Duration(seconds: 60)));
 
+  /// One run of [channelCutCancelThenReturn] for [lostDelete]. Returns null
+  /// when the cancelled item published after the reconnect and the isolate
+  /// exited; returns the reason when the client came back with a new
+  /// session, which makes the run show nothing. Anything else fails.
+  Future<String?> channelCutAttempt(LostDelete lostDelete) async {
+    final itemsBefore = server.statistics.currentMonitoredItemCount ?? 0;
+    final report = ReceivePort();
+    final exited = ReceivePort();
+    final events = StreamIterator(report);
+    await Isolate.spawn(channelCutCancelThenReturn, (proxy.port, report.sendPort, lostDelete), onExit: exited.sendPort);
+
+    Future<void> isolateExits(String stillOpen) async {
+      await events.cancel();
+      await exited.first.timeout(Duration(seconds: 10), onTimeout: () => fail('the isolate never exited: $stillOpen'));
+    }
+
+    // The isolate's next report. 'session lost' can come at any step: the
+    // isolate keeps its subscription only if it came back on the session it
+    // had, a new session drops it, and the isolate then gives up, deletes
+    // its client and reports that instead of the step.
+    const sessionLost = 'session lost';
+    Future<Object?> nextEvent() async {
+      expect(await events.moveNext().timeout(Duration(seconds: 60)), isTrue);
+      return events.current;
+    }
+
+    final first = await nextEvent();
+    if (first == sessionLost) {
+      await isolateExits('after the client came back with a new session');
+      return 'the client came back from the cut with a new session';
+    }
+    final nextStep = first as SendPort;
+    switch (lostDelete) {
+      case LostDelete.notSent:
+        proxy.cut();
+      case LostDelete.responseLost:
+        proxy.stall();
+        nextStep.send(null);
+        expect(await nextEvent(), 'delete sent');
+        proxy.cut();
+    }
+    nextStep.send(null);
+
+    final cancelled = await nextEvent();
+    if (cancelled == sessionLost) {
+      await isolateExits('after the client came back with a new session');
+      return 'the client came back with a new session while cancel() was pending';
+    }
+    expect(cancelled, 'cancelled', reason: 'cancel() must complete although the delete went nowhere');
+    proxy.resume();
+    nextStep.send(null);
+
+    final published = await nextEvent();
+    if (published == sessionLost) {
+      await isolateExits('after the client came back with a new session');
+      return 'the client came back from the cut with a new session';
+    }
+    expect(published, 'published', reason: 'the client must come back from the cut and publish');
+    // One item of the cancelled stream, one of the witness stream. If the
+    // delete is ever retried after a reconnect this becomes 1, and this test
+    // no longer exercises the callback of the cancelled stream.
+    expect(
+      server.statistics.currentMonitoredItemCount,
+      itemsBefore + 2,
+      reason: 'precondition: the cancelled item is still on the server and publishes into its callback',
+    );
+    nextStep.send(null);
+
+    expect(await nextEvent(), 'ok');
+    await isolateExits('the native callback of the cancelled item is still open');
+    return null;
+  }
+
   // Guards the use-after-free rule on the two paths where a delete does not
   // take effect (PR #119 review finding 3, and the abort found in that
   // review): the item survives on the server while the session lives, so its
   // callback must stay open until the client is deleted. If it is closed
   // earlier, these tests abort the VM with "Callback invoked after it has
   // been deleted".
+  //
+  // The run shows something only if the client re-activates the session it
+  // had, with the item still on it. A run where it came back with a new
+  // session instead is retried, a bounded number of times; the test never
+  // passes on such a run.
   for (final lostDelete in LostDelete.values) {
     final how = switch (lostDelete) {
       LostDelete.notSent => 'while only the channel is down',
@@ -539,66 +620,17 @@ void main() {
     };
     test('an item cancelled $how still takes its notifications after the reconnect, '
         'and is released with the client', () async {
-      final sessionsBefore = server.statistics.cumulatedSessionCount;
-      final report = ReceivePort();
-      final exited = ReceivePort();
-      final events = StreamIterator(report);
-      await Isolate.spawn(channelCutCancelThenReturn, (
-        proxy.port,
-        report.sendPort,
-        lostDelete,
-      ), onExit: exited.sendPort);
-      Future<Object?> nextEvent() async {
-        expect(await events.moveNext().timeout(Duration(seconds: 60)), isTrue);
-        return events.current;
+      const attempts = 3;
+      final reasons = <String>[];
+      for (var attempt = 1; attempt <= attempts; attempt++) {
+        final reason = await channelCutAttempt(lostDelete);
+        if (reason == null) return;
+        reasons.add('attempt $attempt: $reason');
       }
-
-      final nextStep = await nextEvent() as SendPort;
-      switch (lostDelete) {
-        case LostDelete.notSent:
-          proxy.cut();
-        case LostDelete.responseLost:
-          proxy.stall();
-          nextStep.send(null);
-          expect(await nextEvent(), 'delete sent');
-          proxy.cut();
-      }
-      nextStep.send(null);
-
-      expect(await nextEvent(), 'cancelled', reason: 'cancel() must complete although the delete went nowhere');
-      proxy.resume();
-      nextStep.send(null);
-
-      // If the client had to create a new session, the cancelled item is gone
-      // with the old one and nothing was published into its callback: the
-      // run would show nothing, so it must not pass.
-      expect(
-        await nextEvent(),
-        'published',
-        reason: 'the client must come back from the cut on the session it had, and publish',
+      fail(
+        'in $attempts attempts the client never re-activated the session it had after the cut, so the cancelled '
+        'item was never there to publish into its callback: ${reasons.join('; ')}',
       );
-      final stats = server.statistics;
-      expect(
-        stats.cumulatedSessionCount,
-        sessionsBefore + 1,
-        reason: 'precondition: the isolate client re-activated its session, it did not create a new one',
-      );
-      // One item of the cancelled stream, one of the witness stream. If the
-      // delete is ever retried after a reconnect this becomes 1, and this
-      // test no longer exercises the callback of the cancelled stream.
-      expect(
-        stats.currentMonitoredItemCount,
-        2,
-        reason: 'precondition: the cancelled item is still on the server and publishes into its callback',
-      );
-      nextStep.send(null);
-
-      expect(await nextEvent(), 'ok');
-      await events.cancel();
-      await exited.first.timeout(
-        Duration(seconds: 10),
-        onTimeout: () => fail('the isolate never exited: the native callback of the cancelled item is still open'),
-      );
-    }, timeout: Timeout(Duration(seconds: 120)));
+    }, timeout: Timeout(Duration(seconds: 300)));
   }
 }
