@@ -26,9 +26,9 @@ import 'package:open62541/open62541.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'common.dart';
 
-final serverStatusId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS);
-final buildInfoId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_BUILDINFO);
-final stateId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_STATE);
+final serverStatusId = NodeId.serverStatus;
+final buildInfoId = NodeId.serverStatusBuildInfo;
+final stateId = NodeId.serverStatusState;
 final serverStatusTypeId = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVERSTATUSDATATYPE);
 final buildInfoTypeId = NodeId.fromNumeric(0, raw.UA_NS0ID_BUILDINFO);
 
