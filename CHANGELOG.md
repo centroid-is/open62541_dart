@@ -4,7 +4,7 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
+## 1.5.9
 
 - **Monitoring with quality: `monitorDataValue` / `monitoredDataValues`.**
   `Client` and `ClientIsolate` implement the new `DataValueMonitoringApi`,
@@ -39,9 +39,6 @@ changes that ship the same native library version.
   (`Description`, `DisplayName`, `DataType`, `DataTypeDefinition`) answered
   Good and empty is treated as absent, like the already tolerated
   `BadAttributeIdInvalid`.
-
-## 1.5.9
-
 - **`Server.port`: the port the server listens on, for `Server(port: 0)`.**
   open62541 supports dynamic port assignment (the listen socket binds port 0
   and `getsockname` reads what the OS picked), but on a dual-stack host its
