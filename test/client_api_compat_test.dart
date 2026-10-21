@@ -102,11 +102,16 @@ void main() {
     expect(api, isNot(isA<DataValueMonitoringApi>()));
   });
 
-  test('Client carries the quality surface next to ClientApi', () async {
-    // Static: the assignment must type-check without a cast.
+  test('Client and ClientIsolate carry the quality surface next to ClientApi', () async {
+    // Static: both assignments must type-check without a cast.
     final Client direct = Client();
     final DataValueMonitoringApi directQuality = direct;
     expect(directQuality, same(direct));
     await direct.delete();
+
+    final isolate = await ClientIsolate.create();
+    final DataValueMonitoringApi isolateQuality = isolate;
+    expect(isolateQuality, same(isolate));
+    await isolate.delete();
   });
 }

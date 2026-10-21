@@ -50,7 +50,7 @@ import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/common.dart' show uaDateTimeToDateTime;
-import 'common.dart' show setupClientOfType;
+import 'common.dart' show clientTypes, setupClientOfType;
 import 'data_value_rewriting_proxy.dart';
 
 final goodNodeId = NodeId.fromString(1, "the.int");
@@ -78,9 +78,9 @@ const badNoCommunication = 0x80310000;
 /// a caller that never asked for qualities keeps getting the typed error.
 final legacyBadStatusMatcher = isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', badInternalError);
 
-/// The client types the DataValue monitoring API is available on: the direct
-/// client only, until ClientIsolate forwards it.
-const monitoringClientTypes = ['direct'];
+/// The client types the DataValue monitoring API is available on: both. On
+/// ClientIsolate every event crosses the SendPort as a `Map<NodeId, DataValue>`.
+const monitoringClientTypes = clientTypes;
 
 void main() {
   group('UA_DateTime conversion', () {
