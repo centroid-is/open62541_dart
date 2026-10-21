@@ -68,28 +68,11 @@ jobs:
         working-directory: flutter_example
         run: flutter pub get
 
-      # Windows keeps no record of a crashed flutter_tester unless asked:
-      # register a WER LocalDumps minidump for it (the runner is admin).
-      - name: Enable crash dumps for flutter_tester
+      - name: Dump directory for flake hunting
         shell: pwsh
         run: |
           $dumps = "$env:RUNNER_TEMP\dumps"
           New-Item -ItemType Directory -Force $dumps | Out-Null
-          # The runner image may have Windows Error Reporting switched off,
-          # which also suppresses the Application-log crash events.
-          $wer = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
-          "WER before: " + ((Get-ItemProperty $wer -ErrorAction SilentlyContinue | Select-Object Disabled, DontShowUI | Format-List | Out-String).Trim())
-          Set-ItemProperty -Path $wer -Name Disabled -Value 0 -Type DWord
-          Set-ItemProperty -Path $wer -Name DontShowUI -Value 1 -Type DWord
-          Set-Service WerSvc -StartupType Manual -ErrorAction SilentlyContinue
-          Get-Service WerSvc | Format-Table Name, Status, StartType
-          foreach ($exe in 'flutter_tester.exe', 'dart.exe') {
-            $k = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\$exe"
-            New-Item -Path $k -Force | Out-Null
-            Set-ItemProperty -Path $k -Name DumpFolder -Value $dumps -Type ExpandString
-            Set-ItemProperty -Path $k -Name DumpType -Value 2 -Type DWord
-            Set-ItemProperty -Path $k -Name DumpCount -Value 10 -Type DWord
-          }
           "DUMP_DIR=$dumps" >> $env:GITHUB_ENV
 
       - name: Run tests
@@ -104,9 +87,11 @@ jobs:
           # Flake hunting: verbose output per run (it is the only place
           # flutter_tools reports the tester's exit code on Windows), kept
           # for the failed runs and uploaded with the crash dumps.
-          # The Dart VM filters the access violation itself (no WER dump, no
+          # flutter_tools discards flutter_tester's exit code on Windows and
+          # the Dart VM handles the access violation itself (no WER dump, no
           # event-log record), so attach ProcDump to each flutter_tester and
-          # take a full dump on the first-chance access violation.
+          # take a full dump on the first-chance access violation. This is
+          # how the crash behind flutter/flutter#191069 was caught here.
           $pd = "$env:RUNNER_TEMP\procdump"
           New-Item -ItemType Directory -Force $pd | Out-Null
           Invoke-WebRequest -Uri https://download.sysinternals.com/files/Procdump.zip -OutFile "$pd\Procdump.zip"
@@ -153,26 +138,6 @@ jobs:
           name: windows-flutter-crash-dumps
           path: ${{ env.DUMP_DIR }}
           if-no-files-found: ignore
-
-      # On Windows flutter_tools discards flutter_tester's exit code
-      # (flutter_tester_device.dart, `finished`: "On Windows, the [exitCode]
-      # and the terminating signal have no correlation"), so a tester that
-      # dies mid-run is indistinguishable from one that finished: the test
-      # channel just closes, package:test marks the running test and every
-      # test after it complete without a result (the github reporter still
-      # prints them with a ✅), the summary counts only the tests that really
-      # finished ("🎉 4 tests passed." under seven ✅ lines) and the step exits
-      # 1 with no ❌ anywhere. Only Windows itself records the crash: print
-      # the Application-log entries (exception code, faulting module and
-      # offset) so the next occurrence can be attributed.
-      - name: Crash records for flutter_tester (Windows Application log)
-        if: failure()
-        shell: pwsh
-        run: |
-          $events = Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001; StartTime=(Get-Date).AddHours(-2)} -ErrorAction SilentlyContinue |
-            Where-Object { $_.Message -match 'flutter_tester|dart' }
-          if (-not $events) { "No Application-log crash record for flutter_tester/dart in the last 2 hours."; exit 0 }
-          foreach ($e in $events) { "--- $($e.TimeCreated) event $($e.Id)"; $e.Message }
 
   macos:
     name: macOS Test
