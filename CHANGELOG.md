@@ -4,6 +4,14 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## Unreleased
+
+- **`ua_malloc` is gone; the package allocates with `ua_calloc` only
+  (#45).** Every buffer handed to open62541 or freed with `free()` came from
+  one of two allocators that differed only in zero-filling; the malloc one is
+  removed (`UaMallocAllocator`, `ua_malloc`, never exported), `NodeId.toRaw`
+  defaults to `ua_calloc`, and the heap-growth tests measure through it.
+
 ## 1.5.9
 
 - **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the

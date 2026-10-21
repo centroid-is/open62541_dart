@@ -187,10 +187,10 @@ class NodeId {
   /// memory. A string identifier is copied into a buffer from [allocator], and
   /// whoever ends up holding the struct has to release it: open62541, when the
   /// struct is stored in something open62541 frees (a request passed to
-  /// `UA_*_delete`, a config it clears), which needs the default `ua_malloc`;
+  /// `UA_*_delete`, a config it clears), which needs the default `ua_calloc`;
   /// otherwise the caller. Where the NodeId is only passed by value to a call
   /// that copies it, pass an [Arena] so the buffer goes with the scope.
-  raw.UA_NodeId toRaw({Allocator allocator = ua_malloc}) {
+  raw.UA_NodeId toRaw({Allocator allocator = ua_calloc}) {
     if (_stringId != null) {
       return raw.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: allocator).cast());
     } else if (_numericId != null) {
