@@ -29,10 +29,16 @@
       band-aware rule of Part 4 §6.6.2.4.2 (Table 105): the initial selection
       is the highest ServiceLevel; while the active server is Healthy
       (200-255) the client stays with it, switching only when it becomes
-      unreachable, reports 0 (Maintenance) or leaves the Healthy band; from
-      Degraded (2-199) or NoData (1) it moves to the best Healthy server if
-      there is one, otherwise to a higher Degraded one that clears a
-      hysteresis margin.
+      unreachable, reports 0 (Maintenance), announces a shutdown or leaves
+      the Healthy band; from Degraded (2-199) it moves to the best Healthy
+      server if there is one, otherwise to a higher Degraded one that clears
+      a hysteresis margin. Only a server at 2 or more is given the data
+      subscription: a NoData (1) server is polled for ServiceLevel and
+      ServerStatus and nothing else, and with no member at 2 or more the
+      client holds no subscription at all.
+   5. Leave a Maintenance (0) server the way Table 105 says: not just no
+      data, but disconnect, and look again only after a much longer interval
+      (30 s by default, `--maintenance-retry`), until its level is above 0.
 */
 
 import 'dart:async';
@@ -40,9 +46,11 @@ import 'dart:io';
 
 import 'package:open62541/open62541.dart';
 
-import 'metar_redundant_server.dart' show isHealthyServiceLevel, parseFlags, serviceLevelMaintenance;
+import 'metar_redundant_server.dart'
+    show isHealthyServiceLevel, parseFlags, serviceLevelDegradedFloor, serviceLevelMaintenance, serviceLevelNoData;
 
-/// Emitted every time the client moves its data subscription to another server.
+/// Emitted every time the client moves its data subscription to another
+/// server, or drops it because no server qualifies for data.
 class FailoverEvent {
   FailoverEvent({
     required this.from,
@@ -57,8 +65,9 @@ class FailoverEvent {
   /// Endpoint left behind, or `null` for the initial selection.
   final String? from;
 
-  /// Endpoint now serving data.
-  final String to;
+  /// Endpoint now serving data, or `null` when none qualifies (every member
+  /// is at NoData / Maintenance / unreachable): no data subscription.
+  final String? to;
 
   /// ApplicationUri of the server at [from], when it had been identified.
   final String? fromUri;
@@ -69,7 +78,7 @@ class FailoverEvent {
   /// ServiceLevel of [from] at the moment of the switch (`-1` = unreachable).
   final int fromLevel;
 
-  /// ServiceLevel of [to] at the moment of the switch.
+  /// ServiceLevel of [to] at the moment of the switch (`-1` when none).
   final int toLevel;
 
   /// Why the client moved, e.g. `connection lost`.
@@ -77,8 +86,9 @@ class FailoverEvent {
 
   @override
   String toString() =>
-      'switched ${from == null ? '(none)' : _describe(from!, fromUri)} -> ${_describe(to, toUri)}: '
-      'ServiceLevel ${fromLevel < 0 ? 'unreachable' : fromLevel} -> $toLevel, reason: $reason';
+      'switched ${from == null ? '(none)' : _describe(from!, fromUri)} -> '
+      '${to == null ? '(none)' : _describe(to!, toUri)}: '
+      'ServiceLevel ${fromLevel < 0 ? 'unreachable' : fromLevel} -> ${toLevel < 0 ? 'none' : toLevel}, reason: $reason';
 
   static String _describe(String endpoint, String? uri) => uri == null ? endpoint : '$uri ($endpoint)';
 }
@@ -123,7 +133,18 @@ class _Link {
   StreamSubscription<Map<NodeId, DynamicValue>>? dataSubscription;
   StreamSubscription<void>? reconnectSubscription;
 
+  /// Set while the server is left alone after a Maintenance reading (Table
+  /// 105, ServiceLevel 0 or a non-Running State): the session is closed and
+  /// nothing is read until this moment, when one reconnect is tried.
+  DateTime? maintenanceUntil;
+
+  bool get inMaintenance => maintenanceUntil != null;
+
   bool get reachable => serviceLevel >= 0;
+
+  /// Whether the client may take data from this server: Table 105 reserves
+  /// NoData (1) for ServiceLevel / ServerStatus / diagnostics reads.
+  bool get qualifiesForData => rank >= serviceLevelDegradedFloor;
 }
 
 /// Follows the healthiest member of a redundant OPC UA server set.
@@ -138,6 +159,7 @@ class MetarFailoverClient {
     this.logLevel = LogLevel.UA_LOGLEVEL_FATAL,
     this.identifyMembers = true,
     this.discoverMembers = true,
+    this.maintenanceRetryInterval = const Duration(seconds: 30),
     void Function(String message)? log,
   }) : _log = log ?? print,
        _seed = List.of(endpoints);
@@ -174,6 +196,13 @@ class MetarFailoverClient {
   /// [identifyMembers]). Off, every member needs a configured endpoint.
   final bool discoverMembers;
 
+  /// How long a server that reported Maintenance (ServiceLevel 0, or a
+  /// State other than Running) is left alone, disconnected, before one
+  /// reconnect is tried to read its level again (Table 105: "clients shall
+  /// not connect"). Much longer than [pollInterval]; a server found at 0
+  /// again is disconnected for another interval.
+  final Duration maintenanceRetryInterval;
+
   final void Function(String message) _log;
   final List<String> _seed;
 
@@ -185,6 +214,8 @@ class MetarFailoverClient {
   _Link? _active;
   bool _arbitrating = false;
   bool _stopped = false;
+  bool _everSelected = false;
+  bool _reportedNoneQualifies = false;
 
   /// The METAR structure node published by the servers.
   NodeId get metarNodeId => NodeId.fromString(1, '$station.Metar');
@@ -201,6 +232,11 @@ class MetarFailoverClient {
   /// Last `ServerStatus.State` read from each known endpoint (0 Running, 4
   /// Shutdown, ...; `-1` unreachable).
   Map<String, int> get serverStates => {for (final e in _links.entries) e.key: e.value.serverState};
+
+  /// Whether each known endpoint is currently left alone after a Maintenance
+  /// reading: disconnected, not polled, until [maintenanceRetryInterval] has
+  /// passed (its [serviceLevels] entry keeps the last reading meanwhile).
+  Map<String, bool> get inMaintenance => {for (final e in _links.entries) e.key: e.value.inMaintenance};
 
   /// Every endpoint the client connects to: the configured ones and those
   /// learned from `ServerNetworkGroups`. The entries of `ServerUriArray` are
@@ -305,53 +341,120 @@ class MetarFailoverClient {
       if (_stopped) return;
 
       final active = _active;
-      // The highest rank (ServiceLevel, or 0 for a server whose State is not
-      // Running); on a tie the first configured endpoint, so the choice is
-      // deterministic.
+      // The best server data may be taken from: the highest rank (its
+      // ServiceLevel, or 0 for a server whose State is not Running) among
+      // those at 2 or more; on a tie the first configured endpoint, so the
+      // choice is deterministic. NoData (1) and Maintenance (0) never
+      // qualify (Table 105).
       _Link? best;
       for (final link in _links.values) {
-        if (link.rank > 0 && (best == null || link.rank > best.rank)) best = link;
-      }
-      if (best == null) {
-        if (active != null && !active.reachable) {
-          _log('[client] every server in the set is unreachable or out of service');
-        }
-        return;
+        if (link.qualifiesForData && (best == null || link.rank > best.rank)) best = link;
       }
 
       if (active == null) {
-        await _switchTo(best, 'initial selection', fromLevel: -1);
-        return;
-      }
-      if (identical(active, best)) return;
-
-      // OPC 10000-4 §6.6.2.4.2, Table 105. An active server that is
-      // unreachable, has announced a shutdown (ServerStatus.State, Part 5
-      // §12.6) or has declared Maintenance (ServiceLevel 0) is abandoned at
-      // once. A Healthy one is kept whatever the others report. A Degraded
-      // or NoData one is left for any Healthy server; failing that, for a
-      // higher Degraded one that clears the hysteresis margin.
-      final String? reason;
-      if (!active.reachable) {
-        reason = 'connection lost';
-      } else if (active.serverState != serverStateRunning) {
-        reason =
-            'server announced shutdown (ServerStatus.State ${active.serverState}, ServiceLevel ${active.serviceLevel})';
-      } else if (active.serviceLevel == serviceLevelMaintenance) {
-        reason = 'server reported ServiceLevel 0 (out of service)';
-      } else if (isHealthyServiceLevel(active.serviceLevel)) {
-        reason = null;
-      } else if (isHealthyServiceLevel(best.serviceLevel)) {
-        reason = 'active server is ${_band(active.serviceLevel)}; Healthy server available';
-      } else if (best.serviceLevel > active.serviceLevel + hysteresis) {
-        reason = 'no Healthy server; higher ServiceLevel available';
+        if (best != null) {
+          await _switchTo(
+            best,
+            _everSelected ? 'a server qualifies for data again' : 'initial selection',
+            fromLevel: -1,
+          );
+        } else if (!_reportedNoneQualifies) {
+          _reportedNoneQualifies = true;
+          _log('[client] no member qualifies for data (every one is NoData, Maintenance or unreachable); polling on');
+        }
       } else {
-        reason = null;
+        // OPC 10000-4 §6.6.2.4.2, Table 105. An active server that is
+        // unreachable, has announced a shutdown (ServerStatus.State, Part 5
+        // §12.6), has declared Maintenance (ServiceLevel 0) or has dropped
+        // to NoData (1) is left at once -- for the best qualifying server, or
+        // for none. A Healthy one is kept whatever the others report. A
+        // Degraded one is left for any Healthy server; failing that, for a
+        // higher Degraded one that clears the hysteresis margin.
+        final String? reason;
+        if (!active.reachable) {
+          reason = 'connection lost';
+        } else if (active.serverState != serverStateRunning) {
+          reason =
+              'server announced shutdown (ServerStatus.State ${active.serverState}, ServiceLevel ${active.serviceLevel})';
+        } else if (active.serviceLevel == serviceLevelMaintenance) {
+          reason = 'server reported ServiceLevel 0 (out of service)';
+        } else if (active.serviceLevel == serviceLevelNoData) {
+          reason = 'server reports NoData (1): ServiceLevel and ServerStatus only, no data';
+        } else if (best == null || identical(active, best) || isHealthyServiceLevel(active.serviceLevel)) {
+          reason = null;
+        } else if (isHealthyServiceLevel(best.serviceLevel)) {
+          reason = 'active server is ${_band(active.serviceLevel)}; Healthy server available';
+        } else if (best.serviceLevel > active.serviceLevel + hysteresis) {
+          reason = 'no Healthy server; higher ServiceLevel available';
+        } else {
+          reason = null;
+        }
+        if (reason != null) {
+          if (best != null && !identical(best, active)) {
+            await _switchTo(best, reason, fromLevel: active.rank);
+          } else if (active.reachable) {
+            // The server answers and says: no data from me. Nowhere to go:
+            // drop the subscription and keep polling.
+            await _switchTo(null, reason, fromLevel: active.rank);
+          } else {
+            // Lost the socket with nowhere to go: keepConnected keeps trying
+            // and the subscription is recreated when the session recovers.
+            _log('[client] every server in the set is unreachable or out of service');
+          }
+        }
       }
-      if (reason != null) await _switchTo(best, reason, fromLevel: active.rank);
+
+      // Table 105, Maintenance: a server at 0 (or not Running) is not just
+      // left, it is disconnected, and looked at again much later.
+      for (final link in _links.values.toList()) {
+        if (link.reachable &&
+            link.rank == serviceLevelMaintenance &&
+            !link.inMaintenance &&
+            !identical(link, _active)) {
+          await _enterMaintenance(link);
+        }
+      }
     } finally {
       _arbitrating = false;
     }
+  }
+
+  /// Closes [link]'s session and leaves it alone for [maintenanceRetryInterval].
+  Future<void> _enterMaintenance(_Link link) async {
+    final client = link.client;
+    if (client == null) return;
+    link.maintenanceUntil = DateTime.now().add(maintenanceRetryInterval);
+    final why = link.serverState != serverStateRunning ? 'ServerStatus.State ${link.serverState}' : 'ServiceLevel 0';
+    _log(
+      '[client] ${link.endpoint}: Maintenance ($why): disconnecting; next look in ${maintenanceRetryInterval.inSeconds} s',
+    );
+    await _unsubscribe(link);
+    try {
+      await client.stopKeepConnected().timeout(readTimeout);
+      await client.disconnect().timeout(readTimeout);
+    } catch (e) {
+      _log('[client] ${link.endpoint}: disconnect: $e');
+    }
+  }
+
+  /// One reconnect after the Maintenance interval: the supervisor is started
+  /// again and the next ticks read the level; found at 0 again, the server
+  /// is disconnected for another interval by [_arbitrate].
+  void _retryAfterMaintenance(_Link link) {
+    final client = link.client;
+    if (client == null) return;
+    link.maintenanceUntil = null;
+    link.applicationUri = null;
+    link.serverUris = const [];
+    link.networkGroups = const {};
+    link.serviceLevel = -1;
+    link.serverState = -1;
+    _log('[client] ${link.endpoint}: Maintenance interval over; reconnecting to read its ServiceLevel');
+    unawaited(
+      client
+          .keepConnected(link.endpoint)
+          .catchError((Object e) => _log('[client] ${link.endpoint}: keepConnected: $e')),
+    );
   }
 
   /// The Table 105 band of a ServiceLevel, for log lines.
@@ -364,6 +467,13 @@ class MetarFailoverClient {
   Future<void> _refresh(_Link link) async {
     final client = link.client;
     if (client == null) return;
+    final until = link.maintenanceUntil;
+    if (until != null) {
+      // Disconnected on purpose: nothing to read until the interval is over.
+      if (DateTime.now().isBefore(until)) return;
+      _retryAfterMaintenance(link);
+      return;
+    }
     try {
       // One Read request for both: the level and the state are set together
       // by an orderly shutdown, and they are judged together.
@@ -471,22 +581,25 @@ class MetarFailoverClient {
     }
   }
 
-  Future<void> _switchTo(_Link next, String reason, {required int fromLevel}) async {
+  /// Moves the data subscription to [next], or drops it for `null`.
+  Future<void> _switchTo(_Link? next, String reason, {required int fromLevel}) async {
     final previous = _active;
     if (previous != null) await _unsubscribe(previous);
     _active = next;
+    _everSelected = true;
+    _reportedNoneQualifies = false;
     final event = FailoverEvent(
       from: previous?.endpoint,
-      to: next.endpoint,
+      to: next?.endpoint,
       fromUri: previous?.applicationUri,
-      toUri: next.applicationUri,
+      toUri: next?.applicationUri,
       fromLevel: fromLevel,
-      toLevel: next.serviceLevel,
+      toLevel: next?.serviceLevel ?? -1,
       reason: reason,
     );
     _log('[client] $event');
     if (!_failovers.isClosed) _failovers.add(event);
-    await _subscribe(next);
+    if (next != null) await _subscribe(next);
   }
 
   Future<void> _unsubscribe(_Link link) async {
@@ -615,6 +728,7 @@ Future<void> main(List<String> args) async {
     hysteresis: int.parse(flags['hysteresis']?.last ?? '10'),
     identifyMembers: !flags.containsKey('no-identify'),
     discoverMembers: !flags.containsKey('no-discover'),
+    maintenanceRetryInterval: Duration(seconds: int.parse(flags['maintenance-retry']?.last ?? '30')),
   );
 
   await client.start();
@@ -640,6 +754,10 @@ Usage: dart run example/metar_redundant_client.dart [options]
   --hysteresis <n>   Margin a Degraded rival must beat a Degraded active
                      server by (default: 10). Not used while the active
                      server is Healthy, nor when a Healthy one is available.
+  --maintenance-retry <s>
+                     How long a server that reported ServiceLevel 0 (or a
+                     State other than Running) is left disconnected before
+                     one reconnect to read its level again (default: 30)
   --no-identify      Do not read ServerArray / ServerUriArray /
                      ServerNetworkGroups; rank the --endpoint servers without
                      matching them to the set (implies --no-discover)

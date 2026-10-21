@@ -422,6 +422,100 @@ void main() {
       expect(events.last.toLevel, 250);
     }, timeout: const Timeout(Duration(minutes: 2)));
 
+    test('a server in Maintenance (0) is disconnected, and reconnected only after the retry interval', () async {
+      // Table 105 at 0: "clients shall not connect, connected clients shall
+      // disconnect". The client leaves the member, drops its session, and
+      // looks again only after a much longer interval; it comes back once
+      // the level is above 0.
+      const retry = Duration(seconds: 3);
+      final patient = MetarFailoverClient(
+        endpoints: [endpointOf(portA), endpointOf(portB)],
+        pollInterval: clientPoll,
+        maintenanceRetryInterval: retry,
+        log: (_) {},
+      );
+      final patientEvents = <FailoverEvent>[];
+      patient.failovers.listen(patientEvents.add);
+      cleanup.add(() => patient.stop());
+      await patient.start();
+      expect(patient.activeEndpoint, endpointOf(portA));
+      expect(await waitUntil(() => serverA.connectionCount == 1), isTrue);
+      expect(patient.inMaintenance, {endpointOf(portA): false, endpointOf(portB): false});
+
+      serverA.forceServiceLevel(0);
+      expect(await waitUntil(() => patient.activeEndpoint == endpointOf(portB)), isTrue);
+      expect(await waitUntil(() => serverA.connectionCount == 0), isTrue, reason: 'disconnected, not just abandoned');
+      expect(patient.inMaintenance[endpointOf(portA)], isTrue);
+      expect(patient.serviceLevels[endpointOf(portA)], 0, reason: 'the last reading stands while disconnected');
+      final left = DateTime.now();
+
+      // A is back in service, but the client does not know and must not
+      // look before the retry interval.
+      serverA.forceServiceLevel(null);
+      expect(serverA.serviceLevel, 250);
+      await Future.delayed(clientPoll * 4);
+      expect(patient.serviceLevels[endpointOf(portA)], 0);
+      expect(serverA.connectionCount, 0, reason: 'no reconnect before the interval');
+      expect(patient.inMaintenance[endpointOf(portA)], isTrue);
+
+      // After the interval it reconnects, reads 250, and stays supervised.
+      expect(await waitUntil(() => patient.serviceLevels[endpointOf(portA)] == 250, timeout: retry * 3), isTrue);
+      expect(DateTime.now().difference(left), greaterThanOrEqualTo(retry));
+      expect(patient.inMaintenance[endpointOf(portA)], isFalse);
+      expect(serverA.connectionCount, 1);
+      expect(patient.activeEndpoint, endpointOf(portB), reason: 'B is Healthy: no fail-back');
+      expect(patientEvents, hasLength(2));
+
+      // Still at 0 at the retry: disconnected again for another interval.
+      serverA.forceServiceLevel(0);
+      expect(await waitUntil(() => serverA.connectionCount == 0), isTrue);
+      expect(patient.inMaintenance[endpointOf(portA)], isTrue);
+      await Future.delayed(retry + clientPoll * 3);
+      expect(patient.inMaintenance[endpointOf(portA)], isTrue, reason: 'checked once, found 0, disconnected again');
+      expect(await waitUntil(() => serverA.connectionCount == 0), isTrue);
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('a NoData (1) server is polled for ServiceLevel and ServerStatus but never chosen for data', () async {
+      // Table 105: at 1 a server is "not operational; only ServiceLevel,
+      // ServerStatus and diagnostics can be read". The client keeps polling
+      // it (the session stays), and subscribes to data only on a server at
+      // 2 or more.
+      serverA.forceServiceLevel(1);
+      serverB.forceServiceLevel(1);
+      await client.start();
+      expect(client.activeEndpoint, isNull, reason: 'no member qualifies for data');
+      expect(events, isEmpty);
+      expect(client.serviceLevels, {endpointOf(portA): 1, endpointOf(portB): 1}, reason: 'still polled');
+      await Future.delayed(clientPoll * 3);
+      expect(client.activeEndpoint, isNull);
+      expect(serverA.connectionCount, 1, reason: 'NoData is not Maintenance: the connection stays for the polling');
+      expect(serverB.connectionCount, 1);
+
+      // 2 is the bottom of the Degraded band: data may be read from it.
+      serverB.forceServiceLevel(2);
+      expect(await waitUntil(() => client.activeEndpoint == endpointOf(portB)), isTrue);
+      expect(events.single.from, isNull);
+      expect(events.single.toLevel, 2);
+      expect((await client.readActive())!.isGood, isTrue);
+
+      // Back to NoData with no alternative: the data subscription goes, the
+      // polling stays, and nothing is chosen.
+      serverB.forceServiceLevel(1);
+      expect(await waitUntil(() => client.activeEndpoint == null), isTrue);
+      expect(events, hasLength(2));
+      expect(events.last.from, endpointOf(portB));
+      expect(events.last.to, isNull);
+      expect(events.last.reason, contains('NoData'));
+      await Future.delayed(clientPoll * 3);
+      expect(client.serviceLevels[endpointOf(portB)], 1, reason: 'still polled');
+      expect(serverB.connectionCount, 1, reason: 'not disconnected');
+
+      // A member comes up Healthy: chosen.
+      serverA.forceServiceLevel(null);
+      expect(await waitUntil(() => client.activeEndpoint == endpointOf(portA)), isTrue);
+      expect(events.last.toLevel, 250);
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
     // Table 105 (OPC 10000-4 §6.6.2.4.2) prescribes the client's behaviour
     // per band: while the active server is Healthy (200-255) the client
     // shall not fail over; a Degraded (2-199) or NoData (1) server is left
@@ -609,6 +703,9 @@ void main() {
       client = MetarFailoverClient(
         endpoints: [endpointOf(portA), endpointOf(serverB.listenPort)],
         pollInterval: clientPoll,
+        // A is left (Table 105: disconnect) and will not come back; a short
+        // retry lets the test see it go unreachable.
+        maintenanceRetryInterval: const Duration(seconds: 1),
         log: (_) {},
       );
       client.failovers.listen(events.add);
@@ -665,6 +762,11 @@ void main() {
         expect(events.last.reason, contains('shutdown'));
         expect(client.serverStates[endpointOf(portA)], 4);
         expect(client.serviceLevels[endpointOf(portA)], 0);
+        expect(
+          await waitUntil(() => client.inMaintenance[endpointOf(portA)] == true),
+          isTrue,
+          reason: 'left and disconnected, Table 105',
+        );
         final fromB = await client.readActive();
         expect(fromB!.isGood, isTrue);
 

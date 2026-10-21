@@ -121,6 +121,13 @@ class MetarRedundantServer {
   /// `opc.tcp://` URL clients use to reach this instance.
   String get endpoint => 'opc.tcp://$host:$listenPort';
 
+  /// Secure channels (connections) open on this instance right now (`null`
+  /// before [start]): what a redundant client's disconnect on Maintenance
+  /// looks like from here. Channels, not sessions: a client's reconnect can
+  /// leave a superseded session on the server until it times out, while a
+  /// disconnect closes the channel at once.
+  int? get connectionCount => _server?.statistics.currentChannelCount;
+
   /// DataType node of the published structure.
   NodeId get metarTypeId => NodeId.fromString(1, 'MetarObservationType');
 
