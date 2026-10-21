@@ -53,7 +53,7 @@ void main() {
         final errors = <Object>[];
         final mSub = dc.client
             .monitor(tempId, subId, samplingInterval: const Duration(milliseconds: 200))
-            .listen((v) => values.add(v.asDouble), onError: errors.add);
+            .listen((v) => values.add(v.asDouble!), onError: errors.add);
 
         // Confirm live data is flowing before we freeze the link.
         final flowing = await waitUntil(() => values.isNotEmpty, timeout: const Duration(seconds: 20));

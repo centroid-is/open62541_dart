@@ -127,8 +127,8 @@ Future<void> main(List<String> args) async {
   final nodeIds = [for (var i = 0; i < nNodes; i++) NodeId.fromString(1, 'n$i')];
 
   void onTs(DynamicValue v) {
-    final sentUs = (v.asDouble).round();
-    if (sentUs <= 0) return;
+    final sentUs = v.asDouble?.round();
+    if (sentUs == null || sentUs <= 0) return;
     latency.add(DateTime.now().microsecondsSinceEpoch - sentUs);
   }
 

@@ -81,7 +81,7 @@ void main() {
         final errors = <Object>[];
         final mSub = dc.client
             .monitor(tempId, subId, samplingInterval: const Duration(milliseconds: 200))
-            .listen((v) => values.add(v.asDouble), onError: errors.add);
+            .listen((v) => values.add(v.asDouble!), onError: errors.add);
 
         final flowing = await waitUntil(() => values.isNotEmpty, timeout: const Duration(seconds: 20));
         expect(flowing, isTrue, reason: 'no baseline values before RST; errors=$errors');

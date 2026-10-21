@@ -70,7 +70,7 @@ void main() {
               final sub = client.monitor(tempId, subId, samplingInterval: const Duration(milliseconds: 100)).listen((
                 v,
               ) {
-                seen.add(v.asDouble);
+                seen.add(v.asDouble!);
                 if (!gotOne.isCompleted) gotOne.complete();
               });
 
@@ -125,7 +125,7 @@ void main() {
             final received = <bool>[];
             final done = Completer<void>();
             final sub = client.monitor(node, subId, samplingInterval: const Duration(milliseconds: 20)).listen((v) {
-              received.add(v.asBool);
+              received.add(v.asBool!);
               if (received.length >= pattern.length && !done.isCompleted) done.complete();
             });
 

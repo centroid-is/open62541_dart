@@ -12,14 +12,19 @@ changes that ship the same native library version.
   removed (`UaMallocAllocator`, `ua_malloc`, never exported), `NodeId.toRaw`
   defaults to `ua_calloc`, and the heap-growth tests measure through it.
 
-- **`DynamicValue`: `DynamicType.datetime`, and accessors that say when a
-  value is missing (#115).** A `DateTime` value reported `DynamicType.unknown`;
-  `type` now reports `datetime` and `isDateTime` goes with it. `asInt`,
-  `asDouble` and `asBool` fall back to `0`, `0.0` and `false` for a value that
-  is missing or of another type, which in process data is a plausible reading
-  rather than a failure; they are unchanged (and now documented), and
-  `asIntOrNull`, `asDoubleOrNull` and `asBoolOrNull` return null there
-  instead, like `asDateTime` already did. `DynamicType` is exported.
+- **BREAKING: `DynamicValue.asInt`, `asDouble` and `asBool` are nullable
+  (#115).** They returned `0`, `0.0` and `false` for a value that is missing
+  or of another type, which in process data is a plausible reading rather
+  than a failure, so a node that was not read or a member that did not
+  decode looked like a zero downstream. They are `int?`, `double?` and
+  `bool?` now and return null there, like `asDateTime` always did; the
+  coercions stay (a num reads as int or double, a numeric string parses, a
+  non-zero num is true, `'true'`/`'1'` and `'false'`/`'0'` are bools). A
+  caller that did arithmetic on the result or passed it where a non-null
+  number is expected has to check for null (or `!` where the value is known
+  present). Also: a `DateTime` value reported `DynamicType.unknown`; `type`
+  now reports `DynamicType.datetime`, `isDateTime` goes with it, and
+  `DynamicType` is exported.
 
 - **A refused monitored item fails the stream with `MonitoredItemsRefused`,
   not a `String` (#38).** When the server refuses an item of a

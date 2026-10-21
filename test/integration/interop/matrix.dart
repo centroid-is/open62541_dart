@@ -82,7 +82,7 @@ void registerInteropMatrix({
           for (final s in _sensors) {
             final v = await client().read(await tankVar(client(), i, s));
             expect(v.value, isA<double>(), reason: 'Tank$i/$s should read as a Double');
-            expect(v.asDouble.isFinite, isTrue);
+            expect(v.asDouble?.isFinite, isTrue);
           }
         }
       }, timeout: const Timeout(Duration(seconds: 60)));
@@ -140,7 +140,7 @@ void registerInteropMatrix({
         final seen = <double>[];
         final gotEnough = Completer<void>();
         final sub = client().monitor(tempId, subId, samplingInterval: const Duration(milliseconds: 100)).listen((v) {
-          seen.add(v.asDouble);
+          seen.add(v.asDouble!);
           // At least 3 distinct samples => the value is genuinely live.
           if (seen.toSet().length >= 3 && !gotEnough.isCompleted) {
             gotEnough.complete();

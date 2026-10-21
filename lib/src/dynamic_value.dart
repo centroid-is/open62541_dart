@@ -133,34 +133,23 @@ class DynamicValue {
   bool get isBoolean => type == DynamicType.boolean;
   bool get isDateTime => type == DynamicType.datetime;
 
-  /// The value as a double, or `0.0` when there is none or it is not numeric
-  /// (a `String` that parses as a number counts). `0.0` is a plausible
-  /// reading too; [asDoubleOrNull] tells the two apart.
-  double get asDouble => _parseDouble(value) ?? 0.0;
+  /// The value as a double: a `double`, a num, or a `String` that parses as
+  /// one; null when there is no value or it is of another type. A missing
+  /// reading never looks like `0.0`.
+  double? get asDouble => _parseDouble(value);
 
-  /// The value as an int, or `0` when there is none or it is not numeric (a
-  /// `String` that parses as an int counts). `0` is a plausible reading too;
-  /// [asIntOrNull] tells the two apart.
-  int get asInt => _parseInt(value) ?? 0;
+  /// The value as an int: an `int`, a num, or a `String` that parses as one;
+  /// null when there is no value or it is of another type. A missing reading
+  /// never looks like `0`.
+  int? get asInt => _parseInt(value);
   String get asString => value?.toString() ?? '';
 
-  /// The value as a bool, or `false` when there is none or it is not a bool
-  /// (a number is non-zero, a `String` is `'true'`/`'1'` or `'false'`/`'0'`).
-  /// [asBoolOrNull] tells a missing value from `false`.
-  bool get asBool => _parseBool(value) ?? false;
+  /// The value as a bool: a `bool`, a num (non-zero is true), or the
+  /// `String`s `'true'`/`'1'` and `'false'`/`'0'`; null when there is no
+  /// value or it is of another type. A missing reading never looks like
+  /// `false`.
+  bool? get asBool => _parseBool(value);
   DateTime? get asDateTime => _parseDateTime(value);
-
-  /// [asDouble] without the fallback: null where that would be `0.0` because
-  /// the value is missing or not numeric.
-  double? get asDoubleOrNull => _parseDouble(value);
-
-  /// [asInt] without the fallback: null where that would be `0` because the
-  /// value is missing or not numeric.
-  int? get asIntOrNull => _parseInt(value);
-
-  /// [asBool] without the fallback: null where that would be `false` because
-  /// the value is missing or not a bool.
-  bool? get asBoolOrNull => _parseBool(value);
 
   List<DynamicValue> get asArray =>
       isArray ? value : throw StateError('DynamicValue is not an array, ${value.runtimeType}');

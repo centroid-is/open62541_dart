@@ -72,7 +72,7 @@ void main() {
     final seen = <int>[];
     final monitor = client
         .monitor(intNodeId, sub, samplingInterval: const Duration(milliseconds: 0), queueSize: 10)
-        .listen((v) => seen.add(v.asInt));
+        .listen((v) => seen.add(v.asInt!));
 
     // Metronome on the SAME isolate: if the pump blocked, these ticks would be
     // starved. The bound is deliberately generous so it holds on loaded CI.

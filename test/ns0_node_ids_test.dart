@@ -66,7 +66,7 @@ void main() {
     expect(currentTime.asDateTime!.toUtc().isAfter(before), isTrue, reason: 'read ${currentTime.asDateTime}');
 
     // The service level and namespace array are there as well.
-    expect((await client.read(NodeId.serviceLevel)).asIntOrNull, isNotNull);
+    expect((await client.read(NodeId.serviceLevel)).asInt, isNotNull);
     final namespaces = await client.read(NodeId.namespaceArray);
     expect(namespaces.isArray, isTrue);
     expect(namespaces.asArray.first.asString, 'http://opcfoundation.org/UA/');

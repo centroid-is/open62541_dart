@@ -36,7 +36,7 @@ void main() {
           final tankId = await resolvePath(dc.client, ['Plant', 'Tank1']);
           final feedId = await tankMethod(dc.client, 1, 'FeedNow');
 
-          Future<bool> feed(double grams) async {
+          Future<bool?> feed(double grams) async {
             final res = await dc.client.call(tankId, feedId, [DynamicValue(value: grams, typeId: NodeId.double)]);
             expect(res, hasLength(1), reason: 'FeedNow returns a single accepted flag');
             return res.first.asBool;

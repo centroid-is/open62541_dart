@@ -55,7 +55,7 @@ void main() {
     test('Double NaN / +Inf / -Inf write/read (TempSetpoint)', () async {
       final id = await tankVar(dc.client, 1, 'TempSetpoint');
       await dc.client.write(id, DynamicValue(value: double.nan, typeId: NodeId.double));
-      expect((await dc.client.read(id).timeout(const Duration(seconds: 8))).asDouble.isNaN, isTrue);
+      expect((await dc.client.read(id).timeout(const Duration(seconds: 8))).asDouble?.isNaN, isTrue);
       await dc.client.write(id, DynamicValue(value: double.infinity, typeId: NodeId.double));
       expect((await dc.client.read(id).timeout(const Duration(seconds: 8))).asDouble, double.infinity);
       await dc.client.write(id, DynamicValue(value: double.negativeInfinity, typeId: NodeId.double));
@@ -82,7 +82,7 @@ void main() {
     test('live sensor Double reads are finite (Temperature)', () async {
       final id = await tankVar(dc.client, 1, 'Temperature');
       final r = await dc.client.read(id).timeout(const Duration(seconds: 8));
-      expect(r.asDouble.isFinite, isTrue);
+      expect(r.asDouble?.isFinite, isTrue);
     }, timeout: const Timeout(Duration(seconds: 40)));
 
     // BUG: subnormal double corrupts over the client wire (see
