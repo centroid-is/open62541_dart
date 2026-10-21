@@ -549,9 +549,14 @@ class Client implements ClientApi {
           int reqId,
           ffi.Pointer<raw.UA_WriteResponse> response,
         ) {
-          if (completer.isCompleted) {
-            return; // Request timed out already
-          }
+          // The native callback fires exactly once per request (a timeout
+          // arrives here too, as a Bad_Timeout service result), so release
+          // the trampoline and the variant FIRST — before any of the early
+          // returns below, like readValue does. Closing only on the success
+          // path leaked one native callable (and the closure and variant it
+          // captured) per rejected write, and a node answering
+          // Bad_NotWritable is routine on a plant.
+          callback.close();
           raw.UA_Variant_delete(variant);
           // Fail with a typed UaStatusException so the exact service/operation
           // status code is programmatically extractable (e.g. a data-source
@@ -565,11 +570,8 @@ class Client implements ClientApi {
             return;
           }
           completer.complete();
-
-          // Close our callback so it can be garbage collected
-          callback.close();
         });
-    raw.UA_Client_writeValueAttribute_async(
+    final res = raw.UA_Client_writeValueAttribute_async(
       _client,
       nodeId.toRaw(),
       variant,
@@ -577,6 +579,14 @@ class Client implements ClientApi {
       ffi.nullptr,
       ffi.nullptr,
     );
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      // Refused before anything was sent (Bad_ServerNotConnected: the secure
+      // channel is down). The callback will never run, so release here and
+      // fail typed rather than leave the caller waiting forever.
+      callback.close();
+      raw.UA_Variant_delete(variant);
+      completer.completeError(UaStatusException(res));
+    }
     return completer.future;
   }
 
@@ -1305,7 +1315,7 @@ class Client implements ClientApi {
           completer.complete(response.ref.subscriptionId);
         });
 
-    raw.UA_Client_Subscriptions_create_async(
+    final res = raw.UA_Client_Subscriptions_create_async(
       _client,
       request.ref,
       ffi.nullptr,
@@ -1315,6 +1325,17 @@ class Client implements ClientApi {
       ffi.nullptr,
       ffi.nullptr,
     );
+    if (res != raw.UA_STATUSCODE_GOOD) {
+      // Refused before anything was sent (Bad_ServerNotConnected): neither
+      // callback will ever run, and the subscription the delete callback was
+      // registered for will never exist. Release both and fail typed rather
+      // than leave the caller waiting forever.
+      raw.UA_CreateSubscriptionRequest_delete(request);
+      callback.close();
+      _subscriptionDeleteCallbacks.remove(deleteCallback);
+      deleteCallback.close();
+      completer.completeError(UaStatusException(res));
+    }
     return completer.future;
   }
 
@@ -1392,6 +1413,23 @@ class Client implements ClientApi {
     // Track config stream subscriptions so we can cancel them on close
     StreamSubscription? inactivitySub, deletedSub, stateSub;
 
+    // Drops this item's listeners on the config's broadcast streams. Called
+    // from EVERY path that ends the item — the cancel, the client delete, the
+    // refused create, the partial create — so the release is deterministic.
+    // Each listener closure captures this item's value map (`latestValues`
+    // below), so a listener that outlives its item pins the key's last value,
+    // enum fields and localized texts included. The `controller.isClosed`
+    // guard inside each listener is only a backstop: it fires on the NEXT
+    // event on that stream, and on a quiet client that is never.
+    void releaseConfigListeners() {
+      inactivitySub?.cancel();
+      deletedSub?.cancel();
+      stateSub?.cancel();
+      inactivitySub = null;
+      deletedSub = null;
+      stateSub = null;
+    }
+
     // The actual teardown of the native monitored items and callables. This is
     // invoked either through the stream's onCancel (normal user cancellation) or
     // directly by Client.delete() via the _activeMonitoredStreams registry, so
@@ -1399,13 +1437,18 @@ class Client implements ClientApi {
     // native client (otherwise an in-flight Publish notification would be
     // delivered into a freed NativeCallable and crash the VM with a SEGV).
     Future<void> monitorTeardown() {
-      inactivitySub?.cancel();
-      deletedSub?.cancel();
-      stateSub?.cancel();
+      releaseConfigListeners();
       final completer = Completer<void>();
       if (monIds.isEmpty) {
         if (localRequestId == ffi.nullptr) {
-          throw 'This should not happen';
+          // The create was answered and left no item: every node was refused
+          // with a tolerated status, so the stream stayed open with nothing
+          // behind it. There is nothing to delete on the server. open62541
+          // dropped its own item for each refused result before it delivered
+          // the create response, so no native code can invoke monitorCallback
+          // any more and it can be closed right here.
+          monitorCallback.close();
+          completer.complete();
         } else {
           // The monitored item request has not yet returned. Ask the server to
           // cancel it (best effort — Cancel only affects requests it has not
@@ -1453,43 +1496,111 @@ class Client implements ClientApi {
               int requestId,
               ffi.Pointer<raw.UA_DeleteMonitoredItemsResponse> response,
             ) {
+              // Did open62541 drop its own items? It does so before it
+              // invokes this callback, and only for a Good service result and
+              // a Good or BadMonitoredItemIdInvalid result per item. In every
+              // other case its items are still there, and usually the
+              // server's too: the response was lost with the channel
+              // (answered locally, BadSecureChannelClosed, with no results),
+              // the request timed out, or the service failed.
+              var itemsGone = false;
               if (response == ffi.nullptr) {
                 _safeErr(
                   "Error deleting monitored item, nullptr provided connection propably already closed. Client cleanup.",
                 );
-              } else if (response.ref.resultsSize == 0) {
+              } else if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD ||
+                  response.ref.resultsSize == 0) {
+                final serviceResult = response.ref.responseHeader.serviceResult;
                 _safeErr(
-                  "Error deleting monitored item, no results provided, connection propably already closed. Client cleanup.",
+                  "Error deleting monitored item, no results provided, connection propably already closed "
+                  "($serviceResult ${statusCodeToString(serviceResult)}). Client cleanup.",
                 );
               } else {
+                itemsGone = response.ref.resultsSize == monIds.length;
                 for (var i = 0; i < response.ref.resultsSize; i++) {
-                  if (response.ref.results[i] != raw.UA_STATUSCODE_GOOD) {
-                    _safeErr(
-                      "Error deleting monitored item: ${response.ref.results.value} ${statusCodeToString(response.ref.results.value)}",
-                    );
+                  final result = response.ref.results[i];
+                  if (result != raw.UA_STATUSCODE_GOOD) {
+                    _safeErr("Error deleting monitored item: $result ${statusCodeToString(result)}");
+                    if (result != raw.UA_STATUSCODE_BADMONITOREDITEMIDINVALID) itemsGone = false;
                   }
                 }
               }
               raw.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
-              // Defer closing monitorCallback: a Publish response processed
-              // later in the same runIterate batch may still invoke it.
-              // scheduleMicrotask runs after runIterate returns to the event
-              // loop, so all native callbacks in the current batch complete first.
-              scheduleMicrotask(() => monitorCallback.close());
-              ua_calloc.free(callbacks);
               deleteCallback.close();
-              monIds.clear();
+              if (itemsGone) {
+                // Defer closing monitorCallback: a Publish response processed
+                // later in the same runIterate batch may still invoke it.
+                // scheduleMicrotask runs after runIterate returns to the event
+                // loop, so all native callbacks in the current batch complete first.
+                scheduleMicrotask(() => monitorCallback.close());
+                monIds.clear();
+              } else {
+                // An item that survived publishes again once the session is
+                // re-activated, and closing monitorCallback now would abort
+                // the VM on that notification ("Callback invoked after it has
+                // been deleted"). As on the not-sent path below, the client
+                // closes it in delete().
+                _undeletedMonitorCallbacks.add(monitorCallback);
+              }
               completer.complete();
             });
-        raw.UA_Client_MonitoredItems_delete_async(
+        final res = raw.UA_Client_MonitoredItems_delete_async(
           _client,
           request.ref,
           deleteCallback.nativeFunction,
           ffi.nullptr,
           ffi.nullptr,
         );
+        if (res != raw.UA_STATUSCODE_GOOD) {
+          // Refused before anything was sent (Bad_ServerNotConnected: the
+          // secure channel is down, which is exactly when a caller reacting
+          // to SecureChannelClosed cancels). deleteCallback will never run,
+          // so release what it would have released and complete — a cancel
+          // the caller awaits must not hang forever.
+          //
+          // monitorCallback cannot be closed here: the request never left,
+          // so the native client still holds the items, and so does the
+          // server if the session outlives the channel drop. The session is
+          // then re-activated on reconnect and the items publish again, into
+          // this callback, which drops the notifications. It is handed to
+          // the client instead, which closes it in delete() once
+          // UA_Client_delete has freed the items.
+          //
+          // Known limitation: the delete is not retried when the session
+          // comes back, so the server keeps sampling an item nobody listens
+          // to until the session or the subscription ends. A retry has to
+          // tell a re-activated session from a recreated one, where the
+          // stale ids can name a new subscription's items.
+          _safeErr(
+            "Error deleting monitored item, request not sent: $res ${statusCodeToString(res)}. "
+            "The native client releases it with the session.",
+          );
+          raw.UA_DeleteMonitoredItemsRequest_delete(request); // This frees ids as well
+          deleteCallback.close();
+          _undeletedMonitorCallbacks.add(monitorCallback);
+          completer.complete();
+        }
       }
       return completer.future;
+    }
+
+    // Runs monitorTeardown from a microtask, for the paths that end an item
+    // from inside the create-response callback. That callback runs
+    // synchronously inside the C response-processing stack (runIterate, a
+    // blocking service call, or even UA_Client_delete), and issuing a new
+    // service call from there re-enters the native client mid-decode. The
+    // microtask runs as soon as control returns to the Dart event loop — and
+    // must re-check that the client still exists: if the response was
+    // delivered during Client.delete()'s native teardown, the client is freed
+    // by the time we run and the server side is gone with it.
+    void teardownLater() {
+      scheduleMicrotask(() {
+        if (_client == ffi.nullptr) {
+          monitorCallback.close();
+          return;
+        }
+        unawaited(monitorTeardown());
+      });
     }
 
     controller.onCancel = () {
@@ -1679,6 +1790,10 @@ class Client implements ClientApi {
             raw.UA_CreateMonitoredItemsRequest_delete(createRequest);
             createCallback.close();
             ua_calloc.free(localRequestId);
+            // Null it: a non-null value means "create still in flight" to
+            // monitorTeardown, which would otherwise read the freed slot and
+            // send a Cancel for whatever request id it happens to hold now.
+            localRequestId = ffi.nullptr;
 
             if (cancelledInFlight) {
               // The stream was cancelled while this create was on the wire.
@@ -1696,31 +1811,13 @@ class Client implements ClientApi {
                 // The server ignored the cancel and created the items: delete
                 // them for real. monIds is non-empty, so monitorTeardown takes
                 // the DeleteMonitoredItems branch (which also closes
-                // monitorCallback and frees the callback array) and cannot
-                // recurse into the cancel branch.
-                // Deferred to a microtask: this callback runs synchronously
-                // inside the C response-processing stack (runIterate, a
-                // blocking service call, or even UA_Client_delete), and
-                // issuing a new service call from there re-enters the native
-                // client mid-decode. The microtask runs as soon as control
-                // returns to the Dart event loop — and must re-check that the
-                // client still exists: if the response was delivered during
-                // Client.delete()'s native teardown, the client is freed by
-                // the time we run and the server side is gone with it.
-                scheduleMicrotask(() {
-                  if (_client == ffi.nullptr) {
-                    monitorCallback.close();
-                    ua_calloc.free(callbacks);
-                    return;
-                  }
-                  unawaited(monitorTeardown());
-                });
+                // monitorCallback) and cannot recurse into the cancel branch.
+                teardownLater();
               } else {
                 // The cancel was honoured (BadRequestCancelledByRequest) or
                 // the service failed: the C layer already dropped any local
                 // items and the server holds nothing. Just release.
                 scheduleMicrotask(() => monitorCallback.close());
-                ua_calloc.free(callbacks);
               }
               return;
             }
@@ -1752,14 +1849,14 @@ class Client implements ClientApi {
                 controller.addError(SecureChannelClosed());
               }
             });
+            // The release for a create that produced no item at all: nothing
+            // exists server-side, so monitorCallback can go at once and there
+            // is no teardown for onCancel to run.
             cleanup() {
               _activeMonitoredStreams.remove(controller);
               controller.onCancel = () {}; // Don't invoke the real close callback
-              inactivitySub?.cancel();
-              deletedSub?.cancel();
-              stateSub?.cancel();
+              releaseConfigListeners();
               monitorCallback.close();
-              ua_calloc.free(callbacks);
               controller.close();
             }
 
@@ -1804,7 +1901,26 @@ class Client implements ClientApi {
               controller.addError(
                 "Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value)}").join(", ")}",
               );
-              controller.close(); // Call onCancel above
+              // This is the path a caller that rebuilds a refused item (a
+              // hard BadNodeIdUnknown, forever, on a backoff ladder) walks on
+              // every attempt, so it must leave nothing behind. It used to
+              // just close the controller and let the done event's onCancel
+              // run monitorTeardown — which, with no item created, took the
+              // "create still in flight" branch against the freed request-id
+              // slot and never closed monitorCallback.
+              if (monIds.isEmpty) {
+                // Every item was refused: identical to the refusals above.
+                cleanup();
+              } else {
+                // Some items WERE created and must be deleted again — through
+                // monitorTeardown, deferred because this runs inside the C
+                // stack. Deregister now; the teardown is ours to run, not the
+                // done event's, and it releases the listeners.
+                _activeMonitoredStreams.remove(controller);
+                controller.onCancel = () {};
+                controller.close();
+                teardownLater();
+              }
               return;
             }
 
@@ -1883,9 +1999,14 @@ class Client implements ClientApi {
         localRequestId,
       );
       ua_calloc.free(contexts);
+      // Same for the callback array: open62541 copies each entry into its
+      // monitored item during the call above and never touches the array
+      // again, so it does not have to live until teardown.
+      ua_calloc.free(callbacks);
       if (statusCode != raw.UA_STATUSCODE_GOOD) {
         raw.UA_CreateMonitoredItemsRequest_delete(createRequest);
-        ua_calloc.free(callbacks);
+        ua_calloc.free(localRequestId);
+        localRequestId = ffi.nullptr;
         monitorCallback.close();
         createCallback.close();
         // Typed, like the async response path: the exact status code (e.g.
@@ -2192,6 +2313,12 @@ class Client implements ClientApi {
     _client = ffi.nullptr;
     await Future.delayed(Duration(milliseconds: 10));
     raw.UA_Client_delete(client);
+    // The native client is freed, and with it every monitored item that could
+    // still invoke one of these callbacks. Only now can they be closed.
+    for (final callback in _undeletedMonitorCallbacks) {
+      callback.close();
+    }
+    _undeletedMonitorCallbacks.clear();
     // Client_delete calls client config state callbacks
     // Need to close the config after deleting the client
     // s.t. the native callbacks are not closed when called
@@ -2201,6 +2328,12 @@ class Client implements ClientApi {
   late ffi.Pointer<raw.UA_Client> _client;
   late final ClientConfig _clientConfig;
   final List<ffi.NativeCallable> _subscriptionDeleteCallbacks = [];
+
+  // Monitor callbacks of items whose DeleteMonitoredItems request could not be
+  // sent (dead channel). The native client still holds those items and can
+  // invoke the callbacks again after a reconnect, so they stay open until
+  // delete() has freed the native client.
+  final List<ffi.NativeCallable> _undeletedMonitorCallbacks = [];
 
   // Registry of active monitored-item streams keyed by their StreamController,
   // mapped to their native teardown function. Populated on onListen, removed on
