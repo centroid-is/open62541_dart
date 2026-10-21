@@ -9,7 +9,7 @@ import 'package:open62541/src/ua_allocation.dart';
 
 void main() {
   test('Verify version', () {
-    expect(UA_OPEN62541_VERSION, "v1.5.8");
+    expect(UA_OPEN62541_VERSION, "v1.5.9");
   });
 
   // UA_OPEN62541_VERSION is a constant baked into the generated bindings, so

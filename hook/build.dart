@@ -42,6 +42,7 @@ const Map<String, String> _open62541Sha256 = {
   'v1.5.6': 'c142bd304f7f614f570a2b8ec0a618608bc22a94b43e4e477525829ba1c69641',
   'v1.5.7': '79ded488caf7b8dc7f1ad1269d0142a80c47bab1d5725663f194f72ac8911a78',
   'v1.5.8': 'aae5d1e6c73f8fd5a72e36e6d21afb27bf5eacbe3f20e3581dbde80d3024cadc',
+  'v1.5.9': 'e67790c33feeee660a3831fb2546a3dea070d93003c7901523cf8ed3963ef840',
 };
 
 /// mbedTLS release version and the SHA-256 of its `.tar.bz2` release asset.
@@ -669,7 +670,7 @@ Future<ProcessResult?> _tryRun(String executable, List<String> arguments, String
 }
 
 Future<void> main(List<String> args) async {
-  final version = "v1.5.8";
+  final version = "v1.5.9";
   await build(args, (input, output) async {
     final extractedFiles = await download(input.outputDirectoryShared, version);
     await _applyPatches(extractedFiles, input.packageRoot);

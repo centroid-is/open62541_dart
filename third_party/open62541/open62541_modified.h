@@ -1,6 +1,6 @@
 /* THIS IS A SINGLE-FILE DISTRIBUTION CONCATENATED FROM THE OPEN62541 SOURCES
  * visit http://open62541.org/ for information about this software
- * Git-Revision: v1.5.8
+ * Git-Revision: v1.5.9
  */
 
 /*
@@ -30,10 +30,10 @@
  * ----------------- */
 #define UA_OPEN62541_VER_MAJOR 1
 #define UA_OPEN62541_VER_MINOR 5
-#define UA_OPEN62541_VER_PATCH 8
+#define UA_OPEN62541_VER_PATCH 9
 #define UA_OPEN62541_VER_LABEL "" /* Release candidate label, etc. */
 #define UA_OPEN62541_VER_COMMIT "unknown-commit"
-#define UA_OPEN62541_VERSION "v1.5.8"
+#define UA_OPEN62541_VERSION "v1.5.9"
 
 /**
  * Architecture
@@ -43480,6 +43480,14 @@ typedef void (*UA_ClientNotificationCallback)(UA_Client *client,
  * client settings. The :ref:`tutorials` provide examples for many of the
  * client settings. */
 
+/* Previous policy arrays retained by the default configuration plugin. Open
+ * SecureChannels and Sessions may still reference them. Freed with the config. */
+typedef struct UA_ClientConfig_PolicyHistory {
+    struct UA_ClientConfig_PolicyHistory *next;
+    UA_SecurityPolicy *policies;
+    size_t policiesSize;
+} UA_ClientConfig_PolicyHistory;
+
 struct UA_ClientConfig {
     void *clientContext; /* User-defined pointer attached to the client */
     UA_Logger *logging;  /* Plugin for log output */
@@ -43575,6 +43583,7 @@ struct UA_ClientConfig {
      * UA_ClientConfig_setAuthenticationCert. */
     size_t authSecurityPoliciesSize;
     UA_SecurityPolicy *authSecurityPolicies;
+    UA_ClientConfig_PolicyHistory *securityPolicyHistory; /* Internal ownership */
 
     /* Allow clients without encryption support to connect with username and
      * password. This requires to transmit the password in plain text over the
@@ -50184,6 +50193,9 @@ UA_StatusCode UA_EXPORT
 UA_ClientConfig_setDefault(UA_ClientConfig *config);
 
 #ifdef UA_ENABLE_ENCRYPTION
+/* Replaces the configured encryption policies. Previous policy arrays are
+ * retained until the configuration is cleared, preserving references held by
+ * open SecureChannels and Sessions, including across repeated calls. */
 UA_StatusCode UA_EXPORT
 UA_ClientConfig_setDefaultEncryption(UA_ClientConfig *config,
                                      UA_ByteString localCertificate,

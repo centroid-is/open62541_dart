@@ -2280,13 +2280,6 @@ final class UA_CertificateGroup extends ffi.Struct {
 /// amalgamated original file "/src/include/open62541/client.h"
 final class UA_Client extends ffi.Opaque {}
 
-/// .. _client-config:
-///
-/// Client Configuration
-/// --------------------
-/// The configuration used for setting connection parameters and additional
-/// client settings. The :ref:`tutorials` provide examples for many of the
-/// client settings.
 final class UA_ClientConfig extends ffi.Struct {
   external ffi.Pointer<ffi.Void> clientContext;
 
@@ -2359,6 +2352,8 @@ final class UA_ClientConfig extends ffi.Struct {
 
   external ffi.Pointer<UA_SecurityPolicy> authSecurityPolicies;
 
+  external ffi.Pointer<UA_ClientConfig_PolicyHistory> securityPolicyHistory;
+
   @ffi.Bool()
   external bool allowNonePolicyPassword;
 
@@ -2424,6 +2419,15 @@ final class UA_ClientConfig extends ffi.Struct {
   @ffi.Bool()
   external bool externalEventLoop;
 }
+
+/// .. _client-config:
+///
+/// Client Configuration
+/// --------------------
+/// The configuration used for setting connection parameters and additional
+/// client settings. The :ref:`tutorials` provide examples for many of the
+/// client settings.
+final class UA_ClientConfig_PolicyHistory extends ffi.Opaque {}
 
 final class UA_ConfigurationVersionDataType extends ffi.Struct {
   @UA_UInt32()
@@ -55639,7 +55643,7 @@ final class UA_NumericRange extends ffi.Struct {
 /// with a single element (min==max).
 final class UA_NumericRangeDimension extends ffi.Opaque {}
 
-const String UA_OPEN62541_VERSION = 'v1.5.8';
+const String UA_OPEN62541_VERSION = 'v1.5.9';
 
 const String UA_OPEN62541_VER_COMMIT = 'unknown-commit';
 
@@ -55649,7 +55653,7 @@ const int UA_OPEN62541_VER_MAJOR = 1;
 
 const int UA_OPEN62541_VER_MINOR = 5;
 
-const int UA_OPEN62541_VER_PATCH = 8;
+const int UA_OPEN62541_VER_PATCH = 9;
 
 final class UA_ObjectAttributes extends ffi.Struct {
   @UA_UInt32()

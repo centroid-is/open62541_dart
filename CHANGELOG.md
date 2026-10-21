@@ -4,9 +4,10 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## 1.5.8
+## 1.5.9
 
-- Bump bundled open62541 from `v1.5.7` to `v1.5.8`.
+- Bump bundled open62541 from `v1.5.7` to `v1.5.9` (v1.5.8 was never shipped
+  by this package; both upstream releases land here).
   - Upstream v1.5.8 is a maintenance release focused on hardening and
     stability: overflow/bounds checks across the binary, JSON and XML
     decoders and the SecureChannel chunk/OPN handling; server MonitoredItem
@@ -17,15 +18,38 @@ changes that ship the same native library version.
     and a batch of PubSub transport/encoding fixes (UADP security headers,
     oversized DataSetMessages, RawData metadata, MQTT/Ethernet). See
     https://github.com/open62541/open62541/releases/tag/v1.5.8.
+  - Upstream v1.5.9 continues the hardening: SecureChannel TokenId and OPN
+    renewal SequenceNumber checks; the server validates HEL messages
+    (trailing data, EndpointUrl length), endpoint security modes, event
+    filter operators, attribute ids, GetMonitoredItems / ConditionRefresh /
+    GDS method arguments and session user identity changes, bounds
+    diagnostics member names, and sends a PublishResponse when cancelling a
+    queued Publish; the client deep-copies owned `UA_ClientConfig` members
+    (`UA_ClientConfig_copy`), frees the OpenSecureChannelResponse on every
+    exit path, initialises async responses before decoding and keeps
+    previous SecurityPolicy arrays alive while open channels reference them;
+    plugins validate RSA-PSS / ECDSA signature lengths and use constant-time
+    MAC comparison; plus a large batch of PubSub/SKS fixes and thread-safety
+    fixes in `arch` (no `gmtime` / `inet_ntoa`). See
+    https://github.com/open62541/open62541/releases/tag/v1.5.9.
   - Regenerated the amalgamated header
     (`third_party/open62541/open62541_modified.h`) and the ffigen bindings
-    (`lib/src/third_party/open62541.g.dart`) against v1.5.8. No ABI or
-    struct-layout changes: `remove_bitfields.patch` applies unchanged and
-    `verify_sizes_test` still passes. The only public-header addition is
-    `UA_Node_moveMonitoredItems` (custom-nodestore API, not bound).
+    (`lib/src/third_party/open62541.g.dart`) against v1.5.9.
+    `remove_bitfields.patch` applies unchanged. One struct-layout change:
+    `UA_ClientConfig` gained the internal `securityPolicyHistory` pointer
+    after `authSecurityPolicies` (888 -> 896 bytes on 64-bit;
+    `verify_sizes_test` updated). The Dart wrappers access the config only
+    through the generated struct fields and `UA_Client_newWithConfig` still
+    takes the struct by value, so nothing in `lib/` changes. The new
+    `UA_ClientConfig_PolicyHistory` type is bound as opaque (internal
+    ownership). The only other public-header addition across both releases
+    is `UA_Node_moveMonitoredItems` (custom-nodestore API, not bound).
   - All build-time source patches (subscription cleanup, bounded send,
     session-recreate race, delete-by-client-handle, single-threaded
-    AsyncManager) still apply to v1.5.8; none has landed upstream yet.
+    AsyncManager) still apply to v1.5.9; none has landed upstream yet
+    (`ua_client_subscriptions.c` and `eventloop_posix_tcp.c` are unchanged
+    between v1.5.8 and v1.5.9, and the v1.5.9 edits to `ua_client.c`,
+    `ua_client_connect.c` and `ua_server.c` do not touch the patched code).
 - **Build: the hook re-downloads open62541 when the pinned version changes.**
   The extracted source tree in the shared hook output directory was reused
   whenever it existed, whatever version it held, so a project upgraded with
