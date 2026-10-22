@@ -80,11 +80,13 @@ void main() {
     'hasComponent': (actual: NodeId.hasComponent, generated: raw.UA_NS0ID_HASCOMPONENT),
     'hasProperty': (actual: NodeId.hasProperty, generated: raw.UA_NS0ID_HASPROPERTY),
     'hasTypeDefinition': (actual: NodeId.hasTypeDefinition, generated: raw.UA_NS0ID_HASTYPEDEFINITION),
+    'hasEncoding': (actual: NodeId.hasEncoding, generated: raw.UA_NS0ID_HASENCODING),
     // Type definitions.
     'baseObjectType': (actual: NodeId.baseObjectType, generated: raw.UA_NS0ID_BASEOBJECTTYPE),
     'folderType': (actual: NodeId.folderType, generated: raw.UA_NS0ID_FOLDERTYPE),
     'baseDataVariableType': (actual: NodeId.baseDataVariableType, generated: raw.UA_NS0ID_BASEDATAVARIABLETYPE),
     'propertyType': (actual: NodeId.propertyType, generated: raw.UA_NS0ID_PROPERTYTYPE),
+    'dataTypeEncodingType': (actual: NodeId.dataTypeEncodingType, generated: raw.UA_NS0ID_DATATYPEENCODINGTYPE),
   };
 
   group('NodeId namespace-0 literals match the generated bindings', () {

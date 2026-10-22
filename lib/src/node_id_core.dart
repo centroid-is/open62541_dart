@@ -156,6 +156,10 @@ class NodeId {
   /// The HasProperty reference type, `i=46`: a node to its properties.
   static NodeId get hasProperty => NodeId.fromNumeric(0, 46);
 
+  /// The HasEncoding reference type, `i=38`: a DataType to its
+  /// DataTypeEncoding objects (`Default Binary`, ...).
+  static NodeId get hasEncoding => NodeId.fromNumeric(0, 38);
+
   /// The HasTypeDefinition reference type, `i=40`.
   static NodeId get hasTypeDefinition => NodeId.fromNumeric(0, 40);
 
@@ -171,6 +175,10 @@ class NodeId {
 
   /// The PropertyType, `i=68`: the type definition of a property.
   static NodeId get propertyType => NodeId.fromNumeric(0, 68);
+
+  /// The DataTypeEncodingType object type, `i=76`: the TypeDefinition of a
+  /// `Default Binary` encoding object.
+  static NodeId get dataTypeEncodingType => NodeId.fromNumeric(0, 76);
 
   int get namespace => _namespaceIndex;
   int get numeric => _numericId!;

@@ -35,6 +35,43 @@ changes that ship the same native library version.
   imported only `open62541_types.dart` either died in the hook (where
   `input.config.code` throws for a build without code assets) or sat through a
   full cmake build of a C library it can never call.
+- **Fixed: a custom structure was an opaque ExtensionObject in UaExpert and
+  asyncua.** The server encoded every ExtensionObject of a custom type
+  (`addCustomType`) under the type's DataType id, while the DataType node's
+  `DataTypeDefinition.defaultEncodingId` (which open62541 derives from the
+  registered type) named a different id, and no node existed at either: a
+  1.04 client matches the wire id against the `defaultEncodingId` it fetched
+  (UaExpert, asyncua `load_data_type_definitions`) and found no type. The
+  Dart client never noticed because it resolves the schema from the
+  variable's DataType attribute. Now the wire carries the type's DefaultBinary
+  DataTypeEncoding id, `addDataTypeNode` publishes the `Default Binary`
+  object (TypeDefinition DataTypeEncodingType i=76, parentless as in NS0)
+  and the HasEncoding (i=38) reference from the DataType node to it, and the
+  encoding id follows the OPC UA naming convention: `ns=N;s=Name` →
+  `ns=N;s=Name_Encoding_DefaultBinary` (a numeric id: `ns=N;i=42` →
+  `ns=N;s=42_Encoding_DefaultBinary`; the rule is documented on
+  `addCustomType`). Nested struct types auto-registered by `addCustomType`
+  get theirs too. On the client, `readValue` and `Client.call` outputs (which
+  have no DataType at hand) resolve the wire id to its DataType through the
+  inverse HasEncoding reference, as a browser does; `read`, `readAttribute`
+  and the monitors are unchanged. A write from a client that carries the
+  encoding id is now decoded natively by open62541 and reaches a data-source
+  `onWrite` through the native-struct path; one built from scratch under the
+  DataType id decodes against the local schema as before. A definition
+  fetched with `readAttribute(DATATYPEDEFINITION)` carries its
+  `defaultEncodingId` as `extObjEncodingId`, so a value built from it
+  (`DynamicValue.from`) writes with the encoding id the server expects.
+  A bundled NS0 structure the reduced nodeset lacks as a node, published
+  with `addDataTypeNode` (`NetworkGroupDataType` i=11944,
+  `EndpointUrlListDataType` i=11943), gets its bundled `Default Binary`
+  object (i=11958 / i=11957) via HasEncoding too. An ExtensionObject whose
+  encoding id resolves to no DataType in the address space (a relayed value
+  under a foreign id, a variable typed `BaseDataType`) is returned as its
+  body with `extObjEncodingId` set by `readValue`, `read` and `Client.call`
+  instead of failing (`Failed to read attribute: BadNodeIdUnknown` with the
+  encoding id, or `Unsupported nodeId type: ns=0;i=24`); a Browse that
+  fails for any other reason still throws. `NodeId.hasEncoding` and
+  `NodeId.dataTypeEncodingType` are new.
 - `ServerStatistics` gained `liveDataChangeNotificationCount` and
   `liveNotificationCount`: the per-subscription `dataChangeNotificationsCount`
   / `notificationsCount` (data changes + events; keep-alives carry none) of
