@@ -6,6 +6,13 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **CI's ASan/UBSan lane now sanitises.** The hooks runner starts build hooks
+  with a scrubbed environment, so `OPEN62541_DART_SANITIZER` (and
+  `ENABLE_SANITIZER` before it) never reached the hook and `test-asan` ran
+  against a plain library. The switch is now an empty `.open62541_sanitizer`
+  file in the package root (gitignored; the hook reruns when it appears or
+  goes). The job asserts `__asan_` symbols in the built library, and
+  `test/native_sanitizer_test.dart` checks the loaded one.
 - **Fixed (security): a server could make the client read out-of-bounds native
   memory by sending a value whose type disagreed with the type it declared.**
   `Client.read` passed the node's DataType attribute to the variant decoder as
@@ -26,6 +33,21 @@ changes that ship the same native library version.
   `native_toolchain_cmake` overwrite (`-march=...`), so a fresh build dropped
   them. They now go in a script given as `CMAKE_PROJECT_INCLUDE`, which runs
   after the toolchain.
+- **A custom structure is laid out the way C lays it out.**
+  `Server.addCustomType` packed the members of the `UA_DataType` it
+  registers with open62541 with no padding, so a member after a narrower one
+  sat at an unaligned offset (`ST_Test { Int32 Id; Double Value; Boolean
+  Enabled; String Label }` put `Value` at 4 and `Label` at 13). open62541
+  read and wrote those members misaligned: UBSan reported it on x86-64, and a
+  strict-alignment CPU (32-bit ARM, Android armv7) can fault. Each member now
+  starts at a multiple of its C alignment and the size is rounded up to the
+  struct's, as open62541's `UA_DataType_fromStructureDescription` computes it;
+  every structure in `UA_TYPES` gets back the padding its C compiler gave it.
+  A structure with an optional field is now registered as a structure with
+  optional fields (the field a pointer, the body led by the encoding mask the
+  Dart side already wrote): before, a client write to such a struct failed
+  with `Bad_DecodingError`, and open62541 read a pointer out of the inline
+  value while clearing the failed decode (a heap overflow under ASan).
 
 - **Breaking: `Server.addVariableNode` adds a read-only node by default.**
   `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
