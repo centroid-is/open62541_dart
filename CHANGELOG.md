@@ -6,6 +6,35 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **`package:open62541/open62541_types.dart`: the value types without
+  `dart:ffi`.** A new barrel exporting `DynamicValue`, `DynamicType`,
+  `LocalizedText`, `EnumField`, `Schema` and `NodeId`, importable from code that
+  must also compile for the browser (`flutter build web`, `dart compile js`).
+  `NodeId` is split in two: `lib/src/node_id_core.dart` is the pure value type
+  (the three identifier kinds, equality, every namespace-0 static such as
+  `NodeId.serverStatusCurrentTime`, `NodeId.server`, `NodeId.namespaceArray`),
+  and `lib/src/node_id.dart` keeps the FFI conversions as
+  `extension NodeIdFfi on NodeId` and re-exports the core. The NS0 statics are
+  literals in the core (reading `UA_NS0ID_*` from the generated bindings is
+  what pulled `dart:ffi` in); `test/ns0_literals_test.dart` pins every one
+  against its generated constant, and refuses a static added to the core
+  without a row there. `test/web/types_web_test.dart` (`@TestOn('browser')`)
+  compiles the barrel with dart2js, so a stray FFI import in the pure half
+  fails CI instead of someone's web build. `dynamic_value.dart` now imports
+  the core, which is what breaks the chain.
+  - **Breaking for callers of `NodeId.fromRaw`:** it is `NodeIdFfi.fromRaw(...)`
+    now (a static on the extension; a factory cannot live outside its class).
+    `import 'package:open62541/open62541.dart'` exports `NodeIdFfi`, so the
+    only change is the receiver name. `toRaw({allocator})` and `toRawPointer()`
+    are unchanged for every caller: they are instance extension methods and
+    resolve as before.
+- **Fixed: `flutter build web` ran (or failed) the native build hook.** A web
+  build asks the hook for no code assets, and there is nothing it could link
+  for dart2js; it now returns before downloading or building open62541 when
+  `input.config.buildCodeAssets` is false. Before, a Flutter web app that
+  imported only `open62541_types.dart` either died in the hook (where
+  `input.config.code` throws for a build without code assets) or sat through a
+  full cmake build of a C library it can never call.
 - **Fixed: a custom structure was an opaque ExtensionObject in UaExpert and
   asyncua.** The server encoded every ExtensionObject of a custom type
   (`addCustomType`) under the type's DataType id, while the DataType node's

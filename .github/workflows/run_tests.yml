@@ -52,6 +52,26 @@ jobs:
       - name: Run tests
         run: dart test
 
+  # The pure-Dart barrel (open62541_types.dart) must keep compiling without
+  # dart:ffi. The VM lane cannot tell: a stray FFI import compiles fine there.
+  # `dart test -p chrome` compiles test/web with dart2js and runs it in the
+  # runner's Chrome, which also exercises the build hook's no-code-assets path.
+  test-web:
+    name: test-web
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1.8.1
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Run browser tests
+        run: dart test -p chrome test/web
+
   test-sanitizer:
     name: test-asan
     runs-on: ubuntu-latest
