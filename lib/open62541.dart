@@ -60,13 +60,17 @@ export 'src/server.dart'
 export 'src/types/endpoint_description.dart' show EndpointDescription, UserTokenPolicy;
 export 'src/types/errors.dart'
     show
+        ClientDeletedException,
         DataTypeDefinitionCycle,
         DataTypeDefinitionTooDeep,
+        DataTypeDefinitionTooMany,
         Inactivity,
         MonitoredItemsRefused,
         SecureChannelClosed,
         SubscriptionDeleted,
-        UaStatusException;
+        UaStatusException,
+        UaTypeMismatch,
+        ValueTooLarge;
 export 'src/isolate.dart' show ClientIsolate;
 export 'src/client_api.dart' show ClientApi, DataValueMonitoringApi;
 export 'src/types/opcua_serializer.dart' show OpcUaDynamicValueSerializer;

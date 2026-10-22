@@ -55,6 +55,90 @@ changes that ship the same native library version.
   - Bindings: `UA_AccessControl_default`, `UA_CertificateUtils_verifyApplicationUri`,
     `UA_UsernamePasswordLogin`, and the AddNodes/DeleteNodes/AddReferences/
     DeleteReferences request, item and response structs (additions only).
+- The web barrel (`open62541_types.dart`) compiles again: it pulled in `dart:ffi` through the value-size limit.
+- `subscriptionCreate` fails with a `UaStatusException` carrying the server's status (e.g. `BadTooManySubscriptions`) when the server refuses, on `Client` and `ClientIsolate`; it was a plain string.
+- The native library is built without XML encoding (`UA_ENABLE_XML_ENCODING=OFF`): the XML decoder was unreachable from the Dart API and the network, and the library is about 9% smaller.
+- **`Client.connect(timeout:)`** (default 30 s, `null` waits): a peer that
+  never answers, or a session never activated, is a `TimeoutException` and
+  the attempt is abandoned; `keepConnected(connectTimeout:)` abandons and
+  retries such an attempt. `ClientIsolate` forwards both, and its connect
+  timeout is now a `TimeoutException` (was `UaStatusException(Bad_Timeout)`).
+- **The client's DataType definition cache is bounded** (`schemaCacheSize`,
+  default 4096, on `Client` and `ClientIsolate`): it grew by every distinct
+  type id a server served; past the cap it is emptied and refilled on demand.
+- **Fixed: `buildSchema` read a DataType once per path, not once per type.**
+  A definition graph where each type has two fields of the next one (a
+  diamond) cost 2^(k+1) reads for one `read` of a k-level value: 16 levels
+  did not finish in a minute. Each distinct type is now read once per call
+  (16 levels: 19 reads, about a second), a field's type already cached is not
+  read again, and a type needing more than `schemaCacheSize` definitions is
+  refused with the new `DataTypeDefinitionTooMany`.
+- **A value is decoded into at most `ValueTooLarge.limit` (1,000,000)
+  nodes.** A type whose fields share a type is read once, but decoding a value
+  copied the shared definition per field: a 20-level diamond expanded to 3
+  million `DynamicValue`s (467 MB) for one value. `buildSchema` now refuses a
+  type that expands past the limit, and an array whose length times its
+  element type's nodes passes it is refused before anything is copied, both
+  with the new `ValueTooLarge`.
+- **Fixed: `Client.delete()` during a pending operation crashed the
+  process.** A `read` still building its schema (or one a `timeout` had
+  abandoned), a browse following continuation points or a monitor started
+  late made its next service call through the freed client: SIGSEGV in
+  `__UA_Client_AsyncService`, for `ClientIsolate` too. Every service call now
+  checks the client first and fails with the new `ClientDeletedException`
+  (`ClientIsolateClosedException` is now a subtype of it), and so do
+  `connect` and `awaitConnect` when `delete()` ends the wait (they failed
+  with `StateError("No element")` or a `BadConnectionClosed`).
+- **Fixed: a ReadResponse with fewer results than attributes read** left
+  `readAttribute` (and `read`) with a partial map, or never completing with
+  assertions enabled. It now fails with `UaStatusException(Bad_UnexpectedError)`.
+- **An encrypted client private key is an `ArgumentError`**, not an
+  open62541 password prompt on stdin that blocked the process, and a key
+  open62541 cannot load is a `UaStatusException` from the constructor (its
+  `setDefaultEncryption` status was ignored).
+- **CI's ASan/UBSan lane now sanitises.** The hooks runner starts build hooks
+  with a scrubbed environment, so `OPEN62541_DART_SANITIZER` (and
+  `ENABLE_SANITIZER` before it) never reached the hook and `test-asan` ran
+  against a plain library. The switch is now an empty `.open62541_sanitizer`
+  file in the package root (gitignored; the hook reruns when it appears or
+  goes). The job asserts `__asan_` symbols in the built library, and
+  `test/native_sanitizer_test.dart` checks the loaded one.
+- **Fixed (security): a server could make the client read out-of-bounds native
+  memory by sending a value whose type disagreed with the type it declared.**
+  `Client.read` passed the node's DataType attribute to the variant decoder as
+  a hint and chose the native payload reader from it, rather than from the type
+  open62541 actually decoded from the wire. A server that advertised one
+  built-in type but put another on the wire (a DataType attribute that
+  disagrees with the value on the wire) could therefore have the raw bytes read
+  under the wrong layout — an out-of-bounds read that could crash the client or
+  leak memory. The decoder now keys the reader on the wire type and raises a
+  typed `UaTypeMismatch` (an `on UaStatusException`, carrying `Bad_TypeMismatch`
+  and the expected/actual NodeIds; it crosses the `ClientIsolate` boundary as
+  itself) when the declared and wire types are different built-ins; the client
+  stays usable. `readValue` and the monitored-item callbacks were never
+  affected (they pass no hint).
+- **The compile and link hardening reaches the native build again.** The hook
+  passed `-fstack-protector-strong -D_FORTIFY_SOURCE=2` and
+  `UA_FLOAT_LITTLE_ENDIAN=1` as `CMAKE_C_FLAGS`, which the toolchain files of
+  `native_toolchain_cmake` overwrite (`-march=...`), so a fresh build dropped
+  them. They now go in a script given as `CMAKE_PROJECT_INCLUDE`, which runs
+  after the toolchain.
+- **A custom structure is laid out the way C lays it out.**
+  `Server.addCustomType` packed the members of the `UA_DataType` it
+  registers with open62541 with no padding, so a member after a narrower one
+  sat at an unaligned offset (`ST_Test { Int32 Id; Double Value; Boolean
+  Enabled; String Label }` put `Value` at 4 and `Label` at 13). open62541
+  read and wrote those members misaligned: UBSan reported it on x86-64, and a
+  strict-alignment CPU (32-bit ARM, Android armv7) can fault. Each member now
+  starts at a multiple of its C alignment and the size is rounded up to the
+  struct's, as open62541's `UA_DataType_fromStructureDescription` computes it;
+  every structure in `UA_TYPES` gets back the padding its C compiler gave it.
+  A structure with an optional field is now registered as a structure with
+  optional fields (the field a pointer, the body led by the encoding mask the
+  Dart side already wrote): before, a client write to such a struct failed
+  with `Bad_DecodingError`, and open62541 read a pointer out of the inline
+  value while clearing the failed decode (a heap overflow under ASan).
+
 - **The `Server` authorizes per user: `Server(authorization:
   ServerAuthorization(...))`.** Three optional hooks, each given the session
   (`MethodSessionInfo`, with its `identity`): `userAccessLevel(session,

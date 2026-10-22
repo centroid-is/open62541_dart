@@ -198,24 +198,45 @@ String _targetKey(BuildInput input) {
 /// mbedTLS is built as a static library and linked into libopen62541, so it
 /// takes the same compile flags; the linker flags apply where it is linked.
 /// `test/native_hardening_test.dart` reads the marks these leave in the ELF.
-class _Hardening {
-  const _Hardening({required this.cFlags, required this.sharedLinkerFlags});
-
-  final String cFlags;
-
-  /// Empty where the linker has nothing to add (Apple).
-  final String sharedLinkerFlags;
+///
+/// The flags reach CMake as a script passed in `CMAKE_PROJECT_INCLUDE`, which
+/// CMake runs after every `project()` call, after the toolchain file. They
+/// cannot go in `CMAKE_C_FLAGS`: `native_toolchain_cmake`'s toolchain files
+/// `set()` that variable (`-march=...`) and shadow the command-line value.
+///
+/// The text of the script for [targetOS]; [floatLittleEndian] adds the
+/// open62541-only define, [sanitizer] ASan + UBSan.
+String hardeningCmake(OS targetOS, {bool floatLittleEndian = false, bool sanitizer = false}) {
+  final compile = <String>[];
+  final link = <String>[];
+  if (targetOS == OS.windows) {
+    compile.addAll(['/GS', '/guard:cf']);
+    link.addAll(['/DYNAMICBASE', '/NXCOMPAT', '/guard:cf']);
+  } else {
+    compile.addAll(['-fstack-protector-strong', '-D_FORTIFY_SOURCE=2']);
+    if (targetOS == OS.linux || targetOS == OS.android) {
+      link.addAll(['-Wl,-z,relro', '-Wl,-z,now']);
+    }
+  }
+  if (sanitizer) {
+    compile.addAll(['-fsanitize=address,undefined', '-fno-omit-frame-pointer']);
+    link.add('-fsanitize=address,undefined');
+  }
+  return [
+    if (floatLittleEndian) 'add_compile_definitions(UA_FLOAT_LITTLE_ENDIAN=1)',
+    'add_compile_options("\$<\$<COMPILE_LANGUAGE:C>:${compile.join(';')}>")',
+    if (link.isNotEmpty) 'add_link_options(${link.join(' ')})',
+    '',
+  ].join('\n');
 }
 
-_Hardening _hardeningFor(OS targetOS) {
-  if (targetOS == OS.windows) {
-    return const _Hardening(cFlags: '/GS /guard:cf', sharedLinkerFlags: '/DYNAMICBASE /NXCOMPAT /guard:cf');
-  }
-  final elf = targetOS == OS.linux || targetOS == OS.android;
-  return _Hardening(
-    cFlags: '-fstack-protector-strong -D_FORTIFY_SOURCE=2',
-    sharedLinkerFlags: elf ? '-Wl,-z,relro,-z,now' : '',
-  );
+/// Writes [script] to `hardening-<name>.cmake` under [dir] and returns the
+/// path to hand to `CMAKE_PROJECT_INCLUDE`.
+Future<String> _writeHardening(Uri dir, String name, String script) async {
+  final file = File.fromUri(dir.resolve('hardening-$name.cmake'));
+  await file.parent.create(recursive: true);
+  await file.writeAsString(script);
+  return file.path;
 }
 
 /// Configures + builds + installs a CMake project via `native_toolchain_cmake`.
@@ -261,8 +282,8 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
   // linked in as it is. A mismatch discards the install and rebuilds; the
   // CMake build directory under src/ is reconfigured, so only the objects
   // the flags touch recompile.
-  final hardening = _hardeningFor(input.config.code.targetOS);
-  final flags = '${hardening.cFlags}\n${hardening.sharedLinkerFlags}\n';
+  final hardening = hardeningCmake(input.config.code.targetOS);
+  final flags = hardening;
   final flagsStamp = File.fromUri(installPrefix.resolve('flags'));
   final includeCheck = File.fromUri(installPrefix.resolve('include/mbedtls/ssl.h'));
   if (await includeCheck.exists()) {
@@ -289,9 +310,7 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
       'USE_STATIC_MBEDTLS_LIBRARY': 'ON',
       'BUILD_SHARED_LIBS': 'OFF',
       'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
-      // mbedTLS's CMakeLists appends its warning flags to these.
-      'CMAKE_C_FLAGS': hardening.cFlags,
-      if (hardening.sharedLinkerFlags.isNotEmpty) 'CMAKE_SHARED_LINKER_FLAGS': hardening.sharedLinkerFlags,
+      'CMAKE_PROJECT_INCLUDE': await _writeHardening(input.outputDirectoryShared, 'mbedtls', hardening),
     },
     targets: ['install'],
   );
@@ -845,14 +864,16 @@ Future<void> main(List<String> args) async {
     final libPrefix = isWindows ? '' : 'lib';
     final libSuffix = isWindows ? '.lib' : '.a';
 
-    // OPEN62541_DART_SANITIZER=1 builds the library with ASan + UBSan (CI's
-    // test-asan job). The sanitizer flags go on top of the hardening ones.
-    final sanitizer = Platform.environment['OPEN62541_DART_SANITIZER'] == '1';
-    final hardening = _hardeningFor(input.config.code.targetOS);
-    final linkerFlags = [
-      hardening.sharedLinkerFlags,
-      if (sanitizer) '-fsanitize=address,undefined',
-    ].where((flags) => flags.isNotEmpty).join(' ');
+    // An (empty) `.open62541_sanitizer` file in the package root builds the
+    // library with ASan + UBSan (CI's test-asan job), on top of the hardening
+    // flags. The hooks runner starts hooks with a scrubbed environment, so an
+    // environment variable never reaches this point, and `dart test` passes no
+    // user-defines; a file is the one switch that does. It is registered as a
+    // dependency so creating or removing it reruns the hook.
+    final marker = input.packageRoot.resolve('.open62541_sanitizer');
+    final sanitizer = await File.fromUri(marker).exists();
+    output.dependencies.add(marker);
+    final hardening = hardeningCmake(input.config.code.targetOS, floatLittleEndian: true, sanitizer: sanitizer);
 
     await _buildCmakeProject(
       input: input,
@@ -877,28 +898,22 @@ Future<void> main(List<String> args) async {
         // and raw-Ethernet transports stay off.
         'UA_ENABLE_PUBSUB': 'ON',
         'UA_ENABLE_PUBSUB_INFORMATIONMODEL': 'ON',
+        // No XML decoder in the library: nothing in the Dart API or on the
+        // opc.tcp binary path reaches it, and turning it off changes no
+        // struct the bindings use. JSON stays on: event filter parsing
+        // requires it, and turning events off shifts UA_ServerConfig fields.
+        'UA_ENABLE_XML_ENCODING': 'OFF',
         'MBEDTLS_INCLUDE_DIRS': mbedtlsInstall.resolve('include/').toFilePath(),
         'MBEDTLS_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedtls$libSuffix').toFilePath(),
         'MBEDX509_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedx509$libSuffix').toFilePath(),
         'MBEDCRYPTO_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedcrypto$libSuffix').toFilePath(),
-        // Force the fast (memcpy/"overlayable") IEEE 754 encoding path.
-        //
-        // open62541's config.h only sets UA_FLOAT_LITTLE_ENDIAN=1 when the
-        // compiler defines __FLOAT_WORD_ORDER__ (a GCC-only macro) or when the
-        // target is x86. clang (e.g. on macOS arm64) defines neither, so
-        // UA_FLOAT_LITTLE_ENDIAN resolves to 0, UA_BINARY_OVERLAYABLE_FLOAT
-        // becomes 0, and the library falls back to the slow generic pack754/
-        // unpack754 codec in ua_types_encoding_binary.c. That generic codec
-        // normalizes the mantissa to "1.x" and therefore silently corrupts
-        // subnormal (denormalized) Float/Double values on the wire. Every
-        // target we build for uses little-endian IEEE 754 floats, so forcing
-        // this on is both correct and required for subnormals to round-trip.
-        'CMAKE_C_FLAGS': [
-          '-DUA_FLOAT_LITTLE_ENDIAN=1',
-          hardening.cFlags,
-          if (sanitizer) '-fsanitize=address,undefined -fno-omit-frame-pointer',
-        ].join(' '),
-        if (linkerFlags.isNotEmpty) 'CMAKE_SHARED_LINKER_FLAGS': linkerFlags,
+        // Also forces UA_FLOAT_LITTLE_ENDIAN=1: open62541's config.h leaves it 0 under clang
+        // (macOS arm64), which selects the pack754 codec that corrupts subnormal floats.
+        'CMAKE_PROJECT_INCLUDE': await _writeHardening(
+          input.outputDirectoryShared,
+          sanitizer ? '$name-asan' : name,
+          hardening,
+        ),
       },
       targets: ['install'],
     );

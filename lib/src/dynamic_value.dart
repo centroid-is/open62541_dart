@@ -2,6 +2,9 @@ import 'dart:collection' show LinkedHashMap;
 
 import 'node_id_core.dart';
 
+/// The most nodes one value is decoded into.
+const int maxValueNodes = 1000000;
+
 enum DynamicType { object, array, string, boolean, nullValue, unknown, integer, double, datetime }
 
 class LocalizedText {
@@ -293,4 +296,29 @@ class DynamicValue {
     }
     return (value as LinkedHashMap<String, DynamicValue>).entries;
   }
+}
+
+/// The nodes [value] becomes when copied by [DynamicValue.from], which copies
+/// a value shared by several fields once per field; at most
+/// [maxValueNodes] + 1. [counted] holds the counts of shared values.
+int expandedNodes(DynamicValue value, [Map<DynamicValue, int>? counted]) {
+  counted ??= Map.identity();
+  final known = counted[value];
+  if (known != null) return known;
+  final v = value.value;
+  final Iterable<DynamicValue> children = switch (v) {
+    DynamicValue() => [v],
+    Map<String, DynamicValue>() => v.values,
+    List<DynamicValue>() => v,
+    _ => const [],
+  };
+  var nodes = 1;
+  for (final child in children) {
+    nodes += expandedNodes(child, counted);
+    if (nodes > maxValueNodes) {
+      nodes = maxValueNodes + 1;
+      break;
+    }
+  }
+  return counted[value] = nodes;
 }

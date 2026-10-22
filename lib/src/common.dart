@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/types/create_type.dart';
 import 'package:open62541/src/types/native_decode.dart';
+import 'dynamic_value.dart' show expandedNodes;
 import 'extensions.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
@@ -185,19 +186,38 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
 
   // Read structure from opc-ua server
   DynamicValue dynamicValueSchema(NodeId typeId) {
-    if (nodeIdToPayloadType(typeId) != null) {
-      return DynamicValue(typeId: typeId);
-    }
-    if (defs != null && defs.containsKey(typeId)) {
-      return DynamicValue.from(defs[typeId]!);
-    }
-    // The declared DataType has no known payload and no schema — e.g. a vendor
-    // alias of a simple type (TwinCAT exposes STRING at a custom NodeId like
-    // ns=3;i=3013). Fall back to the variant's actual wire type, which open62541
-    // knows how to decode.
+    // A built-in scalar/array is read with the reader for the WIRE type (what
+    // open62541 decoded from the encoding byte), never the `typeId` hint (the
+    // DataType attribute): a mismatched hint reads the native bytes under the
+    // wrong layout (a UA_String {length, pointer} over other bytes dereferences
+    // an arbitrary address). A disagreement between two built-ins, or a hint
+    // built-in over a wire type with no reader, is refused.
     final wireTypeId = data.type.ref.typeId.toNodeId();
-    if (wireTypeId != typeId && nodeIdToPayloadType(wireTypeId) != null) {
-      return DynamicValue(typeId: wireTypeId);
+    final hintPayload = nodeIdToPayloadType(typeId);
+    final wirePayload = nodeIdToPayloadType(wireTypeId);
+    final schema = defs?[typeId];
+    if (schema != null) {
+      // A fetched schema for the declared type. A built-in-backed one (an enum:
+      // Int32 + field names) only adds metadata, so it is used only when its
+      // reader matches the wire layout; otherwise the server's type disagrees
+      // with the wire and it is refused. A struct schema is read against the
+      // body bytes by the deserializer (bounded by their length).
+      final schemaPayload = nodeIdToPayloadType(schema.typeId);
+      if (schemaPayload != null && schema.typeId != wireTypeId) {
+        throw UaTypeMismatch(expected: schema.typeId ?? typeId, actual: wireTypeId);
+      }
+      return DynamicValue.from(schema);
+    }
+    if (hintPayload != null || wirePayload != null) {
+      // A hint with no reader but a known wire built-in is a vendor alias
+      // (TwinCAT exposes STRING at a custom NodeId): read the wire type.
+      if (wirePayload != null) {
+        if (hintPayload != null && typeId != wireTypeId) {
+          throw UaTypeMismatch(expected: typeId, actual: wireTypeId);
+        }
+        return DynamicValue(typeId: wireTypeId);
+      }
+      throw UaTypeMismatch(expected: typeId, actual: wireTypeId);
     }
     // An enum open62541 knows and no schema for it (a method output, a
     // Server.read): Int32 with the fields of the native enum type.
@@ -226,6 +246,13 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
     return list;
   }
 
+  final template = defs?[typeId];
+  if (template != null && nodeIdToPayloadType(typeId) == null) {
+    final nodes = expandedNodes(template);
+    if (nodes > 1 && dimensionsMultiplied > ValueTooLarge.limit ~/ nodes) {
+      throw ValueTooLarge(typeId, elements: data.arrayLength == 0 ? null : dimensionsMultiplied);
+    }
+  }
   retValue = createNestedArray(typeId, dimensions.toList());
   final reader = binarize.ByteReader(data.data.cast<ffi.Uint8>().asTypedList(bufferLength));
   OpcUaDynamicValueSerializer.deserialize(retValue, reader, Endian.little, false, true);
