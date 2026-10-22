@@ -835,6 +835,13 @@ class Server {
       if (res != raw.UA_STATUSCODE_GOOD) {
         throw 'Failed to set default server config ${statusCodeToString(res)}';
       }
+      // setMinimal sets its 2-minute asyncOperationTimeout only under
+      // UA_MULTITHREADING >= 100 (plugins/ua_config_default.c); this package
+      // builds single-threaded, which leaves 0, "never cancel": a parked
+      // method call or data-source write whose handler never completes
+      // would stay in flight (and in _inFlightMethodCalls/_inFlightWrites)
+      // for the life of the server. See [asyncOperationTimeout].
+      config.ref.asyncOperationTimeout = 120000;
 
       // Authentication. Both set* functions installed the default plugin
       // with anonymous only; it is re-created when the logins differ (the
@@ -1286,9 +1293,11 @@ class Server {
     _config.ref.asyncOperationCancelCallback = _asyncCancelDispatcher!.nativeFunction;
   }
 
-  /// The deadline open62541 gives an async operation (a parked method call)
-  /// before cancelling it with `Bad_Timeout` — `Duration.zero` means
-  /// unlimited. Defaults to 2 minutes (`UA_ServerConfig_setMinimal`).
+  /// The deadline open62541 gives an async operation (a parked method call
+  /// or data-source write) before cancelling it with `Bad_Timeout`, checked
+  /// once a second — `Duration.zero` means unlimited. Defaults to 2 minutes,
+  /// set by the constructor: `UA_ServerConfig_setMinimal` sets that value
+  /// only in a multithreaded build, and this package builds single-threaded.
   Duration get asyncOperationTimeout => Duration(milliseconds: _config.ref.asyncOperationTimeout.round());
   set asyncOperationTimeout(Duration timeout) {
     _config.ref.asyncOperationTimeout = timeout.inMilliseconds.toDouble();
@@ -1423,7 +1432,11 @@ class Server {
   /// * [value] - The initial value and type information for the variable
   ///
   /// Optional parameters:
-  /// * [accessLevel] - Controls read/write access to the variable (defaults to read and write enabled)
+  /// * [accessLevel] - Controls client access to the variable. Defaults to
+  ///   read-only: a client write is refused with `Bad_UserAccessDenied`. Pass
+  ///   `const AccessLevelMask(read: true, write: true)` for a node clients may
+  ///   write. [Server.write] is unaffected: the server's own writes bypass the
+  ///   access level.
   /// * [parentNodeId] - The parent node in the address space (defaults to Objects folder)
   /// * [parentReferenceNodeId] - The reference type to the parent (defaults to Organizes)
   /// * [basedatavariableType] - The base type for the variable (defaults to BaseDataVariableType)
@@ -1445,7 +1458,7 @@ class Server {
   void addVariableNode(
     NodeId variableNodeId,
     DynamicValue value, {
-    AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
+    AccessLevelMask accessLevel = const AccessLevelMask(read: true),
     NodeId? parentNodeId,
     NodeId? parentReferenceNodeId,
     NodeId? baseDataVariableType,

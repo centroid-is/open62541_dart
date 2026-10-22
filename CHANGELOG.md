@@ -55,6 +55,57 @@ changes that ship the same native library version.
   - Bindings: `UA_AccessControl_default`, `UA_CertificateUtils_verifyApplicationUri`,
     `UA_UsernamePasswordLogin`, and the AddNodes/DeleteNodes/AddReferences/
     DeleteReferences request, item and response structs (additions only).
+- **Breaking: `Server.addVariableNode` adds a read-only node by default.**
+  `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
+  every variable a server published without thinking about it was writable by
+  any client that could connect, including the anonymous one the default
+  server config admits. The default is now `AccessLevelMask(read: true)`: a
+  client write to such a node is refused with `Bad_UserAccessDenied`
+  (open62541 masks the node's AccessLevel into the session's UserAccessLevel
+  and reports that one). `Server.write` is unaffected, the server's own
+  writes bypass the access level. Migration, for every node clients are meant
+  to write: `server.addVariableNode(id, value, accessLevel: const
+  AccessLevelMask(read: true, write: true))`. `addDataSourceVariableNode` is
+  unchanged, it has always derived write access from whether `onWrite` is
+  given.
+- **Fixed: a monitored sample the client could not decode was dropped
+  without a trace.** The monitored-item data callback caught the conversion
+  error, wrote one line to stderr and moved on; the consumer of `monitor`,
+  `monitoredItems`, `monitorDataValue` or `monitoredDataValues` saw nothing,
+  and a second later the backfill read of the item it never saw a sample for
+  put the server's current value in its place. The error is now an error
+  event on the stream (`addError`; a `String` once it has crossed the
+  `ClientIsolate` boundary, like every non-status error), the stream stays
+  open and the subscription stays up, so the next sample is delivered as
+  before. `test/monitor_data_value_test.dart` (both clients): through the
+  rewriting proxy a notification is turned into a Guid, a type this client
+  has no conversion for; the error arrives on the stream without a value
+  event, and a value written after the proxy stops rewriting is delivered
+  on the same stream.
+- **Build hook: archive extraction stays inside its directory.** The hook
+  unpacks the open62541 zip and the mbedTLS tarball with a plain loop that
+  wrote every entry at `extractDir/entry.name`, so an entry named
+  `../../x` or `/etc/x`, or a symlink entry, would have landed wherever its
+  name said. Both archives are checked against a pinned SHA-256 before
+  extraction, so this only matters if that line falls; it now also skips
+  symbolic links and refuses, naming the entry, any entry whose resolved
+  path is not under the extract directory (`extractArchiveInto` in
+  `hook/build.dart`, shared by both archives;
+  `test/hook_extract_test.dart`). The dead `hook/ua_client_subscriptions.patch`
+  is deleted: nothing referenced it, it does not apply to v1.5.9, and
+  `_patchSubscriptionCleanup` has long done its job in code.
+- **Fixed: `Server.asyncOperationTimeout` was 0, never, not the 2 minutes its
+  dartdoc promised.** `UA_ServerConfig_setMinimal` sets the 2-minute default
+  only under `UA_MULTITHREADING >= 100`, and this package builds
+  single-threaded, so a parked method call or data-source write whose handler
+  never completed stayed in flight for the life of the server, together with
+  its output memory and its entry in the server's in-flight registries. The
+  constructor now sets 2 minutes; the setter is unchanged for anyone who wants
+  another deadline (`Duration.zero` is still "never").
+  `test/server_async_timeout_test.dart`: a fresh `Server` reports 2 minutes,
+  and (both clients) a data-source write whose handler never completes is
+  answered Bad_Timeout by the server at a 1-second deadline, well before the
+  client's own 5-second request timeout, with the server intact afterwards.
 - **Security: the client verifies the server certificate; `Client` and
   `ClientIsolate.create` take `trustList`, `issuerList`, `revocationList`
   and `acceptAllCertificates`.** A client with a `certificate` called

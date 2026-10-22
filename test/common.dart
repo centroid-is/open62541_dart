@@ -211,19 +211,23 @@ final stringNodeId = NodeId.fromString(1, "the.string");
 
 // Not all tests need this and it is annoying me to have this
 // be added while I am debugging other tests.
+/// The access level of the nodes [addBasicVariables] adds: tests write to
+/// them through a client, and `addVariableNode` defaults to read-only.
+const readWrite = AccessLevelMask(read: true, write: true);
+
 void addBasicVariables(Server server) {
   // Create a boolean variable to read and write
   DynamicValue boolValue = DynamicValue(value: true, typeId: NodeId.boolean, name: "the.bool");
-  server.addVariableNode(boolNodeId, boolValue);
+  server.addVariableNode(boolNodeId, boolValue, accessLevel: readWrite);
   // Create a int variables to read and write
   DynamicValue intValue = DynamicValue(value: 1, typeId: NodeId.int32, name: "the.int");
-  server.addVariableNode(intNodeId, intValue);
+  server.addVariableNode(intNodeId, intValue, accessLevel: readWrite);
   // Create a double variables to read and write
   DynamicValue doubleValue = DynamicValue(value: 3.14, typeId: NodeId.double, name: "the.double");
-  server.addVariableNode(doubleNodeId, doubleValue);
+  server.addVariableNode(doubleNodeId, doubleValue, accessLevel: readWrite);
   // Create a string variables to read and write
   DynamicValue stringValue = DynamicValue(value: "Hello World!", typeId: NodeId.uastring, name: "the.string");
-  server.addVariableNode(stringNodeId, stringValue);
+  server.addVariableNode(stringNodeId, stringValue, accessLevel: readWrite);
 }
 
 /// Starts a server on a port the OS picks (read it from `Server.port`) and

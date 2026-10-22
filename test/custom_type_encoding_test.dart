@@ -67,7 +67,12 @@ void main() {
         server.addDataTypeNode(structType, 'ST_Enc');
         server.addCustomType(numericType, numericSchema());
         server.addDataTypeNode(numericType, 'ST_Numeric');
-        server.addVariableNode(nodeId, schema(), typeId: structType);
+        server.addVariableNode(
+          nodeId,
+          schema(),
+          typeId: structType,
+          accessLevel: const AccessLevelMask(read: true, write: true),
+        );
         server.addDataTypeNode(networkGroupDataType, 'NetworkGroupDataType');
         server.addVariableNode(phantomNode, phantom(), typeId: NodeId.fromNumeric(0, 24));
         received = null;
