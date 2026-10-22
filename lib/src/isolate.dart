@@ -354,7 +354,15 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       schemaCacheSize: schemaCacheSize,
     );
 
-    await isolate._initCompleter.future;
+    try {
+      await isolate._initCompleter.future;
+    } catch (_) {
+      // The worker made no client and has returned; nothing else to free.
+      isolate._isClosed = true;
+      isolate._receivePort.close();
+      isolate._errPort.close();
+      rethrow;
+    }
     return isolate;
   }
 
@@ -438,6 +446,8 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     if (message is SendPort) {
       _sendPort = message;
       _initCompleter.complete();
+    } else if (message is _WorkerInitFailed) {
+      _initCompleter.completeError(message.error);
     } else if (message is IsolateResponse) {
       final completer = _pendingRequests[message.requestId];
       if (completer != null) {
@@ -1127,6 +1137,12 @@ class _IsolateData {
   });
 }
 
+/// The worker's answer when its [Client] constructor threw.
+class _WorkerInitFailed {
+  const _WorkerInitFailed(this.error);
+  final Object error;
+}
+
 /// Entry point for the isolate
 void _isolateEntryPoint(_IsolateData data) {
   late Client client;
@@ -1144,25 +1160,31 @@ void _isolateEntryPoint(_IsolateData data) {
   bool iterateRunning = false;
   Completer<void>? iterateStopped;
 
+  try {
+    client = Client(
+      secureChannelLifeTime: data.secureChannelLifeTime,
+      requestedSessionTimeout: data.requestedSessionTimeout,
+      username: data.username,
+      password: data.password,
+      securityMode: data.securityMode,
+      certificate: data.certificate,
+      privateKey: data.privateKey,
+      trustList: data.trustList,
+      issuerList: data.issuerList,
+      revocationList: data.revocationList,
+      acceptAllCertificates: data.acceptAllCertificates,
+      logLevel: data.logLevel,
+      connectivityCheckInterval: data.connectivityCheckInterval,
+      schemaCacheSize: data.schemaCacheSize,
+    );
+  } catch (e) {
+    receivePort.close();
+    sendPort.send(_WorkerInitFailed(sendableError(e)));
+    return;
+  }
+
   // Send our receive port back to the main isolate
   sendPort.send(receivePort.sendPort);
-
-  client = Client(
-    secureChannelLifeTime: data.secureChannelLifeTime,
-    requestedSessionTimeout: data.requestedSessionTimeout,
-    username: data.username,
-    password: data.password,
-    securityMode: data.securityMode,
-    certificate: data.certificate,
-    privateKey: data.privateKey,
-    trustList: data.trustList,
-    issuerList: data.issuerList,
-    revocationList: data.revocationList,
-    acceptAllCertificates: data.acceptAllCertificates,
-    logLevel: data.logLevel,
-    connectivityCheckInterval: data.connectivityCheckInterval,
-    schemaCacheSize: data.schemaCacheSize,
-  );
 
   // Handle messages from the main isolate
   receivePort.listen((message) async {

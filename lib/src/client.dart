@@ -319,6 +319,9 @@ class _BrowseResultError implements Exception {
 ///    explicit choice. An [issuerList] or [revocationList] alone is refused
 ///    for the same reason: issuer certificates only complete a chain, they
 ///    cannot anchor trust.
+///  * The [privateKey] is not encrypted (a PKCS#8 `EncryptedPrivateKeyInfo`,
+///    DER or PEM, or a legacy PEM with `Proc-Type: 4,ENCRYPTED`): open62541
+///    would ask for its password on stdin and block the process.
 void checkClientCertificateArguments({
   required Uint8List? certificate,
   required Uint8List? privateKey,
@@ -329,6 +332,13 @@ void checkClientCertificateArguments({
 }) {
   if ((certificate == null) != (privateKey == null)) {
     throw ArgumentError('certificate and privateKey come together; got only one of them');
+  }
+  if (privateKey != null && _isEncryptedPrivateKey(privateKey)) {
+    throw ArgumentError.value(
+      '<${privateKey.length} bytes>',
+      'privateKey',
+      'is encrypted; pass the decrypted key (DER). open62541 would prompt for its password on stdin',
+    );
   }
   final hasLists = trustList != null || issuerList != null || revocationList != null;
   if (certificate == null) {
@@ -356,6 +366,29 @@ void checkClientCertificateArguments({
     );
   }
 }
+
+/// Whether [key] is an encrypted private key: a PKCS#8
+/// `EncryptedPrivateKeyInfo` in DER (a SEQUENCE whose first element is the
+/// encryption AlgorithmIdentifier, itself a SEQUENCE; an unencrypted key
+/// starts with its version INTEGER) or PEM, or a legacy encrypted PEM.
+bool _isEncryptedPrivateKey(Uint8List key) {
+  if (key.length > 2 && key[0] == 0x30) {
+    var offset = 2;
+    final length = key[1];
+    // Long-form length: 0x80 | number of length bytes.
+    if (length & 0x80 != 0) offset += length & 0x7f;
+    return offset < key.length && key[offset] == 0x30;
+  }
+  final text = String.fromCharCodes(key);
+  return text.contains('-----BEGIN ENCRYPTED PRIVATE KEY-----') || text.contains('Proc-Type: 4,ENCRYPTED');
+}
+
+/// open62541's `privateKeyPasswordCallback`, which it calls when the key
+/// does not load without a password and otherwise replaces by a prompt on
+/// stdin. It hands over no password, so open62541 retries with an empty one
+/// and returns its own status for the key.
+int _noPrivateKeyPassword(ffi.Pointer<raw.UA_ClientConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
+    raw.UA_STATUSCODE_GOOD;
 
 /// A `UA_ByteString` in [arena] holding a copy of [bytes].
 ffi.Pointer<raw.UA_ByteString> _byteString(Arena arena, Uint8List bytes) {
@@ -389,7 +422,8 @@ ffi.Pointer<raw.UA_ByteString> _byteStrings(Arena arena, List<Uint8List> list) {
 /// the wire is signed or encrypted, and a [username]/[password] only travels
 /// if [allowUnencryptedPassword] is set, in clear text then.
 ///
-/// With a [certificate] and [privateKey] (DER) and a [securityMode] of
+/// With a [certificate] and [privateKey] (DER, not encrypted, see
+/// [checkClientCertificateArguments]) and a [securityMode] of
 /// `Sign` or `SignAndEncrypt` the channel is signed or encrypted with a
 /// policy the server offers (Basic256Sha256, Aes128Sha256RsaOaep, ...).
 /// Encryption alone does not say *who* the peer is: the server's certificate
@@ -507,52 +541,14 @@ class Client implements ClientApi, DataValueMonitoringApi {
     }
 
     if (certificate != null && privateKey != null) {
-      // Everything here is scratch for the calls: open62541 keeps its own
-      // copies of the certificate and key (in each security policy, the key
-      // decrypted to DER) and of the lists (UA_Array_copy into a
-      // UA_TrustListDataType that UA_CertificateGroup_Memorystore copies
-      // again into its store, after which the first copy is cleared;
-      // addToTrustList appends copies the same way).
-      using((arena) {
-        final rawCertificate = _byteString(arena, certificate);
-        final rawPrivateKey = _byteString(arena, privateKey);
-        final trust = trustList ?? const <Uint8List>[];
-        final revocation = revocationList ?? const <Uint8List>[];
-        raw.UA_ClientConfig_setDefaultEncryption(
-          config,
-          rawCertificate.ref,
-          rawPrivateKey.ref,
-          _byteStrings(arena, trust),
-          trust.length,
-          _byteStrings(arena, revocation),
-          revocation.length,
-        );
-
-        // Dart FFI cannot take the address of the UA_CertificateGroup nested
-        // in the config, so the plugin calls below get a copy of the struct.
-        // They only read it (the store is behind `context`, which the copy
-        // shares) or set its function pointers, so the copy goes back.
-        final group = arena<raw.UA_CertificateGroup>();
-        group.ref = config.ref.certificateVerification;
-        if (acceptAllCertificates) {
-          raw.UA_CertificateGroup_AcceptAll(group);
-        } else if (issuerList != null && issuerList.isNotEmpty) {
-          // setDefaultEncryption takes no issuer list; the memory store it
-          // installed (for a non-empty trust list, which
-          // checkClientCertificateArguments guarantees here) does.
-          final issuers = arena<raw.UA_TrustListDataType>();
-          issuers.ref.specifiedLists = raw.UA_TrustListMasks.UA_TRUSTLISTMASKS_ISSUERCERTIFICATES.value;
-          issuers.ref.issuerCertificates = _byteStrings(arena, issuerList);
-          issuers.ref.issuerCertificatesSize = issuerList.length;
-          final addToTrustList = group.ref.addToTrustList
-              .asFunction<int Function(ffi.Pointer<raw.UA_CertificateGroup>, ffi.Pointer<raw.UA_TrustListDataType>)>();
-          final status = addToTrustList(group, issuers);
-          if (status != raw.UA_STATUSCODE_GOOD) {
-            throw UaStatusException(status);
-          }
-        }
-        config.ref.certificateVerification = group.ref;
-      }, ua_calloc);
+      try {
+        _setEncryption(config, certificate, privateKey, trustList, issuerList, revocationList, acceptAllCertificates);
+      } catch (_) {
+        // A client made of the config and deleted frees what it holds.
+        raw.UA_Client_delete(raw.UA_Client_newWithConfig(config));
+        ua_calloc.free(config);
+        rethrow;
+      }
     }
 
     if (username != null) {
@@ -584,6 +580,79 @@ class Client implements ClientApi, DataValueMonitoringApi {
     // client's copy, so free just the struct itself.
     _clientConfig = ClientConfig(raw.UA_Client_getConfig(_client));
     ua_calloc.free(config);
+  }
+
+  /// `UA_ClientConfig_setDefaultEncryption` and the certificate verification
+  /// on [config]; throws a [UaStatusException] when open62541 refuses the
+  /// certificate or key, leaving the caller to free [config].
+  static void _setEncryption(
+    ffi.Pointer<raw.UA_ClientConfig> config,
+    Uint8List certificate,
+    Uint8List privateKey,
+    List<Uint8List>? trustList,
+    List<Uint8List>? issuerList,
+    List<Uint8List>? revocationList,
+    bool acceptAllCertificates,
+  ) {
+    // Everything here is scratch for the calls: open62541 keeps its own
+    // copies of the certificate and key (in each security policy, the key
+    // decrypted to DER) and of the lists (UA_Array_copy into a
+    // UA_TrustListDataType that UA_CertificateGroup_Memorystore copies
+    // again into its store, after which the first copy is cleared;
+    // addToTrustList appends copies the same way).
+    using((arena) {
+      final rawCertificate = _byteString(arena, certificate);
+      final rawPrivateKey = _byteString(arena, privateKey);
+      final trust = trustList ?? const <Uint8List>[];
+      final revocation = revocationList ?? const <Uint8List>[];
+      // Only for this call: the pointer is into this isolate.
+      config.ref.privateKeyPasswordCallback = ffi.Pointer.fromFunction(
+        _noPrivateKeyPassword,
+        raw.UA_STATUSCODE_BADINTERNALERROR,
+      );
+      final status = raw.UA_ClientConfig_setDefaultEncryption(
+        config,
+        rawCertificate.ref,
+        rawPrivateKey.ref,
+        _byteStrings(arena, trust),
+        trust.length,
+        _byteStrings(arena, revocation),
+        revocation.length,
+      );
+      config.ref.privateKeyPasswordCallback = ffi.nullptr;
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        throw UaStatusException(status);
+      }
+      // A DER key passes setDefaultEncryption unparsed; each policy then
+      // fails to load it and is left out, with only None remaining.
+      if (config.ref.securityPoliciesSize <= 1) {
+        throw const UaStatusException(raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED);
+      }
+      // Dart FFI cannot take the address of the UA_CertificateGroup nested
+      // in the config, so the plugin calls below get a copy of the struct.
+      // They only read it (the store is behind `context`, which the copy
+      // shares) or set its function pointers, so the copy goes back.
+      final group = arena<raw.UA_CertificateGroup>();
+      group.ref = config.ref.certificateVerification;
+      if (acceptAllCertificates) {
+        raw.UA_CertificateGroup_AcceptAll(group);
+      } else if (issuerList != null && issuerList.isNotEmpty) {
+        // setDefaultEncryption takes no issuer list; the memory store it
+        // installed (for a non-empty trust list, which
+        // checkClientCertificateArguments guarantees here) does.
+        final issuers = arena<raw.UA_TrustListDataType>();
+        issuers.ref.specifiedLists = raw.UA_TrustListMasks.UA_TRUSTLISTMASKS_ISSUERCERTIFICATES.value;
+        issuers.ref.issuerCertificates = _byteStrings(arena, issuerList);
+        issuers.ref.issuerCertificatesSize = issuerList.length;
+        final addToTrustList = group.ref.addToTrustList
+            .asFunction<int Function(ffi.Pointer<raw.UA_CertificateGroup>, ffi.Pointer<raw.UA_TrustListDataType>)>();
+        final status = addToTrustList(group, issuers);
+        if (status != raw.UA_STATUSCODE_GOOD) {
+          throw UaStatusException(status);
+        }
+      }
+      config.ref.certificateVerification = group.ref;
+    }, ua_calloc);
   }
 
   ClientConfig get config => _clientConfig;

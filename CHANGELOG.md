@@ -14,6 +14,10 @@ changes that ship the same native library version.
 - **The client's DataType definition cache is bounded** (`schemaCacheSize`,
   default 4096, on `Client` and `ClientIsolate`): it grew by every distinct
   type id a server served; past the cap it is emptied and refilled on demand.
+- **An encrypted client private key is an `ArgumentError`**, not an
+  open62541 password prompt on stdin that blocked the process, and a key
+  open62541 cannot load is a `UaStatusException` from the constructor (its
+  `setDefaultEncryption` status was ignored).
 - **Breaking: `Server.addVariableNode` adds a read-only node by default.**
   `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
   every variable a server published without thinking about it was writable by
