@@ -1741,9 +1741,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
           raw.UA_CreateSubscriptionRequest_delete(request);
           callback.close();
           if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-            completer.completeError(
-              'unable to create subscription ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
-            );
+            completer.completeError(UaStatusException(response.ref.responseHeader.serviceResult));
             return;
           }
           completer.complete(response.ref.subscriptionId);

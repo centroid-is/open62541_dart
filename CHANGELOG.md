@@ -6,6 +6,7 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- `subscriptionCreate` fails with a `UaStatusException` carrying the server's status (e.g. `BadTooManySubscriptions`) when the server refuses, on `Client` and `ClientIsolate`; it was a plain string.
 - **Breaking: `Server.addVariableNode` adds a read-only node by default.**
   `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
   every variable a server published without thinking about it was writable by
