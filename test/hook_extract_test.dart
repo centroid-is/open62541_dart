@@ -6,11 +6,44 @@
 import 'dart:io';
 
 import 'package:archive/archive.dart';
+import 'package:code_assets/code_assets.dart';
 import 'package:test/test.dart';
 
 import '../hook/build.dart';
 
 void main() {
+  group('hardeningCmake', () {
+    test('Linux compiles with canaries + FORTIFY and links RELRO/BIND_NOW', () {
+      final script = hardeningCmake(OS.linux, floatLittleEndian: true);
+      expect(script, contains('add_compile_definitions(UA_FLOAT_LITTLE_ENDIAN=1)'));
+      expect(
+        script,
+        contains(r'add_compile_options("$<$<COMPILE_LANGUAGE:C>:-fstack-protector-strong;-D_FORTIFY_SOURCE=2>")'),
+      );
+      expect(script, contains('add_link_options(-Wl,-z,relro -Wl,-z,now)'));
+    });
+
+    test('macOS has no link options, and no float define unless asked', () {
+      final script = hardeningCmake(OS.macOS);
+      expect(script, contains('-fstack-protector-strong'));
+      expect(script, isNot(contains('add_link_options')));
+      expect(script, isNot(contains('UA_FLOAT_LITTLE_ENDIAN')));
+    });
+
+    test('Windows uses the MSVC flags', () {
+      final script = hardeningCmake(OS.windows);
+      expect(script, contains('/GS;/guard:cf'));
+      expect(script, contains('add_link_options(/DYNAMICBASE /NXCOMPAT /guard:cf)'));
+      expect(script, isNot(contains('-fstack')));
+    });
+
+    test('the sanitizer adds to both', () {
+      final script = hardeningCmake(OS.linux, sanitizer: true);
+      expect(script, contains('-fsanitize=address,undefined;-fno-omit-frame-pointer'));
+      expect(script, contains('-Wl,-z,now -fsanitize=address,undefined'));
+    });
+  });
+
   late Directory sandbox;
   late Directory extractDir;
 
