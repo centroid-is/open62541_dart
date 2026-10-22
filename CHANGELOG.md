@@ -6,6 +6,18 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **Fixed: `Server.asyncOperationTimeout` was 0, never, not the 2 minutes its
+  dartdoc promised.** `UA_ServerConfig_setMinimal` sets the 2-minute default
+  only under `UA_MULTITHREADING >= 100`, and this package builds
+  single-threaded, so a parked method call or data-source write whose handler
+  never completed stayed in flight for the life of the server, together with
+  its output memory and its entry in the server's in-flight registries. The
+  constructor now sets 2 minutes; the setter is unchanged for anyone who wants
+  another deadline (`Duration.zero` is still "never").
+  `test/server_async_timeout_test.dart`: a fresh `Server` reports 2 minutes,
+  and (both clients) a data-source write whose handler never completes is
+  answered Bad_Timeout by the server at a 1-second deadline, well before the
+  client's own 5-second request timeout, with the server intact afterwards.
 - **Breaking: `Server.addVariableNode` adds a read-only node by default.**
   `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
   every variable a server published without thinking about it was writable by
