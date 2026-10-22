@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
@@ -62,13 +64,13 @@ void main() {
       }
     }, timeout: const Timeout(Duration(seconds: 60)));
 
-    test('an unreachable endpoint fails with Bad_Timeout within the timeout', () async {
+    test('an unreachable endpoint fails with a TimeoutException within the timeout', () async {
       final client = await ClientIsolate.create(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
       try {
         final sw = Stopwatch()..start();
         await expectLater(
           client.connect('opc.tcp://192.0.2.1:4840', timeout: const Duration(seconds: 2)),
-          throwsA(isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', raw.UA_STATUSCODE_BADTIMEOUT)),
+          throwsA(isA<TimeoutException>()),
         );
         sw.stop();
         // Bounded: it must not hang anywhere near the old forever-wait.

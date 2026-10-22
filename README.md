@@ -118,8 +118,9 @@ More examples are in the [`example/`](example/) directory: a minimal client
 **Client.** Without a certificate the client offers SecurityPolicy None:
 nothing on the wire is signed or encrypted, and a username/password only
 travels if `allowUnencryptedPassword: true` is set (in clear text then; for a
-network you trust end to end). With a `certificate` and `privateKey` (DER)
-and `securityMode: SignAndEncrypt` the channel is encrypted, and the server
+network you trust end to end). With a `certificate` and `privateKey` (DER,
+not encrypted: an encrypted key is an `ArgumentError`, a key open62541
+cannot load a `UaStatusException` from the constructor) and `securityMode: SignAndEncrypt` the channel is encrypted, and the server
 is authenticated against the `trustList` (DER: the server's own certificate,
 or the CA certificate that issued it), with an optional `issuerList`
 (intermediate CAs, which complete a chain but are not trusted by themselves)
