@@ -87,7 +87,7 @@ jobs:
 
       - name: Run tests with AddressSanitizer
         env:
-          ENABLE_SANITIZER: '1'
+          OPEN62541_DART_SANITIZER: '1'
         run: |
           # Find the ASAN shared library for LD_PRELOAD
           ASAN_LIB=$(gcc -print-file-name=libasan.so)

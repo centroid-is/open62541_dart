@@ -136,6 +136,52 @@ String _targetKey(BuildInput input) {
   return '$os-$arch';
 }
 
+/// Compiler and linker hardening for the native builds, per toolchain.
+///
+/// The toolchain follows the target OS the way the build itself does:
+/// `native_toolchain_cmake` configures a Windows target with CMake's default
+/// generator there (Visual Studio, so MSVC), an Android target through the
+/// NDK's toolchain file and an iOS/macOS target through its Xcode toolchain
+/// file (clang both), and Linux with the system compiler (GCC or clang). Every
+/// one of them understands its flags, so nothing is probed on the host.
+///
+/// GCC/clang: `-fstack-protector-strong` puts a canary in every frame that
+/// holds an array or has a local's address taken; `_FORTIFY_SOURCE=2` compiles
+/// a bounded `__*_chk` libc call in place of an unbounded one wherever the
+/// compiler knows the destination size (it needs optimisation, which the
+/// Release build's -O3 gives; Apple's libc fortifies a subset and the rest
+/// compiles as before). On Linux and Android the shared library is linked
+/// with `-z relro -z now` as well: the GOT is resolved at load and then made
+/// read-only, so a write primitive cannot redirect a call through it. The
+/// Apple linker has no RELRO (`__DATA_CONST` is its default equivalent).
+///
+/// MSVC: `/GS` is the canary, `/guard:cf` Control Flow Guard (wanted by both
+/// the compiler and the linker), `/DYNAMICBASE` ASLR and `/NXCOMPAT` DEP for
+/// the DLL.
+///
+/// mbedTLS is built as a static library and linked into libopen62541, so it
+/// takes the same compile flags; the linker flags apply where it is linked.
+/// `test/native_hardening_test.dart` reads the marks these leave in the ELF.
+class _Hardening {
+  const _Hardening({required this.cFlags, required this.sharedLinkerFlags});
+
+  final String cFlags;
+
+  /// Empty where the linker has nothing to add (Apple).
+  final String sharedLinkerFlags;
+}
+
+_Hardening _hardeningFor(OS targetOS) {
+  if (targetOS == OS.windows) {
+    return const _Hardening(cFlags: '/GS /guard:cf', sharedLinkerFlags: '/DYNAMICBASE /NXCOMPAT /guard:cf');
+  }
+  final elf = targetOS == OS.linux || targetOS == OS.android;
+  return _Hardening(
+    cFlags: '-fstack-protector-strong -D_FORTIFY_SOURCE=2',
+    sharedLinkerFlags: elf ? '-Wl,-z,relro,-z,now' : '',
+  );
+}
+
 /// Configures + builds + installs a CMake project via `native_toolchain_cmake`.
 ///
 /// [CMakeBuilder] manages its own build directory via `buildLocal`, and honors
@@ -173,11 +219,23 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
   // it, so an install that is still present afterwards is the pinned version.
   final sourceDir = await _downloadMbedTLS(input.outputDirectoryShared);
 
-  // Skip if already built for this target
+  // Skip if already built for this target with these flags. The flags are
+  // stamped into the install prefix: the prefix outlives a package upgrade,
+  // and an install built under other flags (or none) would otherwise be
+  // linked in as it is. A mismatch discards the install and rebuilds; the
+  // CMake build directory under src/ is reconfigured, so only the objects
+  // the flags touch recompile.
+  final hardening = _hardeningFor(input.config.code.targetOS);
+  final flags = '${hardening.cFlags}\n${hardening.sharedLinkerFlags}\n';
+  final flagsStamp = File.fromUri(installPrefix.resolve('flags'));
   final includeCheck = File.fromUri(installPrefix.resolve('include/mbedtls/ssl.h'));
   if (await includeCheck.exists()) {
-    logger.info('mbedTLS already built, skipping');
-    return installPrefix;
+    if (await flagsStamp.exists() && await flagsStamp.readAsString() == flags) {
+      logger.info('mbedTLS already built, skipping');
+      return installPrefix;
+    }
+    logger.info('mbedTLS install was built with other flags, rebuilding');
+    await Directory.fromUri(installPrefix).delete(recursive: true);
   }
 
   await _buildCmakeProject(
@@ -195,9 +253,13 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
       'USE_STATIC_MBEDTLS_LIBRARY': 'ON',
       'BUILD_SHARED_LIBS': 'OFF',
       'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
+      // mbedTLS's CMakeLists appends its warning flags to these.
+      'CMAKE_C_FLAGS': hardening.cFlags,
+      if (hardening.sharedLinkerFlags.isNotEmpty) 'CMAKE_SHARED_LINKER_FLAGS': hardening.sharedLinkerFlags,
     },
     targets: ['install'],
   );
+  await flagsStamp.writeAsString(flags);
 
   return installPrefix;
 }
@@ -757,7 +819,14 @@ Future<void> main(List<String> args) async {
     final libPrefix = isWindows ? '' : 'lib';
     final libSuffix = isWindows ? '.lib' : '.a';
 
-    final sanitizer = Platform.environment['ENABLE_SANITIZER'] == '1';
+    // OPEN62541_DART_SANITIZER=1 builds the library with ASan + UBSan (CI's
+    // test-asan job). The sanitizer flags go on top of the hardening ones.
+    final sanitizer = Platform.environment['OPEN62541_DART_SANITIZER'] == '1';
+    final hardening = _hardeningFor(input.config.code.targetOS);
+    final linkerFlags = [
+      hardening.sharedLinkerFlags,
+      if (sanitizer) '-fsanitize=address,undefined',
+    ].where((flags) => flags.isNotEmpty).join(' ');
 
     await _buildCmakeProject(
       input: input,
@@ -798,10 +867,12 @@ Future<void> main(List<String> args) async {
         // subnormal (denormalized) Float/Double values on the wire. Every
         // target we build for uses little-endian IEEE 754 floats, so forcing
         // this on is both correct and required for subnormals to round-trip.
-        'CMAKE_C_FLAGS': sanitizer
-            ? '-DUA_FLOAT_LITTLE_ENDIAN=1 -fsanitize=address,undefined -fno-omit-frame-pointer'
-            : '-DUA_FLOAT_LITTLE_ENDIAN=1',
-        if (sanitizer) 'CMAKE_SHARED_LINKER_FLAGS': '-fsanitize=address,undefined',
+        'CMAKE_C_FLAGS': [
+          '-DUA_FLOAT_LITTLE_ENDIAN=1',
+          hardening.cFlags,
+          if (sanitizer) '-fsanitize=address,undefined -fno-omit-frame-pointer',
+        ].join(' '),
+        if (linkerFlags.isNotEmpty) 'CMAKE_SHARED_LINKER_FLAGS': linkerFlags,
       },
       targets: ['install'],
     );
