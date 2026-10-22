@@ -628,7 +628,11 @@ class Server {
   /// * [value] - The initial value and type information for the variable
   ///
   /// Optional parameters:
-  /// * [accessLevel] - Controls read/write access to the variable (defaults to read and write enabled)
+  /// * [accessLevel] - Controls client access to the variable. Defaults to
+  ///   read-only: a client write is refused with `Bad_UserAccessDenied`. Pass
+  ///   `const AccessLevelMask(read: true, write: true)` for a node clients may
+  ///   write. [Server.write] is unaffected: the server's own writes bypass the
+  ///   access level.
   /// * [parentNodeId] - The parent node in the address space (defaults to Objects folder)
   /// * [parentReferenceNodeId] - The reference type to the parent (defaults to Organizes)
   /// * [basedatavariableType] - The base type for the variable (defaults to BaseDataVariableType)
@@ -650,7 +654,7 @@ class Server {
   void addVariableNode(
     NodeId variableNodeId,
     DynamicValue value, {
-    AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
+    AccessLevelMask accessLevel = const AccessLevelMask(read: true),
     NodeId? parentNodeId,
     NodeId? parentReferenceNodeId,
     NodeId? baseDataVariableType,
