@@ -105,8 +105,6 @@ changes that ship the same native library version.
   previous loops end on their next turn. `stopKeepConnected()` behaviour is
   unchanged.
 
-## 1.5.9
-
 - **Known structures decode from their native layout.** A value whose
   DataType is a structure the bundled open62541 knows (every NS0 DataType in
   `UA_TYPES`: `ServerStatusDataType`, `BuildInfo`, `Argument`, `Range`,
