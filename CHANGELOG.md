@@ -6,6 +6,13 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **CI's ASan/UBSan lane now sanitises.** The hooks runner starts build hooks
+  with a scrubbed environment, so `OPEN62541_DART_SANITIZER` (and
+  `ENABLE_SANITIZER` before it) never reached the hook and `test-asan` ran
+  against a plain library. The switch is now an empty `.open62541_sanitizer`
+  file in the package root (gitignored; the hook reruns when it appears or
+  goes). The job asserts `__asan_` symbols in the built library, and
+  `test/native_sanitizer_test.dart` checks the loaded one.
 - **Fixed (security): a server could make the client read out-of-bounds native
   memory by sending a value whose type disagreed with the type it declared.**
   `Client.read` passed the node's DataType attribute to the variant decoder as

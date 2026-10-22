@@ -88,9 +88,21 @@ jobs:
       - name: Install dependencies
         run: dart pub get
 
+      # The hooks runner scrubs the environment, so the switch is a file in the
+      # package root (see hook/build.dart).
+      - name: Build the library with ASan + UBSan
+        run: |
+          touch .open62541_sanitizer
+          LD_PRELOAD="$(gcc -print-file-name=libasan.so)" \
+          ASAN_OPTIONS="detect_leaks=0,halt_on_error=1" \
+          dart test test/native_sanitizer_test.dart
+
+      - name: Assert the library is sanitised
+        run: |
+          LIB=.dart_tool/lib/libopen62541.so
+          nm -D "$LIB" | grep -q '__asan_' || { echo "::error::$LIB has no __asan_ symbols; the lane is not sanitising"; exit 1; }
+
       - name: Run tests with AddressSanitizer
-        env:
-          OPEN62541_DART_SANITIZER: '1'
         run: |
           # Find the ASAN shared library for LD_PRELOAD
           ASAN_LIB=$(gcc -print-file-name=libasan.so)
