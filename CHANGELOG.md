@@ -6,6 +6,20 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **Fixed (security): a server could make the client read out-of-bounds native
+  memory by sending a value whose type disagreed with the type it declared.**
+  `Client.read` passed the node's DataType attribute to the variant decoder as
+  a hint and chose the native payload reader from it, rather than from the type
+  open62541 actually decoded from the wire. A server that advertised one
+  built-in type but put another on the wire (a DataType attribute that
+  disagrees with the value on the wire) could therefore have the raw bytes read
+  under the wrong layout — an out-of-bounds read that could crash the client or
+  leak memory. The decoder now keys the reader on the wire type and raises a
+  typed `UaTypeMismatch` (an `on UaStatusException`, carrying `Bad_TypeMismatch`
+  and the expected/actual NodeIds; it crosses the `ClientIsolate` boundary as
+  itself) when the declared and wire types are different built-ins; the client
+  stays usable. `readValue` and the monitored-item callbacks were never
+  affected (they pass no hint).
 - **Breaking: `Server.addVariableNode` adds a read-only node by default.**
   `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
   every variable a server published without thinking about it was writable by
