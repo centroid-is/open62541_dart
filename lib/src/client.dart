@@ -668,13 +668,29 @@ class Client implements ClientApi, DataValueMonitoringApi {
     await config.stateStream.firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
   }
 
+  /// Connects to [url] and completes once the session is activated; the
+  /// caller pumps ([runIterate]) meanwhile.
+  ///
+  /// [timeout] bounds the whole handshake (default 30 s, `null` waits as long
+  /// as it takes): a peer that accepts the connection and never answers, or a
+  /// server that never activates the session, is a [TimeoutException]. The
+  /// attempt is then abandoned (the client disconnects), so [delete] and a
+  /// later [connect] work. A handshake that fails instead is a
+  /// [UaStatusException] with open62541's status.
   @override
-  Future<void> connect(String url) async {
+  Future<void> connect(String url, {Duration? timeout = const Duration(seconds: 30)}) async {
     final instantReturn = _issueConnect(url);
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
     }
-    await _awaitHandshake();
+    if (timeout == null) return _awaitHandshake();
+    await _awaitHandshake().timeout(
+      timeout,
+      onTimeout: () {
+        if (_client != ffi.nullptr) raw.UA_Client_disconnect(_client);
+        throw TimeoutException('connect to $url: no activated session within $timeout', timeout);
+      },
+    );
   }
 
   /// Completes when the session is activated, or throws a [UaStatusException]
@@ -749,7 +765,9 @@ class Client implements ClientApi, DataValueMonitoringApi {
   ///
   /// The returned future completes when the session first reaches ACTIVATED.
   /// After that the supervisor keeps running in the background until
-  /// [stopKeepConnected] (or [delete]) is called. This method OWNS the event
+  /// [stopKeepConnected] (or [delete]) is called. An attempt still in flight
+  /// after [connectTimeout] (a peer that accepts and never answers) is
+  /// abandoned and retried; `null` lets it run. This method OWNS the event
   /// loop pump — do not run your own `runIterate` loop alongside it.
   ///
   /// Existing `connect()` / `runIterate()` semantics are unchanged; recovery is
@@ -802,6 +820,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
     bool nonBlocking = false,
+    Duration? connectTimeout = const Duration(seconds: 30),
   }) {
     // Restart cleanly if already supervising: the running pump and supervisor
     // check this generation on every turn and stop as soon as it has moved on,
@@ -810,7 +829,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     final firstActivation = Completer<void>();
     _keepConnected = true;
     _startPump(iterateInterval, nonBlocking, generation);
-    _superviseConnection(url, retryInterval, maxBackoff, firstActivation, generation);
+    _superviseConnection(url, retryInterval, maxBackoff, connectTimeout, firstActivation, generation);
     return firstActivation.future;
   }
 
@@ -838,6 +857,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     String url,
     Duration retryInterval,
     Duration maxBackoff,
+    Duration? connectTimeout,
     Completer<void> firstActivation,
     int generation,
   ) async {
@@ -845,12 +865,15 @@ class Client implements ClientApi, DataValueMonitoringApi {
     var backoff = retryInterval;
     var everActivated = false;
     var wasActivated = false;
+    // How long the attempt in flight has been; null when none is.
+    Stopwatch? connectingSince;
 
     while (_keepConnected && generation == _keepConnectedGeneration && _client != ffi.nullptr) {
       final snapshot = state;
       final activated = snapshot.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED;
 
       if (activated) {
+        connectingSince = null;
         // Signal a recovery (session came back after having dropped).
         if (everActivated && !wasActivated && !_reconnectController.isClosed) {
           _reconnectController.add(null);
@@ -873,9 +896,16 @@ class Client implements ClientApi, DataValueMonitoringApi {
           snapshot.recoveryStatus == raw.UA_STATUSCODE_GOOD &&
           snapshot.channelState != raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CLOSED;
       if (connecting) {
-        await Future.delayed(pollInterval);
-        continue;
+        connectingSince ??= Stopwatch()..start();
+        if (connectTimeout == null || connectingSince.elapsed < connectTimeout) {
+          await Future.delayed(pollInterval);
+          continue;
+        }
+        // A peer that never answers keeps the attempt in flight forever:
+        // abandon it and start over.
+        raw.UA_Client_disconnect(_client);
       }
+      connectingSince = null;
 
       // Either we have never connected, or the connect latch has gone bad and
       // open62541 has given up. Re-issue connect to reset connectStatus and

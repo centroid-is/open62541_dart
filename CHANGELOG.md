@@ -6,6 +6,11 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **`Client.connect(timeout:)`** (default 30 s, `null` waits): a peer that
+  never answers, or a session never activated, is a `TimeoutException` and
+  the attempt is abandoned; `keepConnected(connectTimeout:)` abandons and
+  retries such an attempt. `ClientIsolate` forwards both, and its connect
+  timeout is now a `TimeoutException` (was `UaStatusException(Bad_Timeout)`).
 - **Breaking: `Server.addVariableNode` adds a read-only node by default.**
   `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
   every variable a server published without thinking about it was writable by

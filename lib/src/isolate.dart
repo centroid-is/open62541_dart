@@ -8,7 +8,6 @@ import 'client_api.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'node_id.dart';
-import 'third_party/open62541.g.dart' show UA_STATUSCODE_BADTIMEOUT;
 import 'types/endpoint_description.dart';
 import 'types/errors.dart';
 
@@ -194,12 +193,14 @@ class KeepConnectedMessage extends IsolateMessage {
   final Duration retryInterval;
   final Duration maxBackoff;
   final Duration iterateInterval;
+  final Duration? connectTimeout;
   const KeepConnectedMessage(
     super.requestId,
     this.url, {
     required this.retryInterval,
     required this.maxBackoff,
     required this.iterateInterval,
+    required this.connectTimeout,
   });
 }
 
@@ -242,12 +243,12 @@ class IsolateResponse<T> {
 }
 
 /// Maps an error to what crosses the isolate boundary: a [UaStatusException]
-/// travels as itself (its status code survives — callers on the main isolate
+/// (and a [TimeoutException]) travels as itself (its status code survives — callers on the main isolate
 /// can `on UaStatusException catch` and read `statusCode`), and so does a
 /// [MonitoredItemsRefused], with its per-item statuses; anything else is
 /// stringified, because arbitrary exception types (native handles, closures)
 /// are not reliably sendable.
-Object sendableError(Object e) => e is UaStatusException ? e : e.toString();
+Object sendableError(Object e) => e is UaStatusException || e is TimeoutException ? e : e.toString();
 
 /// A [Client] on its own isolate, driven through messages: the same API, with
 /// the native event loop and its callbacks off the calling isolate.
@@ -462,9 +463,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
   /// [keepConnected] (preferred — it owns the pump) or a [runIterate] loop
   /// to process traffic.
   ///
-  /// [timeout] bounds the attempt (default 30 s; the underlying open62541
-  /// connect otherwise retries forever): on expiry the connect attempt is
-  /// abandoned and a [UaStatusException] with `Bad_Timeout` is thrown.
+  /// [timeout] is [Client.connect]'s: it bounds the handshake (default
+  /// 30 s, `null` waits as long as it takes); on expiry the attempt is
+  /// abandoned and a [TimeoutException] is thrown.
   @override
   Future<void> connect(String url, {Duration? timeout = const Duration(seconds: 30)}) async {
     if (_isClosed) throw const ClientIsolateClosedException();
@@ -894,6 +895,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     Duration retryInterval = const Duration(milliseconds: 500),
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
+    Duration? connectTimeout = const Duration(seconds: 30),
   }) async {
     if (_isClosed) throw const ClientIsolateClosedException();
 
@@ -908,6 +910,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
         retryInterval: retryInterval,
         maxBackoff: maxBackoff,
         iterateInterval: iterateInterval,
+        connectTimeout: connectTimeout,
       ),
     );
 
@@ -1163,7 +1166,7 @@ void _isolateEntryPoint(_IsolateData data) {
         // owns one, but must not be required just to connect). The pump ends
         // with the connect — session traffic afterwards is the caller's
         // pump's job.
-        final connectFuture = client.connect(message.url);
+        final connectFuture = client.connect(message.url, timeout: message.timeout);
         var connecting = true;
         connectFuture.whenComplete(() => connecting = false).ignore();
         unawaited(() async {
@@ -1172,22 +1175,7 @@ void _isolateEntryPoint(_IsolateData data) {
             await Future<void>.delayed(const Duration(milliseconds: 5));
           }
         }());
-        if (message.timeout == null) {
-          await connectFuture;
-        } else {
-          await connectFuture.timeout(
-            message.timeout!,
-            onTimeout: () {
-              // Abandon the attempt: stop the state machine so a later
-              // connect/keepConnected starts clean, and answer Bad_Timeout.
-              connecting = false;
-              try {
-                client.disconnect();
-              } catch (_) {}
-              throw const UaStatusException(UA_STATUSCODE_BADTIMEOUT);
-            },
-          );
-        }
+        await connectFuture;
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is ReadMessage) {
         final result = await client.read(message.nodeId);
@@ -1357,6 +1345,7 @@ void _isolateEntryPoint(_IsolateData data) {
                 retryInterval: message.retryInterval,
                 maxBackoff: message.maxBackoff,
                 iterateInterval: message.iterateInterval,
+                connectTimeout: message.connectTimeout,
               )
               .then((_) => sendPort.send(IsolateResponse.success(message.requestId, null)))
               .catchError((Object e) => sendPort.send(IsolateResponse.error(message.requestId, sendableError(e)))),
