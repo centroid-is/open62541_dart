@@ -3,6 +3,7 @@ import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:logging/logging.dart';
 
 import 'package:open62541/open62541.dart';
 import 'common.dart';
@@ -222,6 +223,116 @@ class MethodSessionInfo {
       'MethodSessionInfo(sessionId: $sessionId, sessionName: $sessionName, '
       'applicationUri: $applicationUri, applicationName: $applicationName, '
       'identity: $identity)';
+}
+
+typedef _ActivateSessionNative =
+    raw.UA_StatusCode Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_EndpointDescription>,
+      ffi.Pointer<raw.UA_ByteString>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<raw.UA_ExtensionObject>,
+      ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    );
+typedef _ActivateSession =
+    int Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_EndpointDescription>,
+      ffi.Pointer<raw.UA_ByteString>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<raw.UA_ExtensionObject>,
+      ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    );
+typedef _CloseSessionNative =
+    ffi.Void Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+    );
+typedef _CloseSession =
+    void Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+    );
+
+/// getUserAccessLevel, getUserExecutable and allowBrowseNode: (server, ac,
+/// sessionId, sessionContext, nodeId, nodeContext).
+typedef _NodeHookNative<R extends ffi.NativeType> =
+    R Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+    );
+typedef _ExecutableOnObjectNative =
+    ffi.Bool Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+    );
+
+/// Per-user authorization of client sessions, see the `authorization`
+/// argument of [Server].
+///
+/// Each hook is optional; open62541's own answer (everything allowed) stands
+/// for a hook left `null`, and a [Server] without an authorization keeps
+/// open62541's default functions untouched. Every hook gets the session as
+/// a [MethodSessionInfo]: its [MethodSessionInfo.identity] says who logged
+/// in (anonymous, a username, a certificate subject). It is resolved once
+/// per session activation and kept until the session closes or activates
+/// again.
+///
+/// The hooks restrict, they never grant: open62541 ANDs what they return
+/// with the node's own attributes (`src/server/ua_services_attribute.c`,
+/// `getUserAccessLevel` and the Call service's `executable` check), so a
+/// read-only node stays read-only whatever [userAccessLevel] answers. They
+/// apply to client sessions only: the host's own [Server.read],
+/// [Server.write], [Server.addVariableNode] and the rest run as open62541's
+/// admin session, which is never asked.
+///
+/// The hooks are called synchronously on the isolate that created the
+/// server, from [Server.runIterate], while a request is being served:
+/// [userAccessLevel] once per Read or Write of a variable's value (and per
+/// sample of a monitored item), so it must be cheap and must not wait for
+/// anything. A hook that throws denies (no access, not executable, not
+/// browsable); the first exception of each hook is logged on the
+/// `open62541.Server` logger (package:logging), later ones are not.
+class ServerAuthorization {
+  const ServerAuthorization({this.userAccessLevel, this.userExecutable, this.allowBrowse});
+
+  /// The access a session has to a variable node's value: the
+  /// `UserAccessLevel` attribute, ANDed with the node's `AccessLevel`.
+  /// `null` leaves the node's own access level. A Read or Write the result
+  /// does not allow is `BadUserAccessDenied`.
+  final AccessLevelMask? Function(MethodSessionInfo session, NodeId node)? userAccessLevel;
+
+  /// Whether a session may call the method [method] (on [object]; `null`
+  /// when a client reads the method's `UserExecutable` attribute). A
+  /// refused Call is `BadUserAccessDenied`.
+  final bool Function(MethodSessionInfo session, NodeId method, NodeId? object)? userExecutable;
+
+  /// Whether a session may browse [node], and read its attributes other
+  /// than the Value: a refused Browse of the node is `BadUserAccessDenied`,
+  /// TranslateBrowsePathsToNodeIds does not pass through it
+  /// (`src/server/ua_services_view.c`), and a Read of any attribute but
+  /// Value and RolePermissions is `BadUserAccessDenied`
+  /// (`src/server/ua_services_attribute.c`, `ReadWithNodeMaybeAsync`; the
+  /// Value is [userAccessLevel]'s). open62541 asks only about the node a
+  /// Browse starts from: the node still appears among its parent's
+  /// references.
+  final bool Function(MethodSessionInfo session, NodeId node)? allowBrowse;
 }
 
 /// The complete read result of a data-source variable node: the [value] plus
@@ -605,6 +716,8 @@ ffi.Pointer<raw.UA_ByteString> _byteStrings(Arena arena, List<Uint8List> list) {
 ///   `BadUserAccessDenied` unless `allowClientNodeManagement: true`. The
 ///   host's own [addVariableNode], [deleteNode], [addReference], ... are
 ///   not affected, they run as the server's internal admin session.
+///   `authorization` ([ServerAuthorization]) restricts reads, writes,
+///   calls and browsing per user.
 /// * **Listen address.** All interfaces, or `hostname` only.
 /// * **Limits.** [ServerLimits], see [limits].
 class Server {
@@ -722,8 +835,10 @@ class Server {
   /// but the server's own admin session, which is how the host's
   /// [addVariableNode], [deleteNode], [addReference] and the rest go
   /// through unchecked). [allowClientNodeManagement] restores the old
-  /// behaviour, where any client may reshape the address space. A per-user
-  /// access level (`getUserAccessLevel`) is not exposed yet.
+  /// behaviour, where any client may reshape the address space.
+  /// [authorization] decides per session what open62541's plugin would
+  /// allow everyone: a variable's user access level, whether a method may
+  /// be called, whether a node may be browsed, see [ServerAuthorization].
   ///
   /// ### Listen address
   ///
@@ -764,6 +879,7 @@ class Server {
     bool allowUnencryptedPassword = false,
     bool allowClientNodeManagement = false,
     ServerLimits limits = const ServerLimits(),
+    ServerAuthorization? authorization,
   }) : allowNone = allowNone ?? certificate == null,
        allowAnonymous = allowAnonymous,
        allowClientNodeManagement = allowClientNodeManagement,
@@ -913,6 +1029,9 @@ class Server {
 
     if (!allowClientNodeManagement) {
       _installNodeManagementGuard();
+    }
+    if (authorization != null) {
+      _installAuthorization(authorization);
     }
   }
 
@@ -1168,6 +1287,176 @@ class Server {
     ac.allowAddReference = _allowAddReferenceGuard!.nativeFunction;
     ac.allowDeleteNode = _allowDeleteNodeGuard!.nativeFunction;
     ac.allowDeleteReference = _allowDeleteReferenceGuard!.nativeFunction;
+  }
+
+  // ---- Authorization ------------------------------------------------------
+  //
+  // The hooks of [ServerAuthorization] replace the plugin's
+  // getUserAccessLevel, getUserExecutable(OnObject) and allowBrowseNode, each
+  // only when given. activateSession and closeSession are wrapped around the
+  // plugin's own: every successful activation gets a fresh key in the
+  // session context (the default plugin leaves it NULL and never reads it),
+  // under which the session's identity is cached on first use, so a hook
+  // costs a map lookup. Closed in [delete], after UA_Server_delete, which
+  // still closes the open sessions through the wrapper.
+  static final _log = Logger('open62541.Server');
+  final List<ffi.NativeCallable> _authorizationCallbacks = [];
+  final Map<int, MethodSessionInfo> _authorizedSessions = {};
+  int _lastSessionKey = 0;
+  final Set<String> _authorizationHooksThatThrew = {};
+
+  void _installAuthorization(ServerAuthorization authorization) {
+    final ac = _config.ref.accessControl;
+    final activate = ac.activateSession.asFunction<_ActivateSession>();
+    final close = ac.closeSession.asFunction<_CloseSession>();
+    final activateWrapper = ffi.NativeCallable<_ActivateSessionNative>.isolateLocal((
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_AccessControl> ac,
+      ffi.Pointer<raw.UA_EndpointDescription> endpoint,
+      ffi.Pointer<raw.UA_ByteString> certificate,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<raw.UA_ExtensionObject> token,
+      ffi.Pointer<ffi.Pointer<ffi.Void>> sessionContext,
+    ) {
+      final status = activate(server, ac, endpoint, certificate, sessionId, token, sessionContext);
+      if (status == raw.UA_STATUSCODE_GOOD) {
+        try {
+          _authorizedSessions.remove(sessionContext.value.address);
+          sessionContext.value = ffi.Pointer.fromAddress(++_lastSessionKey);
+        } catch (_) {
+          return raw.UA_STATUSCODE_BADINTERNALERROR;
+        }
+      }
+      return status;
+    }, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
+    final closeWrapper = ffi.NativeCallable<_CloseSessionNative>.isolateLocal((
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_AccessControl> ac,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionContext,
+    ) {
+      try {
+        _authorizedSessions.remove(sessionContext.address);
+      } catch (_) {
+        // Nothing to undo: the entry is gone or never was.
+      }
+      close(server, ac, sessionId, sessionContext);
+    });
+    _authorizationCallbacks.addAll([activateWrapper, closeWrapper]);
+    ac.activateSession = activateWrapper.nativeFunction;
+    ac.closeSession = closeWrapper.nativeFunction;
+
+    final userAccessLevel = authorization.userAccessLevel;
+    if (userAccessLevel != null) {
+      final callback = ffi.NativeCallable<_NodeHookNative<raw.UA_Byte>>.isolateLocal((
+        ffi.Pointer<raw.UA_Server> server,
+        ffi.Pointer<raw.UA_AccessControl> ac,
+        ffi.Pointer<raw.UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<raw.UA_NodeId> nodeId,
+        ffi.Pointer<ffi.Void> nodeContext,
+      ) {
+        try {
+          final session = _authorizedSession(sessionId, sessionContext);
+          if (session == null) return 0;
+          return userAccessLevel(session, NodeIdFfi.fromRaw(nodeId.ref))?.value ?? 0xFF;
+        } catch (error, stack) {
+          _authorizationHookThrew('userAccessLevel', error, stack);
+          return 0;
+        }
+      }, exceptionalReturn: 0);
+      _authorizationCallbacks.add(callback);
+      ac.getUserAccessLevel = callback.nativeFunction;
+    }
+
+    final userExecutable = authorization.userExecutable;
+    if (userExecutable != null) {
+      bool decide(
+        ffi.Pointer<raw.UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<raw.UA_NodeId> methodId,
+        ffi.Pointer<raw.UA_NodeId> objectId,
+      ) {
+        try {
+          final session = _authorizedSession(sessionId, sessionContext);
+          if (session == null) return false;
+          final object = objectId == ffi.nullptr ? null : NodeIdFfi.fromRaw(objectId.ref);
+          return userExecutable(session, NodeIdFfi.fromRaw(methodId.ref), object);
+        } catch (error, stack) {
+          _authorizationHookThrew('userExecutable', error, stack);
+          return false;
+        }
+      }
+
+      final callback = ffi.NativeCallable<_NodeHookNative<ffi.Bool>>.isolateLocal(
+        (
+          ffi.Pointer<raw.UA_Server> server,
+          ffi.Pointer<raw.UA_AccessControl> ac,
+          ffi.Pointer<raw.UA_NodeId> sessionId,
+          ffi.Pointer<ffi.Void> sessionContext,
+          ffi.Pointer<raw.UA_NodeId> methodId,
+          ffi.Pointer<ffi.Void> methodContext,
+        ) => decide(sessionId, sessionContext, methodId, ffi.nullptr),
+        exceptionalReturn: false,
+      );
+      final onObject = ffi.NativeCallable<_ExecutableOnObjectNative>.isolateLocal(
+        (
+          ffi.Pointer<raw.UA_Server> server,
+          ffi.Pointer<raw.UA_AccessControl> ac,
+          ffi.Pointer<raw.UA_NodeId> sessionId,
+          ffi.Pointer<ffi.Void> sessionContext,
+          ffi.Pointer<raw.UA_NodeId> methodId,
+          ffi.Pointer<ffi.Void> methodContext,
+          ffi.Pointer<raw.UA_NodeId> objectId,
+          ffi.Pointer<ffi.Void> objectContext,
+        ) => decide(sessionId, sessionContext, methodId, objectId),
+        exceptionalReturn: false,
+      );
+      _authorizationCallbacks.addAll([callback, onObject]);
+      ac.getUserExecutable = callback.nativeFunction;
+      ac.getUserExecutableOnObject = onObject.nativeFunction;
+    }
+
+    final allowBrowse = authorization.allowBrowse;
+    if (allowBrowse != null) {
+      final callback = ffi.NativeCallable<_NodeHookNative<ffi.Bool>>.isolateLocal((
+        ffi.Pointer<raw.UA_Server> server,
+        ffi.Pointer<raw.UA_AccessControl> ac,
+        ffi.Pointer<raw.UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<raw.UA_NodeId> nodeId,
+        ffi.Pointer<ffi.Void> nodeContext,
+      ) {
+        try {
+          final session = _authorizedSession(sessionId, sessionContext);
+          if (session == null) return false;
+          return allowBrowse(session, NodeIdFfi.fromRaw(nodeId.ref));
+        } catch (error, stack) {
+          _authorizationHookThrew('allowBrowse', error, stack);
+          return false;
+        }
+      }, exceptionalReturn: false);
+      _authorizationCallbacks.add(callback);
+      ac.allowBrowseNode = callback.nativeFunction;
+    }
+  }
+
+  /// The session behind a hook's arguments, resolved on its first hook call
+  /// after activation; `null` (deny) without one: a monitored item of a
+  /// subscription whose session timed out is sampled with no session.
+  MethodSessionInfo? _authorizedSession(ffi.Pointer<raw.UA_NodeId> sessionId, ffi.Pointer<ffi.Void> sessionContext) {
+    if (sessionId == ffi.nullptr || sessionContext == ffi.nullptr) return null;
+    final key = sessionContext.address;
+    final known = _authorizedSessions[key];
+    if (known != null) return known;
+    if (_server == ffi.nullptr) return null;
+    return _authorizedSessions[key] = _resolveSessionInfo(sessionId);
+  }
+
+  void _authorizationHookThrew(String hook, Object error, StackTrace stack) {
+    if (_authorizationHooksThatThrew.add(hook)) {
+      _log.severe('ServerAuthorization.$hook threw, the request is denied (logged once)', error, stack);
+    }
   }
 
   /// The text of the `ApplicationDescription.applicationName` this server
@@ -4163,6 +4452,12 @@ class Server {
     _allowAddReferenceGuard = null;
     _allowDeleteNodeGuard = null;
     _allowDeleteReferenceGuard = null;
+    // The authorization hooks and session wrappers, likewise.
+    for (final callback in _authorizationCallbacks) {
+      callback.close();
+    }
+    _authorizationCallbacks.clear();
+    _authorizedSessions.clear();
     if (ret != 0) {
       throw "Failed to delete server ${statusCodeToString(ret)}";
     }
