@@ -24,6 +24,7 @@ Future<void> main() async {
     'UA_Client_findDataType',
     'UA_ClientConfig_setDefaultEncryption',
     'UA_CertificateGroup_AcceptAll',
+    'UA_CreateCertificate',
     'UA_ClientConfig_setAuthenticationUsername',
     'UA_Client_newWithConfig',
     'UA_Client_getConfig',
@@ -63,6 +64,7 @@ Future<void> main() async {
     'UA_BrowseDescription_init',
 
     'UA_ServerConfig_setMinimal',
+    'UA_ServerConfig_setDefaultWithSecurityPolicies',
     'UA_Server_newWithConfig',
     'UA_Server_getConfig',
     'UA_Server_run_startup',
@@ -197,6 +199,8 @@ Future<void> main() async {
 
   const structSet = {
     'UA_ClientConfig',
+    'UA_TrustListDataType',
+    'UA_KeyValuePair',
     'UA_Variant',
     'UA_EnumDefinition',
     'UA_EnumField',

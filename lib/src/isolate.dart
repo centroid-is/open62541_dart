@@ -248,6 +248,17 @@ class IsolateResponse<T> {
 /// are not reliably sendable.
 Object sendableError(Object e) => e is UaStatusException ? e : e.toString();
 
+/// A [Client] on its own isolate, driven through messages: the same API, with
+/// the native event loop and its callbacks off the calling isolate.
+///
+/// The security of the connection is the [Client]'s, see its class
+/// documentation: SecurityPolicy#None without a certificate; with a
+/// `certificate`/`privateKey` and `SignAndEncrypt` the server is
+/// authenticated only against a `trustList` (plus `issuerList`,
+/// `revocationList`), and `acceptAllCertificates: true` opts out of that
+/// authentication (encrypted, so safe from passive eavesdropping, but open to
+/// an active attacker). [create] checks the combination up front and throws
+/// an [ArgumentError] before any isolate is spawned.
 class ClientIsolate implements ClientApi, DataValueMonitoringApi {
   ClientIsolate._({
     Duration? secureChannelLifeTime,
@@ -257,6 +268,10 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     MessageSecurityMode? securityMode,
     Uint8List? certificate,
     Uint8List? privateKey,
+    List<Uint8List>? trustList,
+    List<Uint8List>? issuerList,
+    List<Uint8List>? revocationList,
+    bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
   }) {
@@ -268,12 +283,18 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       securityMode: securityMode,
       certificate: certificate,
       privateKey: privateKey,
+      trustList: trustList,
+      issuerList: issuerList,
+      revocationList: revocationList,
+      acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
     );
   }
 
-  /// Factory constructor that creates a ClientIsolate with the specified configuration
+  /// Creates the worker isolate and the [Client] on it; the arguments are
+  /// the [Client] constructor's (the certificate ones are checked here
+  /// first, see [checkClientCertificateArguments]).
   static Future<ClientIsolate> create({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -282,10 +303,25 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     MessageSecurityMode? securityMode,
     Uint8List? certificate,
     Uint8List? privateKey,
+    List<Uint8List>? trustList,
+    List<Uint8List>? issuerList,
+    List<Uint8List>? revocationList,
+    bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     Duration iterateInterval = const Duration(milliseconds: 10),
   }) async {
+    // The worker's Client constructor would throw where nobody awaits it
+    // (errorsAreFatal is false there) and every later call would find no
+    // client: check on this isolate, where the caller gets the exception.
+    checkClientCertificateArguments(
+      certificate: certificate,
+      privateKey: privateKey,
+      trustList: trustList,
+      issuerList: issuerList,
+      revocationList: revocationList,
+      acceptAllCertificates: acceptAllCertificates,
+    );
     final isolate = ClientIsolate._(
       secureChannelLifeTime: secureChannelLifeTime,
       requestedSessionTimeout: requestedSessionTimeout,
@@ -294,6 +330,10 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       securityMode: securityMode,
       certificate: certificate,
       privateKey: privateKey,
+      trustList: trustList,
+      issuerList: issuerList,
+      revocationList: revocationList,
+      acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
     );
@@ -319,6 +359,10 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     MessageSecurityMode? securityMode,
     Uint8List? certificate,
     Uint8List? privateKey,
+    List<Uint8List>? trustList,
+    List<Uint8List>? issuerList,
+    List<Uint8List>? revocationList,
+    bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
   }) async {
@@ -347,6 +391,10 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
           securityMode: securityMode,
           certificate: certificate,
           privateKey: privateKey,
+          trustList: trustList,
+          issuerList: issuerList,
+          revocationList: revocationList,
+          acceptAllCertificates: acceptAllCertificates,
           logLevel: logLevel,
           connectivityCheckInterval: connectivityCheckInterval,
           sendPort: _receivePort.sendPort,
@@ -1031,6 +1079,10 @@ class _IsolateData {
   final MessageSecurityMode? securityMode;
   final Uint8List? certificate;
   final Uint8List? privateKey;
+  final List<Uint8List>? trustList;
+  final List<Uint8List>? issuerList;
+  final List<Uint8List>? revocationList;
+  final bool acceptAllCertificates;
   final LogLevel? logLevel;
   final Duration connectivityCheckInterval;
   final SendPort sendPort;
@@ -1043,6 +1095,10 @@ class _IsolateData {
     this.securityMode,
     this.certificate,
     this.privateKey,
+    this.trustList,
+    this.issuerList,
+    this.revocationList,
+    required this.acceptAllCertificates,
     this.logLevel,
     required this.connectivityCheckInterval,
     required this.sendPort,
@@ -1077,6 +1133,10 @@ void _isolateEntryPoint(_IsolateData data) {
     securityMode: data.securityMode,
     certificate: data.certificate,
     privateKey: data.privateKey,
+    trustList: data.trustList,
+    issuerList: data.issuerList,
+    revocationList: data.revocationList,
+    acceptAllCertificates: data.acceptAllCertificates,
     logLevel: data.logLevel,
     connectivityCheckInterval: data.connectivityCheckInterval,
   );

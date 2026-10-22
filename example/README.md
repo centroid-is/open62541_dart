@@ -29,12 +29,17 @@ Starts an OPC UA server exposing scalar, array and custom-structure variables:
 dart run example/server_example.dart
 ```
 
-## `resilient_client.dart` — secure, self-healing client
+The server speaks SecurityPolicy None with anonymous access and binds all
+interfaces: anyone who can reach port 4840 can read and write its nodes. Run
+it on a trusted network only.
 
-A client that connects with certificates (`SignAndEncrypt`), recreates its
-subscriptions after a session loss, and keeps a monitored item alive across
-reconnects. It expects `client_cert.der` and `client_key.der` in the working
-directory:
+## `resilient_client.dart` — encrypted, self-healing client
+
+A client that connects with a certificate (`SignAndEncrypt`), verifies the
+server against a trust list, recreates its subscriptions after a session
+loss, and keeps a monitored item alive across reconnects. It expects
+`client_cert.der`, `client_key.der` and `server_cert.der` (the server's
+certificate, or the CA certificate that issued it) in the working directory:
 
 ```bash
 dart run example/resilient_client.dart opc.tcp://localhost:4840 [username] [password]
