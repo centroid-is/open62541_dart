@@ -864,9 +864,15 @@ Future<void> main(List<String> args) async {
     final libPrefix = isWindows ? '' : 'lib';
     final libSuffix = isWindows ? '.lib' : '.a';
 
-    // OPEN62541_DART_SANITIZER=1 builds the library with ASan + UBSan (CI's
-    // test-asan job). The sanitizer flags go on top of the hardening ones.
-    final sanitizer = Platform.environment['OPEN62541_DART_SANITIZER'] == '1';
+    // An (empty) `.open62541_sanitizer` file in the package root builds the
+    // library with ASan + UBSan (CI's test-asan job), on top of the hardening
+    // flags. The hooks runner starts hooks with a scrubbed environment, so an
+    // environment variable never reaches this point, and `dart test` passes no
+    // user-defines; a file is the one switch that does. It is registered as a
+    // dependency so creating or removing it reruns the hook.
+    final marker = input.packageRoot.resolve('.open62541_sanitizer');
+    final sanitizer = await File.fromUri(marker).exists();
+    output.dependencies.add(marker);
     final hardening = hardeningCmake(input.config.code.targetOS, floatLittleEndian: true, sanitizer: sanitizer);
 
     await _buildCmakeProject(
@@ -898,7 +904,11 @@ Future<void> main(List<String> args) async {
         'MBEDCRYPTO_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedcrypto$libSuffix').toFilePath(),
         // Also forces UA_FLOAT_LITTLE_ENDIAN=1: open62541's config.h leaves it 0 under clang
         // (macOS arm64), which selects the pack754 codec that corrupts subnormal floats.
-        'CMAKE_PROJECT_INCLUDE': await _writeHardening(input.outputDirectoryShared, name, hardening),
+        'CMAKE_PROJECT_INCLUDE': await _writeHardening(
+          input.outputDirectoryShared,
+          sanitizer ? '$name-asan' : name,
+          hardening,
+        ),
       },
       targets: ['install'],
     );
