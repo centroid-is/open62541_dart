@@ -9,6 +9,7 @@ import 'common.dart';
 import 'extensions.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'types/custom_type_registry.dart';
+import 'types/struct_layout.dart';
 import 'ua_allocation.dart';
 
 /// Describes a single input or output argument of a method node.
@@ -2433,20 +2434,15 @@ class Server {
     array.ref.types[0].binaryEncodingId = binaryEncodingId.toRaw();
     registerCustomBinaryEncodingId(typeId, binaryEncodingId);
 
-    array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
+    // A struct with an optional field is an OPTSTRUCT: an encoding mask leads
+    // the body on the wire and the field is a pointer in memory.
+    array.ref.types[0].typeKind = value.asObject.values.any((member) => member.isOptional)
+        ? raw.UA_DataTypeKind.UA_DATATYPEKIND_OPTSTRUCT
+        : raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
 
     final memberCount = value.asObject.length;
     array.ref.types[0].membersSize = memberCount;
     array.ref.types[0].members = ua_calloc<raw.UA_DataTypeMember>(memberCount);
-    // Accumulate the in-memory size of the struct. open62541 materialises the
-    // struct in native memory (e.g. when validating/decoding the value) by
-    // walking the members: each member is placed at the running offset plus its
-    // `padding`, then the offset advances by the member type's `memSize`. With a
-    // packed layout (padding == 0) the total size must therefore equal the sum
-    // of the member type sizes. A too-small `memSize` makes open62541 write
-    // past the allocation while placing pointer-bearing members (e.g. UA_String),
-    // corrupting the heap and aborting the process.
-    int memSize = 0;
     for (var i = 0; i < memberCount; i++) {
       final entry = value.asObject.entries.elementAt(i);
       final member = entry.value;
@@ -2472,12 +2468,8 @@ class Server {
       array.ref.types[0].members[i].memberType = memberType;
       array.ref.types[0].members[i].isOptional = member.isOptional;
       array.ref.types[0].members[i].isArray = member.isArray;
-      array.ref.types[0].members[i].padding = 0;
-      // Arrays are stored as a (size_t length, T* data) pair in the native
-      // struct; scalar members occupy the member type's own size.
-      memSize += member.isArray ? ffi.sizeOf<ffi.Size>() + ffi.sizeOf<ffi.Pointer<ffi.Void>>() : memberType.ref.memSize;
     }
-    array.ref.types[0].memSize = memSize;
+    layoutStructure(array.ref.types);
 
     // Have open62541 clear the pointers we are allocating here on configuration clean-up
     array.ref.cleanup = true;

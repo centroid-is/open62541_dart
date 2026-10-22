@@ -8,6 +8,7 @@ open62541_examples/*
 *.dylib
 lib/src/generated/*
 .direnv
+.open62541_sanitizer
 .envrc
 ffigen.yaml
 doc/api/
