@@ -20,6 +20,23 @@
 import 'dart:ffi' as ffi;
 import '' as self;
 
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_ServerConfig>,
+    ffi.Bool,
+    ffi.Pointer<UA_String>,
+    ffi.Size,
+    ffi.Pointer<UA_UsernamePasswordLogin>,
+  )
+>()
+external int UA_AccessControl_default(
+  ffi.Pointer<UA_ServerConfig> config,
+  bool allowAnonymous,
+  ffi.Pointer<UA_String> userTokenPolicyUri,
+  int usernamePasswordLoginSize,
+  ffi.Pointer<UA_UsernamePasswordLogin> usernamePasswordLogin,
+);
+
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_BrowseDescription>)>()
 external void UA_BrowseDescription_init(ffi.Pointer<UA_BrowseDescription> p);
 
@@ -44,6 +61,12 @@ external ffi.Pointer<UA_BrowseRequest> UA_BrowseRequest_new();
 /// amalgamated original file "/src/plugins/include/open62541/plugin/certificategroup_default.h"
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_CertificateGroup>)>()
 external void UA_CertificateGroup_AcceptAll(ffi.Pointer<UA_CertificateGroup> certGroup);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ByteString>, ffi.Pointer<UA_String>)>()
+external int UA_CertificateUtils_verifyApplicationUri(
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<UA_String> applicationUri,
+);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>()
 external int UA_ClientConfig_setAuthenticationUsername(
@@ -1766,7 +1789,55 @@ final class UA_AccessControl extends ffi.Struct {
     ..ref.allowHistoryUpdateDeleteRawModified = allowHistoryUpdateDeleteRawModified;
 }
 
-final class UA_AddNodesItem extends ffi.Opaque {}
+final class UA_AddNodesItem extends ffi.Struct {
+  external UA_ExpandedNodeId parentNodeId;
+
+  external UA_NodeId referenceTypeId;
+
+  external UA_ExpandedNodeId requestedNewNodeId;
+
+  external UA_QualifiedName browseName;
+
+  @ffi.UnsignedInt()
+  external int nodeClassAsInt;
+
+  UA_NodeClass get nodeClass => UA_NodeClass.fromValue(nodeClassAsInt);
+  set nodeClass(UA_NodeClass value) => nodeClassAsInt = value.value;
+
+  external UA_ExtensionObject nodeAttributes;
+
+  external UA_ExpandedNodeId typeDefinition;
+}
+
+final class UA_AddNodesRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Size()
+  external int nodesToAddSize;
+
+  external ffi.Pointer<UA_AddNodesItem> nodesToAdd;
+}
+
+final class UA_AddNodesResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_AddNodesResult> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
+
+final class UA_AddNodesResult extends ffi.Struct {
+  @UA_StatusCode()
+  external int statusCode;
+
+  external UA_NodeId addedNodeId;
+}
 
 final class UA_AddPublishedDataSetResult extends ffi.Struct {
   @UA_StatusCode()
@@ -1780,7 +1851,47 @@ final class UA_AddPublishedDataSetResult extends ffi.Struct {
   external UA_ConfigurationVersionDataType configurationVersion;
 }
 
-final class UA_AddReferencesItem extends ffi.Opaque {}
+final class UA_AddReferencesItem extends ffi.Struct {
+  external UA_NodeId sourceNodeId;
+
+  external UA_NodeId referenceTypeId;
+
+  @ffi.Bool()
+  external bool isForward;
+
+  external UA_String targetServerUri;
+
+  external UA_ExpandedNodeId targetNodeId;
+
+  @ffi.UnsignedInt()
+  external int targetNodeClassAsInt;
+
+  UA_NodeClass get targetNodeClass => UA_NodeClass.fromValue(targetNodeClassAsInt);
+  set targetNodeClass(UA_NodeClass value) => targetNodeClassAsInt = value.value;
+}
+
+final class UA_AddReferencesRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Size()
+  external int referencesToAddSize;
+
+  external ffi.Pointer<UA_AddReferencesItem> referencesToAdd;
+}
+
+final class UA_AddReferencesResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_StatusCode> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
 
 final class UA_ApplicationDescription extends ffi.Struct {
   external UA_String applicationUri;
@@ -3312,11 +3423,74 @@ final class UA_DeleteMonitoredItemsResponse extends ffi.Struct {
   external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
 }
 
-final class UA_DeleteNodesItem extends ffi.Opaque {}
+final class UA_DeleteNodesItem extends ffi.Struct {
+  external UA_NodeId nodeId;
+
+  @ffi.Bool()
+  external bool deleteTargetReferences;
+}
+
+final class UA_DeleteNodesRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Size()
+  external int nodesToDeleteSize;
+
+  external ffi.Pointer<UA_DeleteNodesItem> nodesToDelete;
+}
+
+final class UA_DeleteNodesResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_StatusCode> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
 
 final class UA_DeleteRawModifiedDetails extends ffi.Opaque {}
 
-final class UA_DeleteReferencesItem extends ffi.Opaque {}
+final class UA_DeleteReferencesItem extends ffi.Struct {
+  external UA_NodeId sourceNodeId;
+
+  external UA_NodeId referenceTypeId;
+
+  @ffi.Bool()
+  external bool isForward;
+
+  external UA_ExpandedNodeId targetNodeId;
+
+  @ffi.Bool()
+  external bool deleteBidirectional;
+}
+
+final class UA_DeleteReferencesRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Size()
+  external int referencesToDeleteSize;
+
+  external ffi.Pointer<UA_DeleteReferencesItem> referencesToDelete;
+}
+
+final class UA_DeleteReferencesResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_StatusCode> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
 
 /// DiagnosticInfo
 /// ^^^^^^^^^^^^^^
@@ -59226,6 +59400,13 @@ enum UA_UserTokenType {
     2147483647 => __UA_USERTOKENTYPE_FORCE32BIT,
     _ => throw ArgumentError('Unknown value for UA_UserTokenType: $value'),
   };
+}
+
+/// amalgamated original file "/src/plugins/include/open62541/plugin/accesscontrol_default.h"
+final class UA_UsernamePasswordLogin extends ffi.Struct {
+  external UA_String username;
+
+  external UA_ByteString password;
 }
 
 const int UA_VALUERANK_ANY = -2;

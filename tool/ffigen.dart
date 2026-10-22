@@ -65,6 +65,8 @@ Future<void> main() async {
 
     'UA_ServerConfig_setMinimal',
     'UA_ServerConfig_setDefaultWithSecurityPolicies',
+    'UA_AccessControl_default',
+    'UA_CertificateUtils_verifyApplicationUri',
     'UA_Server_newWithConfig',
     'UA_Server_getConfig',
     'UA_Server_run_startup',
@@ -199,6 +201,21 @@ Future<void> main() async {
 
   const structSet = {
     'UA_ClientConfig',
+    'UA_UsernamePasswordLogin',
+    // Node-management service requests (a test sends them from a client)
+    'UA_AddNodesItem',
+    'UA_AddNodesRequest',
+    'UA_AddNodesResponse',
+    'UA_AddNodesResult',
+    'UA_DeleteNodesItem',
+    'UA_DeleteNodesRequest',
+    'UA_DeleteNodesResponse',
+    'UA_AddReferencesItem',
+    'UA_AddReferencesRequest',
+    'UA_AddReferencesResponse',
+    'UA_DeleteReferencesItem',
+    'UA_DeleteReferencesRequest',
+    'UA_DeleteReferencesResponse',
     'UA_TrustListDataType',
     'UA_KeyValuePair',
     'UA_Variant',
