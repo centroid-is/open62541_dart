@@ -273,6 +273,18 @@ class NodeId {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_HASPROPERTY);
   }
 
+  /// The HasEncoding reference type, `i=38`: a DataType to its
+  /// DataTypeEncoding objects (`Default Binary`, ...).
+  static NodeId get hasEncoding {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_HASENCODING);
+  }
+
+  /// The DataTypeEncodingType object type, `i=76`: the TypeDefinition of a
+  /// `Default Binary` encoding object.
+  static NodeId get dataTypeEncodingType {
+    return NodeId.fromNumeric(0, raw.UA_NS0ID_DATATYPEENCODINGTYPE);
+  }
+
   /// The HasTypeDefinition reference type, `i=40`.
   static NodeId get hasTypeDefinition {
     return NodeId.fromNumeric(0, raw.UA_NS0ID_HASTYPEDEFINITION);

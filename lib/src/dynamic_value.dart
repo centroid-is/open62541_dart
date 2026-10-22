@@ -48,6 +48,19 @@ typedef Schema = Map<NodeId, DynamicValue>;
 class DynamicValue {
   dynamic value;
   NodeId? typeId;
+
+  /// The DataTypeEncoding NodeId a structured value travels under: the
+  /// ExtensionObject's typeId on the wire (`<Type>_Encoding_DefaultBinary`
+  /// for a structure, as opposed to [typeId], its DataType). Set on a value
+  /// read from a server and on a schema built from a fetched
+  /// DataTypeDefinition; a serializer that finds it set uses it verbatim.
+  ///
+  /// It is valid for the session it was read in, namespace *index*
+  /// included: a round trip back to the same server is right, serving the
+  /// value from another server (a relay, an aggregator) under that id is
+  /// not, since the id means nothing in that server's address space. Clear
+  /// it (null) before serving the value elsewhere so the receiving side's
+  /// own registration decides the id.
   NodeId? extObjEncodingId;
   String? name;
   LocalizedText? description;
