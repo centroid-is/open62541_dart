@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/types/create_type.dart';
 import 'package:open62541/src/types/native_decode.dart';
+import 'dynamic_value.dart' show expandedNodes;
 import 'extensions.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
@@ -245,6 +246,13 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
     return list;
   }
 
+  final template = defs?[typeId];
+  if (template != null && nodeIdToPayloadType(typeId) == null) {
+    final nodes = expandedNodes(template);
+    if (nodes > 1 && dimensionsMultiplied > ValueTooLarge.limit ~/ nodes) {
+      throw ValueTooLarge(typeId, elements: data.arrayLength == 0 ? null : dimensionsMultiplied);
+    }
+  }
   retValue = createNestedArray(typeId, dimensions.toList());
   final reader = binarize.ByteReader(data.data.cast<ffi.Uint8>().asTypedList(bufferLength));
   OpcUaDynamicValueSerializer.deserialize(retValue, reader, Endian.little, false, true);
