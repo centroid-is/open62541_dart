@@ -108,6 +108,16 @@ changes that ship the same native library version.
   it (what open62541's `Array_decodeBinary` does), and the elements are
   decoded one at a time into a list that grows with them; the read fails and
   the client stays usable.
+- **Fixed: a DataTypeDefinition that contained itself hung every read of the
+  type.** `buildSchema` followed a field's DataType into its own definition
+  with no memory of where it had been, so a type with a field of its own type
+  (or A → B → A) was fetched forever, one readAttribute per level, and a
+  `read`, `readValue`, `call` or monitor of such a value never completed.
+  Now the chain of types being resolved travels down the recursion: a type
+  met again fails the read with `DataTypeDefinitionCycle` naming the cycle,
+  and more than 100 nested levels (open62541's own decoder bound) with
+  `DataTypeDefinitionTooDeep`; both are exported, nothing of a refused schema
+  is cached, and the client stays usable.
 - **Fixed: a second `Client.keepConnected()` doubled the pump.** The call
   reset its stop flag and set it again synchronously, so the pump and the
   reconnect supervisor already running never observed the stop and kept
