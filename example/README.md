@@ -30,8 +30,10 @@ dart run example/server_example.dart
 ```
 
 The server speaks SecurityPolicy None with anonymous access and binds all
-interfaces: anyone who can reach port 4840 can read and write its nodes. Run
-it on a trusted network only.
+interfaces: anyone who can reach port 4840 can read and write its nodes (not
+add or delete them). Run it on a trusted network only; for anything else give
+`Server` a certificate, a trust list and users, see the README's Security
+section.
 
 ## `resilient_client.dart` — encrypted, self-healing client
 

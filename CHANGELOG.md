@@ -6,6 +6,45 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **Security: the `Server` takes a certificate, a trust list, users, a
+  listen address and limits; clients may no longer add or delete nodes.**
+  `Server(certificate:, privateKey:, trustList:, issuerList:, revocationList:,
+  acceptAllClientCertificates:, allowNone:, allowAnonymous:, users:,
+  allowUnencryptedPassword:, allowClientNodeManagement:, hostname:, limits:)`.
+  With a certificate (DER) the configuration is open62541's
+  `UA_ServerConfig_setDefaultWithSecurityPolicies`: Basic256Sha256,
+  Aes256Sha256RsaPss and Aes128Sha256RsaOaep in Sign and SignAndEncrypt,
+  the client certificates verified against the in-memory store built from
+  the lists (`UA_CertificateGroup_Memorystore`); `acceptAllClientCertificates`
+  is the explicit opt-out, and a certificate with neither a non-empty trust
+  list nor the opt-out is an `ArgumentError` (`checkServerSecurityArguments`;
+  open62541 keeps accept-all for an empty trust list). The certificate must
+  carry the `applicationUri` (checked with
+  `UA_CertificateUtils_verifyApplicationUri`, an `ArgumentError` otherwise,
+  where open62541 only warns at startup). `allowNone` (default false with a
+  certificate) drops the None endpoint and leaves the None policy for
+  discovery only (`securityPolicyNoneDiscoveryOnly`). `allowAnonymous` and
+  `users` go to `UA_AccessControl_default` (logins copied, stored in plain
+  text, compared in constant time); `allowUnencryptedPassword` is
+  `UA_ServerConfig.allowNonePolicyPassword`. `hostname` sets
+  `serverUrls[0]` to `opc.tcp://hostname:port`. `ServerLimits` maps to the
+  `UA_ServerConfig` limit fields (`Server.limits` reads them back).
+  `Server.endpoints` lists the endpoints on offer. Without a trust list the
+  X509 user-token policy is dropped, so a certificate login means a trusted
+  certificate.
+  - **Breaking:** a client session may no longer add or delete nodes or
+    references: AddNodes, DeleteNodes, AddReferences and DeleteReferences
+    answer `BadUserAccessDenied` (the default plugin's `allowAddNode` and
+    the other three are replaced by a refusal; open62541 never consults
+    them for the server's own admin session, so the host's `addVariableNode`
+    etc. are unchanged). `allowClientNodeManagement: true` restores the old
+    behaviour. Everything else about `Server()` is as it was: None,
+    anonymous, all interfaces, open62541's limits.
+  - `ClientIsolate.create` takes `allowUnencryptedPassword`, which it lacked
+    (only the direct `Client` could send a password over None).
+  - Bindings: `UA_AccessControl_default`, `UA_CertificateUtils_verifyApplicationUri`,
+    `UA_UsernamePasswordLogin`, and the AddNodes/DeleteNodes/AddReferences/
+    DeleteReferences request, item and response structs (additions only).
 - **Security: the client verifies the server certificate; `Client` and
   `ClientIsolate.create` take `trustList`, `issuerList`, `revocationList`
   and `acceptAllCertificates`.** A client with a `certificate` called

@@ -41,6 +41,11 @@ export 'src/pubsub.dart'
 export 'src/server.dart'
     show
         Server,
+        ServerLimits,
+        ServerEndpoint,
+        checkServerSecurityArguments,
+        securityPolicyNoneUri,
+        defaultServerApplicationUri,
         Argument,
         RedundancySupport,
         DataSourceValue,

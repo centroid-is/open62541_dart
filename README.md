@@ -2,9 +2,10 @@
 
 Dart FFI bindings to the [open62541](https://www.open62541.org/) OPC UA stack.
 This package provides idiomatic Dart client and server APIs for OPC UA over TCP,
-including subscriptions, custom types and, on the client, encrypted (mbedTLS)
-connections that verify the server against a trust list. The server speaks
-SecurityPolicy None only; see [Security](#security).
+including subscriptions, custom types and encrypted (mbedTLS) connections
+with certificate verification on both sides: a client that verifies the
+server against a trust list, and a server with a certificate, a trust list,
+users, a listen address and limits; see [Security](#security).
 
 > Status: work in progress. The API is functional but still evolving and may
 > change between releases.
@@ -15,7 +16,8 @@ SecurityPolicy None only; see [Security](#security).
   subscriptions and monitored items, and encrypted connections
   (`SignAndEncrypt` with a certificate) that authenticate the server against
   a trust list; accepting any server certificate is an explicit opt-in.
-- **Server** (SecurityPolicy None, anonymous access, see
+- **Server** (SecurityPolicy None and anonymous by default; a certificate,
+  trust list, users and limits make it a secured one, see
   [Security](#security)): expose scalar, array and structure (custom type) variable nodes,
   data-type nodes, custom object types, and monitor variables via streams.
   Redundant sets are published with `setRedundancy` (Part 5
@@ -142,16 +144,52 @@ neither a `trustList` nor `acceptAllCertificates: true` is an
 every certificate". `ClientIsolate.create` takes the same arguments. The
 endpoint hostname is not checked against the server certificate.
 
-**Server.** A `Server` offers SecurityPolicy None only: no encryption, no
-signing, no server certificate, and anonymous login with open62541's
-permissive default access control, so any client that can reach the port
-can read every node, write every node whose access level allows it, call
-methods, and add or delete nodes. It binds all interfaces. There is no API
-yet to change any of this, so a `Server` must only face a trusted network
-(a machine network behind its own firewall, a lab, `localhost`); do not
-expose it to the internet or to an untrusted LAN. `addVariableNode` defaults
-to `AccessLevelMask(read: true, write: true)`; `addDataSourceVariableNode`
-is read-only unless `onWrite` is given.
+**Server.** A plain `Server()` offers SecurityPolicy None with anonymous
+access on all interfaces, so any client that can reach the port can read every
+node, write every node whose access level allows it and call methods; it may
+not add or delete nodes or references (new: those services answer
+`BadUserAccessDenied` unless `allowClientNodeManagement: true`). Run it on a
+trusted network only (a machine network behind its own firewall, a lab,
+`localhost`). `addVariableNode` defaults to `AccessLevelMask(read: true,
+write: true)`; `addDataSourceVariableNode` is read-only unless `onWrite` is
+given.
+
+A secured server takes its own `certificate` and `privateKey` (DER; the
+`applicationUri` must be the URI in the certificate's subjectAltName, or the
+constructor throws) and the client certificates to trust, and refuses
+anonymous sessions in favour of users:
+
+```dart
+final server = Server(
+  certificate: await File('server_cert.der').readAsBytes(),
+  privateKey: await File('server_key.der').readAsBytes(),
+  trustList: [await File('client_cert.der').readAsBytes()],
+  allowAnonymous: false,
+  users: {'operator': 'a long passphrase'},
+  hostname: 'plc-gateway.example',   // or 'localhost'; null binds all interfaces
+  limits: const ServerLimits(maxSessions: 10, maxNodesPerRead: 1000),
+);
+```
+
+With a certificate the server offers Basic256Sha256, Aes256Sha256RsaPss and
+Aes128Sha256RsaOaep, each in Sign and SignAndEncrypt (`Server.endpoints`),
+and verifies the client's certificate against the `trustList` (plus
+`issuerList` and `revocationList`) before the channel opens; a client whose
+certificate is in no list gets no channel. `acceptAllClientCertificates: true`
+is the explicit opt-out (encrypted, not authenticated; a certificate with
+neither is an `ArgumentError`, as on the client). SecurityPolicy None is then
+off by default (`allowNone`; the None policy stays for discovery, so a client
+can still call GetEndpoints) and a client that offers only None finds no
+endpoint. Anonymous sessions are allowed exactly when `allowAnonymous` is,
+on every endpoint; `users` are username/password logins that open62541's
+default access-control plugin keeps in memory in plain text and compares in
+constant time. A password over SecurityPolicy None travels in clear text,
+and the server refuses it unless `allowUnencryptedPassword: true` (the
+`Client` has the same opt-in); over an encrypted channel it is always
+accepted. `ServerLimits` bounds what one client can ask for (sessions,
+subscriptions, monitored items, nodes per Read/Write/Browse/Call, message
+size); what is left out keeps open62541's default (100 channels and
+sessions, the rest unlimited), see `Server.limits`.
 
 ### Monitoring with quality
 
