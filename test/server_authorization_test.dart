@@ -76,8 +76,9 @@ final allowing = ServerAuthorization(
   allowBrowse: (session, node) => true,
 );
 
-/// An isolate's entry: a server with [allowing] for alice, pumped until a
-/// message arrives on the port it sends to [ready] with its own port.
+/// An isolate's entry: a server with [allowing] for alice, pumped until
+/// `null` arrives on the port it sends to [ready] with its own port; a
+/// [SendPort] sent there is answered with the open channel count.
 Future<void> serveWithAuthorization(SendPort ready) async {
   final server = Server(
     port: 0,
@@ -85,18 +86,27 @@ Future<void> serveWithAuthorization(SendPort ready) async {
     users: {'alice': 'a'},
     allowUnencryptedPassword: true,
     authorization: allowing,
+    // The cycles open and close channels faster than a loaded machine may
+    // reap them; the caps are not what this test is about.
+    limits: ServerLimits.unlimited,
   );
   addNodes(server);
   server.start();
-  final stop = ReceivePort();
+  final control = ReceivePort();
   var serving = true;
-  stop.listen((_) => serving = false);
-  ready.send((server.port, stop.sendPort));
+  control.listen((message) {
+    if (message is SendPort) {
+      message.send(server.statistics.currentChannelCount);
+    } else {
+      serving = false;
+    }
+  });
+  ready.send((server.port, control.sendPort));
   while (serving) {
     server.runIterate();
     await Future<void>.delayed(const Duration(milliseconds: 1));
   }
-  stop.close();
+  control.close();
   server.shutdown();
   server.delete();
 }
@@ -287,11 +297,25 @@ void main() {
       final ready = ReceivePort();
       final exited = ReceivePort();
       await Isolate.spawn(serveWithAuthorization, ready.sendPort, onExit: exited.sendPort);
-      final (port, stop) = await ready.first as (int, SendPort);
+      final (port, control) = await ready.first as (int, SendPort);
       addTearDown(() async {
-        stop.send(null);
+        control.send(null);
         await exited.first;
       });
+      final replies = ReceivePort();
+      addTearDown(replies.close);
+      final channelCounts = StreamIterator(replies);
+      Future<void> untilChannelsClosed() async {
+        final deadline = DateTime.now().add(const Duration(seconds: 10));
+        while (true) {
+          control.send(replies.sendPort);
+          await channelCounts.moveNext();
+          if (channelCounts.current == 0) return;
+          if (DateTime.now().isAfter(deadline)) fail('the server kept ${channelCounts.current} channels open');
+          await Future<void>.delayed(const Duration(milliseconds: 1));
+        }
+      }
+
       await expectNoHeapGrowth(
         () async {
           final client = Client(logLevel: _fatal, username: 'alice', password: 'a', allowUnencryptedPassword: true);
@@ -304,6 +328,7 @@ void main() {
           await client.read(writable);
           await client.delete();
           await pump;
+          await untilChannelsClosed();
         },
         warmUp: 20,
         iterations: 10,
@@ -311,7 +336,7 @@ void main() {
         maxGrowth: 1000,
         attempts: 3,
       );
-    });
+    }, timeout: const Timeout.factor(3));
 
     for (final clientType in clientTypes) {
       test('$clientType client: delete() with sessions open and identities cached is clean', () async {
