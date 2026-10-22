@@ -281,9 +281,24 @@ enum RedundancySupport {
   final int value;
 }
 
+/// An OPC UA server over open62541, pumped by the caller ([runIterate]).
+///
+/// ## Security
+///
+/// A [Server] offers SecurityPolicy None only: no signing, no encryption, no
+/// server certificate, and anonymous login with open62541's permissive
+/// default access control. Any client that can reach the port can read every
+/// node, write every node whose access level allows it ([addVariableNode]
+/// defaults to `AccessLevelMask(read: true, write: true)`;
+/// [addDataSourceVariableNode] is read-only unless `onWrite` is given), call
+/// methods, and add or delete nodes. It binds all interfaces. There is no API
+/// yet to change any of this, so a [Server] must only face a trusted network
+/// (a machine network behind its own firewall, a lab, `localhost`): never the
+/// internet, never an untrusted LAN.
 class Server {
   /// Creates a server with open62541's minimal default configuration,
   /// listening on [port] (4840 by default; `0` lets the OS pick, see [Server.port]).
+  /// SecurityPolicy None and anonymous access only, see the class documentation.
   ///
   /// The optional identity strings replace what open62541 announces about the
   /// server (`open62541-based OPC UA Application`, `urn:open62541.unconfigured.application`,
@@ -294,10 +309,10 @@ class Server {
   ///   (locale `en`), the name an OPC UA browser lists the server under.
   /// * [applicationUri] - the `ApplicationDescription.applicationUri`.
   ///   open62541 also publishes it as `ServerArray[0]` (`ns=0;i=2254`) and as
-  ///   `NamespaceArray[1]`, the server's own namespace. Once security is
-  ///   configured it **must** match the URI embedded in the server certificate
-  ///   (open62541 logs a warning at startup when it does not, and clients
-  ///   validating the certificate reject the session).
+  ///   `NamespaceArray[1]`, the server's own namespace. A [Server] has no
+  ///   certificate (SecurityPolicy None only), so nothing checks it; a
+  ///   client that resolves the server through discovery may still compare
+  ///   it with what FindServers returned.
   /// * [productName] / [manufacturerName] - `BuildInfo.productName` and
   ///   `BuildInfo.manufacturerName` (`Server/ServerStatus/BuildInfo/ProductName`,
   ///   `.../ManufacturerName`).

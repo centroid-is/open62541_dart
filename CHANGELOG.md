@@ -49,6 +49,21 @@ changes that ship the same native library version.
     `UA_TrustListDataType` / `UA_KeyValuePair` structs (the tests build an
     encrypted open62541 server with them; the Dart `Server` has no security
     API).
+- **Docs: what the security of each side is.** README (Features, a Security
+  section), `example/README.md`, the pubspec description and the `Client` /
+  `ClientIsolate` dartdoc say that `SignAndEncrypt` authenticates the server
+  only with a trust list, that accept-all is opt-in and protects against
+  passive eavesdropping only, and that `allowUnencryptedPassword` sends the
+  password in clear text. The `Server` dartdoc and README state what a
+  `Server` is: SecurityPolicy None only, anonymous login with open62541's
+  permissive default access control (any client can add/delete nodes and
+  write any node whose access level allows it; `addVariableNode` defaults to
+  read+write, `addDataSourceVariableNode` is read-only unless `onWrite` is
+  given), bound on all interfaces, no API yet to change it, trusted networks
+  only. `example/server_example.dart` carries the warning. The sentence
+  about the ApplicationUri having to match the server certificate "once
+  security is configured" is gone: a `Server` has no certificate. Server
+  behaviour and defaults are unchanged.
 - **`package:open62541/open62541_types.dart`: the value types without
   `dart:ffi`.** A new barrel exporting `DynamicValue`, `DynamicType`,
   `LocalizedText`, `EnumField`, `Schema` and `NodeId`, importable from code that
@@ -137,9 +152,8 @@ changes that ship the same native library version.
   `BuildInfo.productUri` (`Server/ServerStatus/BuildInfo/ProductUri`); left
   out it stays open62541's `http://open62541.org` even when `productName` /
   `manufacturerName` are set. Each one is opt-in: `Server()` still announces
-  the defaults.
-  Once security is configured the ApplicationUri must match the URI in the
-  server certificate.
+  the defaults. A `Server` has no certificate (SecurityPolicy None only), so
+  nothing checks the ApplicationUri against one.
 - **Fixed: a second `Client.keepConnected()` doubled the pump.** The call
   reset its stop flag and set it again synchronously, so the pump and the
   reconnect supervisor already running never observed the stop and kept
