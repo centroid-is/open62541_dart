@@ -46,6 +46,39 @@ Uint8List withoutSourceTimestamp(Uint8List dataValue) {
   ]);
 }
 
+/// Whether [message] is a final chunk of a ReadResponse: the shape
+/// [DataValueRewritingProxy] rewrites, for a [DataValueRewritingProxy.rewriteMessage]
+/// that must leave every other message alone.
+bool isReadResponse(Uint8List message) {
+  if (message.length < 28) return false;
+  if (message[0] != 0x4D || message[1] != 0x53 || message[2] != 0x47 || message[3] != 0x46) return false;
+  if (message[24] != 0x01 || message[25] != 0x00) return false;
+  return ByteData.sublistView(message).getUint16(26, Endian.little) == DataValueRewritingProxy._readResponse;
+}
+
+/// [message] with every occurrence of [needle] replaced by [replacement],
+/// which has the same length so nothing else in the message moves, and how
+/// many were replaced.
+(Uint8List, int) replaceBytes(Uint8List message, List<int> needle, List<int> replacement) {
+  if (needle.length != replacement.length) throw ArgumentError('needle and replacement must have the same length');
+  final out = Uint8List.fromList(message);
+  var count = 0;
+  for (var i = 0; i + needle.length <= out.length; i++) {
+    var match = true;
+    for (var j = 0; j < needle.length; j++) {
+      if (out[i + j] != needle[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (!match) continue;
+    out.setRange(i, i + needle.length, replacement);
+    count++;
+    i += needle.length - 1;
+  }
+  return (out, count);
+}
+
 class DataValueRewritingProxy {
   DataValueRewritingProxy._(this._listener, this._upstreamPort);
 
@@ -61,6 +94,13 @@ class DataValueRewritingProxy {
   /// Applied to the DataValue of every PublishResponse that carries exactly
   /// one data-change notification while set.
   DataValueRewrite? rewriteNotification;
+
+  /// Applied to every whole message on its way to the client while set,
+  /// before [rewriteRead] / [rewriteNotification]: for a rewrite of some
+  /// bytes inside a response the two above cannot reach (a ReadResponse of
+  /// several DataValues). It must return a message of the same length, the
+  /// header's size is not recomputed for it; see [replaceBytes].
+  Uint8List Function(Uint8List message)? rewriteMessage;
 
   /// How many responses [rewriteRead] / [rewriteNotification] were applied to.
   int readRewrites = 0;
@@ -114,7 +154,9 @@ class DataValueRewritingProxy {
         while (pending.length >= 8) {
           final size = ByteData.sublistView(pending).getUint32(4, Endian.little);
           if (size < 8 || pending.length < size) break;
-          client.add(_rewriteMessage(pending.sublist(0, size)));
+          var message = pending.sublist(0, size);
+          if (rewriteMessage != null) message = rewriteMessage!(message);
+          client.add(_rewriteMessage(message));
           pending = pending.sublist(size);
         }
       },
