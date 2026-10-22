@@ -2919,13 +2919,23 @@ class Client implements ClientApi, DataValueMonitoringApi {
   /// invalid (a structure cannot contain itself by value) and is refused with
   /// a [DataTypeDefinitionCycle] naming the types on the cycle. The nesting is
   /// also capped at [DataTypeDefinitionTooDeep.limit] levels, the bound
-  /// open62541's binary decoder uses. Either way the read that needed the
-  /// schema fails and the client stays usable.
-  Future<Schema> buildSchema(NodeId nodeIdType) => _buildSchema(nodeIdType, const []);
+  /// open62541's binary decoder uses. Each distinct type is fetched once per
+  /// call, however many fields use it, and a type needing more than
+  /// [schemaCacheSize] definitions is refused with a
+  /// [DataTypeDefinitionTooMany]. Either way the read that needed the schema
+  /// fails and the client stays usable.
+  Future<Schema> buildSchema(NodeId nodeIdType) => _buildSchemaWith(nodeIdType, defs);
+
+  /// [buildSchema], taking a field's type from [cached] when it is there.
+  Future<Schema> _buildSchemaWith(NodeId nodeIdType, Schema cached) async {
+    final build = _SchemaBuild(cached);
+    await _buildSchema(nodeIdType, const [], build);
+    return build.map;
+  }
 
   /// [resolving] is the chain of DataType ids whose definitions are being
   /// built, outermost first: the types whose fields led here.
-  Future<Schema> _buildSchema(NodeId nodeIdType, List<NodeId> resolving) async {
+  Future<void> _buildSchema(NodeId nodeIdType, List<NodeId> resolving, _SchemaBuild build) async {
     final path = [...resolving, nodeIdType];
     if (resolving.contains(nodeIdType)) {
       throw DataTypeDefinitionCycle(path.sublist(resolving.indexOf(nodeIdType)));
@@ -2933,7 +2943,15 @@ class Client implements ClientApi, DataValueMonitoringApi {
     if (resolving.length >= DataTypeDefinitionTooDeep.limit) {
       throw DataTypeDefinitionTooDeep(path);
     }
-    var map = Schema();
+    final map = build.map;
+    if (map.containsKey(nodeIdType)) return;
+    final cached = build.cached[nodeIdType];
+    if (cached != null && resolving.isNotEmpty) {
+      map[nodeIdType] = cached;
+      return;
+    }
+    if (!build.fetched.add(nodeIdType)) return;
+    if (build.fetched.length > schemaCacheSize) throw DataTypeDefinitionTooMany(path, schemaCacheSize);
     final read = await readAttribute({
       nodeIdType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION],
     });
@@ -2942,7 +2960,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
       // type (or a vendor alias of one, e.g. TwinCAT's STRING at a custom
       // NodeId), not a struct/enum. Return an empty schema; the value then
       // decodes by its wire type.
-      return map;
+      return;
     }
     map[nodeIdType] = read.values.first;
     final val = map[nodeIdType]!;
@@ -2957,20 +2975,20 @@ class Client implements ClientApi, DataValueMonitoringApi {
     if (val.isObject) {
       for (var entry in val.entries) {
         if (nodeIdToPayloadType(entry.value.typeId) == null) {
-          final temporary = await _buildSchema(entry.value.typeId!, path);
-          map.addAll(temporary);
+          await _buildSchema(entry.value.typeId!, path, build);
+          final schema = map[entry.value.typeId];
+          if (schema == null) continue;
           if (val[entry.value.name].isArray) {
             // todo: only supports one level of array
             for (var i = 0; i < val[entry.value.name].asArray.length; i++) {
-              val[entry.value.name][i] = map[entry.value.typeId]!;
+              val[entry.value.name][i] = schema;
             }
           } else {
-            val[entry.value.name] = map[entry.value.typeId]!;
+            val[entry.value.name] = schema;
           }
         }
       }
     }
-    return map;
   }
 
   /// The default of [schemaCacheSize].
@@ -3019,7 +3037,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     final fetched = Schema();
     bool known(NodeId id) => defs.containsKey(id) || fetched.containsKey(id);
     Future<void> fetch(NodeId id) async {
-      final schema = await buildSchema(id);
+      final schema = await _buildSchemaWith(id, fetched.isEmpty ? defs : {...defs, ...fetched});
       fetched.addAll(schema);
       _cacheSchemas(schema);
     }
@@ -3213,4 +3231,16 @@ class Client implements ClientApi, DataValueMonitoringApi {
   /// stop when a later call has moved it on.
   int _keepConnectedGeneration = 0;
   final StreamController<void> _reconnectController = StreamController<void>.broadcast();
+}
+
+/// The state of one [Client.buildSchema] call.
+class _SchemaBuild {
+  _SchemaBuild(this.cached);
+
+  /// Definitions fetched by earlier calls.
+  final Schema cached;
+  final Schema map = Schema();
+
+  /// The types this call has read, so that each is read once.
+  final Set<NodeId> fetched = {};
 }

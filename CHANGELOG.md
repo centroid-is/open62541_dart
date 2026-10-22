@@ -14,6 +14,13 @@ changes that ship the same native library version.
 - **The client's DataType definition cache is bounded** (`schemaCacheSize`,
   default 4096, on `Client` and `ClientIsolate`): it grew by every distinct
   type id a server served; past the cap it is emptied and refilled on demand.
+- **Fixed: `buildSchema` read a DataType once per path, not once per type.**
+  A definition graph where each type has two fields of the next one (a
+  diamond) cost 2^(k+1) reads for one `read` of a k-level value: 16 levels
+  did not finish in a minute. Each distinct type is now read once per call
+  (16 levels: 19 reads, about a second), a field's type already cached is not
+  read again, and a type needing more than `schemaCacheSize` definitions is
+  refused with the new `DataTypeDefinitionTooMany`.
 - **An encrypted client private key is an `ArgumentError`**, not an
   open62541 password prompt on stdin that blocked the process, and a key
   open62541 cannot load is a `UaStatusException` from the constructor (its

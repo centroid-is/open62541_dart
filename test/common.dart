@@ -277,16 +277,17 @@ Future<ClientApi> setupClientOfType(
   String clientType,
   String url, {
   LogLevel logLevel = LogLevel.UA_LOGLEVEL_FATAL,
+  int schemaCacheSize = Client.defaultSchemaCacheSize,
 }) async {
   switch (clientType) {
     case 'isolate':
-      final client = await ClientIsolate.create(logLevel: logLevel);
+      final client = await ClientIsolate.create(logLevel: logLevel, schemaCacheSize: schemaCacheSize);
       // runIterate fails once the client is deleted (expected in tearDown).
       unawaited(client.runIterate().catchError((_) {}));
       await client.connect(url);
       return client;
     case 'direct':
-      final client = Client(logLevel: logLevel);
+      final client = Client(logLevel: logLevel, schemaCacheSize: schemaCacheSize);
       () async {
         while (client.runIterate(Duration(milliseconds: 10))) {
           await Future.delayed(Duration(milliseconds: 5));

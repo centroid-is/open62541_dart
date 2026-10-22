@@ -82,6 +82,24 @@ class DataTypeDefinitionTooDeep implements Exception {
       '(at ${path.last})';
 }
 
+/// A structured type's DataTypeDefinitions name more distinct types than
+/// [limit] (the client's `schemaCacheSize`): the schema is refused before
+/// they are all fetched.
+class DataTypeDefinitionTooMany implements Exception {
+  DataTypeDefinitionTooMany(this.path, this.limit);
+
+  /// The DataType ids from the root type down to the one past [limit].
+  final List<NodeId> path;
+
+  /// The most definitions one schema is built from.
+  final int limit;
+
+  @override
+  String toString() =>
+      'DataTypeDefinitionTooMany: the DataTypeDefinition of ${path.first} uses more than $limit types '
+      '(at ${path.last})';
+}
+
 class Inactivity extends Error {}
 
 class SubscriptionDeleted extends Error {

@@ -56,6 +56,7 @@ export 'src/types/errors.dart'
     show
         DataTypeDefinitionCycle,
         DataTypeDefinitionTooDeep,
+        DataTypeDefinitionTooMany,
         Inactivity,
         MonitoredItemsRefused,
         SecureChannelClosed,
