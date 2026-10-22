@@ -15,6 +15,8 @@ SecurityPolicy None only; see [Security](#security).
   subscriptions and monitored items, and encrypted connections
   (`SignAndEncrypt` with a certificate) that authenticate the server against
   a trust list; accepting any server certificate is an explicit opt-in.
+  Endpoint discovery (`Client.getEndpoints`) lists a server's endpoints with
+  its certificate, which is how the trust list gets that certificate.
 - **Server** (SecurityPolicy None, anonymous access, see
   [Security](#security)): expose scalar, array and structure (custom type) variable nodes,
   data-type nodes, custom object types, and monitor variables via streams.
@@ -141,6 +143,37 @@ neither a `trustList` nor `acceptAllCertificates: true` is an
 `ArgumentError`, because open62541 treats an empty trust list as "accept
 every certificate". `ClientIsolate.create` takes the same arguments. The
 endpoint hostname is not checked against the server certificate.
+
+**Discovery, and trust on first use.** The trust list needs the server
+certificate before the first secure connection, and the server itself hands
+it out: `Client.getEndpoints` (the same static on `ClientIsolate`) runs the
+GetEndpoints service over a SecurityPolicy None channel without a session,
+so it needs no certificate and no trust list, and every
+`EndpointDescription` it returns carries the `serverCertificate` (DER) next
+to the policy, mode and identity tokens of that endpoint. Discovery
+authenticates nothing: a machine in the middle at that moment hands over
+its own certificate, and trusting it would make every later "encrypted"
+session its to read. So compare the `certificateThumbprint` (SHA-1, what
+the server's own certificate manager shows) with one obtained out of band,
+from the server's operator, before trusting it; then persist the DER and
+pass it as `trustList` from then on. A server whose certificate changes is
+refused with `BadCertificateUntrusted` after that, which is the point.
+
+```dart
+final endpoints = await Client.getEndpoints('opc.tcp://plc:4840');
+final endpoint = endpoints.firstWhere(
+  (e) => e.securityMode == MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
+);
+print('server certificate ${endpoint.certificateThumbprint}'); // confirm out of band
+await File('server_cert.der').writeAsBytes(endpoint.serverCertificate);
+```
+
+The call makes a native client of its own for the duration, on an isolate
+of its own (open62541's `UA_Client_getEndpoints` blocks until the answer),
+and keeps nothing. A host that does not answer within `timeout` is a
+`TimeoutException`; a refused connection or a Bad service result is a
+`UaStatusException`. `example/discover_endpoints.dart` prints the endpoints
+and thumbprints of a server.
 
 **Server.** A `Server` offers SecurityPolicy None only: no encryption, no
 signing, no server certificate, and anonymous login with open62541's

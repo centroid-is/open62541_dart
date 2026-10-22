@@ -49,6 +49,35 @@ changes that ship the same native library version.
     `UA_TrustListDataType` / `UA_KeyValuePair` structs (the tests build an
     encrypted open62541 server with them; the Dart `Server` has no security
     API).
+- **Endpoint discovery: `Client.getEndpoints` (and `ClientIsolate.getEndpoints`)
+  returns the server's endpoints with its certificate, for the trust list.**
+  The question the trust list raises is where the server certificate comes
+  from before the first secure connection; the OPC UA answer is the
+  GetEndpoints service, which runs over a SecurityPolicy#None channel
+  without a session and describes every endpoint with its
+  `serverCertificate`. `getEndpoints(url, {timeout, logLevel})` needs no
+  certificate and no trust list and keeps no state: a native client of its
+  own for the call (`UA_Client_getEndpoints`: connect without a session,
+  GetEndpoints, disconnect) on an isolate of its own, since the native call
+  drives its own event loop and blocks until the answer; `ClientIsolate`
+  gets the same static, as there is no session for a worker to hold. Each
+  `EndpointDescription` has `endpointUrl`, `securityPolicyUri`,
+  `securityMode`, `securityLevel`, `serverCertificate` (DER, empty for a
+  server without one), `applicationUri`, `productUri`, `applicationName`,
+  `transportProfileUri`, `userIdentityTokens` (`UserTokenPolicy`: policy id
+  and `UserTokenType` anonymous/username/certificate/issued) and a
+  `certificateThumbprint` (SHA-1 of the DER, uppercase hex, the thumbprint
+  OPC UA tooling shows) to compare out of band. A host that does not answer
+  within `timeout` is a `TimeoutException`; a refused connection, a bad URL
+  or a Bad service result a `UaStatusException`. The trust-on-first-use
+  flow (discover, confirm the thumbprint out of band, persist the DER, pass
+  it as `trustList`, and why a MITM at discovery time is what the thumbprint
+  check catches) is in README's Security section and the `Client` dartdoc;
+  `example/discover_endpoints.dart` prints a server's endpoints and
+  thumbprints. Bindings: `UA_Client_getEndpoints`, `UA_Array_delete`. The
+  encrypted test server and client of `client_trust_list_test.dart` moved
+  to `test/secure_fixtures.dart`, shared with
+  `test/endpoint_discovery_test.dart`.
 - **Docs: what the security of each side is.** README (Features, a Security
   section), `example/README.md`, the pubspec description and the `Client` /
   `ClientIsolate` dartdoc say that `SignAndEncrypt` authenticates the server
