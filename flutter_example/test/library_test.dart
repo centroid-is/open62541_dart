@@ -38,9 +38,10 @@ void main() {
   test('UA_Server creation with config', () {
     final config = ua_calloc<raw.UA_ServerConfig>();
     // Silence the native logger BEFORE setMinimal (which keeps a pre-set
-    // logger) so the test output stays readable. Native stdout cannot corrupt
-    // the test protocol: flutter_tools relays the tester's stdout line by line
-    // ("Shell: ...") and the test events travel over a separate WebSocket.
+    // logger): open62541's log lines share stdout with flutter test's
+    // machine-readable JSON event stream, and an interleaved write can
+    // corrupt an event mid-line — the tool then miscounts tests and exits 1
+    // with every test green (seen as Windows CI flakiness).
     config.ref.logging = raw.UA_Log_Stdout_new(LogLevel.UA_LOGLEVEL_FATAL);
     final result = raw.UA_ServerConfig_setMinimal(config, 4840, nullptr);
     expect(result, equals(raw.UA_STATUSCODE_GOOD));
@@ -54,7 +55,7 @@ void main() {
   test('UA_Client creation with config', () {
     final config = ua_calloc<raw.UA_ClientConfig>();
     raw.UA_ClientConfig_setDefault(config);
-    // Same quiet logger as the server tests (see above).
+    // Same stdout-quieting as the server tests (see above).
     config.ref.logging = raw.UA_Log_Stdout_new(LogLevel.UA_LOGLEVEL_FATAL);
     expect(config.ref.timeout, greaterThan(0));
     // Client takes ownership of config
