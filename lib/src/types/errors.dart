@@ -45,6 +45,43 @@ class MonitoredItemsRefused extends UaStatusException {
       'Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value)}").join(", ")}';
 }
 
+/// The DataTypeDefinitions a server serves for a structured type lead back to
+/// a type that is still being resolved (a field of type A inside A, or A → B
+/// → A): the definition is invalid (Part 3: a structure cannot contain itself
+/// by value) and its schema cannot be built. Thrown by `Client.buildSchema`,
+/// so a `read`, `readValue`, `call` or monitor of a value of that type fails
+/// with it instead of fetching definitions forever; the client stays usable.
+/// Crosses the `ClientIsolate` boundary as its message.
+class DataTypeDefinitionCycle implements Exception {
+  DataTypeDefinitionCycle(this.path);
+
+  /// The DataType ids from the repeated type down to the field that names it
+  /// again, so `path.first == path.last`.
+  final List<NodeId> path;
+
+  @override
+  String toString() => 'DataTypeDefinitionCycle: the DataTypeDefinition of ${path.join(' -> ')} contains itself';
+}
+
+/// A structured type's DataTypeDefinitions nest deeper than
+/// [DataTypeDefinitionTooDeep.limit] levels: the backstop (the bound
+/// open62541's binary decoder uses) behind [DataTypeDefinitionCycle] for a
+/// server that serves a new definition at every level.
+class DataTypeDefinitionTooDeep implements Exception {
+  DataTypeDefinitionTooDeep(this.path);
+
+  /// The deepest nesting of struct-typed fields a schema is built for.
+  static const limit = 100;
+
+  /// The DataType ids from the root type down to the one past [limit].
+  final List<NodeId> path;
+
+  @override
+  String toString() =>
+      'DataTypeDefinitionTooDeep: the DataTypeDefinition of ${path.first} nests more than $limit levels '
+      '(at ${path.last})';
+}
+
 class Inactivity extends Error {}
 
 class SubscriptionDeleted extends Error {
