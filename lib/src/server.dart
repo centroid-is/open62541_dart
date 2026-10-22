@@ -1288,7 +1288,7 @@ class Server {
   /// session-owned memory, which this method fully copies into Dart values
   /// before returning.
   MethodSessionInfo _resolveSessionInfo(ffi.Pointer<raw.UA_NodeId> sessionIdPtr) {
-    final sessionId = NodeId.fromRaw(sessionIdPtr.ref);
+    final sessionId = NodeIdFfi.fromRaw(sessionIdPtr.ref);
 
     // An empty UA_String can carry a null data pointer; treat it as ''.
     String uaStr(raw.UA_String s) => s.length == 0 ? '' : s.value;
@@ -1347,7 +1347,7 @@ class Server {
       final entries = diagVariant.ref.data.cast<raw.UA_SessionSecurityDiagnosticsDataType>();
       for (var i = 0; i < diagVariant.ref.arrayLength; i++) {
         final entry = (entries + i).ref;
-        if (NodeId.fromRaw(entry.sessionId) != sessionId) continue;
+        if (NodeIdFfi.fromRaw(entry.sessionId) != sessionId) continue;
         final userId = clientUserId ?? uaStr(entry.clientUserIdOfSession);
         identity = switch (uaStr(entry.authenticationMechanism)) {
           'Anonymous' => const AnonymousSessionIdentity(),
@@ -1947,7 +1947,7 @@ class Server {
           throw UaStatusException(result.ref.statusCode);
         }
         return [
-          for (var i = 0; i < result.ref.referencesSize; i++) NodeId.fromRaw(result.ref.references[i].nodeId.nodeId),
+          for (var i = 0; i < result.ref.referencesSize; i++) NodeIdFfi.fromRaw(result.ref.references[i].nodeId.nodeId),
         ];
       } finally {
         raw.UA_clear(result.cast(), getType(UaTypes.browseResult));

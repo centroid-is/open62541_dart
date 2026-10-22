@@ -29,8 +29,9 @@ including subscriptions, custom types and encrypted (mbedTLS) connections.
 
 ## Supported platforms
 
-Linux, macOS, Windows, Android and iOS. (Web is not supported — this is a native
-FFI binding.)
+Linux, macOS, Windows, Android and iOS. The client and server are a native FFI
+binding, so they do not run in a browser; the value types (`DynamicValue`,
+`NodeId`, ...) do — see [Using the types on the web](#using-the-types-on-the-web).
 
 ## How the native library is built
 
@@ -165,6 +166,36 @@ server.setDataSetReaderTargetVariables(reader, [targetNodeId]);
 server.onValueChanged(targetNodeId).listen((v) => print('received: ${v.value}'));
 server.enableAllPubSubComponents();
 ```
+
+### Using the types on the web
+
+`package:open62541/open62541.dart` imports `dart:ffi`, which makes a Flutter
+web build a compile error, not a runtime one. Code that only passes values
+around — an HMI widget that renders a `DynamicValue`, a model that keys on
+`NodeId` — imports the pure-Dart barrel instead:
+
+```dart
+import 'package:open62541/open62541_types.dart';
+
+final motor = DynamicValue(typeId: NodeId.fromString(2, 'ST_Motor'))
+  ..['run'] = DynamicValue(value: true)
+  ..['speed'] = DynamicValue(value: 1450);
+print('${motor.typeId}: ${motor['speed'].asInt}'); // ns=2;s=ST_Motor: 1450
+```
+
+It exports `DynamicValue`, `DynamicType`, `LocalizedText`, `EnumField`,
+`Schema` and `NodeId` (with every namespace-0 static, `NodeId.server`,
+`NodeId.serverStatusCurrentTime`, ...), and nothing that needs the native
+library. Keep the `Client`/`Server` behind a platform-conditional import or in
+a separate package; a web build still runs this package's build hook, which
+returns without building anything when no code assets are requested.
+
+The FFI conversions on `NodeId` live in `extension NodeIdFfi` in the main
+library: `nodeId.toRaw()` resolves as before, and what used to be
+`NodeId.fromRaw(raw)` is `NodeIdFfi.fromRaw(raw)`.
+
+`test/web/types_web_test.dart` compiles the barrel with dart2js and runs it in
+Chrome (`dart test -p chrome test/web`); CI runs it on every push.
 
 ## Development
 
