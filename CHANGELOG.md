@@ -6,6 +6,18 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **`Client.connect(timeout:)`** (default 30 s, `null` waits): a peer that
+  never answers, or a session never activated, is a `TimeoutException` and
+  the attempt is abandoned; `keepConnected(connectTimeout:)` abandons and
+  retries such an attempt. `ClientIsolate` forwards both, and its connect
+  timeout is now a `TimeoutException` (was `UaStatusException(Bad_Timeout)`).
+- **The client's DataType definition cache is bounded** (`schemaCacheSize`,
+  default 4096, on `Client` and `ClientIsolate`): it grew by every distinct
+  type id a server served; past the cap it is emptied and refilled on demand.
+- **An encrypted client private key is an `ArgumentError`**, not an
+  open62541 password prompt on stdin that blocked the process, and a key
+  open62541 cannot load is a `UaStatusException` from the constructor (its
+  `setDefaultEncryption` status was ignored).
 - **CI's ASan/UBSan lane now sanitises.** The hooks runner starts build hooks
   with a scrubbed environment, so `OPEN62541_DART_SANITIZER` (and
   `ENABLE_SANITIZER` before it) never reached the hook and `test-asan` ran
