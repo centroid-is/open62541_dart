@@ -442,6 +442,78 @@ external int UA_Client_writeValueAttribute_async(
   ffi.Pointer<UA_UInt32> reqId,
 );
 
+/// Create a self-signed certificate
+///
+/// It is recommended to store the generated certificate on disk for reuse, so the
+/// application can be recognized across several executions.
+///
+/// \param subject Elements for the subject,
+/// e.g. ["C=DE", "O=SampleOrganization", "CN=Open62541Server@localhost"]
+/// \param subjectAltName Elements for SubjectAltName,
+/// e.g. ["DNS:localhost", "URI:urn:open62541.server.application"]
+/// \param params key value map with optional parameters:
+/// - expires-in-days after these the cert expires default: 365
+/// - key-size-bits Size of the generated RSA key in bits. Possible
+/// values are: [0, 1024 (deprecated), 2048, 4096] default: 4096.
+/// Ignored when key-type is set to "EC".
+/// - key-type (UA_String) "RSA" or "EC". default: "RSA".
+/// When "EC", an ECC key is generated for the curve specified
+/// by the ecc-curve parameter. The certificate key usage is set
+/// to include keyAgreement (required for ECDH).
+/// - ecc-curve (UA_String) The EC curve name. Possible values:
+/// "prime256v1" (NIST P-256, default when key-type is "EC"),
+/// "secp384r1" (NIST P-384),
+/// "brainpoolP256r1", "brainpoolP384r1",
+/// "ed25519", "ed448" (OpenSSL only).
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Logger>,
+    ffi.Pointer<UA_String>,
+    ffi.Size,
+    ffi.Pointer<UA_String>,
+    ffi.Size,
+    ffi.UnsignedInt,
+    ffi.Pointer<UA_KeyValueMap>,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Pointer<UA_ByteString>,
+  )
+>(symbol: 'UA_CreateCertificate')
+external int _UA_CreateCertificate(
+  ffi.Pointer<UA_Logger> logger,
+  ffi.Pointer<UA_String> subject,
+  int subjectSize,
+  ffi.Pointer<UA_String> subjectAltName,
+  int subjectAltNameSize,
+  int certFormat,
+  ffi.Pointer<UA_KeyValueMap> params,
+  ffi.Pointer<UA_ByteString> outPrivateKey,
+  ffi.Pointer<UA_ByteString> outCertificate,
+);
+
+DartUA_StatusCode UA_CreateCertificate(
+  ffi.Pointer<UA_Logger> logger,
+  ffi.Pointer<UA_String> subject,
+  int subjectSize,
+  ffi.Pointer<UA_String> subjectAltName,
+  int subjectAltNameSize,
+  UA_CertificateFormat certFormat,
+  ffi.Pointer<UA_KeyValueMap> params,
+  ffi.Pointer<UA_ByteString> outPrivateKey,
+  ffi.Pointer<UA_ByteString> outCertificate,
+) {
+  return _UA_CreateCertificate(
+    logger,
+    subject,
+    subjectSize,
+    subjectAltName,
+    subjectAltNameSize,
+    certFormat.value,
+    params,
+    outPrivateKey,
+    outCertificate,
+  );
+}
+
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_CreateMonitoredItemsRequest>)>()
 external void UA_CreateMonitoredItemsRequest_delete(ffi.Pointer<UA_CreateMonitoredItemsRequest> p);
 
@@ -532,6 +604,33 @@ external void UA_ReadRequest_init(ffi.Pointer<UA_ReadRequest> p);
 
 @ffi.Native<ffi.Pointer<UA_ReadRequest> Function()>()
 external ffi.Pointer<UA_ReadRequest> UA_ReadRequest_new();
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_ServerConfig>,
+    UA_UInt16,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Size,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Size,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Size,
+  )
+>()
+external int UA_ServerConfig_setDefaultWithSecurityPolicies(
+  ffi.Pointer<UA_ServerConfig> conf,
+  int portNumber,
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<UA_ByteString> privateKey,
+  ffi.Pointer<UA_ByteString> trustList,
+  int trustListSize,
+  ffi.Pointer<UA_ByteString> issuerList,
+  int issuerListSize,
+  ffi.Pointer<UA_ByteString> revocationList,
+  int revocationListSize,
+);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>, UA_UInt16, ffi.Pointer<UA_ByteString>)>()
 external int UA_ServerConfig_setMinimal(
@@ -4211,7 +4310,11 @@ final class UA_KeyValueMap extends ffi.Struct {
     ..ref.map = map;
 }
 
-final class UA_KeyValuePair extends ffi.Opaque {}
+final class UA_KeyValuePair extends ffi.Struct {
+  external UA_QualifiedName key;
+
+  external UA_Variant value;
+}
 
 /// Lifecycle States
 /// ----------------
@@ -58797,7 +58900,52 @@ enum UA_TimestampsToReturn {
   };
 }
 
-final class UA_TrustListDataType extends ffi.Opaque {}
+final class UA_TrustListDataType extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedLists;
+
+  @ffi.Size()
+  external int trustedCertificatesSize;
+
+  external ffi.Pointer<UA_ByteString> trustedCertificates;
+
+  @ffi.Size()
+  external int trustedCrlsSize;
+
+  external ffi.Pointer<UA_ByteString> trustedCrls;
+
+  @ffi.Size()
+  external int issuerCertificatesSize;
+
+  external ffi.Pointer<UA_ByteString> issuerCertificates;
+
+  @ffi.Size()
+  external int issuerCrlsSize;
+
+  external ffi.Pointer<UA_ByteString> issuerCrls;
+
+  static ffi.Pointer<UA_TrustListDataType> $allocate(
+    ffi.Allocator $allocator, {
+    required int specifiedLists,
+    required int trustedCertificatesSize,
+    required ffi.Pointer<UA_ByteString> trustedCertificates,
+    required int trustedCrlsSize,
+    required ffi.Pointer<UA_ByteString> trustedCrls,
+    required int issuerCertificatesSize,
+    required ffi.Pointer<UA_ByteString> issuerCertificates,
+    required int issuerCrlsSize,
+    required ffi.Pointer<UA_ByteString> issuerCrls,
+  }) => $allocator<UA_TrustListDataType>()
+    ..ref.specifiedLists = specifiedLists
+    ..ref.trustedCertificatesSize = trustedCertificatesSize
+    ..ref.trustedCertificates = trustedCertificates
+    ..ref.trustedCrlsSize = trustedCrlsSize
+    ..ref.trustedCrls = trustedCrls
+    ..ref.issuerCertificatesSize = issuerCertificatesSize
+    ..ref.issuerCertificates = issuerCertificates
+    ..ref.issuerCrlsSize = issuerCrlsSize
+    ..ref.issuerCrls = issuerCrls;
+}
 
 enum UA_TrustListMasks {
   UA_TRUSTLISTMASKS_NONE(0),
