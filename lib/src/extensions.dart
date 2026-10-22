@@ -15,6 +15,7 @@ typedef MessageSecurityMode = raw.UA_MessageSecurityMode;
 typedef SecureChannelState = raw.UA_SecureChannelState;
 typedef SessionState = raw.UA_SessionState;
 typedef LogLevel = raw.UA_LogLevel;
+typedef UserTokenType = raw.UA_UserTokenType;
 
 // ignore: camel_case_types
 enum Namespace0Id {
