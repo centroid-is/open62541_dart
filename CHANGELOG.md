@@ -11,6 +11,9 @@ changes that ship the same native library version.
   the attempt is abandoned; `keepConnected(connectTimeout:)` abandons and
   retries such an attempt. `ClientIsolate` forwards both, and its connect
   timeout is now a `TimeoutException` (was `UaStatusException(Bad_Timeout)`).
+- **The client's DataType definition cache is bounded** (`schemaCacheSize`,
+  default 4096, on `Client` and `ClientIsolate`): it grew by every distinct
+  type id a server served; past the cap it is emptied and refilled on demand.
 - **Breaking: `Server.addVariableNode` adds a read-only node by default.**
   `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
   every variable a server published without thinking about it was writable by

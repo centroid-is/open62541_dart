@@ -276,6 +276,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    int schemaCacheSize = Client.defaultSchemaCacheSize,
   }) {
     _initIsolate(
       secureChannelLifeTime: secureChannelLifeTime,
@@ -291,6 +292,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      schemaCacheSize: schemaCacheSize,
     );
   }
 
@@ -321,6 +323,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    int schemaCacheSize = Client.defaultSchemaCacheSize,
     Duration iterateInterval = const Duration(milliseconds: 10),
   }) async {
     // The worker's Client constructor would throw where nobody awaits it
@@ -348,6 +351,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      schemaCacheSize: schemaCacheSize,
     );
 
     await isolate._initCompleter.future;
@@ -377,6 +381,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    int schemaCacheSize = Client.defaultSchemaCacheSize,
   }) async {
     try {
       _receivePort = ReceivePort();
@@ -409,6 +414,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
           acceptAllCertificates: acceptAllCertificates,
           logLevel: logLevel,
           connectivityCheckInterval: connectivityCheckInterval,
+          schemaCacheSize: schemaCacheSize,
           sendPort: _receivePort.sendPort,
         ),
         // A worker isolate must NOT die on an uncaught error. In particular, a
@@ -1099,6 +1105,7 @@ class _IsolateData {
   final bool acceptAllCertificates;
   final LogLevel? logLevel;
   final Duration connectivityCheckInterval;
+  final int schemaCacheSize;
   final SendPort sendPort;
 
   _IsolateData({
@@ -1115,6 +1122,7 @@ class _IsolateData {
     required this.acceptAllCertificates,
     this.logLevel,
     required this.connectivityCheckInterval,
+    required this.schemaCacheSize,
     required this.sendPort,
   });
 }
@@ -1153,6 +1161,7 @@ void _isolateEntryPoint(_IsolateData data) {
     acceptAllCertificates: data.acceptAllCertificates,
     logLevel: data.logLevel,
     connectivityCheckInterval: data.connectivityCheckInterval,
+    schemaCacheSize: data.schemaCacheSize,
   );
 
   // Handle messages from the main isolate

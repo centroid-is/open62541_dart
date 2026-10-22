@@ -457,6 +457,9 @@ class Client implements ClientApi, DataValueMonitoringApi {
   /// sends it anyway. Only for a network trusted end to end (a lab, a
   /// machine network behind its own firewall); anywhere else use a
   /// certificate with `SignAndEncrypt` and a [trustList].
+  ///
+  /// [schemaCacheSize] caps the DataType definitions the client keeps for
+  /// decoding (see [defs]).
   Client({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -472,6 +475,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    this.schemaCacheSize = defaultSchemaCacheSize,
   }) {
     checkClientCertificateArguments(
       certificate: certificate,
@@ -2900,7 +2904,30 @@ class Client implements ClientApi, DataValueMonitoringApi {
     return map;
   }
 
+  /// The default of [schemaCacheSize].
+  static const defaultSchemaCacheSize = 4096;
+
+  /// The most entries [defs] holds: a server chooses the DataType ids it
+  /// serves, so without a bound every distinct one would stay for the life
+  /// of the client. When a new definition would go past it the cache is
+  /// emptied and refilled on demand. A single type whose definitions alone
+  /// exceed it is kept anyway, until the next one arrives.
+  final int schemaCacheSize;
+
+  /// The DataType definitions fetched so far, by DataType id (and by
+  /// DefaultBinary encoding id once resolved); at most [schemaCacheSize].
   Schema defs = {};
+
+  /// Adds [schemas] to [defs], emptying both caches first if they would
+  /// outgrow [schemaCacheSize]. A decode in flight holds its own definitions
+  /// (see [_variantToValueAutoSchema]), so emptying never takes them away.
+  void _cacheSchemas(Schema schemas) {
+    if (defs.length + schemas.length > schemaCacheSize || _dataTypeByEncoding.length >= schemaCacheSize) {
+      defs.clear();
+      _dataTypeByEncoding.clear();
+    }
+    defs.addAll(schemas);
+  }
 
   Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data, [NodeId? dataTypeId]) async {
     // An empty variant (type == NULL) has no payload and no type to probe a
@@ -2918,11 +2945,21 @@ class Client implements ClientApi, DataValueMonitoringApi {
       // that has no definition of its own.
       return variantToValue(data, defs: defs);
     }
-    if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null && !defs.containsKey(dataTypeId)) {
-      defs.addAll(await buildSchema(dataTypeId));
+    // What this call fetched, which a concurrent call emptying the cache
+    // while this one awaits must not take from under the decode below.
+    final fetched = Schema();
+    bool known(NodeId id) => defs.containsKey(id) || fetched.containsKey(id);
+    Future<void> fetch(NodeId id) async {
+      final schema = await buildSchema(id);
+      fetched.addAll(schema);
+      _cacheSchemas(schema);
+    }
+
+    if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null && !known(dataTypeId)) {
+      await fetch(dataTypeId);
     }
     final isExtensionObject = data.type.ref.typeKind == raw.UA_DataTypeKind.UA_DATATYPEKIND_EXTENSIONOBJECT;
-    if (isExtensionObject && (dataTypeId == null || !defs.containsKey(dataTypeId))) {
+    if (isExtensionObject && (dataTypeId == null || !known(dataTypeId))) {
       // No usable DataType at hand: none (readValue, call outputs) or one
       // without a definition (BaseDataType i=24, as a relay serves a value
       // under). The ExtensionObject's typeId is the type's DefaultBinary
@@ -2933,19 +2970,22 @@ class Client implements ClientApi, DataValueMonitoringApi {
       final ext = data.data.cast<raw.UA_ExtensionObject>();
       final encodingId = ext.ref.content.encoded.typeId.toNodeId();
       var resolved = _dataTypeByEncoding[encodingId];
+      if (resolved != null && !known(resolved)) {
+        await fetch(resolved);
+      }
       if (resolved == null) {
         final resolution = await _resolveEncoding(encodingId);
         resolved = resolution.dataType;
-        if (resolved == null && resolution.nodeExists && !defs.containsKey(encodingId)) {
-          defs.addAll(await buildSchema(encodingId));
+        if (resolved == null && resolution.nodeExists && !known(encodingId)) {
+          await fetch(encodingId);
         }
-        if (resolved == null && defs.containsKey(encodingId)) {
+        if (resolved == null && known(encodingId)) {
           resolved = encodingId;
         }
-        if (resolved != null && !defs.containsKey(resolved)) {
-          defs.addAll(await buildSchema(resolved));
+        if (resolved != null && !known(resolved)) {
+          await fetch(resolved);
         }
-        if (resolved != null && defs.containsKey(resolved)) {
+        if (resolved != null && known(resolved)) {
           _dataTypeByEncoding[encodingId] = resolved;
         } else {
           resolved = null;
@@ -2954,14 +2994,19 @@ class Client implements ClientApi, DataValueMonitoringApi {
       if (resolved == null) {
         // Nothing in the address space describes this ExtensionObject: keep
         // its body with the wire id rather than fail the read.
-        return decodeExtensionObjectsOpaque(data, defs: defs);
+        return decodeExtensionObjectsOpaque(data, defs: fetched.isEmpty ? defs : {...defs, ...fetched});
       }
       // Alias the schema under the encoding id, which is what a nested
       // ExtensionObject is looked up by.
-      defs[encodingId] ??= defs[resolved]!;
+      if (!known(encodingId)) {
+        // Held in [fetched] too: adding the alias may empty the cache.
+        final schema = fetched[resolved] ??= defs[resolved]!;
+        fetched[encodingId] = schema;
+        _cacheSchemas({encodingId: schema});
+      }
       dataTypeId = resolved;
     }
-    final retValue = variantToValue(data, defs: defs, dataTypeId: dataTypeId);
+    final retValue = variantToValue(data, defs: fetched.isEmpty ? defs : {...defs, ...fetched}, dataTypeId: dataTypeId);
     return retValue;
   }
 
