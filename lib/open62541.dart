@@ -63,7 +63,8 @@ export 'src/types/errors.dart'
         MonitoredItemsRefused,
         SecureChannelClosed,
         SubscriptionDeleted,
-        UaStatusException;
+        UaStatusException,
+        UaTypeMismatch;
 export 'src/isolate.dart' show ClientIsolate;
 export 'src/client_api.dart' show ClientApi, DataValueMonitoringApi;
 export 'src/types/opcua_serializer.dart' show OpcUaDynamicValueSerializer;
