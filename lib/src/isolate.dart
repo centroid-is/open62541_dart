@@ -8,7 +8,6 @@ import 'client_api.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'node_id.dart';
-import 'third_party/open62541.g.dart' show UA_STATUSCODE_BADTIMEOUT;
 import 'types/endpoint_description.dart';
 import 'types/errors.dart';
 
@@ -194,12 +193,14 @@ class KeepConnectedMessage extends IsolateMessage {
   final Duration retryInterval;
   final Duration maxBackoff;
   final Duration iterateInterval;
+  final Duration? connectTimeout;
   const KeepConnectedMessage(
     super.requestId,
     this.url, {
     required this.retryInterval,
     required this.maxBackoff,
     required this.iterateInterval,
+    required this.connectTimeout,
   });
 }
 
@@ -242,12 +243,12 @@ class IsolateResponse<T> {
 }
 
 /// Maps an error to what crosses the isolate boundary: a [UaStatusException]
-/// travels as itself (its status code survives — callers on the main isolate
+/// (and a [TimeoutException]) travels as itself (its status code survives — callers on the main isolate
 /// can `on UaStatusException catch` and read `statusCode`), and so does a
 /// [MonitoredItemsRefused], with its per-item statuses; anything else is
 /// stringified, because arbitrary exception types (native handles, closures)
 /// are not reliably sendable.
-Object sendableError(Object e) => e is UaStatusException ? e : e.toString();
+Object sendableError(Object e) => e is UaStatusException || e is TimeoutException ? e : e.toString();
 
 /// A [Client] on its own isolate, driven through messages: the same API, with
 /// the native event loop and its callbacks off the calling isolate.
@@ -275,6 +276,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    int schemaCacheSize = Client.defaultSchemaCacheSize,
   }) {
     _initIsolate(
       secureChannelLifeTime: secureChannelLifeTime,
@@ -290,6 +292,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      schemaCacheSize: schemaCacheSize,
     );
   }
 
@@ -320,6 +323,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    int schemaCacheSize = Client.defaultSchemaCacheSize,
     Duration iterateInterval = const Duration(milliseconds: 10),
   }) async {
     // The worker's Client constructor would throw where nobody awaits it
@@ -347,9 +351,18 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      schemaCacheSize: schemaCacheSize,
     );
 
-    await isolate._initCompleter.future;
+    try {
+      await isolate._initCompleter.future;
+    } catch (_) {
+      // The worker made no client and has returned; nothing else to free.
+      isolate._isClosed = true;
+      isolate._receivePort.close();
+      isolate._errPort.close();
+      rethrow;
+    }
     return isolate;
   }
 
@@ -376,6 +389,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    int schemaCacheSize = Client.defaultSchemaCacheSize,
   }) async {
     try {
       _receivePort = ReceivePort();
@@ -408,6 +422,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
           acceptAllCertificates: acceptAllCertificates,
           logLevel: logLevel,
           connectivityCheckInterval: connectivityCheckInterval,
+          schemaCacheSize: schemaCacheSize,
           sendPort: _receivePort.sendPort,
         ),
         // A worker isolate must NOT die on an uncaught error. In particular, a
@@ -431,6 +446,8 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     if (message is SendPort) {
       _sendPort = message;
       _initCompleter.complete();
+    } else if (message is _WorkerInitFailed) {
+      _initCompleter.completeError(message.error);
     } else if (message is IsolateResponse) {
       final completer = _pendingRequests[message.requestId];
       if (completer != null) {
@@ -462,9 +479,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
   /// [keepConnected] (preferred — it owns the pump) or a [runIterate] loop
   /// to process traffic.
   ///
-  /// [timeout] bounds the attempt (default 30 s; the underlying open62541
-  /// connect otherwise retries forever): on expiry the connect attempt is
-  /// abandoned and a [UaStatusException] with `Bad_Timeout` is thrown.
+  /// [timeout] is [Client.connect]'s: it bounds the handshake (default
+  /// 30 s, `null` waits as long as it takes); on expiry the attempt is
+  /// abandoned and a [TimeoutException] is thrown.
   @override
   Future<void> connect(String url, {Duration? timeout = const Duration(seconds: 30)}) async {
     if (_isClosed) throw const ClientIsolateClosedException();
@@ -894,6 +911,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     Duration retryInterval = const Duration(milliseconds: 500),
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
+    Duration? connectTimeout = const Duration(seconds: 30),
   }) async {
     if (_isClosed) throw const ClientIsolateClosedException();
 
@@ -908,6 +926,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
         retryInterval: retryInterval,
         maxBackoff: maxBackoff,
         iterateInterval: iterateInterval,
+        connectTimeout: connectTimeout,
       ),
     );
 
@@ -1096,6 +1115,7 @@ class _IsolateData {
   final bool acceptAllCertificates;
   final LogLevel? logLevel;
   final Duration connectivityCheckInterval;
+  final int schemaCacheSize;
   final SendPort sendPort;
 
   _IsolateData({
@@ -1112,8 +1132,15 @@ class _IsolateData {
     required this.acceptAllCertificates,
     this.logLevel,
     required this.connectivityCheckInterval,
+    required this.schemaCacheSize,
     required this.sendPort,
   });
+}
+
+/// The worker's answer when its [Client] constructor threw.
+class _WorkerInitFailed {
+  const _WorkerInitFailed(this.error);
+  final Object error;
 }
 
 /// Entry point for the isolate
@@ -1133,24 +1160,31 @@ void _isolateEntryPoint(_IsolateData data) {
   bool iterateRunning = false;
   Completer<void>? iterateStopped;
 
+  try {
+    client = Client(
+      secureChannelLifeTime: data.secureChannelLifeTime,
+      requestedSessionTimeout: data.requestedSessionTimeout,
+      username: data.username,
+      password: data.password,
+      securityMode: data.securityMode,
+      certificate: data.certificate,
+      privateKey: data.privateKey,
+      trustList: data.trustList,
+      issuerList: data.issuerList,
+      revocationList: data.revocationList,
+      acceptAllCertificates: data.acceptAllCertificates,
+      logLevel: data.logLevel,
+      connectivityCheckInterval: data.connectivityCheckInterval,
+      schemaCacheSize: data.schemaCacheSize,
+    );
+  } catch (e) {
+    receivePort.close();
+    sendPort.send(_WorkerInitFailed(sendableError(e)));
+    return;
+  }
+
   // Send our receive port back to the main isolate
   sendPort.send(receivePort.sendPort);
-
-  client = Client(
-    secureChannelLifeTime: data.secureChannelLifeTime,
-    requestedSessionTimeout: data.requestedSessionTimeout,
-    username: data.username,
-    password: data.password,
-    securityMode: data.securityMode,
-    certificate: data.certificate,
-    privateKey: data.privateKey,
-    trustList: data.trustList,
-    issuerList: data.issuerList,
-    revocationList: data.revocationList,
-    acceptAllCertificates: data.acceptAllCertificates,
-    logLevel: data.logLevel,
-    connectivityCheckInterval: data.connectivityCheckInterval,
-  );
 
   // Handle messages from the main isolate
   receivePort.listen((message) async {
@@ -1163,7 +1197,7 @@ void _isolateEntryPoint(_IsolateData data) {
         // owns one, but must not be required just to connect). The pump ends
         // with the connect — session traffic afterwards is the caller's
         // pump's job.
-        final connectFuture = client.connect(message.url);
+        final connectFuture = client.connect(message.url, timeout: message.timeout);
         var connecting = true;
         connectFuture.whenComplete(() => connecting = false).ignore();
         unawaited(() async {
@@ -1172,22 +1206,7 @@ void _isolateEntryPoint(_IsolateData data) {
             await Future<void>.delayed(const Duration(milliseconds: 5));
           }
         }());
-        if (message.timeout == null) {
-          await connectFuture;
-        } else {
-          await connectFuture.timeout(
-            message.timeout!,
-            onTimeout: () {
-              // Abandon the attempt: stop the state machine so a later
-              // connect/keepConnected starts clean, and answer Bad_Timeout.
-              connecting = false;
-              try {
-                client.disconnect();
-              } catch (_) {}
-              throw const UaStatusException(UA_STATUSCODE_BADTIMEOUT);
-            },
-          );
-        }
+        await connectFuture;
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is ReadMessage) {
         final result = await client.read(message.nodeId);
@@ -1357,6 +1376,7 @@ void _isolateEntryPoint(_IsolateData data) {
                 retryInterval: message.retryInterval,
                 maxBackoff: message.maxBackoff,
                 iterateInterval: message.iterateInterval,
+                connectTimeout: message.connectTimeout,
               )
               .then((_) => sendPort.send(IsolateResponse.success(message.requestId, null)))
               .catchError((Object e) => sendPort.send(IsolateResponse.error(message.requestId, sendableError(e)))),
