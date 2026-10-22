@@ -6,6 +6,20 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **Fixed: a monitored sample the client could not decode was dropped
+  without a trace.** The monitored-item data callback caught the conversion
+  error, wrote one line to stderr and moved on; the consumer of `monitor`,
+  `monitoredItems`, `monitorDataValue` or `monitoredDataValues` saw nothing,
+  and a second later the backfill read of the item it never saw a sample for
+  put the server's current value in its place. The error is now an error
+  event on the stream (`addError`; a `String` once it has crossed the
+  `ClientIsolate` boundary, like every non-status error), the stream stays
+  open and the subscription stays up, so the next sample is delivered as
+  before. `test/monitor_data_value_test.dart` (both clients): through the
+  rewriting proxy a notification is turned into a Guid, a type this client
+  has no conversion for; the error arrives on the stream without a value
+  event, and a value written after the proxy stops rewriting is delivered
+  on the same stream.
 - **Build hook: archive extraction stays inside its directory.** The hook
   unpacks the open62541 zip and the mbedTLS tarball with a plain loop that
   wrote every entry at `extractDir/entry.name`, so an entry named
