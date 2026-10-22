@@ -395,6 +395,41 @@ changes that ship the same native library version.
   two supervisors reconnecting. Each call now starts a new generation and the
   previous loops end on their next turn. `stopKeepConnected()` behaviour is
   unchanged.
+- **Exported `UA_STATUSCODE_BADNODATA`, `UA_STATUSCODE_BADNODEIDUNKNOWN` and
+  `UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE`** from the package, next to the
+  codes it already exported, so a data-source proxy can serve a quiet
+  device's last usable value as Uncertain, or report "never had data", and
+  a client can test a read for an unknown node, without reaching for the raw
+  bindings.
+- **Example: redundant METAR servers with ServiceLevel failover.**
+  `example/metar_redundant_server.dart` publishes live weather for every
+  Icelandic METAR station (`icelandMetarStations` in `metar_common.dart`,
+  `--station` filters it) as a custom structured type, one data-source node
+  per station named by its ICAO id (`ns=1;s=BIRK`) with every field of the
+  structure as a HasComponent child generated from the schema
+  (`ns=1;s=BIRK.TemperatureC`, ...), each carrying the struct's status and
+  source timestamp (`onReadValue` — the last-known value is served
+  `Bad_NoCommunication` when the feed is down, `Uncertain_LastUsableValue`
+  when only the station has gone quiet, and a station that never reported
+  reads `Bad_NoData`; none of which touches the ServiceLevel). It computes
+  its `ServiceLevel` in the bands of OPC 10000-4 Table 105 (served through
+  `Server.setVariableValueSource`), and publishes the hot-redundant set the
+  Part 5 way through `Server.setRedundancy(RedundancySupport.hot,
+  serverUris:, networkGroups:)`: `ServerRedundancy` typed
+  `NonTransparentNetworkRedundancyType`, `ServerUriArray` holding the
+  members' ApplicationUris (each instance announcing its own through
+  `Server(applicationUri:)`) and `ServerNetworkGroups` mapping them to
+  endpoints. It shuts down orderly with `Server.shutdown(delay:,
+  announceServiceLevel: true)`. `example/metar_redundant_client.dart` is a
+  Part 4 non-transparent redundant client seeded with ONE endpoint: it
+  identifies the server by `ServerArray[0]`, reads `ServerUriArray` and
+  `ServerNetworkGroups`, connects to the other members, polls every
+  member's `ServiceLevel` and `ServerStatus.State` and switches by the Table
+  105 bands (no failover from a Healthy server; a Degraded one is left for
+  any Healthy one; a NoData member is polled but never given data; a
+  Maintenance or shutting-down member is disconnected and retried much
+  later). See `example/README.md` for what is spec-exact and what is
+  simplified.
 
 - **Known structures decode from their native layout.** A value whose
   DataType is a structure the bundled open62541 knows (every NS0 DataType in
@@ -484,6 +519,29 @@ changes that ship the same native library version.
     next regeneration; their sizes are pinned in `verify_sizes_test`.
   - `Client.readAttribute` reads `ValueRank` and `ArrayDimensions` (one of
     them per call; both land in the value).
+  - **`setRedundancy(..., networkGroups:)` publishes `ServerNetworkGroups`**
+    (Part 5 §6.3.10), so a client can find every member of the set from one
+    of them: a ServerUri is an identity, and this property is the spec's map
+    from it to endpoints. Given `Map<String serverUri, List<String>
+    endpointUrls>`, the call types `ServerRedundancy` as
+    `NonTransparentNetworkRedundancyType` (`i=11945`, created as a subtype of
+    `NonTransparentRedundancyType` with the mandatory `ServerNetworkGroups`
+    declaration `i=11948`) and adds `ServerNetworkGroups` (`i=14415`, a
+    `NetworkGroupDataType[]` of `PropertyType`, ValueRank 1): one group per
+    `ServerUriArray` entry, in its order, with that member's URLs as its
+    single network path (an `EndpointUrlListDataType`; a member mapped to
+    `[]` has no path). The map's keys must be exactly the members, the local
+    ApplicationUri included (`ArgumentError` naming the stranger or the
+    missing member, before anything changes). The DataType nodes
+    `EndpointUrlListDataType` (`i=11943`) and `NetworkGroupDataType`
+    (`i=11944`), absent from the reduced NS0 though open62541 knows both
+    types, are added as `Structure` subtypes with `0:` names, so the
+    property's DataType and DataTypeDefinition read as Part 5 says. Calling
+    again updates the groups in place; a call without `networkGroups` removes
+    the property and types the object `NonTransparentRedundancyType` again;
+    `none` removes both properties. The value is read back decoded on both
+    client types and by `Server.read`, which the native-layout decoding
+    above makes possible.
 - **Orderly shutdown: `Server.shutdown(delay:)` and `Server.shutdownDelay`.**
   With a delay the server first announces the shutdown, keeps serving for
   the delay, then shuts down: during the delay `ServerStatus.State`
@@ -577,10 +635,11 @@ changes that ship the same native library version.
   an implementation import. `NodeId.server`, `serverArray`,
   `namespaceArray`, `serverStatus`, `serverStatusStartTime`,
   `serverStatusState`, `serverStatusBuildInfo`, `serviceLevel`,
-  `serverRedundancy`, `redundancySupport`, `serverUriArray`, `organizes`,
-  `hasComponent`, `hasProperty`, `hasTypeDefinition`, `baseObjectType`,
-  `folderType`, `baseDataVariableType` and `propertyType` join the existing
-  folder and reference-type statics, each backed by the generated constant
+  `serverRedundancy`, `redundancySupport`, `serverUriArray`,
+  `serverNetworkGroups`, `organizes`, `hasComponent`, `hasProperty`,
+  `hasTypeDefinition`, `baseObjectType`, `folderType`,
+  `baseDataVariableType` and `propertyType` join the existing folder and
+  reference-type statics, each backed by the generated constant
   (`serverStatusCurrentTime` was a literal `2258`).
 - **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the
   owning isolate.** By default the supervisor's pump calls
