@@ -6,6 +6,7 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- The web barrel (`open62541_types.dart`) compiles again: it pulled in `dart:ffi` through the value-size limit.
 - `subscriptionCreate` fails with a `UaStatusException` carrying the server's status (e.g. `BadTooManySubscriptions`) when the server refuses, on `Client` and `ClientIsolate`; it was a plain string.
 - The native library is built without XML encoding (`UA_ENABLE_XML_ENCODING=OFF`): the XML decoder was unreachable from the Dart API and the network, and the library is about 9% smaller.
 - **`Client.connect(timeout:)`** (default 30 s, `null` waits): a peer that

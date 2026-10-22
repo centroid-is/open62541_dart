@@ -9,6 +9,9 @@
 // nodes is above it is refused before anything is copied: the read fails
 // with ValueTooLarge and the client stays usable.
 
+import 'dart:async';
+import 'dart:isolate';
+
 import 'package:binarize/binarize.dart';
 import 'package:test/test.dart';
 
@@ -36,6 +39,52 @@ Matcher _throwsValueTooLarge(String detail) => throwsA(
   predicate<Object>((e) => '$e'.contains('ValueTooLarge') && '$e'.contains(detail), 'ValueTooLarge ($detail)'),
 );
 
+/// The test server on an isolate of its own: a ~1 MB response is larger than
+/// a Windows loopback buffer, and open62541's client blocks in its receive
+/// until the peer drains it, which a server pumped by the client's isolate
+/// cannot do meanwhile (the read then times out).
+class _IsolateServer {
+  _IsolateServer._(this.port, this._control, this._exited);
+
+  final int port;
+  final SendPort _control;
+  final ReceivePort _exited;
+
+  static Future<_IsolateServer> start() async {
+    final ready = ReceivePort();
+    final exited = ReceivePort();
+    await Isolate.spawn(_serve, ready.sendPort, onExit: exited.sendPort);
+    final (port, control) = await ready.first as (int, SendPort);
+    return _IsolateServer._(port, control, exited);
+  }
+
+  static Future<void> _serve(SendPort ready) async {
+    final server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
+    server.start();
+    server.addVariableNode(_diaNode, addDiamond(server, 20), typeId: diamondType(0));
+    server.addCustomType(_wideType, _wide());
+    server.addDataTypeNode(_wideType, 'Wide200');
+    server.addVariableNode(_okArray, _wides(1000), typeId: _wideType);
+    server.addVariableNode(_bigArray, _wides(ValueTooLarge.limit ~/ 200 + 1), typeId: _wideType);
+    final control = ReceivePort();
+    var serving = true;
+    control.listen((_) => serving = false);
+    ready.send((server.port, control.sendPort));
+    while (serving) {
+      server.runIterate();
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    control.close();
+    server.shutdown();
+    server.delete();
+  }
+
+  Future<void> stop() async {
+    _control.send(null);
+    await _exited.first;
+  }
+}
+
 void main() {
   test('deserialize refuses a struct array member before copying its template per element', () {
     final schema = DynamicValue(typeId: NodeId.fromString(1, 'Holder'));
@@ -51,23 +100,17 @@ void main() {
 
   for (final clientType in clientTypes) {
     group('$clientType client: values that expand past ValueTooLarge.limit', () {
-      late Server server;
+      late _IsolateServer server;
       late ClientApi client;
 
       setUp(() async {
-        server = setupServer();
-        server.addVariableNode(_diaNode, addDiamond(server, 20), typeId: diamondType(0));
-        server.addCustomType(_wideType, _wide());
-        server.addDataTypeNode(_wideType, 'Wide200');
-        server.addVariableNode(_okArray, _wides(1000), typeId: _wideType);
-        server.addVariableNode(_bigArray, _wides(ValueTooLarge.limit ~/ 200 + 1), typeId: _wideType);
+        server = await _IsolateServer.start();
         client = await setupClientOfType(clientType, 'opc.tcp://127.0.0.1:${server.port}');
       });
 
       tearDown(() async {
         await client.delete();
-        server.shutdown();
-        server.delete();
+        await server.stop();
       });
 
       test('a 20-level diamond is refused, and the client stays usable', () async {
