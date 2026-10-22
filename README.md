@@ -2,7 +2,9 @@
 
 Dart FFI bindings to the [open62541](https://www.open62541.org/) OPC UA stack.
 This package provides idiomatic Dart client and server APIs for OPC UA over TCP,
-including subscriptions, custom types and encrypted (mbedTLS) connections.
+including subscriptions, custom types and, on the client, encrypted (mbedTLS)
+connections that verify the server against a trust list. The server speaks
+SecurityPolicy None only; see [Security](#security).
 
 > Status: work in progress. The API is functional but still evolving and may
 > change between releases.
@@ -10,9 +12,11 @@ including subscriptions, custom types and encrypted (mbedTLS) connections.
 ## Features
 
 - **Client**: connect / reconnect, browse and recursive tree browsing, read,
-  subscriptions and monitored items, and secure connections with certificates
-  (`SignAndEncrypt`).
-- **Server**: expose scalar, array and structure (custom type) variable nodes,
+  subscriptions and monitored items, and encrypted connections
+  (`SignAndEncrypt` with a certificate) that authenticate the server against
+  a trust list; accepting any server certificate is an explicit opt-in.
+- **Server** (SecurityPolicy None, anonymous access, see
+  [Security](#security)): expose scalar, array and structure (custom type) variable nodes,
   data-type nodes, custom object types, and monitor variables via streams.
   Redundant sets are published with `setRedundancy` (Part 5
   `NonTransparentRedundancyType`, `ServerUriArray`), and `shutdown(delay:)`
@@ -23,7 +27,7 @@ including subscriptions, custom types and encrypted (mbedTLS) connections.
   ReaderGroups / DataSetReaders that map received fields into local variable
   nodes (both sides configured on `Server`, per the OPC UA PubSub model).
   Received values can be observed with `Server.onValueChanged`.
-- **Encryption** via mbedTLS.
+- **Encryption** via mbedTLS (client side).
 - **`DynamicValue`** for ergonomic access to OPC UA values, including structures
   and arrays.
 
@@ -98,12 +102,56 @@ void main(List<String> args) async {
 
 More examples are in the [`example/`](example/) directory: a minimal client
 (`example.dart`), address-space browsing (`browse_test.dart`), a server
-(`server_example.dart`) and a secure self-healing client
+(`server_example.dart`) and an encrypted, self-healing client
 (`resilient_client.dart`).
 
 > **Threading note:** open62541 is built with multithreading disabled, so the
 > client/server event loop must be driven periodically by calling `runIterate`
 > as shown above.
+
+### Security
+
+**Client.** Without a certificate the client offers SecurityPolicy None:
+nothing on the wire is signed or encrypted, and a username/password only
+travels if `allowUnencryptedPassword: true` is set (in clear text then; for a
+network you trust end to end). With a `certificate` and `privateKey` (DER)
+and `securityMode: SignAndEncrypt` the channel is encrypted, and the server
+is authenticated against the `trustList` (DER: the server's own certificate,
+or the CA certificate that issued it), with an optional `issuerList`
+(intermediate CAs, which complete a chain but are not trusted by themselves)
+and `revocationList` (CRLs). A server whose certificate does not verify is
+refused: `connect` throws a `UaStatusException` with the certificate status
+(`BadCertificateUntrusted`, `BadCertificateChainIncomplete`,
+`BadCertificateRevoked`, ...).
+
+```dart
+final client = Client(
+  securityMode: MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
+  certificate: await File('client_cert.der').readAsBytes(),
+  privateKey: await File('client_key.der').readAsBytes(),
+  trustList: [await File('server_cert.der').readAsBytes()],
+);
+```
+
+`acceptAllCertificates: true` skips the verification: the session is still
+encrypted, which stops passive eavesdropping, but the server is not
+authenticated, so an active attacker (a machine in the middle, a spoofed
+endpoint) goes unnoticed. It is an explicit opt-in: a certificate with
+neither a `trustList` nor `acceptAllCertificates: true` is an
+`ArgumentError`, because open62541 treats an empty trust list as "accept
+every certificate". `ClientIsolate.create` takes the same arguments. The
+endpoint hostname is not checked against the server certificate.
+
+**Server.** A `Server` offers SecurityPolicy None only: no encryption, no
+signing, no server certificate, and anonymous login with open62541's
+permissive default access control, so any client that can reach the port
+can read every node, write every node whose access level allows it, call
+methods, and add or delete nodes. It binds all interfaces. There is no API
+yet to change any of this, so a `Server` must only face a trusted network
+(a machine network behind its own firewall, a lab, `localhost`); do not
+expose it to the internet or to an untrusted LAN. `addVariableNode` defaults
+to `AccessLevelMask(read: true, write: true)`; `addDataSourceVariableNode`
+is read-only unless `onWrite` is given.
 
 ### Monitoring with quality
 

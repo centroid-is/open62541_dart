@@ -9,6 +9,10 @@ import 'dart:io';
 void main(List<String> args) async {
   final certificate = await File("client_cert.der").readAsBytes();
   final privateKey = await File("client_key.der").readAsBytes();
+  // The server's certificate (or the CA certificate that issued it): the
+  // client refuses any other server. Without a trust list the only option is
+  // `acceptAllCertificates: true`, which encrypts but does not authenticate.
+  final serverCertificate = await File("server_cert.der").readAsBytes();
 
   if (args.isEmpty) {
     print("Usage: resilient_client <endpoint> <optional:username> <optional:password>");
@@ -25,6 +29,7 @@ void main(List<String> args) async {
     securityMode: MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
     certificate: certificate,
     privateKey: privateKey,
+    trustList: [serverCertificate],
   );
 
   final id = NodeId.serverStatusCurrentTime;
