@@ -6,6 +6,13 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **CI's ASan/UBSan lane now sanitises.** The hooks runner starts build hooks
+  with a scrubbed environment, so `OPEN62541_DART_SANITIZER` (and
+  `ENABLE_SANITIZER` before it) never reached the hook and `test-asan` ran
+  against a plain library. The switch is now an empty `.open62541_sanitizer`
+  file in the package root (gitignored; the hook reruns when it appears or
+  goes). The job asserts `__asan_` symbols in the built library, and
+  `test/native_sanitizer_test.dart` checks the loaded one.
 - **The compile and link hardening reaches the native build again.** The hook
   passed `-fstack-protector-strong -D_FORTIFY_SOURCE=2` and
   `UA_FLOAT_LITTLE_ENDIAN=1` as `CMAKE_C_FLAGS`, which the toolchain files of
