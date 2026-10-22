@@ -620,7 +620,11 @@ void main() {
 
       setUpAll(() {
         running = Running(Server(port: 0, logLevel: _fatal));
-        running.server.addVariableNode(hostNode, DynamicValue(value: 1, typeId: NodeId.int32, name: 'host.node'));
+        running.server.addVariableNode(
+          hostNode,
+          DynamicValue(value: 1, typeId: NodeId.int32, name: 'host.node'),
+          accessLevel: const AccessLevelMask(read: true, write: true),
+        );
       });
       tearDownAll(() => running.stop());
 
@@ -674,7 +678,11 @@ void main() {
 
       setUpAll(() {
         running = Running(Server(port: 0, logLevel: _fatal, allowClientNodeManagement: true));
-        running.server.addVariableNode(hostNode, DynamicValue(value: 1, typeId: NodeId.int32, name: 'host.node'));
+        running.server.addVariableNode(
+          hostNode,
+          DynamicValue(value: 1, typeId: NodeId.int32, name: 'host.node'),
+          accessLevel: const AccessLevelMask(read: true, write: true),
+        );
       });
       tearDownAll(() => running.stop());
 
