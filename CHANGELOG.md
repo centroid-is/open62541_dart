@@ -20,6 +20,13 @@ changes that ship the same native library version.
   itself) when the declared and wire types are different built-ins; the client
   stays usable. `readValue` and the monitored-item callbacks were never
   affected (they pass no hint).
+- **The compile and link hardening reaches the native build again.** The hook
+  passed `-fstack-protector-strong -D_FORTIFY_SOURCE=2` and
+  `UA_FLOAT_LITTLE_ENDIAN=1` as `CMAKE_C_FLAGS`, which the toolchain files of
+  `native_toolchain_cmake` overwrite (`-march=...`), so a fresh build dropped
+  them. They now go in a script given as `CMAKE_PROJECT_INCLUDE`, which runs
+  after the toolchain.
+
 - **Breaking: `Server.addVariableNode` adds a read-only node by default.**
   `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
   every variable a server published without thinking about it was writable by
