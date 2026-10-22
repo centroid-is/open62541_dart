@@ -274,6 +274,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    bool allowUnencryptedPassword = false,
   }) {
     _initIsolate(
       secureChannelLifeTime: secureChannelLifeTime,
@@ -289,12 +290,14 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      allowUnencryptedPassword: allowUnencryptedPassword,
     );
   }
 
   /// Creates the worker isolate and the [Client] on it; the arguments are
   /// the [Client] constructor's (the certificate ones are checked here
-  /// first, see [checkClientCertificateArguments]).
+  /// first, see [checkClientCertificateArguments]; `allowUnencryptedPassword`
+  /// sends a password over SecurityPolicy#None in clear text, as there).
   static Future<ClientIsolate> create({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -310,6 +313,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     Duration iterateInterval = const Duration(milliseconds: 10),
+    bool allowUnencryptedPassword = false,
   }) async {
     // The worker's Client constructor would throw where nobody awaits it
     // (errorsAreFatal is false there) and every later call would find no
@@ -336,6 +340,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      allowUnencryptedPassword: allowUnencryptedPassword,
     );
 
     await isolate._initCompleter.future;
@@ -365,6 +370,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    bool allowUnencryptedPassword = false,
   }) async {
     try {
       _receivePort = ReceivePort();
@@ -397,6 +403,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
           acceptAllCertificates: acceptAllCertificates,
           logLevel: logLevel,
           connectivityCheckInterval: connectivityCheckInterval,
+          allowUnencryptedPassword: allowUnencryptedPassword,
           sendPort: _receivePort.sendPort,
         ),
         // A worker isolate must NOT die on an uncaught error. In particular, a
@@ -1085,6 +1092,7 @@ class _IsolateData {
   final bool acceptAllCertificates;
   final LogLevel? logLevel;
   final Duration connectivityCheckInterval;
+  final bool allowUnencryptedPassword;
   final SendPort sendPort;
 
   _IsolateData({
@@ -1101,6 +1109,7 @@ class _IsolateData {
     required this.acceptAllCertificates,
     this.logLevel,
     required this.connectivityCheckInterval,
+    required this.allowUnencryptedPassword,
     required this.sendPort,
   });
 }
@@ -1139,6 +1148,7 @@ void _isolateEntryPoint(_IsolateData data) {
     acceptAllCertificates: data.acceptAllCertificates,
     logLevel: data.logLevel,
     connectivityCheckInterval: data.connectivityCheckInterval,
+    allowUnencryptedPassword: data.allowUnencryptedPassword,
   );
 
   // Handle messages from the main isolate
