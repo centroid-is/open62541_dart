@@ -37,6 +37,9 @@ changes that ship the same native library version.
   (`ClientIsolateClosedException` is now a subtype of it), and so do
   `connect` and `awaitConnect` when `delete()` ends the wait (they failed
   with `StateError("No element")` or a `BadConnectionClosed`).
+- **Fixed: a ReadResponse with fewer results than attributes read** left
+  `readAttribute` (and `read`) with a partial map, or never completing with
+  assertions enabled. It now fails with `UaStatusException(Bad_UnexpectedError)`.
 - **An encrypted client private key is an `ArgumentError`**, not an
   open62541 password prompt on stdin that blocked the process, and a key
   open62541 cannot load is a `UaStatusException` from the constructor (its

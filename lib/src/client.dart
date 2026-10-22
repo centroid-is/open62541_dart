@@ -1349,15 +1349,22 @@ class Client implements ClientApi, DataValueMonitoringApi {
           }
           ua_calloc.free(source);
 
-          assert(pointers.length == response.ref.resultsSize);
-          if (pointers.length != nodeCount && pointers.isEmpty) {
+          if (pointers.isEmpty && nodeCount > 0) {
             completer.completeError(
               "The connection might be broken, got no response when reading attributes for nodes: $nodes",
               StackTrace.current,
             );
             return;
           }
-          assert(nodeCount == pointers.length);
+          // A result per attribute read, in order: any other count cannot be
+          // matched to the request.
+          if (pointers.length != nodeCount) {
+            for (final pointer in pointers) {
+              raw.UA_DataValue_delete(pointer);
+            }
+            completer.completeError(UaStatusException(raw.UA_STATUSCODE_BADUNEXPECTEDERROR), StackTrace.current);
+            return;
+          }
 
           try {
             final retVal = <NodeId, DynamicValue>{};
