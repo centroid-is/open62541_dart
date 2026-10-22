@@ -280,6 +280,22 @@ class RawClient {
   }, ua_calloc);
 }
 
+/// Expects every field of [actual] to be [expected]'s.
+void expectLimits(ServerLimits actual, ServerLimits expected) {
+  expect(actual.maxSecureChannels, expected.maxSecureChannels);
+  expect(actual.maxSessions, expected.maxSessions);
+  expect(actual.maxSubscriptions, expected.maxSubscriptions);
+  expect(actual.maxSubscriptionsPerSession, expected.maxSubscriptionsPerSession);
+  expect(actual.maxMonitoredItems, expected.maxMonitoredItems);
+  expect(actual.maxMonitoredItemsPerSubscription, expected.maxMonitoredItemsPerSubscription);
+  expect(actual.maxNodesPerRead, expected.maxNodesPerRead);
+  expect(actual.maxNodesPerWrite, expected.maxNodesPerWrite);
+  expect(actual.maxNodesPerBrowse, expected.maxNodesPerBrowse);
+  expect(actual.maxNodesPerMethodCall, expected.maxNodesPerMethodCall);
+  expect(actual.maxMessageSize, expected.maxMessageSize);
+  expect(actual.maxChunkCount, expected.maxChunkCount);
+}
+
 const _sign = MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGN;
 const _signAndEncrypt = MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
 const _none = MessageSecurityMode.UA_MESSAGESECURITYMODE_NONE;
@@ -382,6 +398,11 @@ void main() {
     test('the hostname and the limits are checked', () {
       expect(() => Server(hostname: ''), throwsArgumentError);
       expect(() => Server(limits: const ServerLimits(maxSessions: -1)), throwsArgumentError);
+      // 0 is a lifted cap for the UInt32 fields, but open62541 compares the
+      // live count against these two with >=: 0 would refuse everything.
+      expect(() => Server(limits: const ServerLimits(maxSessions: 0)), throwsArgumentError);
+      expect(() => Server(limits: const ServerLimits(maxSecureChannels: 0)), throwsArgumentError);
+      Server(limits: const ServerLimits(maxSessions: 0xFFFF, maxSecureChannels: 0xFFFF), logLevel: _fatal).delete();
       expect(() => Server(limits: const ServerLimits(maxSessions: 0x10000)), throwsArgumentError);
       expect(() => Server(limits: const ServerLimits(maxSecureChannels: 0x10000)), throwsArgumentError);
       expect(() => Server(limits: const ServerLimits(maxNodesPerRead: -1)), throwsArgumentError);
@@ -403,19 +424,7 @@ void main() {
       expect(server.hasCertificate, isFalse);
       expect(server.acceptAllClientCertificates, isFalse);
       expect(server.hostname, isNull);
-      final limits = server.limits;
-      expect(limits.maxSecureChannels, 100);
-      expect(limits.maxSessions, 100);
-      expect(limits.maxSubscriptions, 0);
-      expect(limits.maxSubscriptionsPerSession, 0);
-      expect(limits.maxMonitoredItems, 0);
-      expect(limits.maxMonitoredItemsPerSubscription, 0);
-      expect(limits.maxNodesPerRead, 0);
-      expect(limits.maxNodesPerWrite, 0);
-      expect(limits.maxNodesPerBrowse, 0);
-      expect(limits.maxNodesPerMethodCall, 0);
-      expect(limits.maxMessageSize, 0);
-      expect(limits.maxChunkCount, 0);
+      expectLimits(server.limits, ServerLimits.defaults);
     });
   });
 
@@ -737,12 +746,12 @@ void main() {
     });
     tearDownAll(() => running.stop());
 
-    test('what was given is in force, the rest is open62541\'s', () {
+    test('what was given is in force, the rest is the default', () {
       final limits = running.server.limits;
       expect(limits.maxSessions, 1);
       expect(limits.maxNodesPerRead, 2);
-      expect(limits.maxSecureChannels, 100);
-      expect(limits.maxNodesPerWrite, 0);
+      expect(limits.maxSecureChannels, ServerLimits.defaults.maxSecureChannels);
+      expect(limits.maxNodesPerWrite, ServerLimits.defaults.maxNodesPerWrite);
     });
 
     for (final clientType in clientTypes) {
@@ -767,6 +776,96 @@ void main() {
         });
       });
     }
+  });
+
+  group('default limits:', () {
+    test('a fresh server has every default in force, none is 0', () {
+      final server = Server(logLevel: _fatal);
+      addTearDown(server.delete);
+      final limits = server.limits;
+      expectLimits(limits, ServerLimits.defaults);
+      expect(limits.maxSubscriptions, isNot(0));
+      expect(limits.maxNodesPerRead, isNot(0));
+      expect(limits.maxMessageSize, isNot(0));
+    });
+
+    test('ServerLimits.unlimited lifts every cap: 0 for the UInt32 fields, 65535 for sessions and channels', () {
+      final server = Server(logLevel: _fatal, limits: ServerLimits.unlimited);
+      addTearDown(server.delete);
+      final limits = server.limits;
+      expect(limits.maxSecureChannels, 0xFFFF);
+      expect(limits.maxSessions, 0xFFFF);
+      for (final value in [
+        limits.maxSubscriptions,
+        limits.maxSubscriptionsPerSession,
+        limits.maxMonitoredItems,
+        limits.maxMonitoredItemsPerSubscription,
+        limits.maxNodesPerRead,
+        limits.maxNodesPerWrite,
+        limits.maxNodesPerBrowse,
+        limits.maxNodesPerMethodCall,
+        limits.maxMessageSize,
+        limits.maxChunkCount,
+      ]) {
+        expect(value, 0);
+      }
+    });
+
+    group('in force:', () {
+      late Running running;
+
+      setUpAll(() {
+        running = Running(Server(port: 0, logLevel: _fatal));
+        addBasicVariables(running.server);
+      });
+      tearDownAll(() => running.stop());
+
+      // One node, its Value attribute 10 001 times: 10 001 operations in one
+      // Read request (readAttribute sends the map as a single request).
+      final overTheReadLimit = {
+        intNodeId: List.filled(ServerLimits.defaults.maxNodesPerRead! + 1, AttributeId.UA_ATTRIBUTEID_VALUE),
+      };
+
+      for (final clientType in clientTypes) {
+        group('$clientType client:', () {
+          test('maxNodesPerRead refuses a 10 001-node read as a whole', () async {
+            final client = await clientOf(clientType);
+            await client.connect(running.url);
+            await expectLater(
+              client.readAttribute(overTheReadLimit),
+              refusedWith(raw.UA_STATUSCODE_BADTOOMANYOPERATIONS),
+            );
+            // At the limit it is served.
+            final atTheLimit = {
+              intNodeId: List.filled(ServerLimits.defaults.maxNodesPerRead!, AttributeId.UA_ATTRIBUTEID_VALUE),
+            };
+            expect((await client.readAttribute(atTheLimit))[intNodeId]!.asInt, 1);
+          });
+
+          test('maxSubscriptionsPerSession refuses the 51st subscription of a session', () async {
+            final client = await clientOf(clientType);
+            await client.connect(running.url);
+            for (var i = 0; i < ServerLimits.defaults.maxSubscriptionsPerSession!; i++) {
+              await client.subscriptionCreate();
+            }
+            await expectLater(
+              client.subscriptionCreate(),
+              throwsA(predicate((e) => '$e'.contains('BadTooManySubscriptions'), 'mentions BadTooManySubscriptions')),
+            );
+          });
+        });
+      }
+
+      test('an explicit 0 lifts the cap: maxNodesPerRead: 0 serves the 10 001-node read', () async {
+        final lifted = Running(Server(port: 0, logLevel: _fatal, limits: const ServerLimits(maxNodesPerRead: 0)));
+        addTearDown(lifted.stop);
+        addBasicVariables(lifted.server);
+        expect(lifted.server.limits.maxNodesPerRead, 0);
+        final client = await clientOf('direct');
+        await client.connect(lifted.url);
+        expect((await client.readAttribute(overTheReadLimit))[intNodeId]!.asInt, 1);
+      });
+    });
   });
 
   test('a secured server leaves nothing on the C heap once deleted', () async {

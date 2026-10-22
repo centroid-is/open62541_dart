@@ -281,23 +281,18 @@ enum RedundancySupport {
   final int value;
 }
 
-/// The resource limits of a [Server]: `UA_ServerConfig`'s limit fields.
+/// The resource limits of a [Server]: `UA_ServerConfig`'s limit fields,
+/// what one client (or all of them together) may ask of the server.
 ///
-/// A field left `null` keeps open62541's default, the one
-/// `UA_ServerConfig_setMinimal` and `UA_ServerConfig_setDefaultWithSecurityPolicies`
-/// set (`plugins/ua_config_default.c`, `setDefaultConfig`): 100 secure
-/// channels and 100 sessions, everything else 0, which open62541 reads as
-/// unlimited. [Server.limits] reports the values in force.
-///
-/// Recommended for a server that faces more than a handful of known clients,
-/// so that one runaway or hostile client cannot exhaust it: [maxSessions] and
-/// [maxSecureChannels] a little above the number of expected clients;
-/// [maxSubscriptionsPerSession] and [maxMonitoredItemsPerSubscription] in
-/// the hundreds; [maxNodesPerRead], [maxNodesPerWrite], [maxNodesPerBrowse]
-/// and [maxNodesPerMethodCall] in the hundreds or low thousands (a request
-/// over the limit is answered `BadTooManyOperations` as a whole, no
-/// operation of it is served); [maxMessageSize] and [maxChunkCount] to cap
-/// the memory a single request may take (a few MB, a few hundred chunks).
+/// A field left `null` takes its default, [defaults], chosen so that a
+/// runaway or hostile client cannot exhaust the server while an ordinary one
+/// never notices them. An explicit `0` lifts a cap: open62541 1.5.9 skips
+/// the check for every UInt32 field that is 0 (each field says where). The
+/// two UInt16 fields, [maxSecureChannels] and [maxSessions], cannot be 0:
+/// open62541 compares the current count against them with `>=`, so 0 would
+/// refuse every channel and session; an explicit 0 there is an
+/// [ArgumentError], and 65535 is the ceiling. [unlimited] lifts every cap as
+/// far as open62541 allows. [Server.limits] reports the values in force.
 class ServerLimits {
   const ServerLimits({
     this.maxSecureChannels,
@@ -314,56 +309,116 @@ class ServerLimits {
     this.maxChunkCount,
   });
 
+  /// What a field left `null` takes: 100 secure channels and 100 sessions,
+  /// 1000 subscriptions (50 per session), 100 000 monitored items (10 000
+  /// per subscription), 10 000 nodes per Read, Write and Browse, 1000
+  /// methods per Call, 16 MiB per message in at most 512 chunks.
+  static const ServerLimits defaults = ServerLimits(
+    maxSecureChannels: 100,
+    maxSessions: 100,
+    maxSubscriptions: 1000,
+    maxSubscriptionsPerSession: 50,
+    maxMonitoredItems: 100000,
+    maxMonitoredItemsPerSubscription: 10000,
+    maxNodesPerRead: 10000,
+    maxNodesPerWrite: 10000,
+    maxNodesPerBrowse: 10000,
+    maxNodesPerMethodCall: 1000,
+    maxMessageSize: 16 * 1024 * 1024,
+    maxChunkCount: 512,
+  );
+
+  /// Every cap lifted as far as open62541 allows: 0 (no check) for every
+  /// UInt32 field, 65535 for [maxSecureChannels] and [maxSessions]. For a
+  /// server on a network trusted end to end whose clients are known to be
+  /// well-behaved; anywhere else one client can take the whole server down.
+  static const ServerLimits unlimited = ServerLimits(
+    maxSecureChannels: 0xFFFF,
+    maxSessions: 0xFFFF,
+    maxSubscriptions: 0,
+    maxSubscriptionsPerSession: 0,
+    maxMonitoredItems: 0,
+    maxMonitoredItemsPerSubscription: 0,
+    maxNodesPerRead: 0,
+    maxNodesPerWrite: 0,
+    maxNodesPerBrowse: 0,
+    maxNodesPerMethodCall: 0,
+    maxMessageSize: 0,
+    maxChunkCount: 0,
+  );
+
   /// Secure channels open at once (`maxSecureChannels`, a UInt16; default
-  /// 100). A client beyond it cannot open a channel.
+  /// 100, at most 65535, never 0). At the limit the server first purges a
+  /// channel without a session; if there is none the new connection is
+  /// dropped without an answer (`src/server/ua_server_binary.c`,
+  /// `createServerSecureChannel`, `currentChannelCount >= maxSecureChannels`).
+  /// Keep it at or above [maxSessions]: open62541 warns at startup otherwise.
   final int? maxSecureChannels;
 
-  /// Sessions at once (`maxSessions`, a UInt16; default 100). CreateSession
-  /// beyond it is answered `BadTooManySessions`
-  /// (`src/server/ua_services_session.c`, `UA_Session_create`).
+  /// Sessions at once (`maxSessions`, a UInt16; default 100, at most 65535,
+  /// never 0). CreateSession beyond it is answered `BadTooManySessions`
+  /// (`src/server/ua_services_session.c`, `UA_Session_create`,
+  /// `sessionCount >= maxSessions`).
   final int? maxSessions;
 
-  /// Subscriptions on the whole server (`maxSubscriptions`; default 0,
-  /// unlimited). CreateSubscription beyond it is answered
-  /// `BadTooManySubscriptions`.
+  /// Subscriptions on the whole server (`maxSubscriptions`; default 1000,
+  /// 0 = no check). CreateSubscription beyond it is answered
+  /// `BadTooManySubscriptions` (`src/server/ua_services_subscription.c`,
+  /// `Service_CreateSubscription`).
   final int? maxSubscriptions;
 
-  /// Subscriptions per session (`maxSubscriptionsPerSession`; default
-  /// unlimited), `BadTooManySubscriptions`.
+  /// Subscriptions per session (`maxSubscriptionsPerSession`; default 50,
+  /// 0 = no check). The 51st CreateSubscription of a session is answered
+  /// `BadTooManySubscriptions`, and so is a TransferSubscriptions that would
+  /// exceed it.
   final int? maxSubscriptionsPerSession;
 
   /// Monitored items on the whole server (`maxMonitoredItems`; default
-  /// unlimited), `BadTooManyMonitoredItems`.
+  /// 100 000, 0 = no check). An item beyond it is answered
+  /// `BadTooManyMonitoredItems` in its CreateMonitoredItems result
+  /// (`src/server/ua_services_monitoreditem.c`, `Operation_CreateMonitoredItem`).
   final int? maxMonitoredItems;
 
   /// Monitored items per subscription (`maxMonitoredItemsPerSubscription`;
-  /// default unlimited), `BadTooManyMonitoredItems`.
+  /// default 10 000, 0 = no check), `BadTooManyMonitoredItems` per item.
   final int? maxMonitoredItemsPerSubscription;
 
   /// Nodes (attributes) in one Read request (`maxNodesPerRead`; default
-  /// unlimited), `BadTooManyOperations`
+  /// 10 000, 0 = no check). A request over it is answered
+  /// `BadTooManyOperations` as a whole, nothing in it is served
   /// (`src/server/ua_services_attribute.c`, `Service_Read`).
   final int? maxNodesPerRead;
 
-  /// Nodes in one Write request (`maxNodesPerWrite`; default unlimited),
-  /// `BadTooManyOperations`.
+  /// Nodes in one Write request (`maxNodesPerWrite`; default 10 000, 0 =
+  /// no check), `BadTooManyOperations` (`src/server/ua_server_async.c`,
+  /// `Service_Write`).
   final int? maxNodesPerWrite;
 
-  /// Nodes in one Browse request (`maxNodesPerBrowse`; default unlimited),
-  /// `BadTooManyOperations`.
+  /// Nodes in one Browse request (`maxNodesPerBrowse`; default 10 000, 0 =
+  /// no check), `BadTooManyOperations` (`src/server/ua_services_view.c`,
+  /// `Service_Browse`).
   final int? maxNodesPerBrowse;
 
-  /// Methods in one Call request (`maxNodesPerMethodCall`; default
-  /// unlimited), `BadTooManyOperations`.
+  /// Methods in one Call request (`maxNodesPerMethodCall`; default 1000,
+  /// 0 = no check), `BadTooManyOperations` (`src/server/ua_server_async.c`,
+  /// `Service_Call`).
   final int? maxNodesPerMethodCall;
 
-  /// The largest message, in bytes, the server accepts on a TCP connection
-  /// (`tcpMaxMsgSize`; default 0, unbounded). Negotiated with the client at
-  /// Hello/Acknowledge.
+  /// The largest message, in bytes, on a connection to this server
+  /// (`tcpMaxMsgSize`; default 16 MiB, 0 = no check). Announced to the
+  /// client in the Acknowledge of the TCP handshake; a request larger than
+  /// it is `BadTcpMessageTooLarge` and the connection is closed, a response
+  /// larger than it fails with `BadResponseTooLarge` (`src/ua_securechannel.c`,
+  /// `adjustCheckMessageLimitsSym` and `UA_SecureChannel_processBuffer`). A
+  /// value of 50 000 doubles is 400 KiB, so 16 MiB is far above what a
+  /// variable read carries; the package's own client announces 512 MiB
+  /// (`UA_ConnectionConfig_default`).
   final int? maxMessageSize;
 
   /// The most chunks one message may consist of (`tcpMaxChunks`; default
-  /// 0, unbounded). Negotiated the same way.
+  /// 512, 0 = no check), the same statuses. A chunk is at most the 64 KiB
+  /// receive buffer, so 512 chunks are 32 MiB and [maxMessageSize] is the
+  /// cap that binds first.
   final int? maxChunkCount;
 
   @override
@@ -409,8 +464,9 @@ const String defaultServerApplicationUri = 'urn:open62541.unconfigured.applicati
 ///    must be [users], or a trust list (a client certificate in it can be
 ///    presented as an X509 identity token).
 ///  * [hostname], when given, is not empty.
-///  * The [limits] are non-negative, and `maxSecureChannels`/`maxSessions`
-///    fit a UInt16, the rest a UInt32.
+///  * The [limits] are non-negative, `maxSecureChannels`/`maxSessions` fit a
+///    UInt16 and are not 0 (open62541 would refuse every channel and
+///    session), the rest fit a UInt32.
 void checkServerSecurityArguments({
   required Uint8List? certificate,
   required Uint8List? privateKey,
@@ -468,15 +524,19 @@ void checkServerSecurityArguments({
   if (hostname != null && hostname.isEmpty) {
     throw ArgumentError.value(hostname, 'hostname', 'must not be empty; leave it null to bind all interfaces');
   }
-  void checkLimit(String name, int? value, int max) {
+  void checkLimit(String name, int? value, int max, {int min = 0}) {
     if (value == null) return;
-    if (value < 0 || value > max) {
-      throw ArgumentError.value(value, 'limits.$name', 'must be between 0 (unlimited) and $max');
+    if (value < min || value > max) {
+      throw ArgumentError.value(
+        value,
+        'limits.$name',
+        min == 0 ? 'must be between 0 (no check) and $max' : 'must be between $min and $max; 0 would refuse everything',
+      );
     }
   }
 
-  checkLimit('maxSecureChannels', limits.maxSecureChannels, 0xFFFF);
-  checkLimit('maxSessions', limits.maxSessions, 0xFFFF);
+  checkLimit('maxSecureChannels', limits.maxSecureChannels, 0xFFFF, min: 1);
+  checkLimit('maxSessions', limits.maxSessions, 0xFFFF, min: 1);
   checkLimit('maxSubscriptions', limits.maxSubscriptions, 0xFFFFFFFF);
   checkLimit('maxSubscriptionsPerSession', limits.maxSubscriptionsPerSession, 0xFFFFFFFF);
   checkLimit('maxMonitoredItems', limits.maxMonitoredItems, 0xFFFFFFFF);
@@ -674,12 +734,15 @@ class Server {
   ///
   /// ### Limits
   ///
-  /// [limits], see [ServerLimits]: what is left `null` keeps open62541's
-  /// default.
+  /// [limits], see [ServerLimits]: what is left `null` takes
+  /// [ServerLimits.defaults], an explicit 0 lifts a cap,
+  /// [ServerLimits.unlimited] lifts them all.
   ///
   /// A `Server()` with none of the security arguments is what it always
-  /// was (SecurityPolicy#None, anonymous, all interfaces, no limits beyond
-  /// open62541's), except that clients may no longer add or delete nodes.
+  /// was (SecurityPolicy#None, anonymous, all interfaces), except that
+  /// clients may no longer add or delete nodes, and that the limits are
+  /// [ServerLimits.defaults] instead of open62541's (100 channels and
+  /// sessions, everything else unchecked).
   Server({
     LogLevel? logLevel,
     int? port,
@@ -883,7 +946,8 @@ class Server {
       ),
   ];
 
-  /// The limits in force, see [ServerLimits]: 0 is unlimited.
+  /// The limits in force, see [ServerLimits]: the defaults where the
+  /// constructor was given none; 0 is a lifted cap.
   ServerLimits get limits => ServerLimits(
     maxSecureChannels: _config.ref.maxSecureChannels,
     maxSessions: _config.ref.maxSessions,
@@ -899,20 +963,22 @@ class Server {
     maxChunkCount: _config.ref.tcpMaxChunks,
   );
 
+  /// Writes [limits] to the config, a field left `null` as its default.
   static void _applyLimits(ffi.Pointer<raw.UA_ServerConfig> config, ServerLimits limits) {
+    const d = ServerLimits.defaults;
     final c = config.ref;
-    if (limits.maxSecureChannels case final v?) c.maxSecureChannels = v;
-    if (limits.maxSessions case final v?) c.maxSessions = v;
-    if (limits.maxSubscriptions case final v?) c.maxSubscriptions = v;
-    if (limits.maxSubscriptionsPerSession case final v?) c.maxSubscriptionsPerSession = v;
-    if (limits.maxMonitoredItems case final v?) c.maxMonitoredItems = v;
-    if (limits.maxMonitoredItemsPerSubscription case final v?) c.maxMonitoredItemsPerSubscription = v;
-    if (limits.maxNodesPerRead case final v?) c.maxNodesPerRead = v;
-    if (limits.maxNodesPerWrite case final v?) c.maxNodesPerWrite = v;
-    if (limits.maxNodesPerBrowse case final v?) c.maxNodesPerBrowse = v;
-    if (limits.maxNodesPerMethodCall case final v?) c.maxNodesPerMethodCall = v;
-    if (limits.maxMessageSize case final v?) c.tcpMaxMsgSize = v;
-    if (limits.maxChunkCount case final v?) c.tcpMaxChunks = v;
+    c.maxSecureChannels = limits.maxSecureChannels ?? d.maxSecureChannels!;
+    c.maxSessions = limits.maxSessions ?? d.maxSessions!;
+    c.maxSubscriptions = limits.maxSubscriptions ?? d.maxSubscriptions!;
+    c.maxSubscriptionsPerSession = limits.maxSubscriptionsPerSession ?? d.maxSubscriptionsPerSession!;
+    c.maxMonitoredItems = limits.maxMonitoredItems ?? d.maxMonitoredItems!;
+    c.maxMonitoredItemsPerSubscription = limits.maxMonitoredItemsPerSubscription ?? d.maxMonitoredItemsPerSubscription!;
+    c.maxNodesPerRead = limits.maxNodesPerRead ?? d.maxNodesPerRead!;
+    c.maxNodesPerWrite = limits.maxNodesPerWrite ?? d.maxNodesPerWrite!;
+    c.maxNodesPerBrowse = limits.maxNodesPerBrowse ?? d.maxNodesPerBrowse!;
+    c.maxNodesPerMethodCall = limits.maxNodesPerMethodCall ?? d.maxNodesPerMethodCall!;
+    c.tcpMaxMsgSize = limits.maxMessageSize ?? d.maxMessageSize!;
+    c.tcpMaxChunks = limits.maxChunkCount ?? d.maxChunkCount!;
   }
 
   /// Removes the SecurityPolicy#None endpoints from the config and leaves

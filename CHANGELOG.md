@@ -28,7 +28,16 @@ changes that ship the same native library version.
   text, compared in constant time); `allowUnencryptedPassword` is
   `UA_ServerConfig.allowNonePolicyPassword`. `hostname` sets
   `serverUrls[0]` to `opc.tcp://hostname:port`. `ServerLimits` maps to the
-  `UA_ServerConfig` limit fields (`Server.limits` reads them back).
+  `UA_ServerConfig` limit fields (`Server.limits` reads them back), and
+  every server has bounded ones: `ServerLimits.defaults` (100 channels and
+  sessions, 1000 subscriptions, 50 per session, 100 000 monitored items,
+  10 000 per subscription, 10 000 nodes per Read/Write/Browse, 1000 per
+  Call, 16 MiB per message, 512 chunks) where open62541 checks nothing
+  beyond 100 channels and sessions. A field left `null` is its default, an
+  explicit 0 lifts the cap (0 = no check in open62541 for every UInt32
+  field; `maxSessions`/`maxSecureChannels` are compared with `>=`, so 0
+  there is an `ArgumentError` and 65535 the ceiling), and
+  `ServerLimits.unlimited` lifts them all.
   `Server.endpoints` lists the endpoints on offer. Without a trust list the
   X509 user-token policy is dropped, so a certificate login means a trusted
   certificate.
@@ -39,7 +48,8 @@ changes that ship the same native library version.
     them for the server's own admin session, so the host's `addVariableNode`
     etc. are unchanged). `allowClientNodeManagement: true` restores the old
     behaviour. Everything else about `Server()` is as it was: None,
-    anonymous, all interfaces, open62541's limits.
+    anonymous, all interfaces; the limits are now `ServerLimits.defaults`
+    instead of open62541's unchecked ones.
   - `ClientIsolate.create` takes `allowUnencryptedPassword`, which it lacked
     (only the direct `Client` could send a password over None).
   - Bindings: `UA_AccessControl_default`, `UA_CertificateUtils_verifyApplicationUri`,

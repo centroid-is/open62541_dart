@@ -186,10 +186,17 @@ default access-control plugin keeps in memory in plain text and compares in
 constant time. A password over SecurityPolicy None travels in clear text,
 and the server refuses it unless `allowUnencryptedPassword: true` (the
 `Client` has the same opt-in); over an encrypted channel it is always
-accepted. `ServerLimits` bounds what one client can ask for (sessions,
-subscriptions, monitored items, nodes per Read/Write/Browse/Call, message
-size); what is left out keeps open62541's default (100 channels and
-sessions, the rest unlimited), see `Server.limits`.
+accepted. `ServerLimits` bounds what one client can ask for, and every
+server has them: 100 secure channels and sessions, 1000 subscriptions (50
+per session), 100 000 monitored items (10 000 per subscription), 10 000
+nodes per Read, Write and Browse, 1000 methods per Call, 16 MiB per message
+in at most 512 chunks (`ServerLimits.defaults`; a request beyond a limit is
+answered `BadTooManyOperations`, `BadTooManySubscriptions`,
+`BadTooManyMonitoredItems`, `BadTooManySessions` or `BadTcpMessageTooLarge`).
+A field left out keeps its default, an explicit 0 lifts that cap (except
+sessions and channels, which open62541 cannot leave uncapped: 65535 is the
+ceiling), and `ServerLimits.unlimited` lifts every cap for a server whose
+clients are all known to behave. `Server.limits` reports what is in force.
 
 ### Monitoring with quality
 
