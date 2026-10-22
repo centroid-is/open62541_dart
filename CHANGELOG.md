@@ -6,6 +6,49 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **Security: the client verifies the server certificate; `Client` and
+  `ClientIsolate.create` take `trustList`, `issuerList`, `revocationList`
+  and `acceptAllCertificates`.** A client with a `certificate` called
+  `UA_ClientConfig_setDefaultEncryption` with empty lists and then
+  `UA_CertificateGroup_AcceptAll`: the channel was encrypted (safe from
+  passive eavesdropping), the server never authenticated, any certificate
+  opened the session. Now the lists (DER) go to open62541's in-memory
+  certificate store: `trustList` holds the server certificates, or the CA
+  certificates that issued them, to trust; `issuerList` intermediate CAs
+  that complete a chain without being trusted themselves (installed through
+  the store's `addToTrustList`, since `setDefaultEncryption` takes no issuer
+  list); `revocationList` CRLs. open62541 verifies the server certificate
+  before the channel opens and refuses a server that does not match:
+  `BadCertificateUntrusted` for a certificate in no list,
+  `BadCertificateChainIncomplete` for an issuer it cannot find,
+  `BadCertificateRevoked` for one on a CRL. `acceptAllCertificates: true` is
+  the explicit opt-out (encryption without authentication, open to an active
+  attacker). open62541 copies the lists into its store, so the scratch
+  memory is an arena freed after the calls; `test/client_trust_list_test.dart`
+  measures the heap.
+  - **Breaking for a client that passed a certificate and relied on
+    accept-all:** a certificate with neither a non-empty `trustList` nor
+    `acceptAllCertificates: true` is an `ArgumentError` (open62541 keeps the
+    accept-all verification for an empty trust list, with only a warning in
+    the log, so the safe behaviour has to be explicit). Migration: pass
+    `trustList: [serverCertificateDer]`, or `acceptAllCertificates: true` to
+    keep the old behaviour. The combinations are checked by
+    `checkClientCertificateArguments`, also from `ClientIsolate.create` on
+    the calling isolate; a certificate without its key (or the reverse), the
+    lists or `acceptAllCertificates` without a certificate, and a trust list
+    together with `acceptAllCertificates: true` are `ArgumentError`s too.
+  - **`connect()` throws a `UaStatusException` when the handshake fails**
+    (the connect status: a rejected server certificate, no endpoint for the
+    security mode, a refused identity token) instead of waiting forever for
+    an activation that cannot come: open62541 stops its state machine on a
+    bad connect status and only another `connect()` restarts it. On
+    `ClientIsolate` the exception crosses the isolate with its status code.
+    `awaitConnect()` and `keepConnected()` are unchanged.
+  - The bindings gain `UA_CreateCertificate`,
+    `UA_ServerConfig_setDefaultWithSecurityPolicies` and the
+    `UA_TrustListDataType` / `UA_KeyValuePair` structs (the tests build an
+    encrypted open62541 server with them; the Dart `Server` has no security
+    API).
 - **`package:open62541/open62541_types.dart`: the value types without
   `dart:ffi`.** A new barrel exporting `DynamicValue`, `DynamicType`,
   `LocalizedText`, `EnumField`, `Schema` and `NodeId`, importable from code that

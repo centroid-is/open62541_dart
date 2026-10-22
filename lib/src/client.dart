@@ -298,7 +298,130 @@ class _BrowseResultError implements Exception {
   String toString() => 'Browse result error: ${statusCodeToString(statusCode)}';
 }
 
+/// Checks that the certificate arguments of a [Client] make sense together
+/// and throws an [ArgumentError] when they do not. `ClientIsolate.create`
+/// forwards the same arguments and runs this check first, on the calling
+/// isolate, so a bad combination is an exception there and not an error lost
+/// in a worker that never got a client.
+///
+/// The rules:
+///  * [certificate] and [privateKey] come together.
+///  * The lists and [acceptAllCertificates] need a certificate: the server
+///    certificate is only verified on a channel with a security policy, and
+///    a client without a certificate offers SecurityPolicy#None only.
+///  * With a certificate, either a non-empty [trustList] or
+///    `acceptAllCertificates: true`; not both, and not neither. open62541's
+///    `UA_ClientConfig_setDefaultEncryption` treats an empty trust list as
+///    "leave the previous verification in place", which is accept-all with a
+///    warning in the log; refusing it here makes accepting any server an
+///    explicit choice. An [issuerList] or [revocationList] alone is refused
+///    for the same reason: issuer certificates only complete a chain, they
+///    cannot anchor trust.
+void checkClientCertificateArguments({
+  required Uint8List? certificate,
+  required Uint8List? privateKey,
+  required List<Uint8List>? trustList,
+  required List<Uint8List>? issuerList,
+  required List<Uint8List>? revocationList,
+  required bool acceptAllCertificates,
+}) {
+  if ((certificate == null) != (privateKey == null)) {
+    throw ArgumentError('certificate and privateKey come together; got only one of them');
+  }
+  final hasLists = trustList != null || issuerList != null || revocationList != null;
+  if (certificate == null) {
+    if (hasLists || acceptAllCertificates) {
+      throw ArgumentError(
+        'trustList, issuerList, revocationList and acceptAllCertificates need a certificate and privateKey: '
+        'without them the client offers SecurityPolicy#None only and never sees a server certificate to verify',
+      );
+    }
+    return;
+  }
+  if (acceptAllCertificates) {
+    if (hasLists) {
+      throw ArgumentError(
+        'acceptAllCertificates: true and a trustList/issuerList/revocationList contradict each other',
+      );
+    }
+    return;
+  }
+  if (trustList == null || trustList.isEmpty) {
+    throw ArgumentError(
+      'a certificate needs a non-empty trustList (the server certificates, or the CA certificates that issued '
+      'them, DER), or acceptAllCertificates: true to skip server authentication. open62541 treats an empty '
+      'trust list as "accept every certificate", so an empty one is refused rather than silently accepting any server',
+    );
+  }
+}
+
+/// A `UA_ByteString` in [arena] holding a copy of [bytes].
+ffi.Pointer<raw.UA_ByteString> _byteString(Arena arena, Uint8List bytes) {
+  final string = arena<raw.UA_ByteString>();
+  string.ref.length = bytes.length;
+  string.ref.data = arena<ffi.Uint8>(bytes.length);
+  string.ref.data.asTypedList(bytes.length).setAll(0, bytes);
+  return string;
+}
+
+/// An array of `UA_ByteString` in [arena], one per element of [list], each
+/// holding a copy. `nullptr` for an empty list.
+ffi.Pointer<raw.UA_ByteString> _byteStrings(Arena arena, List<Uint8List> list) {
+  if (list.isEmpty) return ffi.nullptr;
+  final array = arena<raw.UA_ByteString>(list.length);
+  for (var i = 0; i < list.length; i++) {
+    final bytes = list[i];
+    array[i].length = bytes.length;
+    array[i].data = arena<ffi.Uint8>(bytes.length);
+    array[i].data.asTypedList(bytes.length).setAll(0, bytes);
+  }
+  return array;
+}
+
+/// An OPC UA client over open62541, pumped by the caller ([runIterate] or
+/// [keepConnected]).
+///
+/// ## Security
+///
+/// Without a [certificate] the client offers SecurityPolicy#None: nothing on
+/// the wire is signed or encrypted, and a [username]/[password] only travels
+/// if [allowUnencryptedPassword] is set, in clear text then.
+///
+/// With a [certificate] and [privateKey] (DER) and a [securityMode] of
+/// `Sign` or `SignAndEncrypt` the channel is signed or encrypted with a
+/// policy the server offers (Basic256Sha256, Aes128Sha256RsaOaep, ...).
+/// Encryption alone does not say *who* the peer is: the server's certificate
+/// must be verified, or anyone on the path can present their own certificate
+/// and read everything. Pass the certificates to trust in [trustList] (DER:
+/// the server's own certificate, or the CA certificate that issued it), and
+/// optionally [issuerList] (intermediate CA certificates, which only complete
+/// a chain and are not trusted by themselves) and [revocationList] (CRLs,
+/// DER). open62541 verifies the server certificate against them before the
+/// channel opens and refuses a server that does not match: [connect] throws a
+/// [UaStatusException] with the certificate status (`BadCertificateUntrusted`
+/// for a certificate that is in no list, `BadCertificateTimeInvalid`,
+/// `BadCertificateRevoked`, ...).
+///
+/// [acceptAllCertificates] skips that verification: any certificate opens
+/// the channel. The session is still encrypted, which stops passive
+/// eavesdropping, but the server is not authenticated, so an active attacker
+/// (a machine in the middle, a spoofed endpoint) goes unnoticed. It is
+/// opt-in: a certificate without a [trustList] and without
+/// `acceptAllCertificates: true` is an [ArgumentError], see
+/// [checkClientCertificateArguments].
+///
+/// The endpoint hostname is not checked against the server certificate.
 class Client implements ClientApi, DataValueMonitoringApi {
+  /// See the class documentation for the certificate arguments; they are
+  /// checked by [checkClientCertificateArguments] before anything is
+  /// allocated.
+  ///
+  /// [allowUnencryptedPassword]: open62541 refuses to send a password over
+  /// SecurityPolicy#None, where it travels in clear text, so username
+  /// authentication over None fails silently at the server. This opt-in
+  /// sends it anyway. Only for a network trusted end to end (a lab, a
+  /// machine network behind its own firewall); anywhere else use a
+  /// certificate with `SignAndEncrypt` and a [trustList].
   Client({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -307,10 +430,22 @@ class Client implements ClientApi, DataValueMonitoringApi {
     MessageSecurityMode? securityMode,
     Uint8List? certificate,
     Uint8List? privateKey,
+    List<Uint8List>? trustList,
+    List<Uint8List>? issuerList,
+    List<Uint8List>? revocationList,
+    bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
   }) {
+    checkClientCertificateArguments(
+      certificate: certificate,
+      privateKey: privateKey,
+      trustList: trustList,
+      issuerList: issuerList,
+      revocationList: revocationList,
+      acceptAllCertificates: acceptAllCertificates,
+    );
     final config = ua_calloc<raw.UA_ClientConfig>();
 
     if (logLevel != null) {
@@ -333,38 +468,52 @@ class Client implements ClientApi, DataValueMonitoringApi {
     }
 
     if (certificate != null && privateKey != null) {
-      ffi.Pointer<raw.UA_ByteString> rawCertificate = ua_calloc<raw.UA_ByteString>();
-      ffi.Pointer<raw.UA_ByteString> rawPrivateKey = ua_calloc<raw.UA_ByteString>();
+      // Everything here is scratch for the calls: open62541 keeps its own
+      // copies of the certificate and key (in each security policy, the key
+      // decrypted to DER) and of the lists (UA_Array_copy into a
+      // UA_TrustListDataType that UA_CertificateGroup_Memorystore copies
+      // again into its store, after which the first copy is cleared;
+      // addToTrustList appends copies the same way).
+      using((arena) {
+        final rawCertificate = _byteString(arena, certificate);
+        final rawPrivateKey = _byteString(arena, privateKey);
+        final trust = trustList ?? const <Uint8List>[];
+        final revocation = revocationList ?? const <Uint8List>[];
+        raw.UA_ClientConfig_setDefaultEncryption(
+          config,
+          rawCertificate.ref,
+          rawPrivateKey.ref,
+          _byteStrings(arena, trust),
+          trust.length,
+          _byteStrings(arena, revocation),
+          revocation.length,
+        );
 
-      rawCertificate.ref.data = ua_calloc<ffi.Uint8>(certificate.length);
-      rawCertificate.ref.length = certificate.length;
-      rawCertificate.ref.data.asTypedList(certificate.length).setRange(0, certificate.length, certificate);
-
-      rawPrivateKey.ref.data = ua_calloc<ffi.Uint8>(privateKey.length);
-      rawPrivateKey.ref.length = privateKey.length;
-      rawPrivateKey.ref.data.asTypedList(privateKey.length).setRange(0, privateKey.length, privateKey);
-
-      raw.UA_ClientConfig_setDefaultEncryption(
-        config,
-        rawCertificate.ref,
-        rawPrivateKey.ref,
-        ffi.nullptr,
-        0,
-        ffi.nullptr,
-        0,
-      );
-
-      // Accept all certificates
-      ffi.Pointer<raw.UA_CertificateGroup> certificateVerification = ua_calloc<raw.UA_CertificateGroup>();
-      certificateVerification.ref = config.ref.certificateVerification;
-      raw.UA_CertificateGroup_AcceptAll(certificateVerification);
-      config.ref.certificateVerification = certificateVerification.ref;
-      ua_calloc.free(certificateVerification);
-
-      ua_calloc.free(rawCertificate.ref.data);
-      ua_calloc.free(rawPrivateKey.ref.data);
-      ua_calloc.free(rawCertificate);
-      ua_calloc.free(rawPrivateKey);
+        // Dart FFI cannot take the address of the UA_CertificateGroup nested
+        // in the config, so the plugin calls below get a copy of the struct.
+        // They only read it (the store is behind `context`, which the copy
+        // shares) or set its function pointers, so the copy goes back.
+        final group = arena<raw.UA_CertificateGroup>();
+        group.ref = config.ref.certificateVerification;
+        if (acceptAllCertificates) {
+          raw.UA_CertificateGroup_AcceptAll(group);
+        } else if (issuerList != null && issuerList.isNotEmpty) {
+          // setDefaultEncryption takes no issuer list; the memory store it
+          // installed (for a non-empty trust list, which
+          // checkClientCertificateArguments guarantees here) does.
+          final issuers = arena<raw.UA_TrustListDataType>();
+          issuers.ref.specifiedLists = raw.UA_TrustListMasks.UA_TRUSTLISTMASKS_ISSUERCERTIFICATES.value;
+          issuers.ref.issuerCertificates = _byteStrings(arena, issuerList);
+          issuers.ref.issuerCertificatesSize = issuerList.length;
+          final addToTrustList = group.ref.addToTrustList
+              .asFunction<int Function(ffi.Pointer<raw.UA_CertificateGroup>, ffi.Pointer<raw.UA_TrustListDataType>)>();
+          final status = addToTrustList(group, issuers);
+          if (status != raw.UA_STATUSCODE_GOOD) {
+            throw UaStatusException(status);
+          }
+        }
+        config.ref.certificateVerification = group.ref;
+      }, ua_calloc);
     }
 
     if (username != null) {
@@ -414,7 +563,30 @@ class Client implements ClientApi, DataValueMonitoringApi {
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
     }
-    await awaitConnect();
+    await _awaitHandshake();
+  }
+
+  /// Completes when the session is activated, or throws a [UaStatusException]
+  /// with open62541's connect status when the handshake fails instead: a
+  /// server certificate the trust list rejects (`BadCertificateUntrusted`),
+  /// no endpoint for the security mode, a refused identity token, ...
+  /// open62541 stops its connect state machine on a bad connect status and
+  /// only another `connect()` restarts it, so once the status is bad there
+  /// is nothing left to wait for. [awaitConnect] keeps waiting for an
+  /// activation on purpose: under [keepConnected] a bad status is what the
+  /// supervisor recovers from, and a waiter there wants the recovery.
+  Future<void> _awaitHandshake() async {
+    bool settled(ClientState s) =>
+        s.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED || s.recoveryStatus != raw.UA_STATUSCODE_GOOD;
+    // The connect call ran the first step of the handshake synchronously
+    // and its state events are gone: start from the state as it is now.
+    var snapshot = state;
+    if (!settled(snapshot)) {
+      snapshot = await config.stateStream.firstWhere(settled);
+    }
+    if (snapshot.sessionState != raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
+      throw UaStatusException(snapshot.recoveryStatus);
+    }
   }
 
   /// Issues a (re)connect to [url] without awaiting session activation.
