@@ -4,8 +4,30 @@ import 'dart:core';
 import 'package:ffigen/ffigen.dart';
 import 'package:logging/logging.dart';
 
+/// Dart FFI cannot represent C bitfields; writes a copy of the amalgamated
+/// header with them replaced by plain fields.
+void removeBitfields(Uri packageRoot) {
+  final dir = packageRoot.resolve('third_party/open62541/');
+  final result = Process.runSync('patch', [
+    dir.resolve('open62541.h').toFilePath(),
+    '--fuzz=0',
+    '-o',
+    dir.resolve('open62541_modified.h').toFilePath(),
+    '-i',
+    packageRoot.resolve('tool/remove_bitfields.patch').toFilePath(),
+  ]);
+  if (result.exitCode != 0) {
+    stderr.write('${result.stdout}${result.stderr}');
+    throw StateError(
+      'tool/remove_bitfields.patch does not apply to open62541.h; '
+      'update the patch for this open62541 version',
+    );
+  }
+}
+
 Future<void> main() async {
   final packageRoot = Platform.script.resolve('../');
+  removeBitfields(packageRoot);
   const functionSet = {
     '__UA_Client_AsyncService',
     '__UA_Server_addNode',

@@ -349,14 +349,15 @@ find .dart_tool/hooks_runner -name open62541.h
 cp .dart_tool/hooks_runner/shared/open62541/build/dl/src/build/macos/arm64/open62541.h \
    third_party/open62541/open62541.h
 
-bash open62541_tooling/patch_header.sh
 dart run tool/ffigen.dart
 ```
 
 `ffigen` needs libclang; on some Linux setups you may need to prefix the last
 command with `CPATH=/usr/lib/clang/<version>/include:/usr/include`.
 
-The header patch removes the bitfields from `UA_DiagnosticInfo`, `UA_DataValue`,
+`tool/ffigen.dart` first applies `tool/remove_bitfields.patch` to
+`open62541.h`, writing `open62541_modified.h` (it fails if the patch no longer
+applies to the header's version), then generates the bindings from that. The patch removes the bitfields from `UA_DiagnosticInfo`, `UA_DataValue`,
 `UA_DataTypeMember` and `UA_DataType`, replacing each with a single field (the
 struct size is unchanged) so the generator does not drop the surrounding members.
 
