@@ -898,6 +898,11 @@ Future<void> main(List<String> args) async {
         // and raw-Ethernet transports stay off.
         'UA_ENABLE_PUBSUB': 'ON',
         'UA_ENABLE_PUBSUB_INFORMATIONMODEL': 'ON',
+        // No XML decoder in the library: nothing in the Dart API or on the
+        // opc.tcp binary path reaches it, and turning it off changes no
+        // struct the bindings use. JSON stays on: event filter parsing
+        // requires it, and turning events off shifts UA_ServerConfig fields.
+        'UA_ENABLE_XML_ENCODING': 'OFF',
         'MBEDTLS_INCLUDE_DIRS': mbedtlsInstall.resolve('include/').toFilePath(),
         'MBEDTLS_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedtls$libSuffix').toFilePath(),
         'MBEDX509_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedx509$libSuffix').toFilePath(),
