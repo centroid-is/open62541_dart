@@ -112,22 +112,58 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
   final decompressed = BZip2Decoder().decodeBytes(bytes);
   final archive = TarDecoder().decodeBytes(decompressed);
 
-  if (!await extractDir.exists()) {
-    await extractDir.create(recursive: true);
-  }
-
-  for (var file in archive) {
-    if (file.isFile) {
-      final outputStream = OutputFileStream('${extractDir.path.toString()}/${file.name}');
-      file.writeContent(outputStream);
-      outputStream.closeSync();
-    }
-  }
+  await extractArchiveInto(archive, extractDir);
   // Rename extracted folder (e.g. mbedtls-3.6.7) to 'src' for shorter paths
   final folder = extractDir.listSync().firstWhere((element) => element is Directory);
   await (folder as Directory).rename(srcDir.path);
   await versionStamp.writeAsString(_mbedtlsVersion);
   return srcDir.uri;
+}
+
+/// Writes the regular files of [archive] under [extractDir].
+///
+/// Directory entries are implied by the files under them, and symbolic links
+/// are skipped: nothing this hook builds needs one, and a link is how an
+/// archive reaches outside its own tree (an entry under a link that points at
+/// `/` or `..` lands wherever the link does). Every entry's path must resolve
+/// inside [extractDir] once `..` and absolute names are taken into account,
+/// or the whole extraction is refused naming the entry. The archives are
+/// verified against a pinned SHA-256 before they get here, so this is
+/// defense in depth, not the line that holds.
+Future<void> extractArchiveInto(Archive archive, Directory extractDir) async {
+  if (!await extractDir.exists()) {
+    await extractDir.create(recursive: true);
+  }
+  // Resolved: the base must be the same string the entries are compared to,
+  // and a relative extractDir or one reached through a symlink is not.
+  final base = Directory(await extractDir.resolveSymbolicLinks()).uri;
+  final basePath = base.toFilePath();
+  for (final file in archive) {
+    if (file.isSymbolicLink || !file.isFile) continue;
+    // An entry name is refused when it is absolute (a leading separator or
+    // a Windows drive letter, which `Uri.toFilePath` would reject on Windows
+    // rather than resolve), when the URI resolution removing `.` and `..`
+    // segments lands outside the base, or when the name is not a file path
+    // at all.
+    final name = file.name.replaceAll('\\', '/');
+    final absolute = name.startsWith('/') || RegExp(r'^[A-Za-z]:').hasMatch(name);
+    String? target;
+    if (!absolute) {
+      try {
+        target = base.resolveUri(Uri(path: name)).toFilePath();
+      } on UnsupportedError {
+        target = null;
+      } on FormatException {
+        target = null;
+      }
+    }
+    if (target == null || !target.startsWith(basePath) || target == basePath) {
+      throw Exception('Refusing to extract "${file.name}": it resolves outside ${extractDir.path}');
+    }
+    final outputStream = OutputFileStream(target);
+    file.writeContent(outputStream);
+    outputStream.closeSync();
+  }
 }
 
 String _targetKey(BuildInput input) {
@@ -296,17 +332,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
   final bytes = await _downloadVerified(url, expectedSha256: expectedSha256, what: 'open62541 $version');
   final archive = ZipDecoder().decodeBytes(bytes);
 
-  if (!await extractDir.exists()) {
-    await extractDir.create(recursive: true);
-  }
-
-  for (var file in archive) {
-    if (file.isFile) {
-      final outputStream = OutputFileStream('${extractDir.path.toString()}/${file.name}');
-      file.writeContent(outputStream);
-      outputStream.closeSync();
-    }
-  }
+  await extractArchiveInto(archive, extractDir);
   // Rename extracted folder (e.g. open62541-includes) to 'src' for shorter paths
   final folder = extractDir.listSync().firstWhere((element) => element is Directory);
   if (!await Directory.fromUri(folder.uri).exists()) {

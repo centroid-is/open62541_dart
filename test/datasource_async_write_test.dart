@@ -83,7 +83,12 @@ void main() {
     test('setVariableValueSource writes take the same async path', () async {
       final nodeId = NodeId.fromString(1, 'async.write.replaced');
       // Plain variable first; then take over its value source with handlers.
-      server.addVariableNode(nodeId, DynamicValue(value: 0, typeId: NodeId.int32, name: 'async.write.replaced'));
+      // The node's own access level still gates the client write.
+      server.addVariableNode(
+        nodeId,
+        DynamicValue(value: 0, typeId: NodeId.int32, name: 'async.write.replaced'),
+        accessLevel: const AccessLevelMask(read: true, write: true),
+      );
       var seen = -1;
       server.setVariableValueSource(
         nodeId,

@@ -1,6 +1,5 @@
 .dart_tool/
 pubspec.lock
-open62541_tools/*
 open62541_build*
 open62541_examples/*
 .DS_Store
@@ -19,6 +18,11 @@ mbedtls-*
 lib/libopen62541.dll
 lib/libopen62541.so
 lib/libopen62541.dylib
+
+# Agent and editor state, local only
+.agents/
+.claude/
+skills-lock.json
 
 # Local-only integration test dependencies (fetched by test/integration/setup_local.sh)
 test/integration/.bin/
