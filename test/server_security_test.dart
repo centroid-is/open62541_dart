@@ -19,9 +19,10 @@ import 'package:open62541/src/common.dart' show getTypeByIndex;
 import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'package:open62541/src/ua_allocation.dart';
-import 'client_trust_list_test.dart' show Identity, createIdentity, refusedWith;
+import 'client_trust_list_test.dart' show refusedWith;
 import 'common.dart';
 import 'heap_growth.dart';
+import 'secure_fixtures.dart' show Identity, createIdentity;
 
 const _fatal = LogLevel.UA_LOGLEVEL_FATAL;
 
