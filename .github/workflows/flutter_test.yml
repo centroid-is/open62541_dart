@@ -49,10 +49,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # beta, not stable: `flutter test` starts flutter_tester with
+      # --enable-dart-profiling, and the Dart VM's native stack walker in
+      # Dart <= 3.13 can read a not-yet-committed stack page while the sampled
+      # thread is in __chkstk entering an open62541 function with a large
+      # frame; the access violation kills the tester silently and the run
+      # ends as "every test ✅, 🎉 4 tests passed., exit 1"
+      # (flutter/flutter#191069). Fixed in Dart 0a7701121e, shipped in
+      # Dart 3.14 (Flutter beta 3.49+); go back to stable once it carries
+      # Dart 3.14.
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: 'beta'
 
       - name: Create Flutter project structure
         working-directory: flutter_example
