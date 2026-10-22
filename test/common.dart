@@ -303,23 +303,24 @@ Future<ClientApi> setupClientOfType(
 /// `ns=1;s=Dia<i>`, level [i] of [addDiamond].
 NodeId diamondType(int i) => NodeId.fromString(1, 'Dia$i');
 
-/// Registers the types D0 {a: D1, b: D1}, ..., Dk {x: Int32} on [server]:
-/// k + 1 types whose value is a tree of 2^(k+1) nodes. Returns D0's value.
+/// Registers the types D0 {a: D1[], b: D1[]}, ..., Dk {x: Int32} on
+/// [server]: k + 1 types with 2^k paths from D0 to Dk, whose schema expands
+/// to about 5 * 2^k nodes. Array fields keep each struct small (open62541
+/// refuses a struct over 64 KiB, which two inline fields per level reach).
+/// Returns a D0 value with empty arrays.
 DynamicValue addDiamond(Server server, int k) {
-  final values = <int, DynamicValue>{};
+  DynamicValue? previous;
   for (var i = k; i >= 0; i--) {
     final v = DynamicValue(name: 'Dia$i', typeId: diamondType(i));
     if (i == k) {
       v['x'] = DynamicValue(value: 1, typeId: NodeId.int32);
     } else {
-      v['a'] = values[i + 1]!;
-      v['b'] = values[i + 1]!;
+      v['a'] = DynamicValue(value: <DynamicValue>[], typeId: diamondType(i + 1));
+      v['b'] = DynamicValue(value: <DynamicValue>[], typeId: diamondType(i + 1));
     }
-    values[i] = v;
-  }
-  for (var i = k; i >= 0; i--) {
-    server.addCustomType(diamondType(i), values[i]!);
+    server.addCustomType(diamondType(i), v);
     server.addDataTypeNode(diamondType(i), 'Dia$i');
+    previous = v;
   }
-  return values[0]!;
+  return previous!;
 }

@@ -45,6 +45,29 @@ class MonitoredItemsRefused extends UaStatusException {
       'Unable to create monitored item: ${failures.entries.map((e) => "${e.key}: ${statusCodeToString(e.value)}").join(", ")}';
 }
 
+/// A value's DataType disagrees with the type actually on the wire: the server
+/// advertised one built-in type for the value (via the DataType attribute a
+/// read supplies as a decode hint) but the variant it sent carries another.
+/// Decoding the native bytes under the advertised type would read memory with
+/// the wrong layout, so the decoder refuses. Thrown by `Client.read` (and any
+/// decode given a DataType hint); the client stays usable.
+///
+/// Extends [UaStatusException] with `Bad_TypeMismatch`, so an `on
+/// UaStatusException` handler sees it and it crosses the `ClientIsolate`
+/// boundary as itself (its [expected] / [actual] NodeIds survive).
+class UaTypeMismatch extends UaStatusException {
+  UaTypeMismatch({required this.expected, required this.actual}) : super(0x80730000 /* Bad_TypeMismatch */);
+
+  /// The type the server advertised for the value (the DataType hint).
+  final NodeId expected;
+
+  /// The type the variant actually carried on the wire.
+  final NodeId actual;
+
+  @override
+  String toString() => 'UaTypeMismatch: the value is typed $expected but the wire carries $actual';
+}
+
 /// The DataTypeDefinitions a server serves for a structured type lead back to
 /// a type that is still being resolved (a field of type A inside A, or A → B
 /// → A): the definition is invalid (Part 3: a structure cannot contain itself

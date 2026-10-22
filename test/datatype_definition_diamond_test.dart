@@ -44,9 +44,9 @@ void main() {
         server = setupServer();
         final d0 = addDiamond(server, _k);
         server.addVariableNode(_diaNode, d0, typeId: diamondType(0));
-        // Top {d: D1}: a new type whose field's type an earlier read cached.
+        // Top {d: D0}: a new type whose field's type an earlier read cached.
         final top = DynamicValue(name: 'Top', typeId: _topType);
-        top['d'] = d0['a'];
+        top['d'] = d0;
         server.addCustomType(_topType, top);
         server.addDataTypeNode(_topType, 'Top');
         server.addVariableNode(_topNode, top, typeId: _topType);
@@ -83,15 +83,12 @@ void main() {
       test('a diamond of $_k levels costs a read per type, not per path', () async {
         final client = await connect();
         final value = await client.read(_diaNode);
-        var leaf = value;
-        for (var i = 0; i < _k; i++) {
-          leaf = leaf[i.isEven ? 'a' : 'b'];
-        }
-        expect(leaf['x'].asInt, 1);
+        expect(value['a'].asArray, isEmpty);
+        expect(value['b'].asArray, isEmpty);
         expect(reads, lessThan(_k + 5));
 
         reads = 0;
-        expect((await client.read(_topNode))['d']['a']['b'].isObject, isTrue);
+        expect((await client.read(_topNode))['d']['a'].isArray, isTrue);
         expect(reads, lessThan(4));
       }, timeout: const Timeout(Duration(seconds: 60)));
 

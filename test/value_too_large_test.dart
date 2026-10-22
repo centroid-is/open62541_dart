@@ -56,14 +56,7 @@ void main() {
 
       setUp(() async {
         server = setupServer();
-        // The node's DataType is D0, its value a small D19: the client
-        // refuses D0 from its definitions, before the value matters (a Dart
-        // Server takes minutes to encode a real D0 value).
-        var value = addDiamond(server, 20);
-        for (var i = 0; i < 19; i++) {
-          value = value['a'];
-        }
-        server.addVariableNode(_diaNode, value, typeId: diamondType(0));
+        server.addVariableNode(_diaNode, addDiamond(server, 20), typeId: diamondType(0));
         server.addCustomType(_wideType, _wide());
         server.addDataTypeNode(_wideType, 'Wide200');
         server.addVariableNode(_okArray, _wides(1000), typeId: _wideType);
@@ -79,7 +72,7 @@ void main() {
 
       test('a 20-level diamond is refused, and the client stays usable', () async {
         final watch = Stopwatch()..start();
-        await expectLater(client.read(_diaNode), _throwsValueTooLarge(diamondType(1).toString()));
+        await expectLater(client.read(_diaNode), _throwsValueTooLarge(diamondType(2).toString()));
         expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
         expect((await client.read(_okArray)).asArray, hasLength(1000));
       }, timeout: const Timeout(Duration(seconds: 60)));

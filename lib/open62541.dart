@@ -63,6 +63,7 @@ export 'src/types/errors.dart'
         SecureChannelClosed,
         SubscriptionDeleted,
         UaStatusException,
+        UaTypeMismatch,
         ValueTooLarge;
 export 'src/isolate.dart' show ClientIsolate;
 export 'src/client_api.dart' show ClientApi, DataValueMonitoringApi;
