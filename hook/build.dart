@@ -140,10 +140,24 @@ Future<void> extractArchiveInto(Archive archive, Directory extractDir) async {
   final basePath = base.toFilePath();
   for (final file in archive) {
     if (file.isSymbolicLink || !file.isFile) continue;
-    // Uri.resolve removes `.` and `..` segments, and an absolute entry name
-    // resolves to itself rather than under the base.
-    final target = base.resolveUri(Uri(path: file.name)).toFilePath();
-    if (!target.startsWith(basePath) || target == basePath) {
+    // An entry name is refused when it is absolute (a leading separator or
+    // a Windows drive letter, which `Uri.toFilePath` would reject on Windows
+    // rather than resolve), when the URI resolution removing `.` and `..`
+    // segments lands outside the base, or when the name is not a file path
+    // at all.
+    final name = file.name.replaceAll('\\', '/');
+    final absolute = name.startsWith('/') || RegExp(r'^[A-Za-z]:').hasMatch(name);
+    String? target;
+    if (!absolute) {
+      try {
+        target = base.resolveUri(Uri(path: name)).toFilePath();
+      } on UnsupportedError {
+        target = null;
+      } on FormatException {
+        target = null;
+      }
+    }
+    if (target == null || !target.startsWith(basePath) || target == basePath) {
       throw Exception('Refusing to extract "${file.name}": it resolves outside ${extractDir.path}');
     }
     final outputStream = OutputFileStream(target);
