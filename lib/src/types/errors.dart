@@ -105,6 +105,60 @@ class DataTypeDefinitionTooDeep implements Exception {
       '(at ${path.last})';
 }
 
+/// A structured type's DataTypeDefinitions name more distinct types than
+/// [limit] (the client's `schemaCacheSize`): the schema is refused before
+/// they are all fetched.
+class DataTypeDefinitionTooMany implements Exception {
+  DataTypeDefinitionTooMany(this.path, this.limit);
+
+  /// The DataType ids from the root type down to the one past [limit].
+  final List<NodeId> path;
+
+  /// The most definitions one schema is built from.
+  final int limit;
+
+  @override
+  String toString() =>
+      'DataTypeDefinitionTooMany: the DataTypeDefinition of ${path.first} uses more than $limit types '
+      '(at ${path.last})';
+}
+
+/// A value would take more than [limit] [DynamicValue] nodes once decoded:
+/// a structured type whose fields share types (D0 {a: D1, b: D1}, ...)
+/// expands to a tree twice as large per level, and an array holds a copy of
+/// its element type's tree per element. Refused by `Client.buildSchema` for
+/// the type, and when decoding an array, before anything is copied.
+class ValueTooLarge implements Exception {
+  ValueTooLarge(this.typeId, {this.elements});
+
+  /// The most nodes one value is decoded into.
+  static const limit = 1000000;
+
+  /// The DataType of the value, or of the array's elements.
+  final NodeId? typeId;
+
+  /// The array's length, null for a type refused on its own.
+  final int? elements;
+
+  @override
+  String toString() => elements == null
+      ? 'ValueTooLarge: a value of $typeId expands to more than $limit nodes'
+      : 'ValueTooLarge: an array of $elements values of $typeId expands to more than $limit nodes';
+}
+
+/// The client was deleted: a call made after `Client.delete`, or one still
+/// under way when it ran (a `read` building its schema, a browse following
+/// continuation points, a connect waiting for the session). A
+/// `ClientIsolate` fails with its subtype `ClientIsolateClosedException`.
+class ClientDeletedException implements Exception {
+  const ClientDeletedException([this.message = 'ClientDeletedException: the client is deleted']);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class Inactivity extends Error {}
 
 class SubscriptionDeleted extends Error {

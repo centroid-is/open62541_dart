@@ -738,7 +738,10 @@ class Client implements ClientApi, DataValueMonitoringApi {
     if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
       return;
     }
-    await config.stateStream.firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
+    await config.stateStream.firstWhere(
+      (state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED,
+      orElse: () => throw const ClientDeletedException(),
+    );
   }
 
   /// Connects to [url] and completes once the session is activated; the
@@ -752,6 +755,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
   /// [UaStatusException] with open62541's status.
   @override
   Future<void> connect(String url, {Duration? timeout = const Duration(seconds: 30)}) async {
+    _requireClient();
     final instantReturn = _issueConnect(url);
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
@@ -782,9 +786,10 @@ class Client implements ClientApi, DataValueMonitoringApi {
     // and its state events are gone: start from the state as it is now.
     var snapshot = state;
     if (!settled(snapshot)) {
-      snapshot = await config.stateStream.firstWhere(settled);
+      snapshot = await config.stateStream.firstWhere(settled, orElse: () => throw const ClientDeletedException());
     }
     if (snapshot.sessionState != raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
+      _requireClient();
       throw UaStatusException(snapshot.recoveryStatus);
     }
   }
@@ -1032,6 +1037,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
   }
 
   Future<void> _write(raw.UA_NodeId nodeId, DynamicValue value) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     Completer<void> completer = Completer<void>();
 
     final variant = valueToVariant(value);
@@ -1105,6 +1111,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
   Stream<ClientState> get stateStream => config.stateStream;
 
   ClientState get state {
+    _requireClient();
     ffi.Pointer<ffi.UnsignedInt> state = ua_calloc<ffi.UnsignedInt>();
     ffi.Pointer<ffi.UnsignedInt> sessionState = ua_calloc<ffi.UnsignedInt>();
     ffi.Pointer<ffi.Uint32> connectStatus = ua_calloc<ffi.Uint32>();
@@ -1150,6 +1157,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
   /// with an error.
   @override
   Future<DataValue> readValue(NodeId nodeId) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     final completer = Completer<DataValue>();
 
     final readValueId = ua_calloc<raw.UA_ReadValueId>();
@@ -1268,6 +1276,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
   // single point of entry for all read operations.
   @override
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
+    _requireClient();
     final nodeCount = nodes.entries.map<int>((entry) => entry.value.length).fold(0, (prev, curr) => prev + curr);
     ffi.Pointer<raw.UA_ReadValueId> readValueId = ua_calloc<raw.UA_ReadValueId>(nodeCount);
     final completer = Completer<Map<NodeId, DynamicValue>>();
@@ -1340,15 +1349,22 @@ class Client implements ClientApi, DataValueMonitoringApi {
           }
           ua_calloc.free(source);
 
-          assert(pointers.length == response.ref.resultsSize);
-          if (pointers.length != nodeCount && pointers.isEmpty) {
+          if (pointers.isEmpty && nodeCount > 0) {
             completer.completeError(
               "The connection might be broken, got no response when reading attributes for nodes: $nodes",
               StackTrace.current,
             );
             return;
           }
-          assert(nodeCount == pointers.length);
+          // A result per attribute read, in order: any other count cannot be
+          // matched to the request.
+          if (pointers.length != nodeCount) {
+            for (final pointer in pointers) {
+              raw.UA_DataValue_delete(pointer);
+            }
+            completer.completeError(UaStatusException(raw.UA_STATUSCODE_BADUNEXPECTEDERROR), StackTrace.current);
+            return;
+          }
 
           try {
             final retVal = <NodeId, DynamicValue>{};
@@ -1540,6 +1556,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     required int nodeClassMask,
     required int resultMask,
   }) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     final completer = Completer<List<BrowseResultItem>>();
 
     final request = raw.UA_BrowseRequest_new();
@@ -1652,6 +1669,10 @@ class Client implements ClientApi, DataValueMonitoringApi {
     ffi.Pointer<ffi.Uint8> continuationPointData,
     int continuationPointLength,
   ) {
+    if (_client == ffi.nullptr) {
+      ua_calloc.free(continuationPointData);
+      return Future.error(const ClientDeletedException());
+    }
     final completer = Completer<List<BrowseResultItem>>();
 
     final request = raw.UA_BrowseNextRequest_new();
@@ -1794,6 +1815,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     bool publishingEnabled = true,
     int priority = 0,
   }) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     ffi.Pointer<raw.UA_CreateSubscriptionRequest> request = raw.UA_CreateSubscriptionRequest_new();
     raw.UA_CreateSubscriptionRequest_init(request);
     request.ref.requestedPublishingInterval = requestedPublishingInterval.inMicroseconds / 1000.0;
@@ -2208,6 +2230,11 @@ class Client implements ClientApi, DataValueMonitoringApi {
     };
 
     controller.onListen = () async {
+      if (_client == ffi.nullptr) {
+        controller.addError(const ClientDeletedException());
+        unawaited(controller.close());
+        return;
+      }
       // Register this stream so Client.delete() can tear it down if it is still
       // active at delete time. Cleanup paths that bypass onCancel remove it.
       _activeMonitoredStreams[controller] = monitorTeardown;
@@ -2784,6 +2811,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
 
   @override
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
+    _requireClient();
     final completer = Completer<List<DynamicValue>>();
     final callbackInner =
         ffi.NativeCallable<
@@ -2919,13 +2947,23 @@ class Client implements ClientApi, DataValueMonitoringApi {
   /// invalid (a structure cannot contain itself by value) and is refused with
   /// a [DataTypeDefinitionCycle] naming the types on the cycle. The nesting is
   /// also capped at [DataTypeDefinitionTooDeep.limit] levels, the bound
-  /// open62541's binary decoder uses. Either way the read that needed the
-  /// schema fails and the client stays usable.
-  Future<Schema> buildSchema(NodeId nodeIdType) => _buildSchema(nodeIdType, const []);
+  /// open62541's binary decoder uses. Each distinct type is fetched once per
+  /// call, however many fields use it, and a type needing more than
+  /// [schemaCacheSize] definitions is refused with a
+  /// [DataTypeDefinitionTooMany]. Either way the read that needed the schema
+  /// fails and the client stays usable.
+  Future<Schema> buildSchema(NodeId nodeIdType) => _buildSchemaWith(nodeIdType, defs);
+
+  /// [buildSchema], taking a field's type from [cached] when it is there.
+  Future<Schema> _buildSchemaWith(NodeId nodeIdType, Schema cached) async {
+    final build = _SchemaBuild(cached);
+    await _buildSchema(nodeIdType, const [], build);
+    return build.map;
+  }
 
   /// [resolving] is the chain of DataType ids whose definitions are being
   /// built, outermost first: the types whose fields led here.
-  Future<Schema> _buildSchema(NodeId nodeIdType, List<NodeId> resolving) async {
+  Future<void> _buildSchema(NodeId nodeIdType, List<NodeId> resolving, _SchemaBuild build) async {
     final path = [...resolving, nodeIdType];
     if (resolving.contains(nodeIdType)) {
       throw DataTypeDefinitionCycle(path.sublist(resolving.indexOf(nodeIdType)));
@@ -2933,7 +2971,15 @@ class Client implements ClientApi, DataValueMonitoringApi {
     if (resolving.length >= DataTypeDefinitionTooDeep.limit) {
       throw DataTypeDefinitionTooDeep(path);
     }
-    var map = Schema();
+    final map = build.map;
+    if (map.containsKey(nodeIdType)) return;
+    final cached = build.cached[nodeIdType];
+    if (cached != null && resolving.isNotEmpty) {
+      map[nodeIdType] = cached;
+      return;
+    }
+    if (!build.fetched.add(nodeIdType)) return;
+    if (build.fetched.length > schemaCacheSize) throw DataTypeDefinitionTooMany(path, schemaCacheSize);
     final read = await readAttribute({
       nodeIdType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION],
     });
@@ -2942,7 +2988,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
       // type (or a vendor alias of one, e.g. TwinCAT's STRING at a custom
       // NodeId), not a struct/enum. Return an empty schema; the value then
       // decodes by its wire type.
-      return map;
+      return;
     }
     map[nodeIdType] = read.values.first;
     final val = map[nodeIdType]!;
@@ -2957,20 +3003,21 @@ class Client implements ClientApi, DataValueMonitoringApi {
     if (val.isObject) {
       for (var entry in val.entries) {
         if (nodeIdToPayloadType(entry.value.typeId) == null) {
-          final temporary = await _buildSchema(entry.value.typeId!, path);
-          map.addAll(temporary);
+          await _buildSchema(entry.value.typeId!, path, build);
+          final schema = map[entry.value.typeId];
+          if (schema == null) continue;
           if (val[entry.value.name].isArray) {
             // todo: only supports one level of array
             for (var i = 0; i < val[entry.value.name].asArray.length; i++) {
-              val[entry.value.name][i] = map[entry.value.typeId]!;
+              val[entry.value.name][i] = schema;
             }
           } else {
-            val[entry.value.name] = map[entry.value.typeId]!;
+            val[entry.value.name] = schema;
           }
         }
       }
     }
-    return map;
+    if (expandedNodes(val, build.counted) > ValueTooLarge.limit) throw ValueTooLarge(nodeIdType);
   }
 
   /// The default of [schemaCacheSize].
@@ -3019,7 +3066,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     final fetched = Schema();
     bool known(NodeId id) => defs.containsKey(id) || fetched.containsKey(id);
     Future<void> fetch(NodeId id) async {
-      final schema = await buildSchema(id);
+      final schema = await _buildSchemaWith(id, fetched.isEmpty ? defs : {...defs, ...fetched});
       fetched.addAll(schema);
       _cacheSchemas(schema);
     }
@@ -3123,10 +3170,17 @@ class Client implements ClientApi, DataValueMonitoringApi {
   }
 
   void disconnect() {
+    _requireClient();
     final statusCode = raw.UA_Client_disconnect(_client);
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Unable to disconnect: $statusCode ${statusCodeToString(statusCode)}';
     }
+  }
+
+  /// Throws a [ClientDeletedException] once [delete] has freed the native
+  /// client, which a service call would dereference.
+  void _requireClient() {
+    if (_client == ffi.nullptr) throw const ClientDeletedException();
   }
 
   @override
@@ -3213,4 +3267,19 @@ class Client implements ClientApi, DataValueMonitoringApi {
   /// stop when a later call has moved it on.
   int _keepConnectedGeneration = 0;
   final StreamController<void> _reconnectController = StreamController<void>.broadcast();
+}
+
+/// The state of one [Client.buildSchema] call.
+class _SchemaBuild {
+  _SchemaBuild(this.cached);
+
+  /// Definitions fetched by earlier calls.
+  final Schema cached;
+  final Schema map = Schema();
+
+  /// The types this call has read, so that each is read once.
+  final Set<NodeId> fetched = {};
+
+  /// See [expandedNodes].
+  final Map<DynamicValue, int> counted = Map.identity();
 }

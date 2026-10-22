@@ -14,6 +14,32 @@ changes that ship the same native library version.
 - **The client's DataType definition cache is bounded** (`schemaCacheSize`,
   default 4096, on `Client` and `ClientIsolate`): it grew by every distinct
   type id a server served; past the cap it is emptied and refilled on demand.
+- **Fixed: `buildSchema` read a DataType once per path, not once per type.**
+  A definition graph where each type has two fields of the next one (a
+  diamond) cost 2^(k+1) reads for one `read` of a k-level value: 16 levels
+  did not finish in a minute. Each distinct type is now read once per call
+  (16 levels: 19 reads, about a second), a field's type already cached is not
+  read again, and a type needing more than `schemaCacheSize` definitions is
+  refused with the new `DataTypeDefinitionTooMany`.
+- **A value is decoded into at most `ValueTooLarge.limit` (1,000,000)
+  nodes.** A type whose fields share a type is read once, but decoding a value
+  copied the shared definition per field: a 20-level diamond expanded to 3
+  million `DynamicValue`s (467 MB) for one value. `buildSchema` now refuses a
+  type that expands past the limit, and an array whose length times its
+  element type's nodes passes it is refused before anything is copied, both
+  with the new `ValueTooLarge`.
+- **Fixed: `Client.delete()` during a pending operation crashed the
+  process.** A `read` still building its schema (or one a `timeout` had
+  abandoned), a browse following continuation points or a monitor started
+  late made its next service call through the freed client: SIGSEGV in
+  `__UA_Client_AsyncService`, for `ClientIsolate` too. Every service call now
+  checks the client first and fails with the new `ClientDeletedException`
+  (`ClientIsolateClosedException` is now a subtype of it), and so do
+  `connect` and `awaitConnect` when `delete()` ends the wait (they failed
+  with `StateError("No element")` or a `BadConnectionClosed`).
+- **Fixed: a ReadResponse with fewer results than attributes read** left
+  `readAttribute` (and `read`) with a partial map, or never completing with
+  assertions enabled. It now fails with `UaStatusException(Bad_UnexpectedError)`.
 - **An encrypted client private key is an `ArgumentError`**, not an
   open62541 password prompt on stdin that blocked the process, and a key
   open62541 cannot load is a `UaStatusException` from the constructor (its
