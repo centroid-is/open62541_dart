@@ -738,7 +738,10 @@ class Client implements ClientApi, DataValueMonitoringApi {
     if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
       return;
     }
-    await config.stateStream.firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
+    await config.stateStream.firstWhere(
+      (state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED,
+      orElse: () => throw const ClientDeletedException(),
+    );
   }
 
   /// Connects to [url] and completes once the session is activated; the
@@ -752,6 +755,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
   /// [UaStatusException] with open62541's status.
   @override
   Future<void> connect(String url, {Duration? timeout = const Duration(seconds: 30)}) async {
+    _requireClient();
     final instantReturn = _issueConnect(url);
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
@@ -782,9 +786,10 @@ class Client implements ClientApi, DataValueMonitoringApi {
     // and its state events are gone: start from the state as it is now.
     var snapshot = state;
     if (!settled(snapshot)) {
-      snapshot = await config.stateStream.firstWhere(settled);
+      snapshot = await config.stateStream.firstWhere(settled, orElse: () => throw const ClientDeletedException());
     }
     if (snapshot.sessionState != raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
+      _requireClient();
       throw UaStatusException(snapshot.recoveryStatus);
     }
   }
@@ -1032,6 +1037,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
   }
 
   Future<void> _write(raw.UA_NodeId nodeId, DynamicValue value) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     Completer<void> completer = Completer<void>();
 
     final variant = valueToVariant(value);
@@ -1105,6 +1111,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
   Stream<ClientState> get stateStream => config.stateStream;
 
   ClientState get state {
+    _requireClient();
     ffi.Pointer<ffi.UnsignedInt> state = ua_calloc<ffi.UnsignedInt>();
     ffi.Pointer<ffi.UnsignedInt> sessionState = ua_calloc<ffi.UnsignedInt>();
     ffi.Pointer<ffi.Uint32> connectStatus = ua_calloc<ffi.Uint32>();
@@ -1150,6 +1157,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
   /// with an error.
   @override
   Future<DataValue> readValue(NodeId nodeId) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     final completer = Completer<DataValue>();
 
     final readValueId = ua_calloc<raw.UA_ReadValueId>();
@@ -1268,6 +1276,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
   // single point of entry for all read operations.
   @override
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
+    _requireClient();
     final nodeCount = nodes.entries.map<int>((entry) => entry.value.length).fold(0, (prev, curr) => prev + curr);
     ffi.Pointer<raw.UA_ReadValueId> readValueId = ua_calloc<raw.UA_ReadValueId>(nodeCount);
     final completer = Completer<Map<NodeId, DynamicValue>>();
@@ -1540,6 +1549,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     required int nodeClassMask,
     required int resultMask,
   }) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     final completer = Completer<List<BrowseResultItem>>();
 
     final request = raw.UA_BrowseRequest_new();
@@ -1652,6 +1662,10 @@ class Client implements ClientApi, DataValueMonitoringApi {
     ffi.Pointer<ffi.Uint8> continuationPointData,
     int continuationPointLength,
   ) {
+    if (_client == ffi.nullptr) {
+      ua_calloc.free(continuationPointData);
+      return Future.error(const ClientDeletedException());
+    }
     final completer = Completer<List<BrowseResultItem>>();
 
     final request = raw.UA_BrowseNextRequest_new();
@@ -1794,6 +1808,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     bool publishingEnabled = true,
     int priority = 0,
   }) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     ffi.Pointer<raw.UA_CreateSubscriptionRequest> request = raw.UA_CreateSubscriptionRequest_new();
     raw.UA_CreateSubscriptionRequest_init(request);
     request.ref.requestedPublishingInterval = requestedPublishingInterval.inMicroseconds / 1000.0;
@@ -2208,6 +2223,11 @@ class Client implements ClientApi, DataValueMonitoringApi {
     };
 
     controller.onListen = () async {
+      if (_client == ffi.nullptr) {
+        controller.addError(const ClientDeletedException());
+        unawaited(controller.close());
+        return;
+      }
       // Register this stream so Client.delete() can tear it down if it is still
       // active at delete time. Cleanup paths that bypass onCancel remove it.
       _activeMonitoredStreams[controller] = monitorTeardown;
@@ -2784,6 +2804,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
 
   @override
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
+    _requireClient();
     final completer = Completer<List<DynamicValue>>();
     final callbackInner =
         ffi.NativeCallable<
@@ -3142,10 +3163,17 @@ class Client implements ClientApi, DataValueMonitoringApi {
   }
 
   void disconnect() {
+    _requireClient();
     final statusCode = raw.UA_Client_disconnect(_client);
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Unable to disconnect: $statusCode ${statusCodeToString(statusCode)}';
     }
+  }
+
+  /// Throws a [ClientDeletedException] once [delete] has freed the native
+  /// client, which a service call would dereference.
+  void _requireClient() {
+    if (_client == ffi.nullptr) throw const ClientDeletedException();
   }
 
   @override

@@ -54,6 +54,7 @@ export 'src/server.dart'
 export 'src/types/endpoint_description.dart' show EndpointDescription, UserTokenPolicy;
 export 'src/types/errors.dart'
     show
+        ClientDeletedException,
         DataTypeDefinitionCycle,
         DataTypeDefinitionTooDeep,
         DataTypeDefinitionTooMany,

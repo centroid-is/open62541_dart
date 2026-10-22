@@ -123,6 +123,19 @@ class ValueTooLarge implements Exception {
       : 'ValueTooLarge: an array of $elements values of $typeId expands to more than $limit nodes';
 }
 
+/// The client was deleted: a call made after `Client.delete`, or one still
+/// under way when it ran (a `read` building its schema, a browse following
+/// continuation points, a connect waiting for the session). A
+/// `ClientIsolate` fails with its subtype `ClientIsolateClosedException`.
+class ClientDeletedException implements Exception {
+  const ClientDeletedException([this.message = 'ClientDeletedException: the client is deleted']);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class Inactivity extends Error {}
 
 class SubscriptionDeleted extends Error {

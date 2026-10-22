@@ -32,12 +32,8 @@ void _safeErr(Object? m) {
 }
 
 /// Exception thrown when an operation is attempted on a closed [ClientIsolate].
-class ClientIsolateClosedException implements Exception {
-  final String message;
-  const ClientIsolateClosedException([this.message = 'ClientIsolate is closed']);
-
-  @override
-  String toString() => message;
+class ClientIsolateClosedException extends ClientDeletedException {
+  const ClientIsolateClosedException([super.message = 'ClientIsolate is closed']);
 }
 
 /// Message types for communication between main isolate and client isolate

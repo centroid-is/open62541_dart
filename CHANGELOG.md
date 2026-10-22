@@ -28,6 +28,15 @@ changes that ship the same native library version.
   type that expands past the limit, and an array whose length times its
   element type's nodes passes it is refused before anything is copied, both
   with the new `ValueTooLarge`.
+- **Fixed: `Client.delete()` during a pending operation crashed the
+  process.** A `read` still building its schema (or one a `timeout` had
+  abandoned), a browse following continuation points or a monitor started
+  late made its next service call through the freed client: SIGSEGV in
+  `__UA_Client_AsyncService`, for `ClientIsolate` too. Every service call now
+  checks the client first and fails with the new `ClientDeletedException`
+  (`ClientIsolateClosedException` is now a subtype of it), and so do
+  `connect` and `awaitConnect` when `delete()` ends the wait (they failed
+  with `StateError("No element")` or a `BadConnectionClosed`).
 - **An encrypted client private key is an `ArgumentError`**, not an
   open62541 password prompt on stdin that blocked the process, and a key
   open62541 cannot load is a `UaStatusException` from the constructor (its
