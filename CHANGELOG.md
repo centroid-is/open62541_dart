@@ -456,6 +456,50 @@ changes that ship the same native library version.
   cache predates the stamp re-downloads and rebuilds mbedTLS once on the next
   build (well under a minute on a fast workstation, a couple of minutes on CI
   or a laptop); later builds reuse the stamped tree as before.
+- **Build: mbedTLS 3.6.5 → 3.6.7.** The bundled TLS library moves to the
+  current 3.6 LTS release, which closes, among the advisories of 3.6.6 and
+  3.6.7: CVE-2026-25835 (the random generator state was duplicated across
+  `fork()`, so parent and child drew the same bytes; the child now reseeds),
+  CVE-2026-34874 (NULL dereference in `mbedtls_x509_string_to_names()` when
+  an allocation fails) and CVE-2026-49300 (two X.509 parser bugs accepted a
+  malformed `basicConstraints` extension, so a certificate other
+  implementations treat as end-entity could parse as a CA). 3.6.6 also moved
+  the Linux fallback entropy device from `/dev/urandom` to `/dev/random`;
+  immaterial here, `getrandom()` is used wherever it exists. The release
+  asset's SHA-256 is pinned as before (verified against the sum published on
+  the release page); a warm `.dart_tool` re-downloads and rebuilds mbedTLS
+  once on the next build, as described above.
+- **Build: the native library is compiled and linked with hardening flags.**
+  open62541 and the mbedTLS linked into it are built, per toolchain, with
+  GCC/clang `-fstack-protector-strong -D_FORTIFY_SOURCE=2` (a canary in every
+  frame that holds an array; bounded `__*_chk` libc calls wherever the
+  compiler knows the destination size — active, since the build is
+  Release/-O3) and, on Linux and Android, linked with `-Wl,-z,relro,-z,now`
+  (full RELRO: the GOT is resolved at load and then read-only, so a write
+  primitive cannot redirect a call through it); MSVC gets `/GS /guard:cf`
+  and the DLL `/DYNAMICBASE /NXCOMPAT /guard:cf`. The toolchain follows the
+  target OS the way the build does (Visual Studio for a Windows target, the
+  NDK and Xcode toolchain files otherwise), not the host.
+  `test/native_hardening_test.dart` (Linux) reads the ELF the VM loaded and
+  asserts BIND_NOW with a GNU_RELRO segment, a FORTIFY `__*_chk` import and
+  `__stack_chk_fail`; skipped where `readelf`/`nm` are absent. The mbedTLS
+  install prefix is now stamped with the flags it was built under and
+  rebuilt on a mismatch, so a warm `.dart_tool` does not keep linking an
+  install built without them (one rebuild on the first build after this
+  upgrade). The sanitizer switch for CI's ASan job is renamed from
+  `ENABLE_SANITIZER` to `OPEN62541_DART_SANITIZER`; its flags go on top of
+  the hardening ones.
+- **CI: actions pinned to commit SHAs, read-only token, the iOS job can
+  fail.** Every `uses:` in `run_tests.yml` and `flutter_test.yml` names the
+  full commit of the release it resolved to (`actions/checkout` v7.0.1,
+  `dart-lang/setup-dart` v1.8.1, `subosito/flutter-action` v2.23.0,
+  `actions/setup-java` v6.1.0, `reactivecircus/android-emulator-runner`
+  v2.38.0), with the version as a trailing comment; Dependabot's
+  `github-actions` entry keeps the pins current. Both workflows run with
+  `permissions: contents: read`. The iOS job's `flutter test ... || true`
+  reported every run green; the step now fails with the test (`pipefail`
+  through the `tee`), and the output tail and crash-log listing moved to a
+  step that runs on failure.
 - **Dev tooling: `ffigen` 22 / 23.** The binding generator (`tool/ffigen.dart`)
   is ported to ffigen 22's visitor-based config API, which replaced the one it
   was written against; ffigen 23 keeps that API. The generated bindings are
