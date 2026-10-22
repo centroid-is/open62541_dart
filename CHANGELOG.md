@@ -55,6 +55,7 @@ changes that ship the same native library version.
   - Bindings: `UA_AccessControl_default`, `UA_CertificateUtils_verifyApplicationUri`,
     `UA_UsernamePasswordLogin`, and the AddNodes/DeleteNodes/AddReferences/
     DeleteReferences request, item and response structs (additions only).
+- Deleting monitored items forgets them in the native client when the request is sent, not when the response arrives. Replaces the clientHandle-snapshot source patch with a smaller one (`hook/forget_monitored_items_on_send.patch`) for the same race: a server that recycled a deleted item's id into a new item, answered first, made the client drop the new item and freeze its value. The extracted source is re-extracted when the hook's patch files change.
 - The web barrel (`open62541_types.dart`) compiles again: it pulled in `dart:ffi` through the value-size limit.
 - `subscriptionCreate` fails with a `UaStatusException` carrying the server's status (e.g. `BadTooManySubscriptions`) when the server refuses, on `Client` and `ClientIsolate`; it was a plain string.
 - The native library is built without XML encoding (`UA_ENABLE_XML_ENCODING=OFF`): the XML decoder was unreachable from the Dart API and the network, and the library is about 9% smaller.
@@ -724,7 +725,7 @@ changes that ship the same native library version.
     ownership). The only other public-header addition across both releases
     is `UA_Node_moveMonitoredItems` (custom-nodestore API, not bound).
   - All build-time source patches (subscription cleanup, bounded send,
-    session-recreate race, delete-by-client-handle, single-threaded
+    session-recreate race, delete-by-client-handle (since replaced by forget-on-send), single-threaded
     AsyncManager) still apply to v1.5.9; none has landed upstream yet
     (`ua_client_subscriptions.c` and `eventloop_posix_tcp.c` are unchanged
     between v1.5.8 and v1.5.9, and the v1.5.9 edits to `ua_client.c`,
