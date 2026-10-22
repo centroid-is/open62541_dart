@@ -359,6 +359,17 @@ The header patch removes the bitfields from `UA_DiagnosticInfo`, `UA_DataValue`,
 `UA_DataTypeMember` and `UA_DataType`, replacing each with a single field (the
 struct size is unchanged) so the generator does not drop the surrounding members.
 
+### Sanitizer build
+
+`touch .open62541_sanitizer` in the package root makes the hook build open62541
+with ASan + UBSan (remove the file for the normal build). An environment
+variable would not work: the hooks runner scrubs it before starting the hook.
+Run the tests with the runtime preloaded:
+
+```bash
+LD_PRELOAD=$(gcc -print-file-name=libasan.so) ASAN_OPTIONS=detect_leaks=0 dart test
+```
+
 ### Known limitations
 
 - A multi-dimensional array that is a **member of a structure** is not modeled and
