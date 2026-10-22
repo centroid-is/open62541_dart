@@ -489,6 +489,17 @@ changes that ship the same native library version.
   upgrade). The sanitizer switch for CI's ASan job is renamed from
   `ENABLE_SANITIZER` to `OPEN62541_DART_SANITIZER`; its flags go on top of
   the hardening ones.
+- **CI: actions pinned to commit SHAs, read-only token, the iOS job can
+  fail.** Every `uses:` in `run_tests.yml` and `flutter_test.yml` names the
+  full commit of the release it resolved to (`actions/checkout` v7.0.1,
+  `dart-lang/setup-dart` v1.8.1, `subosito/flutter-action` v2.23.0,
+  `actions/setup-java` v6.1.0, `reactivecircus/android-emulator-runner`
+  v2.38.0), with the version as a trailing comment; Dependabot's
+  `github-actions` entry keeps the pins current. Both workflows run with
+  `permissions: contents: read`. The iOS job's `flutter test ... || true`
+  reported every run green; the step now fails with the test (`pipefail`
+  through the `tee`), and the output tail and crash-log listing moved to a
+  step that runs on failure.
 - **Dev tooling: `ffigen` 22 / 23.** The binding generator (`tool/ffigen.dart`)
   is ported to ffigen 22's visitor-based config API, which replaced the one it
   was written against; ffigen 23 keeps that API. The generated bindings are
