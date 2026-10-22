@@ -3,6 +3,7 @@
 // within what the node itself allows, never for the host's own calls.
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
 
 import 'package:test/test.dart';
@@ -286,57 +287,68 @@ void main() {
     final withHook = median(times[1]);
     final perRead = (withHook - without) / reads;
     printOnFailure('$reads reads: $without us without, $withHook us with the hook, $perRead us a read');
-    expect(perRead, lessThan(1.5));
+    // Relative to the read itself, so slow runners do not fail it: a cached
+    // identity adds about a tenth of a read, resolving it on every call
+    // (about 3 us on Linux) several reads' worth.
+    expect(withHook - without, lessThan(without));
   });
 
   group('the hooks and the session cache across a server\'s life:', () {
-    test('connect, read and disconnect cycles leave nothing on the C heap', () async {
-      // The server runs on its own isolate: a client's delete() waits for
-      // the CloseSession answer, which a server pumped by this isolate
-      // could not give meanwhile. The heap is the process's either way.
-      final ready = ReceivePort();
-      final exited = ReceivePort();
-      await Isolate.spawn(serveWithAuthorization, ready.sendPort, onExit: exited.sendPort);
-      final (port, control) = await ready.first as (int, SendPort);
-      addTearDown(() async {
-        control.send(null);
-        await exited.first;
-      });
-      final replies = ReceivePort();
-      addTearDown(replies.close);
-      final channelCounts = StreamIterator(replies);
-      Future<void> untilChannelsClosed() async {
-        final deadline = DateTime.now().add(const Duration(seconds: 10));
-        while (true) {
-          control.send(replies.sendPort);
-          await channelCounts.moveNext();
-          if (channelCounts.current == 0) return;
-          if (DateTime.now().isAfter(deadline)) fail('the server kept ${channelCounts.current} channels open');
-          await Future<void>.delayed(const Duration(milliseconds: 1));
+    test(
+      'connect, read and disconnect cycles leave nothing on the C heap',
+      () async {
+        // The server runs on its own isolate: a client's delete() waits for
+        // the CloseSession answer, which a server pumped by this isolate
+        // could not give meanwhile. The heap is the process's either way.
+        final ready = ReceivePort();
+        final exited = ReceivePort();
+        await Isolate.spawn(serveWithAuthorization, ready.sendPort, onExit: exited.sendPort);
+        final (port, control) = await ready.first as (int, SendPort);
+        addTearDown(() async {
+          control.send(null);
+          await exited.first;
+        });
+        final replies = ReceivePort();
+        addTearDown(replies.close);
+        final channelCounts = StreamIterator(replies);
+        Future<void> untilChannelsClosed() async {
+          final deadline = DateTime.now().add(const Duration(seconds: 10));
+          while (true) {
+            control.send(replies.sendPort);
+            await channelCounts.moveNext();
+            if (channelCounts.current == 0) return;
+            if (DateTime.now().isAfter(deadline)) fail('the server kept ${channelCounts.current} channels open');
+            await Future<void>.delayed(const Duration(milliseconds: 1));
+          }
         }
-      }
 
-      await expectNoHeapGrowth(
-        () async {
-          final client = Client(logLevel: _fatal, username: 'alice', password: 'a', allowUnencryptedPassword: true);
-          final pump = () async {
-            while (client.runIterate(Duration.zero)) {
-              await Future<void>.delayed(Duration.zero);
-            }
-          }();
-          await client.connect('opc.tcp://127.0.0.1:$port');
-          await client.read(writable);
-          await client.delete();
-          await pump;
-          await untilChannelsClosed();
-        },
-        warmUp: 20,
-        iterations: 10,
-        rounds: 7,
-        maxGrowth: 1000,
-        attempts: 3,
-      );
-    }, timeout: const Timeout.factor(3));
+        await expectNoHeapGrowth(
+          () async {
+            final client = Client(logLevel: _fatal, username: 'alice', password: 'a', allowUnencryptedPassword: true);
+            final pump = () async {
+              while (client.runIterate(Duration.zero)) {
+                await Future<void>.delayed(Duration.zero);
+              }
+            }();
+            await client.connect('opc.tcp://127.0.0.1:$port');
+            await client.read(writable);
+            await client.delete();
+            await pump;
+            await untilChannelsClosed();
+          },
+          warmUp: 20,
+          iterations: 10,
+          rounds: 7,
+          maxGrowth: 1000,
+          attempts: 3,
+        );
+      },
+      timeout: const Timeout.factor(3),
+      // The C heap is measured with glibc mallinfo2; elsewhere the 90
+      // warm-up cycles would only exercise connect/disconnect, which other
+      // suites cover, and on a slow Windows runner exceed the timeout.
+      skip: Platform.isLinux ? false : 'needs glibc mallinfo2',
+    );
 
     for (final clientType in clientTypes) {
       test('$clientType client: delete() with sessions open and identities cached is clean', () async {
