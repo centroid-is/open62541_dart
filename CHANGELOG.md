@@ -97,6 +97,17 @@ changes that ship the same native library version.
   the defaults.
   Once security is configured the ApplicationUri must match the URI in the
   server certificate.
+- **Fixed: a hostile server could take the client down with one struct.** A
+  struct's array member is sized from an Int32 the server put on the wire,
+  and the deserializer cloned the member's template that many times before
+  reading an element, with no bound: a 4-byte body claiming 2^31-1 elements
+  was an uncatchable OutOfMemoryError (for `ClientIsolate`, the end of the
+  isolate that owns the connection). Now a negative length is a null array
+  (decoded as empty, Part 6), a length greater than the bytes left is refused
+  with a `FormatException` at the length's offset before anything is sized by
+  it (what open62541's `Array_decodeBinary` does), and the elements are
+  decoded one at a time into a list that grows with them; the read fails and
+  the client stays usable.
 - **Fixed: a second `Client.keepConnected()` doubled the pump.** The call
   reset its stop flag and set it again synchronously, so the pump and the
   reconnect supervisor already running never observed the stop and kept
