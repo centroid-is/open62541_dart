@@ -61,10 +61,13 @@ class IssuedCertificates {
       'extendedKeyUsage=serverAuth,clientAuth\n'
       'basicConstraints=CA:FALSE\n',
     );
+    // Relative names: every openssl call runs in [path], and an absolute
+    // Windows path in an OpenSSL config loses its backslashes (the config
+    // parser reads them as escapes).
     await File('$path/ca.cnf').writeAsString(
       '[ca]\ndefault_ca = test_ca\n'
-      '[test_ca]\ndatabase = $path/index.txt\ncrlnumber = $path/crlnumber\n'
-      'certificate = $path/ca.pem\nprivate_key = $path/ca.key\n'
+      '[test_ca]\ndatabase = index.txt\ncrlnumber = crlnumber\n'
+      'certificate = ca.pem\nprivate_key = ca.key\n'
       'default_md = sha256\ndefault_crl_days = 2\n',
     );
     await File('$path/index.txt').writeAsString('');
