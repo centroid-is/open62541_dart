@@ -6,6 +6,19 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **Breaking: `Server.addVariableNode` adds a read-only node by default.**
+  `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
+  every variable a server published without thinking about it was writable by
+  any client that could connect, including the anonymous one the default
+  server config admits. The default is now `AccessLevelMask(read: true)`: a
+  client write to such a node is refused with `Bad_UserAccessDenied`
+  (open62541 masks the node's AccessLevel into the session's UserAccessLevel
+  and reports that one). `Server.write` is unaffected, the server's own
+  writes bypass the access level. Migration, for every node clients are meant
+  to write: `server.addVariableNode(id, value, accessLevel: const
+  AccessLevelMask(read: true, write: true))`. `addDataSourceVariableNode` is
+  unchanged, it has always derived write access from whether `onWrite` is
+  given.
 - **Fixed: a monitored sample the client could not decode was dropped
   without a trace.** The monitored-item data callback caught the conversion
   error, wrote one line to stderr and moved on; the consumer of `monitor`,
@@ -44,19 +57,6 @@ changes that ship the same native library version.
   and (both clients) a data-source write whose handler never completes is
   answered Bad_Timeout by the server at a 1-second deadline, well before the
   client's own 5-second request timeout, with the server intact afterwards.
-- **Breaking: `Server.addVariableNode` adds a read-only node by default.**
-  `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
-  every variable a server published without thinking about it was writable by
-  any client that could connect, including the anonymous one the default
-  server config admits. The default is now `AccessLevelMask(read: true)`: a
-  client write to such a node is refused with `Bad_UserAccessDenied`
-  (open62541 masks the node's AccessLevel into the session's UserAccessLevel
-  and reports that one). `Server.write` is unaffected, the server's own
-  writes bypass the access level. Migration, for every node clients are meant
-  to write: `server.addVariableNode(id, value, accessLevel: const
-  AccessLevelMask(read: true, write: true))`. `addDataSourceVariableNode` is
-  unchanged, it has always derived write access from whether `onWrite` is
-  given.
 - **`package:open62541/open62541_types.dart`: the value types without
   `dart:ffi`.** A new barrel exporting `DynamicValue`, `DynamicType`,
   `LocalizedText`, `EnumField`, `Schema` and `NodeId`, importable from code that
