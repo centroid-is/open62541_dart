@@ -15,32 +15,11 @@ import 'common.dart';
 import 'data_value_rewriting_proxy.dart';
 
 const _k = 16;
-NodeId _dia(int i) => NodeId.fromString(1, 'Dia$i');
 final _diaNode = NodeId.fromString(1, 'dia.node');
 final _wideType = NodeId.fromString(1, 'Wide');
 final _wideNode = NodeId.fromString(1, 'wide.node');
 final _topType = NodeId.fromString(1, 'Top');
 final _topNode = NodeId.fromString(1, 'top.node');
-
-/// Registers the diamond D0..Dk on [server] and returns D0's value.
-DynamicValue addDiamond(Server server, int k) {
-  final values = <int, DynamicValue>{};
-  for (var i = k; i >= 0; i--) {
-    final v = DynamicValue(name: 'Dia$i', typeId: _dia(i));
-    if (i == k) {
-      v['x'] = DynamicValue(value: 1, typeId: NodeId.int32);
-    } else {
-      v['a'] = values[i + 1]!;
-      v['b'] = values[i + 1]!;
-    }
-    values[i] = v;
-  }
-  for (var i = k; i >= 0; i--) {
-    server.addCustomType(_dia(i), values[i]!);
-    server.addDataTypeNode(_dia(i), 'Dia$i');
-  }
-  return values[0]!;
-}
 
 void main() {
   for (final clientType in clientTypes) {
@@ -64,7 +43,7 @@ void main() {
       setUp(() async {
         server = setupServer();
         final d0 = addDiamond(server, _k);
-        server.addVariableNode(_diaNode, d0, typeId: _dia(0));
+        server.addVariableNode(_diaNode, d0, typeId: diamondType(0));
         // Top {d: D1}: a new type whose field's type an earlier read cached.
         final top = DynamicValue(name: 'Top', typeId: _topType);
         top['d'] = d0['a'];

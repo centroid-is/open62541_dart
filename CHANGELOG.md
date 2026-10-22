@@ -21,6 +21,13 @@ changes that ship the same native library version.
   (16 levels: 19 reads, about a second), a field's type already cached is not
   read again, and a type needing more than `schemaCacheSize` definitions is
   refused with the new `DataTypeDefinitionTooMany`.
+- **A value is decoded into at most `ValueTooLarge.limit` (1,000,000)
+  nodes.** A type whose fields share a type is read once, but decoding a value
+  copied the shared definition per field: a 20-level diamond expanded to 3
+  million `DynamicValue`s (467 MB) for one value. `buildSchema` now refuses a
+  type that expands past the limit, and an array whose length times its
+  element type's nodes passes it is refused before anything is copied, both
+  with the new `ValueTooLarge`.
 - **An encrypted client private key is an `ArgumentError`**, not an
   open62541 password prompt on stdin that blocked the process, and a key
   open62541 cannot load is a `UaStatusException` from the constructor (its

@@ -8,6 +8,7 @@ import '../node_id.dart';
 import '../third_party/open62541.g.dart' as raw;
 import 'create_type.dart';
 import 'custom_type_registry.dart';
+import 'errors.dart' show ValueTooLarge;
 import 'native_decode.dart';
 import 'payloads.dart';
 
@@ -201,6 +202,12 @@ class OpcUaDynamicValueSerializer {
       final existing = schema.asArray;
       if (arrayLength > 0 && existing.isEmpty) {
         throw 'Cannot size array member of length $arrayLength: schema has no template element';
+      }
+      if (arrayLength > 0 && arrayLength != existing.length) {
+        final nodes = expandedNodes(existing.first);
+        if (nodes > 1 && arrayLength > ValueTooLarge.limit ~/ nodes) {
+          throw ValueTooLarge(existing.first.typeId, elements: arrayLength);
+        }
       }
       final elements = <DynamicValue>[];
       for (var i = 0; i < arrayLength; i++) {

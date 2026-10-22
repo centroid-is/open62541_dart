@@ -100,6 +100,29 @@ class DataTypeDefinitionTooMany implements Exception {
       '(at ${path.last})';
 }
 
+/// A value would take more than [limit] [DynamicValue] nodes once decoded:
+/// a structured type whose fields share types (D0 {a: D1, b: D1}, ...)
+/// expands to a tree twice as large per level, and an array holds a copy of
+/// its element type's tree per element. Refused by `Client.buildSchema` for
+/// the type, and when decoding an array, before anything is copied.
+class ValueTooLarge implements Exception {
+  ValueTooLarge(this.typeId, {this.elements});
+
+  /// The most nodes one value is decoded into.
+  static const limit = 1000000;
+
+  /// The DataType of the value, or of the array's elements.
+  final NodeId? typeId;
+
+  /// The array's length, null for a type refused on its own.
+  final int? elements;
+
+  @override
+  String toString() => elements == null
+      ? 'ValueTooLarge: a value of $typeId expands to more than $limit nodes'
+      : 'ValueTooLarge: an array of $elements values of $typeId expands to more than $limit nodes';
+}
+
 class Inactivity extends Error {}
 
 class SubscriptionDeleted extends Error {

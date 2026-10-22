@@ -299,3 +299,27 @@ Future<ClientApi> setupClientOfType(
       throw ArgumentError('Unknown client type: $clientType');
   }
 }
+
+/// `ns=1;s=Dia<i>`, level [i] of [addDiamond].
+NodeId diamondType(int i) => NodeId.fromString(1, 'Dia$i');
+
+/// Registers the types D0 {a: D1, b: D1}, ..., Dk {x: Int32} on [server]:
+/// k + 1 types whose value is a tree of 2^(k+1) nodes. Returns D0's value.
+DynamicValue addDiamond(Server server, int k) {
+  final values = <int, DynamicValue>{};
+  for (var i = k; i >= 0; i--) {
+    final v = DynamicValue(name: 'Dia$i', typeId: diamondType(i));
+    if (i == k) {
+      v['x'] = DynamicValue(value: 1, typeId: NodeId.int32);
+    } else {
+      v['a'] = values[i + 1]!;
+      v['b'] = values[i + 1]!;
+    }
+    values[i] = v;
+  }
+  for (var i = k; i >= 0; i--) {
+    server.addCustomType(diamondType(i), values[i]!);
+    server.addDataTypeNode(diamondType(i), 'Dia$i');
+  }
+  return values[0]!;
+}

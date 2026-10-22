@@ -2989,6 +2989,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
         }
       }
     }
+    if (expandedNodes(val, build.counted) > ValueTooLarge.limit) throw ValueTooLarge(nodeIdType);
   }
 
   /// The default of [schemaCacheSize].
@@ -3243,4 +3244,7 @@ class _SchemaBuild {
 
   /// The types this call has read, so that each is read once.
   final Set<NodeId> fetched = {};
+
+  /// See [expandedNodes].
+  final Map<DynamicValue, int> counted = Map.identity();
 }
