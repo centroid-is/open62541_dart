@@ -9,6 +9,7 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -51,6 +52,56 @@ class Running {
     await _stopped.future;
     server.shutdown();
     server.delete();
+  }
+}
+
+/// A [Server] with [addBasicVariables] on an isolate of its own, for
+/// requests larger than a loopback socket buffer: open62541's client blocks
+/// in its send until the peer reads (`TCP_sendWithConnection`), which a
+/// server pumped by the same isolate cannot do meanwhile. On Windows a
+/// 10 001-node Read then took one to several seconds, past the 5 s send
+/// deadline at times; on its own isolate the server answers in milliseconds.
+class IsolateServer {
+  IsolateServer._(this.port, this.limits, this._control, this._exited);
+
+  final int port;
+
+  /// What the server reports as [Server.limits].
+  final ServerLimits limits;
+  final SendPort _control;
+  final ReceivePort _exited;
+
+  String get url => 'opc.tcp://127.0.0.1:$port';
+
+  static Future<IsolateServer> start([ServerLimits limits = const ServerLimits()]) async {
+    final ready = ReceivePort();
+    final exited = ReceivePort();
+    await Isolate.spawn(_serve, (ready.sendPort, limits), onExit: exited.sendPort);
+    final (port, inForce, control) = await ready.first as (int, ServerLimits, SendPort);
+    return IsolateServer._(port, inForce, control, exited);
+  }
+
+  static Future<void> _serve((SendPort, ServerLimits) arguments) async {
+    final (ready, limits) = arguments;
+    final server = Server(port: 0, logLevel: _fatal, limits: limits);
+    addBasicVariables(server);
+    server.start();
+    final control = ReceivePort();
+    var serving = true;
+    control.listen((_) => serving = false);
+    ready.send((server.port, server.limits, control.sendPort));
+    while (serving) {
+      server.runIterate();
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    control.close();
+    server.shutdown();
+    server.delete();
+  }
+
+  Future<void> stop() async {
+    _control.send(null);
+    await _exited.first;
   }
 }
 
@@ -821,12 +872,9 @@ void main() {
     });
 
     group('in force:', () {
-      late Running running;
+      late IsolateServer running;
 
-      setUpAll(() {
-        running = Running(Server(port: 0, logLevel: _fatal));
-        addBasicVariables(running.server);
-      });
+      setUpAll(() async => running = await IsolateServer.start());
       tearDownAll(() => running.stop());
 
       // One node, its Value attribute 10 001 times: 10 001 operations in one
@@ -866,10 +914,9 @@ void main() {
       }
 
       test('an explicit 0 lifts the cap: maxNodesPerRead: 0 serves the 10 001-node read', () async {
-        final lifted = Running(Server(port: 0, logLevel: _fatal, limits: const ServerLimits(maxNodesPerRead: 0)));
+        final lifted = await IsolateServer.start(const ServerLimits(maxNodesPerRead: 0));
         addTearDown(lifted.stop);
-        addBasicVariables(lifted.server);
-        expect(lifted.server.limits.maxNodesPerRead, 0);
+        expect(lifted.limits.maxNodesPerRead, 0);
         final client = await clientOf('direct');
         await client.connect(lifted.url);
         expect((await client.readAttribute(overTheReadLimit))[intNodeId]!.asInt, 1);
