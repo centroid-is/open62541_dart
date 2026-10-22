@@ -1,7 +1,9 @@
 import 'dart:collection' show LinkedHashMap;
 
 import 'node_id_core.dart';
-import 'types/errors.dart' show ValueTooLarge;
+
+/// The most nodes one value is decoded into.
+const int maxValueNodes = 1000000;
 
 enum DynamicType { object, array, string, boolean, nullValue, unknown, integer, double, datetime }
 
@@ -298,7 +300,7 @@ class DynamicValue {
 
 /// The nodes [value] becomes when copied by [DynamicValue.from], which copies
 /// a value shared by several fields once per field; at most
-/// [ValueTooLarge.limit] + 1. [counted] holds the counts of shared values.
+/// [maxValueNodes] + 1. [counted] holds the counts of shared values.
 int expandedNodes(DynamicValue value, [Map<DynamicValue, int>? counted]) {
   counted ??= Map.identity();
   final known = counted[value];
@@ -313,8 +315,8 @@ int expandedNodes(DynamicValue value, [Map<DynamicValue, int>? counted]) {
   var nodes = 1;
   for (final child in children) {
     nodes += expandedNodes(child, counted);
-    if (nodes > ValueTooLarge.limit) {
-      nodes = ValueTooLarge.limit + 1;
+    if (nodes > maxValueNodes) {
+      nodes = maxValueNodes + 1;
       break;
     }
   }

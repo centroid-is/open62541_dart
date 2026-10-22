@@ -6,6 +6,56 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **Security: the `Server` takes a certificate, a trust list, users, a
+  listen address and limits; clients may no longer add or delete nodes.**
+  `Server(certificate:, privateKey:, trustList:, issuerList:, revocationList:,
+  acceptAllClientCertificates:, allowNone:, allowAnonymous:, users:,
+  allowUnencryptedPassword:, allowClientNodeManagement:, hostname:, limits:)`.
+  With a certificate (DER) the configuration is open62541's
+  `UA_ServerConfig_setDefaultWithSecurityPolicies`: Basic256Sha256,
+  Aes256Sha256RsaPss and Aes128Sha256RsaOaep in Sign and SignAndEncrypt,
+  the client certificates verified against the in-memory store built from
+  the lists (`UA_CertificateGroup_Memorystore`); `acceptAllClientCertificates`
+  is the explicit opt-out, and a certificate with neither a non-empty trust
+  list nor the opt-out is an `ArgumentError` (`checkServerSecurityArguments`;
+  open62541 keeps accept-all for an empty trust list). The certificate must
+  carry the `applicationUri` (checked with
+  `UA_CertificateUtils_verifyApplicationUri`, an `ArgumentError` otherwise,
+  where open62541 only warns at startup). `allowNone` (default false with a
+  certificate) drops the None endpoint and leaves the None policy for
+  discovery only (`securityPolicyNoneDiscoveryOnly`). `allowAnonymous` and
+  `users` go to `UA_AccessControl_default` (logins copied, stored in plain
+  text, compared in constant time); `allowUnencryptedPassword` is
+  `UA_ServerConfig.allowNonePolicyPassword`. `hostname` sets
+  `serverUrls[0]` to `opc.tcp://hostname:port`. `ServerLimits` maps to the
+  `UA_ServerConfig` limit fields (`Server.limits` reads them back), and
+  every server has bounded ones: `ServerLimits.defaults` (100 channels and
+  sessions, 1000 subscriptions, 50 per session, 100 000 monitored items,
+  10 000 per subscription, 10 000 nodes per Read/Write/Browse, 1000 per
+  Call, 16 MiB per message, 512 chunks) where open62541 checks nothing
+  beyond 100 channels and sessions. A field left `null` is its default, an
+  explicit 0 lifts the cap (0 = no check in open62541 for every UInt32
+  field; `maxSessions`/`maxSecureChannels` are compared with `>=`, so 0
+  there is an `ArgumentError` and 65535 the ceiling), and
+  `ServerLimits.unlimited` lifts them all.
+  `Server.endpoints` lists the endpoints on offer. Without a trust list the
+  X509 user-token policy is dropped, so a certificate login means a trusted
+  certificate.
+  - **Breaking:** a client session may no longer add or delete nodes or
+    references: AddNodes, DeleteNodes, AddReferences and DeleteReferences
+    answer `BadUserAccessDenied` (the default plugin's `allowAddNode` and
+    the other three are replaced by a refusal; open62541 never consults
+    them for the server's own admin session, so the host's `addVariableNode`
+    etc. are unchanged). `allowClientNodeManagement: true` restores the old
+    behaviour. Everything else about `Server()` is as it was: None,
+    anonymous, all interfaces; the limits are now `ServerLimits.defaults`
+    instead of open62541's unchecked ones.
+  - `ClientIsolate.create` takes `allowUnencryptedPassword`, which it lacked
+    (only the direct `Client` could send a password over None).
+  - Bindings: `UA_AccessControl_default`, `UA_CertificateUtils_verifyApplicationUri`,
+    `UA_UsernamePasswordLogin`, and the AddNodes/DeleteNodes/AddReferences/
+    DeleteReferences request, item and response structs (additions only).
+- The web barrel (`open62541_types.dart`) compiles again: it pulled in `dart:ffi` through the value-size limit.
 - `subscriptionCreate` fails with a `UaStatusException` carrying the server's status (e.g. `BadTooManySubscriptions`) when the server refuses, on `Client` and `ClientIsolate`; it was a plain string.
 - The native library is built without XML encoding (`UA_ENABLE_XML_ENCODING=OFF`): the XML decoder was unreachable from the Dart API and the network, and the library is about 9% smaller.
 - **`Client.connect(timeout:)`** (default 30 s, `null` waits): a peer that

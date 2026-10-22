@@ -272,6 +272,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    bool allowUnencryptedPassword = false,
     int schemaCacheSize = Client.defaultSchemaCacheSize,
   }) {
     _initIsolate(
@@ -288,6 +289,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      allowUnencryptedPassword: allowUnencryptedPassword,
       schemaCacheSize: schemaCacheSize,
     );
   }
@@ -304,7 +306,8 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
 
   /// Creates the worker isolate and the [Client] on it; the arguments are
   /// the [Client] constructor's (the certificate ones are checked here
-  /// first, see [checkClientCertificateArguments]).
+  /// first, see [checkClientCertificateArguments]; `allowUnencryptedPassword`
+  /// sends a password over SecurityPolicy#None in clear text, as there).
   static Future<ClientIsolate> create({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -321,6 +324,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     int schemaCacheSize = Client.defaultSchemaCacheSize,
     Duration iterateInterval = const Duration(milliseconds: 10),
+    bool allowUnencryptedPassword = false,
   }) async {
     // The worker's Client constructor would throw where nobody awaits it
     // (errorsAreFatal is false there) and every later call would find no
@@ -347,6 +351,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      allowUnencryptedPassword: allowUnencryptedPassword,
       schemaCacheSize: schemaCacheSize,
     );
 
@@ -385,6 +390,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    bool allowUnencryptedPassword = false,
     int schemaCacheSize = Client.defaultSchemaCacheSize,
   }) async {
     try {
@@ -418,6 +424,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
           acceptAllCertificates: acceptAllCertificates,
           logLevel: logLevel,
           connectivityCheckInterval: connectivityCheckInterval,
+          allowUnencryptedPassword: allowUnencryptedPassword,
           schemaCacheSize: schemaCacheSize,
           sendPort: _receivePort.sendPort,
         ),
@@ -1111,6 +1118,7 @@ class _IsolateData {
   final bool acceptAllCertificates;
   final LogLevel? logLevel;
   final Duration connectivityCheckInterval;
+  final bool allowUnencryptedPassword;
   final int schemaCacheSize;
   final SendPort sendPort;
 
@@ -1128,6 +1136,7 @@ class _IsolateData {
     required this.acceptAllCertificates,
     this.logLevel,
     required this.connectivityCheckInterval,
+    required this.allowUnencryptedPassword,
     required this.schemaCacheSize,
     required this.sendPort,
   });
@@ -1172,6 +1181,7 @@ void _isolateEntryPoint(_IsolateData data) {
       logLevel: data.logLevel,
       connectivityCheckInterval: data.connectivityCheckInterval,
       schemaCacheSize: data.schemaCacheSize,
+      allowUnencryptedPassword: data.allowUnencryptedPassword,
     );
   } catch (e) {
     receivePort.close();

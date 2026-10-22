@@ -1,4 +1,5 @@
 import '../common.dart' show statusCodeToString;
+import '../dynamic_value.dart' show maxValueNodes;
 import '../extensions.dart' show AttributeId;
 import '../node_id.dart' show NodeId;
 
@@ -132,7 +133,7 @@ class ValueTooLarge implements Exception {
   ValueTooLarge(this.typeId, {this.elements});
 
   /// The most nodes one value is decoded into.
-  static const limit = 1000000;
+  static const limit = maxValueNodes;
 
   /// The DataType of the value, or of the array's elements.
   final NodeId? typeId;
