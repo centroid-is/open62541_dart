@@ -55,6 +55,7 @@ changes that ship the same native library version.
   - Bindings: `UA_AccessControl_default`, `UA_CertificateUtils_verifyApplicationUri`,
     `UA_UsernamePasswordLogin`, and the AddNodes/DeleteNodes/AddReferences/
     DeleteReferences request, item and response structs (additions only).
+- The native library is built without XML encoding (`UA_ENABLE_XML_ENCODING=OFF`): the XML decoder was unreachable from the Dart API and the network, and the library is about 9% smaller.
 - **`Client.connect(timeout:)`** (default 30 s, `null` waits): a peer that
   never answers, or a session never activated, is a `TimeoutException` and
   the attempt is abandoned; `keepConnected(connectTimeout:)` abandons and
