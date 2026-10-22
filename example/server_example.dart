@@ -2,7 +2,9 @@ import 'package:open62541/open62541.dart';
 
 void main() async {
   // SecurityPolicy None, anonymous access, all interfaces: anyone who can
-  // reach port 4840 can read and write these nodes. Trusted networks only.
+  // reach port 4840 can read and write these nodes. Trusted networks only;
+  // elsewhere give Server a certificate, a trustList and users (README,
+  // "Security").
   final server = Server();
 
   print("Starting server");

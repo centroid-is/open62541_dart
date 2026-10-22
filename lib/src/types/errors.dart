@@ -1,7 +1,7 @@
 import '../common.dart' show statusCodeToString;
+import '../dynamic_value.dart' show maxValueNodes;
 import '../extensions.dart' show AttributeId;
 import '../node_id.dart' show NodeId;
-import '../dynamic_value.dart' show maxValueNodes;
 
 /// An OPC UA status code carried as a typed exception, so the exact code is
 /// programmatically extractable (rather than only a formatted message).
