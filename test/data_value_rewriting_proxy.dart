@@ -46,6 +46,10 @@ Uint8List withoutSourceTimestamp(Uint8List dataValue) {
   ]);
 }
 
+/// Status Good with a Guid value (built-in type 14, the sixteen bytes that
+/// follow its encoding byte): a type the Dart client has no conversion for.
+Uint8List asGuid(Uint8List _) => Uint8List.fromList([0x01, 0x0e, ...List<int>.filled(16, 0x5a)]);
+
 /// Whether [message] is a final chunk of a ReadResponse: the shape
 /// [DataValueRewritingProxy] rewrites, for a [DataValueRewritingProxy.rewriteMessage]
 /// that must leave every other message alone.

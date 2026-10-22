@@ -2218,8 +2218,18 @@ class Client implements ClientApi, DataValueMonitoringApi {
               } catch (e) {
                 _safeErr("Error adding data: $e");
               }
-            } catch (e) {
-              _safeErr("Error converting data for: $item to type $DynamicValue: $e");
+            } catch (e, stackTrace) {
+              // A sample this client cannot decode (a type it has no
+              // conversion for, a struct body that does not parse) is the
+              // consumer's news, not a log line's: it goes out as an error
+              // event. The stream stays open and the subscription stays up,
+              // so the next sample is delivered as usual. [isClosed] is
+              // checked again here: the VALUE branch above awaited.
+              if (!controller.isClosed) {
+                controller.addError(e, stackTrace);
+              } else {
+                _safeErr("Error converting data for: $item to type $DynamicValue: $e");
+              }
             }
           });
 
