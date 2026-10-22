@@ -54,7 +54,14 @@ export 'src/server.dart'
         UsernameSessionIdentity,
         CertificateSessionIdentity;
 export 'src/types/errors.dart'
-    show Inactivity, MonitoredItemsRefused, SecureChannelClosed, SubscriptionDeleted, UaStatusException;
+    show
+        DataTypeDefinitionCycle,
+        DataTypeDefinitionTooDeep,
+        Inactivity,
+        MonitoredItemsRefused,
+        SecureChannelClosed,
+        SubscriptionDeleted,
+        UaStatusException;
 export 'src/isolate.dart' show ClientIsolate;
 export 'src/client_api.dart' show ClientApi, DataValueMonitoringApi;
 export 'src/types/opcua_serializer.dart' show OpcUaDynamicValueSerializer;

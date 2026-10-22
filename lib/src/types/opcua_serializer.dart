@@ -154,28 +154,62 @@ class OpcUaDynamicValueSerializer {
 
     // We are a array case
     if (schema.isArray) {
-      // Read the size of the stack to increment the
-      // read pointer but only if we are not the root
-      if (!root) {
-        final arrayLength = reader.int32(endian);
-        // A struct's array member carries its length on the wire, not in the
-        // DataTypeDefinition schema (which only knows the field is an array and
-        // was seeded with a single template element). Grow/shrink the schema
-        // array to the wire length by cloning that template so every element can
-        // be deserialized against the correct type.
-        if (arrayLength != schema.asArray.length) {
-          if (schema.asArray.isEmpty) {
-            throw 'Cannot size array member of length $arrayLength: schema has no template element';
-          }
-          final template = schema.asArray.first;
-          schema.value = <DynamicValue>[for (var i = 0; i < arrayLength; i++) DynamicValue.from(template)];
+      if (root) {
+        // The root array's length came from the variant (arrayLength /
+        // arrayDimensions), which sized the schema; there is none on the wire.
+        for (int i = 0; i < schema.asArray.length; i++) {
+          // if array is root and subsequent type is array we should treat that also as root
+          // as in not read the subsequent array length
+          schema.value[i] = OpcUaDynamicValueSerializer.deserialize(
+            schema.value[i],
+            reader,
+            endian,
+            insideStruct,
+            root,
+          );
         }
+        return schema;
       }
-      for (int i = 0; i < schema.asArray.length; i++) {
-        // if array is root and subsequent type is array we should treat that also as root
-        // as in not read the subsequent array length
-        schema.value[i] = OpcUaDynamicValueSerializer.deserialize(schema.value[i], reader, endian, insideStruct, root);
+      // A struct's array member carries its length on the wire, not in the
+      // DataTypeDefinition schema (which only knows the field is an array and
+      // was seeded with a single template element). The length is an Int32
+      // the server chose, so it is checked before anything is sized by it
+      // (Part 6 5.2.5; open62541's Array_decodeBinary does the same):
+      //  * a negative length is a null array (-1 by the spec; any negative
+      //    value is read the same way), decoded as an empty one;
+      //  * a length greater than the bytes left cannot be right, every element
+      //    takes at least one byte, so it is refused up front. Without this a
+      //    4-byte body claiming 2^31-1 elements had the template cloned that
+      //    many times before the first element was read: an uncatchable
+      //    OutOfMemoryError that takes the isolate (for ClientIsolate, the
+      //    connection) with it.
+      // The elements are then decoded one at a time into a list that grows
+      // with them, never pre-sized from the wire.
+      final lengthOffset = reader.offset;
+      final arrayLength = reader.int32(endian);
+      if (arrayLength < 0) {
+        schema.value = <DynamicValue>[];
+        return schema;
       }
+      if (arrayLength > reader.remainingBytes) {
+        throw FormatException(
+          'Array length $arrayLength exceeds the ${reader.remainingBytes} bytes left in the buffer',
+          null,
+          lengthOffset,
+        );
+      }
+      final existing = schema.asArray;
+      if (arrayLength > 0 && existing.isEmpty) {
+        throw 'Cannot size array member of length $arrayLength: schema has no template element';
+      }
+      final elements = <DynamicValue>[];
+      for (var i = 0; i < arrayLength; i++) {
+        // A schema that already holds the wire's number of elements is decoded
+        // in place; any other length is built by cloning the template.
+        final element = arrayLength == existing.length ? existing[i] : DynamicValue.from(existing.first);
+        elements.add(OpcUaDynamicValueSerializer.deserialize(element, reader, endian, insideStruct, root));
+      }
+      schema.value = elements;
     }
     return schema;
   }

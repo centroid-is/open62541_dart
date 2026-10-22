@@ -97,6 +97,27 @@ changes that ship the same native library version.
   the defaults.
   Once security is configured the ApplicationUri must match the URI in the
   server certificate.
+- **Fixed: a hostile server could take the client down with one struct.** A
+  struct's array member is sized from an Int32 the server put on the wire,
+  and the deserializer cloned the member's template that many times before
+  reading an element, with no bound: a 4-byte body claiming 2^31-1 elements
+  was an uncatchable OutOfMemoryError (for `ClientIsolate`, the end of the
+  isolate that owns the connection). Now a negative length is a null array
+  (decoded as empty, Part 6), a length greater than the bytes left is refused
+  with a `FormatException` at the length's offset before anything is sized by
+  it (what open62541's `Array_decodeBinary` does), and the elements are
+  decoded one at a time into a list that grows with them; the read fails and
+  the client stays usable.
+- **Fixed: a DataTypeDefinition that contained itself hung every read of the
+  type.** `buildSchema` followed a field's DataType into its own definition
+  with no memory of where it had been, so a type with a field of its own type
+  (or A → B → A) was fetched forever, one readAttribute per level, and a
+  `read`, `readValue`, `call` or monitor of such a value never completed.
+  Now the chain of types being resolved travels down the recursion: a type
+  met again fails the read with `DataTypeDefinitionCycle` naming the cycle,
+  and more than 100 nested levels (open62541's own decoder bound) with
+  `DataTypeDefinitionTooDeep`; both are exported, nothing of a refused schema
+  is cached, and the client stays usable.
 - **Fixed: a second `Client.keepConnected()` doubled the pump.** The call
   reset its stop flag and set it again synchronously, so the pump and the
   reconnect supervisor already running never observed the stop and kept
@@ -515,6 +536,50 @@ changes that ship the same native library version.
   cache predates the stamp re-downloads and rebuilds mbedTLS once on the next
   build (well under a minute on a fast workstation, a couple of minutes on CI
   or a laptop); later builds reuse the stamped tree as before.
+- **Build: mbedTLS 3.6.5 → 3.6.7.** The bundled TLS library moves to the
+  current 3.6 LTS release, which closes, among the advisories of 3.6.6 and
+  3.6.7: CVE-2026-25835 (the random generator state was duplicated across
+  `fork()`, so parent and child drew the same bytes; the child now reseeds),
+  CVE-2026-34874 (NULL dereference in `mbedtls_x509_string_to_names()` when
+  an allocation fails) and CVE-2026-49300 (two X.509 parser bugs accepted a
+  malformed `basicConstraints` extension, so a certificate other
+  implementations treat as end-entity could parse as a CA). 3.6.6 also moved
+  the Linux fallback entropy device from `/dev/urandom` to `/dev/random`;
+  immaterial here, `getrandom()` is used wherever it exists. The release
+  asset's SHA-256 is pinned as before (verified against the sum published on
+  the release page); a warm `.dart_tool` re-downloads and rebuilds mbedTLS
+  once on the next build, as described above.
+- **Build: the native library is compiled and linked with hardening flags.**
+  open62541 and the mbedTLS linked into it are built, per toolchain, with
+  GCC/clang `-fstack-protector-strong -D_FORTIFY_SOURCE=2` (a canary in every
+  frame that holds an array; bounded `__*_chk` libc calls wherever the
+  compiler knows the destination size — active, since the build is
+  Release/-O3) and, on Linux and Android, linked with `-Wl,-z,relro,-z,now`
+  (full RELRO: the GOT is resolved at load and then read-only, so a write
+  primitive cannot redirect a call through it); MSVC gets `/GS /guard:cf`
+  and the DLL `/DYNAMICBASE /NXCOMPAT /guard:cf`. The toolchain follows the
+  target OS the way the build does (Visual Studio for a Windows target, the
+  NDK and Xcode toolchain files otherwise), not the host.
+  `test/native_hardening_test.dart` (Linux) reads the ELF the VM loaded and
+  asserts BIND_NOW with a GNU_RELRO segment, a FORTIFY `__*_chk` import and
+  `__stack_chk_fail`; skipped where `readelf`/`nm` are absent. The mbedTLS
+  install prefix is now stamped with the flags it was built under and
+  rebuilt on a mismatch, so a warm `.dart_tool` does not keep linking an
+  install built without them (one rebuild on the first build after this
+  upgrade). The sanitizer switch for CI's ASan job is renamed from
+  `ENABLE_SANITIZER` to `OPEN62541_DART_SANITIZER`; its flags go on top of
+  the hardening ones.
+- **CI: actions pinned to commit SHAs, read-only token, the iOS job can
+  fail.** Every `uses:` in `run_tests.yml` and `flutter_test.yml` names the
+  full commit of the release it resolved to (`actions/checkout` v7.0.1,
+  `dart-lang/setup-dart` v1.8.1, `subosito/flutter-action` v2.23.0,
+  `actions/setup-java` v6.1.0, `reactivecircus/android-emulator-runner`
+  v2.38.0), with the version as a trailing comment; Dependabot's
+  `github-actions` entry keeps the pins current. Both workflows run with
+  `permissions: contents: read`. The iOS job's `flutter test ... || true`
+  reported every run green; the step now fails with the test (`pipefail`
+  through the `tee`), and the output tail and crash-log listing moved to a
+  step that runs on failure.
 - **Dev tooling: `ffigen` 22 / 23.** The binding generator (`tool/ffigen.dart`)
   is ported to ffigen 22's visitor-based config API, which replaced the one it
   was written against; ffigen 23 keeps that API. The generated bindings are
