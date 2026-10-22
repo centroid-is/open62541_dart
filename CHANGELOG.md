@@ -6,6 +6,18 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **Build hook: archive extraction stays inside its directory.** The hook
+  unpacks the open62541 zip and the mbedTLS tarball with a plain loop that
+  wrote every entry at `extractDir/entry.name`, so an entry named
+  `../../x` or `/etc/x`, or a symlink entry, would have landed wherever its
+  name said. Both archives are checked against a pinned SHA-256 before
+  extraction, so this only matters if that line falls; it now also skips
+  symbolic links and refuses, naming the entry, any entry whose resolved
+  path is not under the extract directory (`extractArchiveInto` in
+  `hook/build.dart`, shared by both archives;
+  `test/hook_extract_test.dart`). The dead `hook/ua_client_subscriptions.patch`
+  is deleted: nothing referenced it, it does not apply to v1.5.9, and
+  `_patchSubscriptionCleanup` has long done its job in code.
 - **Fixed: `Server.asyncOperationTimeout` was 0, never, not the 2 minutes its
   dartdoc promised.** `UA_ServerConfig_setMinimal` sets the 2-minute default
   only under `UA_MULTITHREADING >= 100`, and this package builds
