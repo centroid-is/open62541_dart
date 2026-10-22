@@ -10,6 +10,9 @@ on:
     paths-ignore:
       - '**.md'
 
+permissions:
+  contents: read
+
 concurrency:
   group: flutter-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -19,7 +22,7 @@ jobs:
     name: Linux Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Linux dependencies
         run: |
@@ -27,7 +30,7 @@ jobs:
           sudo apt-get install -y clang cmake ninja-build libgtk-3-dev
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: 'stable'
 
@@ -47,7 +50,7 @@ jobs:
     name: Windows Test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # beta, not stable: `flutter test` starts flutter_tester with
       # --enable-dart-profiling, and the Dart VM's native stack walker in
@@ -59,7 +62,7 @@ jobs:
       # Dart 3.14 (Flutter beta 3.49+); go back to stable once it carries
       # Dart 3.14.
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: 'beta'
 
@@ -79,10 +82,10 @@ jobs:
     name: macOS Test
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: 'stable'
 
@@ -102,16 +105,16 @@ jobs:
     name: Android Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Java
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: 'zulu'
           java-version: '17'
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: 'stable'
 
@@ -130,7 +133,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Run integration tests
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 29
           arch: x86_64
@@ -142,10 +145,10 @@ jobs:
     name: iOS Test
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: 'stable'
 
@@ -175,9 +178,13 @@ jobs:
         run: |
           # Check simulator status
           xcrun simctl list devices booted
-          # Run with verbose to see where it gets stuck
-          flutter test integration_test/library_test.dart -d $DEVICE_ID --verbose 2>&1 | tee test_output.txt || true
-          # Show last 100 lines if it fails
-          tail -100 test_output.txt
-          # Check for crash logs
+          # pipefail: the tee must not hide flutter's exit code
+          set -o pipefail
+          flutter test integration_test/library_test.dart -d $DEVICE_ID --verbose 2>&1 | tee test_output.txt
+
+      - name: Show test output and crash logs
+        if: failure()
+        working-directory: flutter_example
+        run: |
+          tail -100 test_output.txt || true
           find ~/Library/Logs/DiagnosticReports -name "*.crash" -mmin -10 2>/dev/null | head -5 || true
