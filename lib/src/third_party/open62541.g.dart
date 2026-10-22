@@ -20,6 +20,9 @@
 import 'dart:ffi' as ffi;
 import '' as self;
 
+@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Size, ffi.Pointer<UA_DataType>)>()
+external void UA_Array_delete(ffi.Pointer<ffi.Void> p, int size, ffi.Pointer<UA_DataType> type);
+
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_BrowseDescription>)>()
 external void UA_BrowseDescription_init(ffi.Pointer<UA_BrowseDescription> p);
 
@@ -382,6 +385,21 @@ external ffi.Pointer<UA_DataType> UA_Client_findDataType(ffi.Pointer<UA_Client> 
 
 @ffi.Native<ffi.Pointer<UA_ClientConfig> Function(ffi.Pointer<UA_Client>)>()
 external ffi.Pointer<UA_ClientConfig> UA_Client_getConfig(ffi.Pointer<UA_Client> client);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Client>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Size>,
+    ffi.Pointer<ffi.Pointer<UA_EndpointDescription>>,
+  )
+>()
+external int UA_Client_getEndpoints(
+  ffi.Pointer<UA_Client> client,
+  ffi.Pointer<ffi.Char> serverUrl,
+  ffi.Pointer<ffi.Size> endpointDescriptionsSize,
+  ffi.Pointer<ffi.Pointer<UA_EndpointDescription>> endpointDescriptions,
+);
 
 @ffi.Native<
   ffi.Void Function(
