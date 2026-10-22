@@ -46,8 +46,8 @@ const Map<String, String> _open62541Sha256 = {
 };
 
 /// mbedTLS release version and the SHA-256 of its `.tar.bz2` release asset.
-const String _mbedtlsVersion = '3.6.5';
-const String _mbedtlsSha256 = '4a11f1777bb95bf4ad96721cac945a26e04bf19f57d905f241fe77ebeddf46d8';
+const String _mbedtlsVersion = '3.6.7';
+const String _mbedtlsSha256 = 'a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6';
 
 /// Downloads [url] over HTTPS and verifies the payload against
 /// [expectedSha256], returning the raw bytes.
@@ -123,7 +123,7 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
       outputStream.closeSync();
     }
   }
-  // Rename extracted folder (e.g. mbedtls-3.6.5) to 'src' for shorter paths
+  // Rename extracted folder (e.g. mbedtls-3.6.7) to 'src' for shorter paths
   final folder = extractDir.listSync().firstWhere((element) => element is Directory);
   await (folder as Directory).rename(srcDir.path);
   await versionStamp.writeAsString(_mbedtlsVersion);

@@ -456,6 +456,19 @@ changes that ship the same native library version.
   cache predates the stamp re-downloads and rebuilds mbedTLS once on the next
   build (well under a minute on a fast workstation, a couple of minutes on CI
   or a laptop); later builds reuse the stamped tree as before.
+- **Build: mbedTLS 3.6.5 → 3.6.7.** The bundled TLS library moves to the
+  current 3.6 LTS release, which closes, among the advisories of 3.6.6 and
+  3.6.7: CVE-2026-25835 (the random generator state was duplicated across
+  `fork()`, so parent and child drew the same bytes; the child now reseeds),
+  CVE-2026-34874 (NULL dereference in `mbedtls_x509_string_to_names()` when
+  an allocation fails) and CVE-2026-49300 (two X.509 parser bugs accepted a
+  malformed `basicConstraints` extension, so a certificate other
+  implementations treat as end-entity could parse as a CA). 3.6.6 also moved
+  the Linux fallback entropy device from `/dev/urandom` to `/dev/random`;
+  immaterial here, `getrandom()` is used wherever it exists. The release
+  asset's SHA-256 is pinned as before (verified against the sum published on
+  the release page); a warm `.dart_tool` re-downloads and rebuilds mbedTLS
+  once on the next build, as described above.
 - **Dev tooling: `ffigen` 22 / 23.** The binding generator (`tool/ffigen.dart`)
   is ported to ffigen 22's visitor-based config API, which replaced the one it
   was written against; ffigen 23 keeps that API. The generated bindings are
