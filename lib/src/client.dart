@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -13,6 +14,7 @@ import 'extensions.dart';
 import 'node_id.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
+import 'types/endpoint_description.dart';
 import 'types/native_decode.dart';
 import 'types/opcua_serializer.dart';
 import 'ua_allocation.dart';
@@ -411,6 +413,39 @@ ffi.Pointer<raw.UA_ByteString> _byteStrings(Arena arena, List<Uint8List> list) {
 /// [checkClientCertificateArguments].
 ///
 /// The endpoint hostname is not checked against the server certificate.
+///
+/// ## Discovery, and trust on first use
+///
+/// A [trustList] needs the server certificate before the first secure
+/// connection. [getEndpoints] gets it from the server itself: the
+/// GetEndpoints service runs over a SecurityPolicy#None channel without a
+/// session, so it needs no certificate and no trust list, and every
+/// [EndpointDescription] it returns carries the [EndpointDescription.serverCertificate]
+/// (DER) with the policy and mode of that endpoint. Discovery authenticates
+/// nothing: a machine in the middle at that moment hands over its own
+/// certificate, and trusting it would make every later "encrypted" session
+/// its to read. So before the certificate is trusted, compare its
+/// [EndpointDescription.certificateThumbprint] (SHA-1, what the server's
+/// own certificate manager shows) with one obtained out of band, from the
+/// server's operator. Then persist the DER and pass it as [trustList] from
+/// then on; a server whose certificate changes is refused with
+/// `BadCertificateUntrusted`, which is the point.
+///
+/// ```dart
+/// final endpoints = await Client.getEndpoints('opc.tcp://plc:4840');
+/// final endpoint = endpoints.firstWhere(
+///   (e) => e.securityMode == MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
+/// );
+/// print('server certificate ${endpoint.certificateThumbprint}'); // confirm out of band
+/// await File('server_cert.der').writeAsBytes(endpoint.serverCertificate);
+/// // Next time:
+/// final client = Client(
+///   securityMode: MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
+///   certificate: clientCertificate,
+///   privateKey: clientKey,
+///   trustList: [await File('server_cert.der').readAsBytes()],
+/// );
+/// ```
 class Client implements ClientApi, DataValueMonitoringApi {
   /// See the class documentation for the certificate arguments; they are
   /// checked by [checkClientCertificateArguments] before anything is
@@ -548,6 +583,82 @@ class Client implements ClientApi, DataValueMonitoringApi {
   }
 
   ClientConfig get config => _clientConfig;
+
+  /// The endpoints the server at [endpointUrl] offers, from its GetEndpoints
+  /// service: for each, the security policy and mode, the identity tokens
+  /// it accepts, who the server says it is, and its certificate (DER), which
+  /// is how a client gets the certificate for its [trustList] (see the
+  /// class documentation: trust on first use, with the thumbprint confirmed
+  /// out of band, because discovery authenticates nothing).
+  ///
+  /// Needs no certificate and no trust list: the service runs over a
+  /// SecurityPolicy#None channel without a session. Keeps nothing: a native
+  /// client of its own, made for the call and deleted after it, on an
+  /// isolate of its own ([Isolate.run]), because open62541's
+  /// `UA_Client_getEndpoints` drives its own event loop and blocks until the
+  /// answer, so the calling isolate, and whatever it pumps, keeps running
+  /// meanwhile. The same static is on `ClientIsolate`.
+  ///
+  /// [timeout] bounds each step (opening the channel, the service call):
+  /// a host that does not answer is a [TimeoutException]; a refused
+  /// connection, a URL that is no endpoint URL or a Bad service result is a
+  /// [UaStatusException] with open62541's status. [logLevel] is the
+  /// temporary client's; the default keeps a failed attempt quiet below a
+  /// warning.
+  static Future<List<EndpointDescription>> getEndpoints(
+    String endpointUrl, {
+    Duration timeout = const Duration(seconds: 10),
+    LogLevel logLevel = LogLevel.UA_LOGLEVEL_WARNING,
+  }) async {
+    final (status, endpoints) = await Isolate.run(
+      () => _discoverEndpoints(endpointUrl, timeout, logLevel),
+      debugName: 'open62541 GetEndpoints',
+    );
+    if (status == raw.UA_STATUSCODE_BADTIMEOUT) {
+      throw TimeoutException('GetEndpoints on $endpointUrl: no answer within $timeout', timeout);
+    }
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
+    return endpoints;
+  }
+
+  /// [getEndpoints]'s native half, on the worker isolate: a default client
+  /// with [timeout] as its response timeout, `UA_Client_getEndpoints`
+  /// (connect without a session, GetEndpoints, disconnect), the answer
+  /// copied to Dart, and everything native freed before it returns. The
+  /// status comes back as a value; the caller throws on it.
+  static (int, List<EndpointDescription>) _discoverEndpoints(String url, Duration timeout, LogLevel logLevel) {
+    final config = ua_calloc<raw.UA_ClientConfig>();
+    config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
+    raw.UA_ClientConfig_setDefault(config);
+    // Bounds the channel open and the service call each (0 would be no
+    // timeout at all).
+    config.ref.timeout = timeout.inMilliseconds;
+    final client = raw.UA_Client_newWithConfig(config);
+    // The client holds a copy of the struct; the struct itself is ours.
+    ua_calloc.free(config);
+    try {
+      return using((arena) {
+        final size = arena<ffi.Size>();
+        final array = arena<ffi.Pointer<raw.UA_EndpointDescription>>();
+        // The URL is copied into the client config; the C string is scratch.
+        final status = raw.UA_Client_getEndpoints(client, url.toNativeUtf8(allocator: arena).cast(), size, array);
+        if (status != raw.UA_STATUSCODE_GOOD) {
+          // Nothing was handed out: the out parameters are untouched.
+          return (status, const <EndpointDescription>[]);
+        }
+        try {
+          return (status, [for (var i = 0; i < size.value; i++) endpointDescriptionFromNative(array.value[i])]);
+        } finally {
+          // The array is open62541's allocation: cleared and freed as one.
+          raw.UA_Array_delete(array.value.cast(), size.value, getTypeByIndex(raw.UA_TYPES_ENDPOINTDESCRIPTION));
+        }
+      }, ua_calloc);
+    } finally {
+      raw.UA_Client_delete(client);
+    }
+  }
 
   @override
   Future<void> awaitConnect() async {

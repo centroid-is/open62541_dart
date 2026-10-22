@@ -9,6 +9,7 @@ import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'node_id.dart';
 import 'third_party/open62541.g.dart' show UA_STATUSCODE_BADTIMEOUT;
+import 'types/endpoint_description.dart';
 import 'types/errors.dart';
 
 // Guarded stderr: on a detached GUI process (release launch) stderr has an
@@ -293,6 +294,16 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       allowUnencryptedPassword: allowUnencryptedPassword,
     );
   }
+
+  /// [Client.getEndpoints], the same static: the endpoints of the server at
+  /// [endpointUrl] with their server certificate, for a [trustList]. It
+  /// needs no session, so no worker: the call makes its own short-lived
+  /// native client on an isolate of its own and keeps nothing.
+  static Future<List<EndpointDescription>> getEndpoints(
+    String endpointUrl, {
+    Duration timeout = const Duration(seconds: 10),
+    LogLevel logLevel = LogLevel.UA_LOGLEVEL_WARNING,
+  }) => Client.getEndpoints(endpointUrl, timeout: timeout, logLevel: logLevel);
 
   /// Creates the worker isolate and the [Client] on it; the arguments are
   /// the [Client] constructor's (the certificate ones are checked here

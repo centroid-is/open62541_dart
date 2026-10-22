@@ -14,7 +14,8 @@ export 'src/extensions.dart'
         Namespace0Id,
         SecureChannelState,
         SessionState,
-        LogLevel;
+        LogLevel,
+        UserTokenType;
 export 'src/third_party/open62541.g.dart'
     show
         UA_STATUSCODE_GOOD,
@@ -55,6 +56,7 @@ export 'src/server.dart'
         AnonymousSessionIdentity,
         UsernameSessionIdentity,
         CertificateSessionIdentity;
+export 'src/types/endpoint_description.dart' show EndpointDescription, UserTokenPolicy;
 export 'src/types/errors.dart'
     show
         DataTypeDefinitionCycle,

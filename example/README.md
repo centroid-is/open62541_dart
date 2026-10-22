@@ -46,3 +46,17 @@ certificate, or the CA certificate that issued it) in the working directory:
 ```bash
 dart run example/resilient_client.dart opc.tcp://localhost:4840 [username] [password]
 ```
+
+## `discover_endpoints.dart` — endpoint discovery, trust on first use
+
+Lists a server's endpoints (security policy and mode, identity tokens, who
+the server says it is) and the SHA-1 thumbprint of its certificate, through
+the GetEndpoints service, which needs no certificate and no trust list. With
+a second argument it saves the server certificate (DER) to that file, to be
+the `trustList` of `resilient_client.dart` once the thumbprint has been
+confirmed with the server's operator (discovery authenticates nothing, so a
+machine in the middle at that moment would be trusted otherwise):
+
+```bash
+dart run example/discover_endpoints.dart opc.tcp://localhost:4840 [server_cert.der]
+```

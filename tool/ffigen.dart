@@ -16,6 +16,7 @@ Future<void> main() async {
     'UA_Variant_delete',
     'UA_Variant_copy',
     'UA_clear',
+    'UA_Array_delete',
     'UA_decodeBinary',
 
     'UA_ClientConfig_setDefault',
@@ -32,6 +33,7 @@ Future<void> main() async {
     'UA_Client_run_iterate',
     'UA_Client_writeValueAttribute_async',
     'UA_Client_getState',
+    'UA_Client_getEndpoints',
     'UA_ReadRequest_init',
     'UA_ReadRequest_new',
     'UA_ReadRequest_delete',
