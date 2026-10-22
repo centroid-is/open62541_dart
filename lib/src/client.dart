@@ -2524,7 +2524,29 @@ class Client implements ClientApi, DataValueMonitoringApi {
     return completer.future;
   }
 
-  Future<Schema> buildSchema(NodeId nodeIdType) async {
+  /// Fetches the DataTypeDefinition of [nodeIdType] and, recursively, of
+  /// every structured type its fields use, as a [Schema] keyed by DataType id.
+  ///
+  /// The definitions are the server's word. One whose field is of the type
+  /// being defined, directly or through other types (A → B → A), would be
+  /// fetched forever, one readAttribute per level; such a definition is
+  /// invalid (a structure cannot contain itself by value) and is refused with
+  /// a [DataTypeDefinitionCycle] naming the types on the cycle. The nesting is
+  /// also capped at [DataTypeDefinitionTooDeep.limit] levels, the bound
+  /// open62541's binary decoder uses. Either way the read that needed the
+  /// schema fails and the client stays usable.
+  Future<Schema> buildSchema(NodeId nodeIdType) => _buildSchema(nodeIdType, const []);
+
+  /// [resolving] is the chain of DataType ids whose definitions are being
+  /// built, outermost first: the types whose fields led here.
+  Future<Schema> _buildSchema(NodeId nodeIdType, List<NodeId> resolving) async {
+    final path = [...resolving, nodeIdType];
+    if (resolving.contains(nodeIdType)) {
+      throw DataTypeDefinitionCycle(path.sublist(resolving.indexOf(nodeIdType)));
+    }
+    if (resolving.length >= DataTypeDefinitionTooDeep.limit) {
+      throw DataTypeDefinitionTooDeep(path);
+    }
     var map = Schema();
     final read = await readAttribute({
       nodeIdType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION],
@@ -2549,7 +2571,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     if (val.isObject) {
       for (var entry in val.entries) {
         if (nodeIdToPayloadType(entry.value.typeId) == null) {
-          final temporary = await buildSchema(entry.value.typeId!);
+          final temporary = await _buildSchema(entry.value.typeId!, path);
           map.addAll(temporary);
           if (val[entry.value.name].isArray) {
             // todo: only supports one level of array
