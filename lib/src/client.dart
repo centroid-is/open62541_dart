@@ -1898,9 +1898,12 @@ class Client implements ClientApi, DataValueMonitoringApi {
 
   /// Creates a monitored item on the server.
   ///
-  /// A sample with a non-Good status is added to the stream as a
-  /// [UaStatusException] error and nothing is delivered for it; see
-  /// [monitoredDataValues] for the sample with its status instead.
+  /// Each value whose Value attribute is monitored carries the latest sample's
+  /// [DynamicValue.statusCode] and [DynamicValue.sourceTimestamp]. A sample
+  /// with a non-Good status is added to the stream as a [UaStatusException]
+  /// error and nothing is delivered for it, unless [deliverBadStatus] is set:
+  /// then it is delivered with its status, as [monitoredDataValues] does. See
+  /// [ClientApi.monitoredItems].
   @override
   Stream<Map<NodeId, DynamicValue>> monitoredItems(
     ReadAttributeParam nodes,
@@ -1909,6 +1912,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
+    bool deliverBadStatus = false,
   }) => _monitoredItemsCore<Map<NodeId, DynamicValue>>(
     nodes,
     subscriptionId,
@@ -1916,10 +1920,19 @@ class Client implements ClientApi, DataValueMonitoringApi {
     samplingInterval: samplingInterval,
     discardOldest: discardOldest,
     queueSize: queueSize,
-    deliverQuality: false,
+    deliverQuality: deliverBadStatus,
     // The one map the stream has always emitted: the same mutable object
-    // every time, updated in place between events.
-    project: (latestValues, _) => latestValues,
+    // every time, updated in place between events. The quality of each node's
+    // latest Value sample is stamped onto its value on the way out.
+    project: (latestValues, qualities) {
+      for (final MapEntry(key: nodeId, value: quality) in qualities.entries) {
+        final value = latestValues[nodeId];
+        if (value == null) continue;
+        value.statusCode = quality.statusCode;
+        value.sourceTimestamp = quality.sourceTimestamp;
+      }
+      return latestValues;
+    },
   );
 
   @override
@@ -2743,6 +2756,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
+    bool deliverBadStatus = false,
   }) {
     final controller = StreamController<DynamicValue>();
     final stream = monitoredItems(
@@ -2759,6 +2773,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
       samplingInterval: samplingInterval,
       discardOldest: discardOldest,
       queueSize: queueSize,
+      deliverBadStatus: deliverBadStatus,
     );
     final subscription = stream.listen((event) => controller.add(event.values.first));
     subscription.onError((error) => controller.addError(error));

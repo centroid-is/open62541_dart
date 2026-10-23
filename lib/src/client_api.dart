@@ -47,6 +47,11 @@ abstract class ClientApi {
   ///
   /// Returns a stream that emits the latest value whenever it changes.
   /// Requires a [subscriptionId] from [subscriptionCreate].
+  ///
+  /// Emitted values carry [DynamicValue.statusCode] and
+  /// [DynamicValue.sourceTimestamp] as the server sent them. See
+  /// [monitoredItems] for what [deliverBadStatus] does to a sample the server
+  /// marked Bad.
   Stream<DynamicValue> monitor(
     NodeId nodeId,
     int subscriptionId, {
@@ -54,6 +59,7 @@ abstract class ClientApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
+    bool deliverBadStatus = false,
   });
 
   /// Monitors multiple nodes and attributes for data changes.
@@ -61,6 +67,21 @@ abstract class ClientApi {
   /// Returns a stream that emits a map of node values whenever any
   /// monitored value changes. Requires a [subscriptionId] from
   /// [subscriptionCreate].
+  ///
+  /// Each value whose Value attribute is monitored carries the latest sample's
+  /// [DynamicValue.statusCode] and [DynamicValue.sourceTimestamp].
+  ///
+  /// [deliverBadStatus] decides what a sample with a non-Good status becomes,
+  /// and defaults to **false**, the behaviour this binding has always had:
+  ///
+  /// - `false`: nothing is delivered for the sample, and its status is added
+  ///   to the stream as a [UaStatusException].
+  /// - `true`: the sample is DELIVERED, with [DynamicValue.statusCode] set to
+  ///   the server's own numeric StatusCode. A gateway that maps upstream status
+  ///   onto a published quality needs the code: BadOutOfRange and
+  ///   BadCommunicationError are different instructions to an operator. Such a
+  ///   sample usually carries no payload (a Bad DataValue arrives with
+  ///   `hasValue` clear), so the value is the last one known.
   Stream<Map<NodeId, DynamicValue>> monitoredItems(
     ReadAttributeParam nodes,
     int subscriptionId, {
@@ -68,6 +89,7 @@ abstract class ClientApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
+    bool deliverBadStatus = false,
   });
 
   /// Browses the references of a node.

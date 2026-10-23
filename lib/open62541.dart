@@ -3,7 +3,7 @@ library;
 export 'src/access_level.dart' show AccessLevelMask;
 export 'src/client.dart'
     show Client, ClientState, DataValue, BrowseResultItem, BrowseTreeItem, NodeClass, BrowseResultMask;
-export 'src/common.dart' show statusCodeToString;
+export 'src/common.dart' show statusCodeToString, uaDateTimeToDateTime;
 export 'src/dynamic_value.dart' show DynamicValue, DynamicType, LocalizedText, EnumField, Schema;
 export 'src/extensions.dart'
     show
