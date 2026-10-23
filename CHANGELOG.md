@@ -6,6 +6,9 @@ changes that ship the same native library version.
 
 ## 1.5.9
 
+- **Tooling:** the header bitfield transform now runs inside
+  `tool/ffigen.dart` (patch kept as `tool/remove_bitfields.patch`), so
+  regenerating bindings is one command; `open62541_tooling/` is gone.
 - **Security: the `Server` takes a certificate, a trust list, users, a
   listen address and limits; clients may no longer add or delete nodes.**
   `Server(certificate:, privateKey:, trustList:, issuerList:, revocationList:,
