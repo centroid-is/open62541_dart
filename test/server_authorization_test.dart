@@ -222,8 +222,11 @@ void main() {
   });
 
   test('a hook is cheap: the identity is resolved once per session, not per read', () async {
-    // Server-side cost of userAccessLevel: the same 10 000-node Read from a
-    // server without and one with a trivial hook, taken in turns. The hook
+    // Server-side cost of userAccessLevel: the same 2 000-node Read from a
+    // server without and one with a trivial hook, taken in turns. Client and
+    // server share this isolate, so the request stays small enough for a
+    // loopback socket buffer: a larger one stalls the client's send until
+    // the deadline on Windows, where the server cannot drain it. The hook
     // adds about 0.1 us a read (the FFI trampoline, a map lookup, the NodeId
     // decode); resolving the session on every call adds about 3 us.
     final servers = [
@@ -257,10 +260,13 @@ void main() {
     for (var i = 0; i < servers.length; i++) {
       await pump(clients[i].connect('opc.tcp://127.0.0.1:${servers[i].port}'));
     }
-    const reads = 10000;
+    const reads = 2000;
     final request = {writable: List.filled(reads, AttributeId.UA_ATTRIBUTEID_VALUE)};
     final times = [<int>[], <int>[]];
-    for (var round = 0; round < 25; round++) {
+    // A budget below the test timeout: a stalled loop would otherwise keep
+    // pumping on this isolate after the timeout and starve the tests after it.
+    final budget = Stopwatch()..start();
+    for (var round = 0; round < 51 && budget.elapsed < const Duration(seconds: 15); round++) {
       for (var i = 0; i < servers.length; i++) {
         final watch = Stopwatch()..start();
         await pump(clients[i].readAttribute(request));
@@ -282,6 +288,7 @@ void main() {
       server.delete();
     }
 
+    expect(times[0], hasLength(51), reason: 'the reads took longer than ${budget.elapsed}');
     int median(List<int> list) => (list..sort())[list.length ~/ 2];
     final without = median(times[0]);
     final withHook = median(times[1]);
