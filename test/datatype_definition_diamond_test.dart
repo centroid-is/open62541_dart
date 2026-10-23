@@ -103,7 +103,10 @@ void main() {
             ),
           ),
         );
-        expect(reads, lessThan(8));
+        // The value read, Wide and five W types before the cap, so about 7;
+        // the margin absorbs the client's periodic connectivity reads on a
+        // slow runner. Without the cap all twenty would be read (22+).
+        expect(reads, lessThan(11));
         // The client is still usable.
         expect((await client.read(NodeId.fromNumeric(0, 2259))).isNull, isFalse);
       });
