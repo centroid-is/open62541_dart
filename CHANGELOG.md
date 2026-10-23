@@ -139,6 +139,27 @@ changes that ship the same native library version.
   with `Bad_DecodingError`, and open62541 read a pointer out of the inline
   value while clearing the failed decode (a heap overflow under ASan).
 
+- **The `Server` authorizes per user: `Server(authorization:
+  ServerAuthorization(...))`.** Three optional hooks, each given the session
+  (`MethodSessionInfo`, with its `identity`): `userAccessLevel(session,
+  node)` is open62541's `getUserAccessLevel`, the `UserAccessLevel` of a
+  variable (`null` keeps the node's own), ANDed by open62541 with the node's
+  `AccessLevel`, so it restricts and never grants; a Read or Write it does not
+  allow is `BadUserAccessDenied`. `userExecutable(session, method, object)`
+  is `getUserExecutableOnObject` (a refused Call is `BadUserAccessDenied`)
+  and `getUserExecutable` (`object` null). `allowBrowse(session, node)` is
+  `allowBrowseNode`: a refused node cannot be browsed, translated through,
+  or read except for its Value (`BadUserAccessDenied`); it still appears in
+  its parent's Browse, since open62541 only asks about the node a Browse
+  starts from. Only the hooks given are installed, so a `Server` without
+  `authorization` keeps open62541's default functions. The host's own
+  calls (the admin session) are never asked. The hooks run synchronously
+  on the server's isolate inside `runIterate`; the session identity is
+  resolved once per activation (the plugin's `activateSession` and
+  `closeSession` are wrapped to key a cache by the session context), so a
+  trivial `userAccessLevel` adds about 0.1 µs per read. A hook that throws
+  denies, and the first exception of each hook is logged on the
+  `open62541.Server` logger (package:logging).
 - **Breaking: `Server.addVariableNode` adds a read-only node by default.**
   `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
   every variable a server published without thinking about it was writable by

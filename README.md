@@ -232,6 +232,34 @@ sessions and channels, which open62541 cannot leave uncapped: 65535 is the
 ceiling), and `ServerLimits.unlimited` lifts every cap for a server whose
 clients are all known to behave. `Server.limits` reports what is in force.
 
+Who may do what is `authorization`: hooks that open62541 asks per session,
+each optional, each given the session (`MethodSessionInfo`, whose `identity`
+is anonymous, a username or a certificate subject):
+
+```dart
+final server = Server(
+  users: {'operator': '...', 'viewer': '...'},
+  authorization: ServerAuthorization(
+    userAccessLevel: (session, node) => switch (session.identity) {
+      UsernameSessionIdentity(username: 'operator') => null, // the node's own
+      _ => const AccessLevelMask(read: true),
+    },
+    userExecutable: (session, method, object) => session.identity is UsernameSessionIdentity,
+    allowBrowse: (session, node) => node != secretFolder,
+  ),
+);
+```
+
+A hook only restricts: open62541 ANDs the user access level with the node's
+own, so a read-only node stays read-only. What it refuses is answered
+`BadUserAccessDenied` (a Read or Write of the value, a Call, a Browse of the
+node and a Read of its other attributes). The host's own `read`, `write` and
+`add...Node` calls are never asked. The hooks run synchronously on the
+server's isolate inside `runIterate`, `userAccessLevel` once per value read
+or written, so they must be quick; the session's identity is looked up once
+per session, and a trivial hook adds about 0.1 µs to a read. A hook that
+throws denies.
+
 ### Monitoring with quality
 
 `monitor` / `monitoredItems` deliver the value alone: a notification with a

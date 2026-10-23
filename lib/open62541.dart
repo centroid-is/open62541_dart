@@ -43,6 +43,7 @@ export 'src/server.dart'
     show
         Server,
         ServerLimits,
+        ServerAuthorization,
         ServerEndpoint,
         checkServerSecurityArguments,
         securityPolicyNoneUri,
