@@ -501,6 +501,30 @@ final class AccessControlHooks {
 
   Object? _context(ffi.Pointer<ffi.Void> sessionContext) => _sessions[sessionContext.address]?.context;
 
+  /// Whether the session behind [sessionContext] may read the history of
+  /// [nodeId]: the HistoryRead bit of its UserAccessLevel, the node's
+  /// AccessLevel ANDed with [AccessControl.userAccessLevel] as the Read
+  /// service reports it. open62541 never checks it on HistoryRead, so the
+  /// server's history dispatcher asks here. A throwing hook denies.
+  bool allowHistoryRead(
+    ffi.Pointer<raw.UA_Server> server,
+    ffi.Pointer<ffi.Void> sessionContext,
+    ffi.Pointer<raw.UA_NodeId> nodeId,
+  ) {
+    final level = ua_calloc<raw.UA_Byte>();
+    try {
+      if (raw.UA_Server_readAccessLevel(server, nodeId.ref, level) != raw.UA_STATUSCODE_GOOD) {
+        return false;
+      }
+      final user = accessControl.userAccessLevel(_context(sessionContext), _node.at(server, nodeId, null));
+      return level.value & user & raw.UA_ACCESSLEVELMASK_HISTORYREAD != 0;
+    } catch (_) {
+      return false;
+    } finally {
+      ua_calloc.free(level);
+    }
+  }
+
   int _userRightsMask(
     ffi.Pointer<raw.UA_Server> server,
     ffi.Pointer<raw.UA_AccessControl> ac,

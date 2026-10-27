@@ -2439,9 +2439,13 @@ class Server {
   ///   at once, with no data.
   ///
   /// The other nodes go to the backend in one call per request, which
-  /// answers asynchronously ([HistoryBackend]). The HistoryRead bit of a
-  /// node's access level is not checked here: open62541 leaves that to the
-  /// access control plugin, which this server does not configure for history.
+  /// answers asynchronously ([HistoryBackend]). With an [AccessControl]
+  /// (`Server(accessControl:)`) a node also needs the HistoryRead bit of the
+  /// session's UserAccessLevel (its AccessLevel ANDed with
+  /// [AccessControl.userAccessLevel]); without it the node is answered
+  /// `Bad_UserAccessDenied` and never reaches the backend. open62541 itself
+  /// does not check that bit, so without an access control it is not
+  /// checked.
   /// Raw reads go to [HistoryBackend.readRaw], aggregates to
   /// [HistoryBackend.readProcessed] and reads at given times to
   /// [HistoryBackend.readAtTime]; a request for modified values or events
@@ -2662,6 +2666,16 @@ class Server {
         final status = _historyNodeStatus(nodeId);
         if (status != raw.UA_STATUSCODE_GOOD) {
           results[i].statusCode = status;
+          continue;
+        }
+        // open62541 leaves the HistoryRead access bit unchecked; with an
+        // access control the session's UserAccessLevel must carry it. A
+        // release of continuation points reads nothing and is not gated.
+        final accessControl = _accessControl;
+        if (accessControl != null &&
+            !releaseContinuationPoints &&
+            !accessControl.allowHistoryRead(_server, sessionContext, (nodesToRead + i).cast())) {
+          results[i].statusCode = raw.UA_STATUSCODE_BADUSERACCESSDENIED;
           continue;
         }
         final cp = valueId.continuationPoint;

@@ -6,6 +6,13 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **HistoryRead honours the session's UserAccessLevel under an
+  `AccessControl`.** open62541 never checks the HistoryRead access bit on a
+  HistoryRead. A server with `Server(accessControl:)` and a history backend
+  now answers a node `Bad_UserAccessDenied` unless the HistoryRead bit is in
+  both its AccessLevel and `AccessControl.userAccessLevel` for the session
+  (a throwing hook denies); a denied node never reaches the backend. A
+  server without an access control is unchanged.
 - **`historyReadRaw`: the client side of HistoryRead.** `Client` and
   `ClientIsolate` implement the new `HistoryReadApi` (a separate interface,
   like `DataValueMonitoringApi`, so `ClientApi` implementers are unaffected):
