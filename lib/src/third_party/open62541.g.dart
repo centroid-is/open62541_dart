@@ -1460,6 +1460,12 @@ external int UA_Server_setAsyncCallMethodResult(
   int result,
 );
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_HistoryReadResult>)>()
+external int UA_Server_setAsyncHistoryReadResult(
+  ffi.Pointer<UA_Server> server,
+  ffi.Pointer<UA_HistoryReadResult> results,
+);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_DataValue>, UA_StatusCode)>()
 external int UA_Server_setAsyncWriteResult(ffi.Pointer<UA_Server> server, ffi.Pointer<UA_DataValue> value, int result);
 

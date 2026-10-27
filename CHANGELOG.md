@@ -6,6 +6,19 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **Native: HistoryRead can complete asynchronously** (`hook/async_history_read.patch`).
+  open62541 1.5.9 answers a HistoryRead as soon as the history database's
+  read callback returns. The build now patches the AsyncManager with a
+  HistoryRead operation type: a callback that sets the response's
+  `serviceResult` to `UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY` gets the
+  response parked, fills its results later and completes it with the new
+  `UA_Server_setAsyncHistoryReadResult(server, results)` (bound). Timeout
+  (`asyncOperationTimeout`, `Bad_Timeout`), the Cancel service and shutdown
+  (`Bad_Shutdown`) cancel a parked read like a parked method call, and call
+  `asyncOperationCancelCallback` with the results pointer. The patch also
+  fixes the AsyncManager's timeout sweep, which classified operation types
+  with `<= WRITE_REQUEST`. A callback that answers synchronously behaves as
+  before.
 - **History node bookkeeping.** `addVariableNode` and
   `addDataSourceVariableNode` take `historizing:` (the node's Historizing
   attribute, `false` by default). `Server.setHistorizing` /
