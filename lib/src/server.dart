@@ -171,18 +171,23 @@ class CertificateSessionIdentity extends SessionIdentity {
   String toString() => 'SessionIdentity.certificate($subjectName)';
 }
 
-/// Identity of the client session that invoked a method callback (see
-/// [Server.addMethodNode]).
+/// Identity of the client session behind a server callback: a method call
+/// ([Server.addMethodNode]) or a data-source read or write (the
+/// `onReadWithSession` / `onWriteWithSession` handlers of
+/// [Server.addDataSourceVariableNode] and [Server.setVariableValueSource]).
 ///
-/// All fields other than [sessionId] are looked up live when the method is
-/// called, via `UA_Server_getSessionAttribute` (open62541 keeps
+/// All fields other than [sessionId] are looked up live when the callback
+/// runs, via `UA_Server_getSessionAttribute` (open62541 keeps
 /// `0:sessionName`, `0:clientDescription` and `0:clientUserId` as always
-/// defined, read-only session attributes) and the NS0
-/// SessionSecurityDiagnosticsArray. They are `null` when the session cannot
-/// be resolved — e.g. a local call through the internal admin session, or a
-/// session that disappeared mid-call.
-class MethodSessionInfo {
-  const MethodSessionInfo({
+/// defined, read-only session attributes) and, without an access control,
+/// the NS0 SessionSecurityDiagnosticsArray. They are `null` when the session
+/// cannot be resolved, e.g. a session that disappeared mid-call.
+///
+/// An operation of the server itself ([Server.read], [Server.write]) runs in
+/// open62541's internal admin session. Its info has [isAdminSession] set,
+/// [sessionId] is [adminSessionId], and every other field is `null`.
+class SessionInfo {
+  const SessionInfo({
     required this.sessionId,
     this.sessionName,
     this.applicationUri,
@@ -191,11 +196,17 @@ class MethodSessionInfo {
     this.context,
   });
 
+  /// The identifier of open62541's internal admin session,
+  /// `g=00000001-0000-0000-0000-000000000000`.
+  static final NodeId adminSessionId = NodeId.fromGuid(0, '00000001-0000-0000-0000-000000000000');
+
   /// The server-assigned identifier of the calling session (a Guid NodeId in
-  /// open62541), taken directly from the native method callback's `sessionId`
-  /// argument. The internal admin session (used for local calls) has the
-  /// well-known identifier `g=00000001-0000-0000-0000-000000000000`.
+  /// open62541), taken directly from the native callback's `sessionId`
+  /// argument; [adminSessionId] for an operation of the server itself.
   final NodeId sessionId;
+
+  /// Whether the server itself, not a client, performs the operation.
+  bool get isAdminSession => sessionId == adminSessionId;
 
   /// The client-defined session name (`0:sessionName` session attribute,
   /// from the CreateSession request), or `null` if the session cannot be
@@ -214,7 +225,7 @@ class MethodSessionInfo {
   final String? applicationName;
 
   /// The activation identity (anonymous / username / certificate), or `null`
-  /// when it cannot be determined — a local admin-session call, a session
+  /// when it cannot be determined — the admin session, a session
   /// that vanished, or an unsupported token type (e.g. IssuedIdentityToken,
   /// which open62541 1.5 does not record).
   final SessionIdentity? identity;
@@ -225,10 +236,23 @@ class MethodSessionInfo {
 
   @override
   String toString() =>
-      'MethodSessionInfo(sessionId: $sessionId, sessionName: $sessionName, '
+      'SessionInfo(sessionId: $sessionId, sessionName: $sessionName, '
       'applicationUri: $applicationUri, applicationName: $applicationName, '
       'identity: $identity, context: $context)';
 }
+
+/// The former name of [SessionInfo], from when only method callbacks
+/// received it.
+typedef MethodSessionInfo = SessionInfo;
+
+typedef _DataSourceRead =
+    DataSourceValue Function(ffi.Pointer<raw.UA_NodeId> sessionId, ffi.Pointer<ffi.Void> sessionContext);
+typedef _DataSourceWrite =
+    Future<void> Function(
+      DynamicValue value,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionContext,
+    );
 
 /// The complete read result of a data-source variable node: the [value] plus
 /// the OPC UA operation [statusCode] and an optional [sourceTimestamp].
@@ -673,8 +697,8 @@ class Server {
     )
   >?
   _dsWriteDispatcher;
-  final Map<NodeId, DataSourceValue Function()> _dataSourceReads = {};
-  final Map<NodeId, Future<void> Function(DynamicValue)> _dataSourceWrites = {};
+  final Map<NodeId, _DataSourceRead> _dataSourceReads = {};
+  final Map<NodeId, _DataSourceWrite> _dataSourceWrites = {};
 
   // The declared DataType of each data-source node whose `typeId` was given.
   // The write dispatcher uses it to marshal an incoming custom-struct value with
@@ -1019,7 +1043,7 @@ class Server {
         }
         // onRead is synchronous and may throw; a throw surfaces to the client
         // as a Bad status rather than crashing the isolate.
-        final dsv = handler();
+        final dsv = handler(sessionId, sessionContext);
         srcVar = valueToVariant(dsv.value);
         // UA_Variant is the first member of UA_DataValue, so a UA_DataValue*
         // cast to UA_Variant* points at the inline `value` field. Deep-copy the
@@ -1109,7 +1133,7 @@ class Server {
         // identity pointer.
         final Future<void> writeFuture;
         try {
-          writeFuture = handler(dyn);
+          writeFuture = handler(dyn, sessionId, sessionContext);
         } on UaStatusException catch (e) {
           // A non-async handler that throws before returning a future.
           return e.statusCode;
@@ -1175,6 +1199,36 @@ class Server {
         >.isolateLocal(writeCb, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
   }
 
+  _DataSourceRead _dataSourceRead(
+    DynamicValue Function()? onRead,
+    DataSourceValue Function()? onReadValue,
+    DataSourceValue Function(SessionInfo session)? onReadWithSession,
+  ) {
+    if ([onRead, onReadValue, onReadWithSession].nonNulls.length != 1) {
+      throw ArgumentError('Provide exactly one of onRead / onReadValue / onReadWithSession');
+    }
+    if (onReadWithSession != null) {
+      return (sessionId, sessionContext) => onReadWithSession(_resolveSessionInfo(sessionId, sessionContext));
+    }
+    if (onReadValue != null) return (_, _) => onReadValue();
+    return (_, _) => DataSourceValue(value: onRead!());
+  }
+
+  _DataSourceWrite? _dataSourceWrite(
+    Future<void> Function(DynamicValue value)? onWrite,
+    Future<void> Function(DynamicValue value, SessionInfo session)? onWriteWithSession,
+  ) {
+    if (onWrite != null && onWriteWithSession != null) {
+      throw ArgumentError('Provide at most one of onWrite / onWriteWithSession');
+    }
+    if (onWriteWithSession != null) {
+      return (value, sessionId, sessionContext) =>
+          onWriteWithSession(value, _resolveSessionInfo(sessionId, sessionContext));
+    }
+    if (onWrite != null) return (value, _, _) => onWrite(value);
+    return null;
+  }
+
   /// Adds a variable node whose value is sourced live from a Dart callback.
   ///
   /// Unlike [addVariableNode] (which stores a static value in the address
@@ -1193,7 +1247,7 @@ class Server {
   ///   an optional source timestamp, so a proxy can serve e.g. the last-known
   ///   value with `Bad_NoCommunication` while the backing device is down
   ///   instead of silently reporting stale data as Good. Provide exactly one
-  ///   of [onRead] / [onReadValue] (they are mutually exclusive; [onRead] is
+  ///   of [onRead] / [onReadValue] / [onReadWithSession] ([onRead] is
   ///   equivalent to an [onReadValue] that always reports Good and no source
   ///   timestamp).
   /// * [onWrite] (optional) receives the [DynamicValue] a client wrote. It is
@@ -1214,9 +1268,23 @@ class Server {
   ///   [UaStatusException] the same way (the read fails with the thrown code
   ///   and no value; to serve a value WITH a Bad status, return a
   ///   [DataSourceValue] from [onReadValue] instead).
-  /// * [accessLevel] defaults to read + (write iff [onWrite] != null). Pass a
-  ///   value to override (e.g. to expose a writable node whose backing store is
-  ///   currently read-only).
+  /// * [onReadWithSession] and [onWriteWithSession] are [onReadValue] and
+  ///   [onWrite] with the [SessionInfo] of the reading or writing session
+  ///   (resolved like a method call's: with an access control, `context` is
+  ///   what its `activateSession` returned). A monitored item's sample reads
+  ///   in the session that owns the subscription. [read] and [write] on this
+  ///   server run in the admin session ([SessionInfo.isAdminSession]); with
+  ///   either write variant, [write] runs the handler but cannot wait for it
+  ///   and throws `Bad_WaitingForResponse` (open62541 cancels the operation).
+  ///   Errors map to statuses exactly as for [onReadValue] and [onWrite].
+  ///   Each handler resolves the session on every call (a few session
+  ///   attribute reads, plus a scan of the session diagnostics without an
+  ///   access control), so prefer the plain variants where the session is not
+  ///   needed. Provide at most one of [onWrite] / [onWriteWithSession]; the
+  ///   read handlers are mutually exclusive as well.
+  /// * [accessLevel] defaults to read + (write iff a write handler is given).
+  ///   Pass a value to override (e.g. to expose a writable node whose backing
+  ///   store is currently read-only).
   /// * [typeId] sets the node's DataType attribute (and marks it scalar) so
   ///   browsing clients see the correct type; when omitted the node keeps
   ///   open62541's permissive defaults.
@@ -1240,7 +1308,9 @@ class Server {
     NodeId nodeId, {
     DynamicValue Function()? onRead,
     DataSourceValue Function()? onReadValue,
+    DataSourceValue Function(SessionInfo session)? onReadWithSession,
     Future<void> Function(DynamicValue value)? onWrite,
+    Future<void> Function(DynamicValue value, SessionInfo session)? onWriteWithSession,
     required String browseName,
     NodeId? parentNodeId,
     NodeId? parentReferenceNodeId,
@@ -1249,13 +1319,12 @@ class Server {
     AccessLevelMask? accessLevel,
     int accessTag = 0,
   }) {
-    if ((onRead == null) == (onReadValue == null)) {
-      throw ArgumentError('Provide exactly one of onRead / onReadValue');
-    }
+    final read = _dataSourceRead(onRead, onReadValue, onReadWithSession);
+    final write = _dataSourceWrite(onWrite, onWriteWithSession);
     _checkAccessTag(accessTag);
     _ensureDataSourceDispatchers();
 
-    final effectiveAccess = accessLevel ?? AccessLevelMask(read: true, write: onWrite != null);
+    final effectiveAccess = accessLevel ?? AccessLevelMask(read: true, write: write != null);
 
     final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
@@ -1295,7 +1364,7 @@ class Server {
     //    server fields, closed in [delete]).
     final source = ua_calloc<raw.UA_CallbackValueSource>();
     source.ref.read = _dsReadDispatcher!.nativeFunction;
-    source.ref.write = onWrite != null ? _dsWriteDispatcher!.nativeFunction : ffi.nullptr;
+    source.ref.write = write != null ? _dsWriteDispatcher!.nativeFunction : ffi.nullptr;
     final setNodeIdRaw = nodeId.toRaw();
     final setStatus = raw.UA_Server_setVariableNode_callbackValueSource(_server, setNodeIdRaw, source.ref);
     _freeRawNodeId(setNodeIdRaw);
@@ -1310,9 +1379,9 @@ class Server {
     //    entries earlier (and removing them again on failure) would let a failed
     //    duplicate add - e.g. BadNodeIdExists for a NodeId that already has a
     //    data source - wipe the EXISTING node's live handlers and schema.
-    _dataSourceReads[nodeId] = onReadValue ?? (() => DataSourceValue(value: onRead!()));
-    if (onWrite != null) {
-      _dataSourceWrites[nodeId] = onWrite;
+    _dataSourceReads[nodeId] = read;
+    if (write != null) {
+      _dataSourceWrites[nodeId] = write;
     }
     if (typeId != null) {
       _dataSourceTypeIds[nodeId] = typeId;
@@ -1341,7 +1410,8 @@ class Server {
   /// ```
   ///
   /// Callback semantics are identical to [addDataSourceVariableNode]: provide
-  /// exactly one of [onRead] / [onReadValue]; [onWrite] (optional) receives
+  /// exactly one of [onRead] / [onReadValue] / [onReadWithSession]; [onWrite]
+  /// or [onWriteWithSession] (optional) receives
   /// client writes — for an existing node the client also needs the node's
   /// access level to permit writing, which NS0 server variables typically do
   /// not. Passing `null` leaves the node without a write callback (client
@@ -1357,18 +1427,19 @@ class Server {
     NodeId nodeId, {
     DynamicValue Function()? onRead,
     DataSourceValue Function()? onReadValue,
+    DataSourceValue Function(SessionInfo session)? onReadWithSession,
     Future<void> Function(DynamicValue value)? onWrite,
+    Future<void> Function(DynamicValue value, SessionInfo session)? onWriteWithSession,
   }) {
-    if ((onRead == null) == (onReadValue == null)) {
-      throw ArgumentError('Provide exactly one of onRead / onReadValue');
-    }
+    final read = _dataSourceRead(onRead, onReadValue, onReadWithSession);
+    final write = _dataSourceWrite(onWrite, onWriteWithSession);
     _ensureDataSourceDispatchers();
 
     // Passed by value; the server copies the function pointers (the
     // NativeCallables are server fields, closed in [delete]).
     final source = ua_calloc<raw.UA_CallbackValueSource>();
     source.ref.read = _dsReadDispatcher!.nativeFunction;
-    source.ref.write = onWrite != null ? _dsWriteDispatcher!.nativeFunction : ffi.nullptr;
+    source.ref.write = write != null ? _dsWriteDispatcher!.nativeFunction : ffi.nullptr;
     final nodeIdRaw = nodeId.toRaw();
     final status = raw.UA_Server_setVariableNode_callbackValueSource(_server, nodeIdRaw, source.ref);
     _freeRawNodeId(nodeIdRaw);
@@ -1380,9 +1451,9 @@ class Server {
     // Register handlers only after the native call succeeded, mirroring
     // [addDataSourceVariableNode]: a failed set must not disturb an existing
     // registration for this node.
-    _dataSourceReads[nodeId] = onReadValue ?? (() => DataSourceValue(value: onRead!()));
-    if (onWrite != null) {
-      _dataSourceWrites[nodeId] = onWrite;
+    _dataSourceReads[nodeId] = read;
+    if (write != null) {
+      _dataSourceWrites[nodeId] = write;
     } else {
       _dataSourceWrites.remove(nodeId);
     }
@@ -1490,8 +1561,9 @@ class Server {
   /// `UA_Server_getSessionAttribute` returns *shallow* variants into
   /// session-owned memory, which this method fully copies into Dart values
   /// before returning.
-  MethodSessionInfo _resolveSessionInfo(ffi.Pointer<raw.UA_NodeId> sessionIdPtr, ffi.Pointer<ffi.Void> sessionContext) {
+  SessionInfo _resolveSessionInfo(ffi.Pointer<raw.UA_NodeId> sessionIdPtr, ffi.Pointer<ffi.Void> sessionContext) {
     final sessionId = NodeId.fromRaw(sessionIdPtr.ref);
+    if (sessionId == SessionInfo.adminSessionId) return SessionInfo(sessionId: sessionId);
 
     // An empty UA_String can carry a null data pointer; treat it as ''.
     String uaStr(raw.UA_String s) => s.length == 0 ? '' : s.value;
@@ -1535,7 +1607,7 @@ class Server {
     final active = _accessControl?.session(sessionContext);
     if (active != null) {
       final activation = active.activation;
-      return MethodSessionInfo(
+      return SessionInfo(
         sessionId: sessionId,
         sessionName: sessionName,
         applicationUri: applicationUri,
@@ -1596,7 +1668,7 @@ class Server {
       identity = clientUserId.isEmpty ? const AnonymousSessionIdentity() : UsernameSessionIdentity(clientUserId);
     }
 
-    return MethodSessionInfo(
+    return SessionInfo(
       sessionId: sessionId,
       sessionName: sessionName,
       applicationUri: applicationUri,
@@ -1610,7 +1682,7 @@ class Server {
   /// When a client calls the method (see `ClientApi.call`), open62541 invokes
   /// the handler from within [runIterate]: the request's input variants are
   /// marshalled into a list of [DynamicValue]s and passed to [callback]
-  /// together with a [MethodSessionInfo] describing the calling session
+  /// together with a [SessionInfo] describing the calling session
   /// (session id, session name, client application description and activation
   /// identity — captured at invocation time, so it stays valid even if the
   /// session closes while the handler runs).
@@ -1648,7 +1720,7 @@ class Server {
   ///   string identifier; required if [methodNodeId] is numeric).
   void addMethodNode(
     NodeId methodNodeId, {
-    required Future<List<DynamicValue>> Function(List<DynamicValue> inputs, MethodSessionInfo session) callback,
+    required Future<List<DynamicValue>> Function(List<DynamicValue> inputs, SessionInfo session) callback,
     List<Argument> inputArguments = const [],
     List<Argument> outputArguments = const [],
     NodeId? parentNodeId,
