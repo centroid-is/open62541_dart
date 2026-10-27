@@ -64,5 +64,5 @@ export 'src/history.dart'
         HistoryReadProcessedRequest,
         HistoryReadResult;
 export 'src/isolate.dart' show ClientIsolate;
-export 'src/client_api.dart' show ClientApi, DataValueMonitoringApi;
+export 'src/client_api.dart' show ClientApi, DataValueMonitoringApi, HistoryReadApi;
 export 'src/types/opcua_serializer.dart' show OpcUaDynamicValueSerializer;

@@ -6,6 +6,17 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **`historyReadRaw`: the client side of HistoryRead.** `Client` and
+  `ClientIsolate` implement the new `HistoryReadApi` (a separate interface,
+  like `DataValueMonitoringApi`, so `ClientApi` implementers are unaffected):
+  `historyReadRaw(nodeIds, {start, end, numValuesPerNode, maxValues,
+  returnBounds, timestampsToReturn})` reads raw history
+  (ReadRawModifiedDetails) through the non-blocking `UA_Client_AsyncService`,
+  follows continuation points until every node is done (empty pages
+  included), and returns each node's `DataValue`s. `maxValues` stops a node
+  early and releases its continuation point on the server. A node answered
+  Bad, or a Bad service result, fails the call with a `UaStatusException`
+  after the continuation points still held are released.
 - **`Server.setHistoryBackend`: HistoryRead served from Dart.** Implement
   `HistoryBackend.readRaw` (and, optionally, `readProcessed` / `readAtTime`,
   which otherwise answer `Bad_HistoryOperationUnsupported` per node) and
