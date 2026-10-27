@@ -38,6 +38,16 @@ export 'src/pubsub.dart'
         DataSetFieldMeta,
         pubSubTransportUdpUadp,
         uadpDefaultNetworkMessageContentMask;
+export 'src/security.dart'
+    show
+        SecurityPolicy,
+        UserTokenType,
+        Certificate,
+        CertificateAndKey,
+        TrustList,
+        createSelfSignedCertificate,
+        decryptPrivateKey,
+        checkKeyPair;
 export 'src/server.dart'
     show
         Server,

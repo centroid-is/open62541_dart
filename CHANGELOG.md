@@ -6,6 +6,24 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **Certificates.** `Certificate` holds an X.509 certificate as DER
+  (`Certificate.fromDer` / `fromPem`, `toPem`) and is parsed on construction,
+  so a malformed entry can no longer make open62541's in-memory trust store
+  drop every entry after it. It exposes `sha1Thumbprint` (the OPC UA
+  thumbprint), `sha256Thumbprint`, `subject`, `notAfter`,
+  `applicationUris` (its `URI:` SubjectAltNames) and `hasApplicationUri`. `createSelfSignedCertificate(applicationUri:, subject:,
+  dnsNames:, ipAddresses:, keyBits:, validity:)` makes an application
+  instance certificate (RSA, CA:FALSE, serverAuth + clientAuth) with
+  open62541's `UA_CreateCertificate`; its serial number is always 1, which
+  open62541 hard-codes, so give each application a unique subject.
+  `decryptPrivateKey` turns a (possibly encrypted PEM) key into DER and
+  `checkKeyPair` tells whether a key belongs to a certificate. `TrustList`
+  (trusted certificates, issuers and their CRLs, or the explicit
+  `TrustList.acceptAll()`), `SecurityPolicy` (with the URIs and the `secure`
+  set) and `UserTokenType` are the vocabulary the server and client security
+  options build on. Test PKI fixtures (a CA, CA-issued leaves, CRLs, an
+  expired leaf, a CA used as a leaf, an encrypted key) are under
+  `test/fixtures/pki` with the openssl script that makes them.
 - **Bindings for history and security.** The FFI bindings now cover what
   HistoryRead and server/client security build on, so the feature work that
   follows needs no regeneration: the `UA_HistoryReadRequest` /

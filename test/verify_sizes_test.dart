@@ -5,6 +5,7 @@ import 'package:test/test.dart';
 
 import 'package:open62541/src/common.dart';
 import 'package:open62541/src/extensions.dart';
+import 'package:open62541/src/security.dart' show UaKeyValuePair;
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 
 typedef _Write = void Function(Pointer<Void> p);
@@ -157,6 +158,10 @@ void main() {
     });
     // Not a UA_TYPES entry: a plain {UA_String, UA_ByteString}.
     expect(sizeOf<raw.UA_UsernamePasswordLogin>(), 2 * getTypeByIndex(raw.UA_TYPES_STRING).ref.memSize);
+    _expectLayout(raw.UA_TYPES_KEYVALUEPAIR, sizeOf<UaKeyValuePair>(), {
+      'Key': (p) => p.cast<UaKeyValuePair>().ref.key.namespaceIndex = 1,
+      'Value': (p) => p.cast<UaKeyValuePair>().ref.value.type = Pointer.fromAddress(1),
+    });
   });
   test("History types are reachable through UaTypes", () {
     for (final (type, name) in [
