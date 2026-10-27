@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:open62541/open62541.dart';
 import 'common.dart';
 import 'extensions.dart';
+import 'security.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
@@ -313,6 +314,14 @@ class Server {
   ///
   /// Each one left `null` keeps open62541's default, so an existing
   /// `Server()` is unchanged.
+  ///
+  /// Without [security] the server has open62541's minimal configuration:
+  /// one SecurityPolicy#None endpoint and anonymous sessions. With it the
+  /// server offers the endpoints [ServerSecurity] describes, validates client
+  /// certificates against its trust lists (an empty list trusts nobody) and
+  /// requires [applicationUri], which must be the certificate's URI
+  /// SubjectAltName; a mismatch throws an [ArgumentError] here rather than
+  /// letting clients refuse the server later. Sessions stay anonymous.
   Server({
     LogLevel? logLevel,
     int? port,
@@ -321,7 +330,9 @@ class Server {
     String? productName,
     String? manufacturerName,
     String? productUri,
+    ServerSecurity? security,
   }) {
+    final privateKey = security == null ? null : _validateSecurity(security, applicationUri);
     // The config struct is scratch. UA_Server_newWithConfig moves its contents
     // into the server and zeroes the struct it was given, and a failing
     // UA_ServerConfig_setMinimal clears it, so either way only the struct
@@ -336,10 +347,14 @@ class Server {
         _refusePrivateKeyPassword,
         raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED,
       );
-      // setMinimal sets the logging level if not set.
-      int res = raw.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
-      if (res != raw.UA_STATUSCODE_GOOD) {
-        throw 'Failed to set default server config ${statusCodeToString(res)}';
+      if (security == null) {
+        // setMinimal sets the logging level if not set.
+        int res = raw.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
+        if (res != raw.UA_STATUSCODE_GOOD) {
+          throw 'Failed to set default server config ${statusCodeToString(res)}';
+        }
+      } else {
+        _configureSecurity(config, security, privateKey!, port ?? 4840);
       }
 
       // The identity strings go in before UA_Server_newWithConfig: server
@@ -375,6 +390,177 @@ class Server {
 
   late ffi.Pointer<raw.UA_Server> _server;
   late ffi.Pointer<raw.UA_ServerConfig> _config;
+
+  /// Checks [security] against what open62541 would only warn about or
+  /// silently mishandle, and returns the private key as DER.
+  static Uint8List _validateSecurity(ServerSecurity security, String? applicationUri) {
+    final certificate = security.certificate;
+    if (applicationUri == null) {
+      throw ArgumentError.value(
+        applicationUri,
+        'applicationUri',
+        'is required with security; the certificate names ${certificate.applicationUris}',
+      );
+    }
+    if (!certificate.hasApplicationUri(applicationUri)) {
+      throw ArgumentError.value(
+        applicationUri,
+        'applicationUri',
+        'is not a URI SubjectAltName of the server certificate, which names ${certificate.applicationUris}',
+      );
+    }
+    if (security.policies.isEmpty || security.policies.contains(SecurityPolicy.none)) {
+      throw ArgumentError.value(
+        security.policies,
+        'security.policies',
+        'needs at least one secure policy (None is ServerSecurity.allowNone)',
+      );
+    }
+    const securedModes = {
+      MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGN,
+      MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
+    };
+    if (security.modes.isEmpty || !securedModes.containsAll(security.modes)) {
+      throw ArgumentError.value(security.modes, 'security.modes', 'must be Sign and/or SignAndEncrypt');
+    }
+    final privateKey = decryptPrivateKey(security.privateKey, password: security.privateKeyPassword);
+    if (!checkKeyPair(certificate, privateKey)) {
+      throw ArgumentError.value(
+        '${security.privateKey.length} bytes',
+        'security.privateKey',
+        'is not the key of $certificate',
+      );
+    }
+    validateTrustList(security.applicationTrust, 'security.applicationTrust');
+    final userTrust = security.userTrust;
+    if (userTrust != null) {
+      validateTrustList(userTrust, 'security.userTrust');
+    }
+    return privateKey;
+  }
+
+  /// Builds a secured config into [config] in place of setMinimal. On failure
+  /// the config is cleared and the error thrown.
+  static void _configureSecurity(
+    ffi.Pointer<raw.UA_ServerConfig> config,
+    ServerSecurity security,
+    Uint8List privateKey,
+    int port,
+  ) {
+    var status = raw.UA_ServerConfig_setBasics_withPort(config, port);
+    if (status == raw.UA_STATUSCODE_GOOD) {
+      status = using((arena) {
+        final certificate = byteStringIn(arena, security.certificate.der);
+        final key = byteStringIn(arena, privateKey);
+        try {
+          return _addSecurity(config, security, certificate, key, arena);
+        } finally {
+          key.ref.data.asTypedList(key.ref.length).fillRange(0, key.ref.length, 0);
+        }
+      }, ua_calloc);
+    }
+    privateKey.fillRange(0, privateKey.length, 0);
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      raw.UA_ServerConfig_clear(config);
+      throw UaStatusException(status);
+    }
+  }
+
+  static int _addSecurity(
+    ffi.Pointer<raw.UA_ServerConfig> config,
+    ServerSecurity security,
+    ffi.Pointer<raw.UA_ByteString> certificate,
+    ffi.Pointer<raw.UA_ByteString> key,
+    Arena arena,
+  ) {
+    final logger = config.ref.logging;
+    var status = installTrustList(
+      () => config.ref.secureChannelPKI,
+      (group) => config.ref.secureChannelPKI = group,
+      raw.UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTAPPLICATIONGROUP,
+      security.applicationTrust,
+      logger,
+    );
+    if (status != raw.UA_STATUSCODE_GOOD) return status;
+
+    // UA_AccessControl_default offers the certificate token whenever the
+    // session PKI can verify, so without a user trust list the PKI is empty
+    // while the access control is built, and fails closed afterwards.
+    final userTrust = security.userTrust;
+    void installUserTrust(TrustList list) => status = installTrustList(
+      () => config.ref.sessionPKI,
+      (group) => config.ref.sessionPKI = group,
+      raw.UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTUSERTOKENGROUP,
+      list,
+      logger,
+    );
+    if (userTrust == null) {
+      clearCertificateGroup(() => config.ref.sessionPKI, (group) => config.ref.sessionPKI = group);
+    } else {
+      installUserTrust(userTrust);
+      if (status != raw.UA_STATUSCODE_GOOD) return status;
+    }
+
+    status = raw.UA_ServerConfig_addSecurityPolicyNone(config, certificate);
+    final policies = SecurityPolicy.values.where(security.policies.contains).toList();
+    for (final policy in policies) {
+      if (status != raw.UA_STATUSCODE_GOOD) return status;
+      status = switch (policy) {
+        SecurityPolicy.basic256Sha256 => raw.UA_ServerConfig_addSecurityPolicyBasic256Sha256(config, certificate, key),
+        SecurityPolicy.aes128Sha256RsaOaep => raw.UA_ServerConfig_addSecurityPolicyAes128Sha256RsaOaep(
+          config,
+          certificate,
+          key,
+        ),
+        SecurityPolicy.aes256Sha256RsaPss => raw.UA_ServerConfig_addSecurityPolicyAes256Sha256RsaPss(
+          config,
+          certificate,
+          key,
+        ),
+        SecurityPolicy.none => throw StateError('unreachable'),
+      };
+    }
+    if (status != raw.UA_STATUSCODE_GOOD) return status;
+
+    raw.UA_String policyUri(SecurityPolicy policy) =>
+        (arena<raw.UA_String>()..ref.set(policy.uri, allocator: arena)).ref;
+    if (security.allowNone) {
+      status = raw.UA_ServerConfig_addEndpoint(
+        config,
+        policyUri(SecurityPolicy.none),
+        MessageSecurityMode.UA_MESSAGESECURITYMODE_NONE,
+      );
+    }
+    final modes = MessageSecurityMode.values.where(security.modes.contains).toList();
+    for (final policy in policies) {
+      for (final mode in modes) {
+        if (status != raw.UA_STATUSCODE_GOOD) return status;
+        status = raw.UA_ServerConfig_addEndpoint(config, policyUri(policy), mode);
+      }
+    }
+    if (status != raw.UA_STATUSCODE_GOOD) return status;
+    config.ref.securityPolicyNoneDiscoveryOnly = !security.allowNone;
+
+    // After the policies: the default access control derives its token
+    // policies from them.
+    status = raw.UA_AccessControl_default(config, true, ffi.nullptr, 0, ffi.nullptr);
+    if (status != raw.UA_STATUSCODE_GOOD) return status;
+    if (userTrust == null) {
+      installUserTrust(const TrustList());
+      if (status != raw.UA_STATUSCODE_GOOD) return status;
+    }
+    config.ref.allowNonePolicyPassword = security.allowUnencryptedPassword;
+    return raw.UA_STATUSCODE_GOOD;
+  }
+
+  /// Client application certificates this server refused, oldest first (at
+  /// most 100). Empty for a server without [ServerSecurity] or with
+  /// [TrustList.acceptAll].
+  List<Certificate> get rejectedApplicationCertificates => rejectedCertificates(_config.ref.secureChannelPKI);
+
+  /// User certificates (X.509 identity tokens) this server refused, oldest
+  /// first (at most 100). Empty without [ServerSecurity.userTrust].
+  List<Certificate> get rejectedUserCertificates => rejectedCertificates(_config.ref.sessionPKI);
 
   /// The text of the `ApplicationDescription.applicationName` this server
   /// announces (open62541's default unless given to the constructor).

@@ -6,6 +6,33 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **`Server(security: ServerSecurity(...))`: encrypted endpoints and client
+  certificate trust.** A secured server is built from open62541's basic
+  config instead of the minimal one: the SecurityPolicy#None policy answers
+  GetEndpoints/FindServers only (`securityPolicyNoneDiscoveryOnly`) unless
+  `allowNone`, and the requested `policies` (Basic256Sha256,
+  Aes128Sha256RsaOaep, Aes256Sha256RsaPss by default) each get an endpoint
+  per `modes` entry (Sign and SignAndEncrypt by default). Client application
+  certificates are validated against `applicationTrust` and X.509 user
+  tokens against `userTrust`, both in open62541's in-memory store; an empty
+  list trusts nobody, and accepting everything takes an explicit
+  `TrustList.acceptAll()` (logged as a warning). Without `userTrust` no
+  certificate login is offered. `applicationUri` is required with security
+  and must be a URI SubjectAltName of the certificate: a mismatch throws an
+  `ArgumentError` naming both (open62541 only logs it and clients then
+  refuse the server). The private key may be an encrypted PEM key with
+  `privateKeyPassword`; it is decrypted in Dart and checked against the
+  certificate, so a bad key fails the constructor instead of reaching
+  open62541. Sessions stay anonymous until access control lands.
+  `allowUnencryptedPassword` maps to `allowNonePolicyPassword`.
+  `Server.rejectedApplicationCertificates` / `rejectedUserCertificates` list
+  what the trust lists refused (the last 100). A client sees an untrusted,
+  revoked or chain-incomplete certificate as `BadSecurityChecksFailed`
+  (open62541 hides the precise reason from the peer), an expired one as
+  `BadCertificateTimeInvalid`, a CA certificate used as a leaf as
+  `BadCertificateUseNotAllowed` and an ApplicationUri that is not in its
+  certificate as `BadCertificateUriInvalid`. `Server()` without `security` is
+  unchanged.
 - **Certificates.** `Certificate` holds an X.509 certificate as DER
   (`Certificate.fromDer` / `fromPem`, `toPem`) and is parsed on construction,
   so a malformed entry can no longer make open62541's in-memory trust store
