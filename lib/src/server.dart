@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'package:open62541/open62541.dart';
+import 'access_control.dart';
 import 'common.dart';
 import 'extensions.dart';
 import 'security.dart';
@@ -187,6 +188,7 @@ class MethodSessionInfo {
     this.applicationUri,
     this.applicationName,
     this.identity,
+    this.context,
   });
 
   /// The server-assigned identifier of the calling session (a Guid NodeId in
@@ -217,11 +219,15 @@ class MethodSessionInfo {
   /// which open62541 1.5 does not record).
   final SessionIdentity? identity;
 
+  /// The context the server's `AccessControl.activateSession` returned for
+  /// the calling session; `null` without an access control.
+  final Object? context;
+
   @override
   String toString() =>
       'MethodSessionInfo(sessionId: $sessionId, sessionName: $sessionName, '
       'applicationUri: $applicationUri, applicationName: $applicationName, '
-      'identity: $identity)';
+      'identity: $identity, context: $context)';
 }
 
 /// The complete read result of a data-source variable node: the [value] plus
@@ -321,7 +327,12 @@ class Server {
   /// certificates against its trust lists (an empty list trusts nobody) and
   /// requires [applicationUri], which must be the certificate's URI
   /// SubjectAltName; a mismatch throws an [ArgumentError] here rather than
-  /// letting clients refuse the server later. Sessions stay anonymous.
+  /// letting clients refuse the server later.
+  ///
+  /// [accessControl] decides who may open a session and what each session
+  /// may do (see [AccessControl]); without it every session is anonymous
+  /// and may do everything. Its user name logins need [security], its
+  /// certificate logins `ServerSecurity.userTrust`.
   Server({
     LogLevel? logLevel,
     int? port,
@@ -331,8 +342,16 @@ class Server {
     String? manufacturerName,
     String? productUri,
     ServerSecurity? security,
+    AccessControl? accessControl,
   }) {
     final privateKey = security == null ? null : _validateSecurity(security, applicationUri);
+    final tokenTypes = accessControl == null
+        ? null
+        : AccessControlHooks.tokenTypes(
+            accessControl,
+            secured: security != null,
+            userTrust: security?.userTrust != null,
+          );
     // The config struct is scratch. UA_Server_newWithConfig moves its contents
     // into the server and zeroes the struct it was given, and a failing
     // UA_ServerConfig_setMinimal clears it, so either way only the struct
@@ -355,6 +374,17 @@ class Server {
         }
       } else {
         _configureSecurity(config, security, privateKey!, port ?? 4840);
+      }
+      if (accessControl != null) {
+        final hooks = AccessControlHooks(accessControl);
+        try {
+          hooks.install(config, tokenTypes!);
+        } catch (_) {
+          raw.UA_ServerConfig_clear(config);
+          hooks.close();
+          rethrow;
+        }
+        _accessControl = hooks;
       }
 
       // The identity strings go in before UA_Server_newWithConfig: server
@@ -390,6 +420,7 @@ class Server {
 
   late ffi.Pointer<raw.UA_Server> _server;
   late ffi.Pointer<raw.UA_ServerConfig> _config;
+  AccessControlHooks? _accessControl;
 
   /// Checks [security] against what open62541 would only warn about or
   /// silently mishandle, and returns the private key as DER.
@@ -561,6 +592,40 @@ class Server {
   /// User certificates (X.509 identity tokens) this server refused, oldest
   /// first (at most 100). Empty without [ServerSecurity.userTrust].
   List<Certificate> get rejectedUserCertificates => rejectedCertificates(_config.ref.sessionPKI);
+
+  static void _checkAccessTag(int tag) {
+    if (tag < 0) {
+      throw ArgumentError.value(tag, 'accessTag', 'must not be negative');
+    }
+  }
+
+  /// Closes the session [sessionId] at once, as if it had timed out without
+  /// keeping its subscriptions: the access control's `closeSession` runs and
+  /// the client has to activate a new session. Throws a
+  /// [UaStatusException] (`BadSessionIdInvalid`) for an unknown session.
+  void closeSession(NodeId sessionId) {
+    final status = using((arena) {
+      final id = arena<raw.UA_NodeId>()..ref = sessionId.toRaw(allocator: arena);
+      return raw.UA_Server_closeSession(_server, id);
+    }, ua_calloc);
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
+  }
+
+  /// Sets the access tag of an existing node: the [NodeRef.tag] the
+  /// [AccessControl] hooks see for it (`0`, the default, is no tag). The tag
+  /// is stored as the node's open62541 node context.
+  void setAccessTag(NodeId nodeId, int tag) {
+    _checkAccessTag(tag);
+    final status = using(
+      (arena) => raw.UA_Server_setNodeContext(_server, nodeId.toRaw(allocator: arena), ffi.Pointer.fromAddress(tag)),
+      ua_calloc,
+    );
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
+  }
 
   /// The text of the `ApplicationDescription.applicationName` this server
   /// announces (open62541's default unless given to the constructor).
@@ -849,10 +914,12 @@ class Server {
     NodeId? parentReferenceNodeId,
     NodeId? baseDataVariableType,
     NodeId? typeId,
+    int accessTag = 0,
   }) {
     final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
     final resolvedType = baseDataVariableType ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
+    _checkAccessTag(accessTag);
 
     // Everything native here is scratch: the attributes are passed by value and
     // open62541 copies what it keeps of them, of the NodeIds and of the browse
@@ -907,7 +974,7 @@ class Server {
         name,
         resolvedType.toRaw(allocator: arena),
         attr,
-        ffi.nullptr,
+        ffi.Pointer.fromAddress(accessTag),
         ffi.nullptr,
       );
       if (returnCode != raw.UA_STATUSCODE_GOOD) {
@@ -1180,10 +1247,12 @@ class Server {
     NodeId? baseDataVariableType,
     NodeId? typeId,
     AccessLevelMask? accessLevel,
+    int accessTag = 0,
   }) {
     if ((onRead == null) == (onReadValue == null)) {
       throw ArgumentError('Provide exactly one of onRead / onReadValue');
     }
+    _checkAccessTag(accessTag);
     _ensureDataSourceDispatchers();
 
     final effectiveAccess = accessLevel ?? AccessLevelMask(read: true, write: onWrite != null);
@@ -1212,7 +1281,7 @@ class Server {
         raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: arena).cast()),
         resolvedType.toRaw(allocator: arena),
         attr,
-        ffi.nullptr,
+        ffi.Pointer.fromAddress(accessTag),
         ffi.nullptr,
       );
     }, ua_calloc);
@@ -1421,7 +1490,7 @@ class Server {
   /// `UA_Server_getSessionAttribute` returns *shallow* variants into
   /// session-owned memory, which this method fully copies into Dart values
   /// before returning.
-  MethodSessionInfo _resolveSessionInfo(ffi.Pointer<raw.UA_NodeId> sessionIdPtr) {
+  MethodSessionInfo _resolveSessionInfo(ffi.Pointer<raw.UA_NodeId> sessionIdPtr, ffi.Pointer<ffi.Void> sessionContext) {
     final sessionId = NodeId.fromRaw(sessionIdPtr.ref);
 
     // An empty UA_String can carry a null data pointer; treat it as ''.
@@ -1461,6 +1530,25 @@ class Server {
       }
       return null;
     });
+
+    // A session the access control activated carries its identity.
+    final active = _accessControl?.session(sessionContext);
+    if (active != null) {
+      final activation = active.activation;
+      return MethodSessionInfo(
+        sessionId: sessionId,
+        sessionName: sessionName,
+        applicationUri: applicationUri,
+        applicationName: applicationName,
+        identity: switch (activation.tokenType) {
+          UserTokenType.anonymous => const AnonymousSessionIdentity(),
+          UserTokenType.username => UsernameSessionIdentity(activation.username ?? ''),
+          UserTokenType.certificate => CertificateSessionIdentity(activation.userCertificate?.subject ?? ''),
+          UserTokenType.issuedToken => null,
+        },
+        context: active.context,
+      );
+    }
 
     // The activation token *type* is not part of the session attributes; it is
     // recorded (as `authenticationMechanism`) in the per-session security
@@ -1566,7 +1654,9 @@ class Server {
     NodeId? parentNodeId,
     NodeId? parentReferenceNodeId,
     String? browseName,
+    int accessTag = 0,
   }) {
+    _checkAccessTag(accessTag);
     final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
     if (browseName == null && !methodNodeId.isString()) {
@@ -1616,7 +1706,7 @@ class Server {
 
             // Session info is captured NOW — the session can be gone by the
             // time the handler's future completes.
-            final session = _resolveSessionInfo(sessionId);
+            final session = _resolveSessionInfo(sessionId, sessionContext);
 
             final Future<List<DynamicValue>> resultsFuture;
             try {
@@ -1695,7 +1785,7 @@ class Server {
           _buildArguments(inputArguments, arena),
           outputArguments.length,
           _buildArguments(outputArguments, arena),
-          ffi.nullptr,
+          ffi.Pointer.fromAddress(accessTag),
           ffi.nullptr,
         );
       }, ua_calloc);
@@ -1771,7 +1861,9 @@ class Server {
     NodeId? parentNodeId,
     NodeId? parentReferenceNodeId,
     NodeId? typeDefinition,
+    int accessTag = 0,
   }) {
+    _checkAccessTag(accessTag);
     final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
     final resolvedType = typeDefinition ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEOBJECTTYPE);
@@ -1800,6 +1892,9 @@ class Server {
         getType(UaTypes.objectAttributes),
       );
     }, ua_calloc);
+    if (accessTag != 0) {
+      setAccessTag(nodeId, accessTag);
+    }
   }
 
   /// Adds an Object node of type `FolderType` - a convenience over
@@ -3447,6 +3542,9 @@ class Server {
     _inFlightWrites.clear();
     _asyncCancelDispatcher?.close();
     _asyncCancelDispatcher = null;
+    // After UA_Server_delete, which ran closeSession for the open sessions.
+    _accessControl?.close();
+    _accessControl = null;
     if (ret != 0) {
       throw "Failed to delete server ${statusCodeToString(ret)}";
     }
