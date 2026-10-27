@@ -140,6 +140,70 @@ void main() {
     });
   });
 
+  group('Client.connect on a refusal', () {
+    Future<void> pumpedConnect(Client client, String url) async {
+      var done = false;
+      final connect = client.connect(url)..whenComplete(() => done = true).ignore();
+      while (!done) {
+        client.runIterate(Duration.zero);
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+      return connect;
+    }
+
+    Matcher refusedWith(int status) =>
+        throwsA(isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', status));
+
+    test('fails with BadCertificateUntrusted when the client refuses the server', () async {
+      final server = serverWith(serverIdentity, securedServerUri);
+      addTearDown(server.delete);
+      final client = trustingClient(const TrustList());
+      addTearDown(() => deleteClient(client));
+      await expectLater(pumpedConnect(client, server.url), refusedWith(raw.UA_STATUSCODE_BADCERTIFICATEUNTRUSTED));
+    });
+
+    test('fails with BadSecurityChecksFailed when the server refuses the client', () async {
+      final server = SecuredServer(
+        ServerSecurity(certificate: serverIdentity.certificate, privateKey: serverIdentity.privateKey),
+      );
+      addTearDown(server.delete);
+      final client = trustingClient(TrustList(trusted: [serverIdentity.certificate]));
+      addTearDown(() => deleteClient(client));
+      await expectLater(pumpedConnect(client, server.url), refusedWith(raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED));
+    });
+
+    test('keepConnected keeps retrying a refused certificate', () async {
+      final server = serverWith(serverIdentity, securedServerUri);
+      addTearDown(server.delete);
+      final client = trustingClient(const TrustList());
+      addTearDown(() async {
+        client.stopKeepConnected();
+        await deleteClient(client);
+      });
+      final refusals = <int>[];
+      final states = client.config.stateStream.listen((state) {
+        if (state.recoveryStatus == raw.UA_STATUSCODE_BADCERTIFICATEUNTRUSTED) refusals.add(state.recoveryStatus);
+      });
+      addTearDown(states.cancel);
+      var settled = false;
+      client
+          .keepConnected(
+            server.url,
+            nonBlocking: true,
+            iterateInterval: Duration.zero,
+            retryInterval: const Duration(milliseconds: 100),
+          )
+          .then((_) => settled = true, onError: (Object _) => settled = true)
+          .ignore();
+      final deadline = DateTime.now().add(const Duration(seconds: 15));
+      while (refusals.length < 2 && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect(refusals.length, greaterThanOrEqualTo(2), reason: 'retried after the refusal');
+      expect(settled, isFalse);
+    });
+  });
+
   group('selection', () {
     test('securityPolicy pins the endpoint policy', () async {
       final trust = TrustList(trusted: [serverIdentity.certificate]);
@@ -295,10 +359,14 @@ void main() {
     test('refuses an untrusted server and reports it', () async {
       final client = await isolate(const TrustList());
       addTearDown(client.delete);
+      final watch = Stopwatch()..start();
       await expectLater(
-        client.connect(server.url, timeout: const Duration(seconds: 3)),
-        throwsA(isA<UaStatusException>()),
+        client.connect(server.url),
+        throwsA(
+          isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', raw.UA_STATUSCODE_BADCERTIFICATEUNTRUSTED),
+        ),
       );
+      expect(watch.elapsed, lessThan(const Duration(seconds: 10)), reason: 'refused, not timed out');
       expect(await client.rejectedServerCertificates, contains(serverIdentity.certificate));
     });
 

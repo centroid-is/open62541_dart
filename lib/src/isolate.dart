@@ -269,6 +269,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     String? applicationUri,
     TrustList? serverTrust,
     SecurityPolicy? securityPolicy,
+    Uint8List? userCertificate,
+    Uint8List? userPrivateKey,
+    String? userPrivateKeyPassword,
   }) {
     _initIsolate(
       secureChannelLifeTime: secureChannelLifeTime,
@@ -285,6 +288,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       applicationUri: applicationUri,
       serverTrust: serverTrust,
       securityPolicy: securityPolicy,
+      userCertificate: userCertificate,
+      userPrivateKey: userPrivateKey,
+      userPrivateKeyPassword: userPrivateKeyPassword,
     );
   }
 
@@ -304,6 +310,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     String? applicationUri,
     TrustList? serverTrust,
     SecurityPolicy? securityPolicy,
+    Uint8List? userCertificate,
+    Uint8List? userPrivateKey,
+    String? userPrivateKeyPassword,
     Duration iterateInterval = const Duration(milliseconds: 10),
   }) async {
     final isolate = ClientIsolate._(
@@ -321,6 +330,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       applicationUri: applicationUri,
       serverTrust: serverTrust,
       securityPolicy: securityPolicy,
+      userCertificate: userCertificate,
+      userPrivateKey: userPrivateKey,
+      userPrivateKeyPassword: userPrivateKeyPassword,
     );
 
     await isolate._initCompleter.future;
@@ -351,6 +363,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     String? applicationUri,
     TrustList? serverTrust,
     SecurityPolicy? securityPolicy,
+    Uint8List? userCertificate,
+    Uint8List? userPrivateKey,
+    String? userPrivateKeyPassword,
   }) async {
     try {
       _receivePort = ReceivePort();
@@ -384,6 +399,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
           applicationUri: applicationUri,
           serverTrust: serverTrust,
           securityPolicy: securityPolicy,
+          userCertificate: userCertificate,
+          userPrivateKey: userPrivateKey,
+          userPrivateKeyPassword: userPrivateKeyPassword,
           sendPort: _receivePort.sendPort,
         ),
         // A worker isolate must NOT die on an uncaught error. In particular, a
@@ -444,7 +462,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
   ///
   /// [timeout] bounds the attempt (default 30 s; the underlying open62541
   /// connect otherwise retries forever): on expiry the connect attempt is
-  /// abandoned and a [UaStatusException] with `Bad_Timeout` is thrown.
+  /// abandoned and a [UaStatusException] with `Bad_Timeout` is thrown. A
+  /// refused certificate, identity or security policy fails at once with
+  /// its status, as for [Client.connect].
   @override
   Future<void> connect(String url, {Duration? timeout = const Duration(seconds: 30)}) async {
     if (_isClosed) throw const ClientIsolateClosedException();
@@ -1101,6 +1121,9 @@ class _IsolateData {
   final String? applicationUri;
   final TrustList? serverTrust;
   final SecurityPolicy? securityPolicy;
+  final Uint8List? userCertificate;
+  final Uint8List? userPrivateKey;
+  final String? userPrivateKeyPassword;
   final SendPort sendPort;
 
   _IsolateData({
@@ -1118,6 +1141,9 @@ class _IsolateData {
     this.applicationUri,
     this.serverTrust,
     this.securityPolicy,
+    this.userCertificate,
+    this.userPrivateKey,
+    this.userPrivateKeyPassword,
     required this.sendPort,
   });
 }
@@ -1155,6 +1181,9 @@ void _isolateEntryPoint(_IsolateData data) {
       applicationUri: data.applicationUri,
       serverTrust: data.serverTrust,
       securityPolicy: data.securityPolicy,
+      userCertificate: data.userCertificate,
+      userPrivateKey: data.userPrivateKey,
+      userPrivateKeyPassword: data.userPrivateKeyPassword,
     );
   } catch (e) {
     receivePort.close();

@@ -6,6 +6,28 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **X.509 user identity tokens.** `Client(userCertificate:,
+  userPrivateKey:, userPrivateKeyPassword:)` (and `ClientIsolate` /
+  `ClientIsolate.create`) activates the session with the user certificate
+  instead of a user name (`UA_ClientConfig_setAuthenticationCert`, after
+  the channel encryption is set up). A server with `ServerSecurity.userTrust`
+  and an `AccessControl` offering `UserTokenType.certificate` sees it as
+  `SessionActivation.userCertificate`, and a method handler as a
+  `CertificateSessionIdentity`; an untrusted user certificate is refused
+  with `BadIdentityTokenRejected` (open62541 hides the validation result)
+  and listed in `Server.rejectedUserCertificates`. On a None endpoint of a
+  secured server the token is still signed under the server's best
+  SecurityPolicy, so open62541 accepts it; the activation's `securityMode`
+  is None, for an `AccessControl` to refuse.
+- **`Client.connect` and `ClientIsolate.connect` fail on a refusal instead
+  of hanging.** A certificate either side refuses (`BadSecurityChecksFailed`
+  from the server, `BadCertificateUntrusted`, `BadCertificateRevoked`, ...
+  from the client's own check), a refused identity (`BadUserAccessDenied`,
+  `BadIdentityTokenRejected`, ...) or a rejected security policy or mode
+  completes the connect with a `UaStatusException` carrying that status.
+  Previously the future never completed (and `ClientIsolate.connect` ran
+  into its timeout). A server that cannot be reached is still waited for,
+  and `keepConnected` still retries a refused connect.
 - **`Server(accessControl:)`: who may open a session and what it may do,
   decided in Dart.** `AccessControl` mirrors open62541's access-control
   plugin: `userTokenTypes` are the identity tokens every endpoint offers
