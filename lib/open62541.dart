@@ -46,6 +46,8 @@ export 'src/security.dart'
         CertificateAndKey,
         TrustList,
         ServerSecurity,
+        EndpointInfo,
+        UserTokenPolicyInfo,
         createSelfSignedCertificate,
         decryptPrivateKey,
         checkKeyPair;

@@ -1,126 +1,12 @@
-import 'dart:async';
-import 'dart:ffi' as ffi;
-import 'dart:isolate';
 import 'dart:typed_data';
 
-import 'package:ffi/ffi.dart';
 import 'package:logging/logging.dart';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'package:open62541/src/common.dart';
-import 'package:open62541/src/extensions.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
-import 'package:open62541/src/ua_allocation.dart';
 import 'pki_fixtures.dart';
-
-const _serverUri = 'urn:open62541.dart.test.secured';
-const _signAndEncrypt = MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
-
-/// An endpoint as GetEndpoints describes it, reduced to plain Dart values so
-/// it crosses the isolate boundary.
-typedef RawEndpoint = ({String policyUri, int mode, List<int> tokenTypes, Uint8List serverCertificate});
-
-/// GetEndpoints over a raw client in another isolate: the call blocks until
-/// answered, and the server is pumped by this one.
-Future<List<RawEndpoint>> rawGetEndpoints(String url) => Isolate.run(() {
-  final config = ua_calloc<raw.UA_ClientConfig>();
-  raw.UA_ClientConfig_setDefault(config);
-  // A configured endpoint skips the endpoint selection a session would need.
-  config.ref.endpoint.endpointUrl.set(url);
-  config.ref.endpoint.securityModeAsInt = MessageSecurityMode.UA_MESSAGESECURITYMODE_NONE.value;
-  config.ref.endpoint.securityPolicyUri.set(SecurityPolicy.none.uri);
-  final client = raw.UA_Client_newWithConfig(config);
-  ua_calloc.free(config);
-  try {
-    return using((arena) {
-      final size = arena<ffi.Size>();
-      final endpoints = arena<ffi.Pointer<raw.UA_EndpointDescription>>();
-      final status = raw.UA_Client_getEndpoints(client, url.toNativeUtf8(allocator: arena).cast(), size, endpoints);
-      if (status != raw.UA_STATUSCODE_GOOD) throw UaStatusException(status);
-      final result = [
-        for (var i = 0; i < size.value; i++)
-          (
-            policyUri: endpoints.value[i].securityPolicyUri.value,
-            mode: endpoints.value[i].securityModeAsInt,
-            tokenTypes: [
-              for (var t = 0; t < endpoints.value[i].userIdentityTokensSize; t++)
-                endpoints.value[i].userIdentityTokens[t].tokenTypeAsInt,
-            ],
-            serverCertificate: Uint8List.fromList(endpoints.value[i].serverCertificate.asTypedList()),
-          ),
-      ];
-      raw.UA_Array_delete(endpoints.value.cast(), size.value, getTypeByIndex(raw.UA_TYPES_ENDPOINTDESCRIPTION));
-      return result;
-    }, ua_calloc);
-  } finally {
-    raw.UA_Client_delete(client);
-  }
-});
-
-class SecuredServer {
-  SecuredServer(ServerSecurity security, {String applicationUri = _serverUri})
-    : server = Server(
-        port: 0,
-        logLevel: LogLevel.UA_LOGLEVEL_FATAL,
-        applicationUri: applicationUri,
-        security: security,
-      ) {
-    server.start();
-    _pump = Timer.periodic(const Duration(milliseconds: 2), (_) => server.runIterate());
-  }
-
-  final Server server;
-  late final Timer _pump;
-
-  String get url => 'opc.tcp://127.0.0.1:${server.port}';
-
-  void delete() {
-    _pump.cancel();
-    server.shutdown();
-    server.delete();
-  }
-}
-
-/// Connects [client] and answers Good once the session is activated, or
-/// the first bad connect status the client reports.
-Future<int> connectStatus(Client client, String url) async {
-  final result = Completer<int>();
-  final states = client.config.stateStream.listen((state) {
-    if (result.isCompleted) return;
-    if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
-      result.complete(raw.UA_STATUSCODE_GOOD);
-    } else if (state.recoveryStatus != raw.UA_STATUSCODE_GOOD) {
-      result.complete(state.recoveryStatus);
-    }
-  });
-  client.connect(url).ignore();
-  final pump = Timer.periodic(const Duration(milliseconds: 2), (_) => client.runIterate(Duration.zero));
-  try {
-    return await result.future.timeout(const Duration(seconds: 15));
-  } finally {
-    pump.cancel();
-    await states.cancel();
-  }
-}
-
-Future<void> deleteClient(Client client) async {
-  try {
-    client.disconnect();
-  } catch (_) {}
-  await client.delete();
-}
-
-Client clientWith(CertificateAndKey identity, String applicationUri, {MessageSecurityMode? mode = _signAndEncrypt}) {
-  final client = Client(
-    certificate: identity.certificate.der,
-    privateKey: identity.privateKey,
-    securityMode: mode,
-    logLevel: LogLevel.UA_LOGLEVEL_FATAL,
-  );
-  client.config.applicationUri = applicationUri;
-  return client;
-}
+import 'security_harness.dart';
 
 void main() {
   late CertificateAndKey serverIdentity;
@@ -129,7 +15,7 @@ void main() {
 
   setUpAll(() {
     serverIdentity = createSelfSignedCertificate(
-      applicationUri: _serverUri,
+      applicationUri: securedServerUri,
       subject: ['CN=open62541-dart secured server'],
       dnsNames: ['localhost'],
       ipAddresses: ['127.0.0.1'],
@@ -243,17 +129,17 @@ void main() {
     test('serves discovery only: no None endpoint, and no None session', () async {
       final server = SecuredServer(security());
       addTearDown(server.delete);
-      final endpoints = await rawGetEndpoints(server.url);
+      final endpoints = await Client.getEndpoints(server.url);
       expect(endpoints, hasLength(SecurityPolicy.secure.length * 2));
-      expect(endpoints.map((e) => e.policyUri).toSet(), {for (final p in SecurityPolicy.secure) p.uri});
-      expect(endpoints.map((e) => e.mode).toSet(), {
-        MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGN.value,
-        MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT.value,
+      expect(endpoints.map((e) => e.securityPolicyUri).toSet(), {for (final p in SecurityPolicy.secure) p.uri});
+      expect(endpoints.map((e) => e.securityMode).toSet(), {
+        MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGN,
+        MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
       });
       for (final endpoint in endpoints) {
-        expect(endpoint.serverCertificate, serverIdentity.certificate.der);
+        expect(endpoint.serverCertificate, serverIdentity.certificate);
         // No user trust list: no certificate login on offer.
-        expect(endpoint.tokenTypes.toSet(), {UserTokenType.anonymous.value});
+        expect(endpoint.userTokenPolicies.map((p) => p.tokenType).toSet(), {UserTokenType.anonymous});
       }
 
       final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
@@ -267,9 +153,9 @@ void main() {
     test('allowNone opens a None endpoint for anonymous sessions', () async {
       final server = SecuredServer(security(allowNone: true));
       addTearDown(server.delete);
-      final endpoints = await rawGetEndpoints(server.url);
-      expect(endpoints.where((e) => e.policyUri == SecurityPolicy.none.uri).map((e) => e.mode), [
-        MessageSecurityMode.UA_MESSAGESECURITYMODE_NONE.value,
+      final endpoints = await Client.getEndpoints(server.url);
+      expect(endpoints.where((e) => e.securityPolicyUri == SecurityPolicy.none.uri).map((e) => e.securityMode), [
+        MessageSecurityMode.UA_MESSAGESECURITYMODE_NONE,
       ]);
       final client = Client(logLevel: LogLevel.UA_LOGLEVEL_FATAL);
       try {
@@ -289,17 +175,20 @@ void main() {
         ),
       );
       addTearDown(server.delete);
-      final endpoints = await rawGetEndpoints(server.url);
-      expect(endpoints.map((e) => (e.policyUri, e.mode)), [
-        (SecurityPolicy.aes256Sha256RsaPss.uri, MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGN.value),
+      final endpoints = await Client.getEndpoints(server.url);
+      expect(endpoints.map((e) => (e.securityPolicyUri, e.securityMode)), [
+        (SecurityPolicy.aes256Sha256RsaPss.uri, MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGN),
       ]);
     });
 
     test('a user trust list puts certificate login on offer', () async {
       final server = SecuredServer(security(userTrust: TrustList(trusted: [selfSignedClient.certificate])));
       addTearDown(server.delete);
-      final endpoints = await rawGetEndpoints(server.url);
-      expect(endpoints.first.tokenTypes.toSet(), {UserTokenType.anonymous.value, UserTokenType.certificate.value});
+      final endpoints = await Client.getEndpoints(server.url);
+      expect(endpoints.first.userTokenPolicies.map((p) => p.tokenType).toSet(), {
+        UserTokenType.anonymous,
+        UserTokenType.certificate,
+      });
       expect(server.server.rejectedUserCertificates, isEmpty);
     });
   });
@@ -312,7 +201,7 @@ void main() {
           isA<ArgumentError>().having(
             (e) => e.toString(),
             'message',
-            allOf(contains('urn:open62541.dart.test.wrong'), contains(_serverUri)),
+            allOf(contains('urn:open62541.dart.test.wrong'), contains(securedServerUri)),
           ),
         ),
       );
@@ -323,7 +212,7 @@ void main() {
       expect(
         () => Server(
           port: 0,
-          applicationUri: _serverUri,
+          applicationUri: securedServerUri,
           security: ServerSecurity(certificate: serverIdentity.certificate, privateKey: selfSignedClient.privateKey),
         ),
         throwsArgumentError,
@@ -335,7 +224,7 @@ void main() {
       expect(
         () => Server(
           port: 0,
-          applicationUri: _serverUri,
+          applicationUri: securedServerUri,
           security: ServerSecurity(certificate: serverIdentity.certificate, privateKey: garbage),
         ),
         throwsA(
@@ -374,7 +263,7 @@ void main() {
     test('invalid policies, modes and CRLs throw', () {
       ServerSecurity with_({
         Set<SecurityPolicy> policies = SecurityPolicy.secure,
-        Set<MessageSecurityMode> modes = const {_signAndEncrypt},
+        Set<MessageSecurityMode> modes = const {signAndEncrypt},
         TrustList applicationTrust = const TrustList(),
       }) => ServerSecurity(
         certificate: serverIdentity.certificate,
@@ -397,7 +286,7 @@ void main() {
           ),
         ),
       ]) {
-        expect(() => Server(port: 0, applicationUri: _serverUri, security: bad), throwsArgumentError);
+        expect(() => Server(port: 0, applicationUri: securedServerUri, security: bad), throwsArgumentError);
       }
     });
   });

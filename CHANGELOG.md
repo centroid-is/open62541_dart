@@ -6,6 +6,25 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **Client trust lists and endpoint selection.** `Client(serverTrust:)`
+  validates the server certificate against a `TrustList` (trusted
+  certificates, issuers and their CRLs, in open62541's in-memory store)
+  instead of accepting every server: an untrusted server fails the connect
+  with `BadCertificateUntrusted` (`BadCertificateRevoked` once a CRL lists
+  it), and `Client.rejectedServerCertificates` lists what was refused. A
+  client with a certificate and no `serverTrust` still accepts every server,
+  as before, and now logs a warning. `privateKeyPassword` decrypts an
+  encrypted PEM key; `applicationUri` sets the announced ApplicationUri and,
+  with a certificate, must be its URI SubjectAltName (`ArgumentError`
+  otherwise, where servers answer `BadCertificateUriInvalid`);
+  `securityPolicy` pins the endpoint's SecurityPolicy (otherwise the client
+  takes the endpoint the server ranks highest, Aes256Sha256RsaPss for an
+  open62541 server). `ClientIsolate` and `ClientIsolate.create` take the same
+  parameters and have `rejectedServerCertificates`. `Client.getEndpoints(url)`
+  lists a server's endpoints (`EndpointInfo`: URL, policy, mode, security
+  level, server certificate, application, user token policies) over a None
+  channel, also from a server that serves None for discovery only; it runs
+  in a short-lived isolate because open62541 blocks for the exchange.
 - **`Server(security: ServerSecurity(...))`: encrypted endpoints and client
   certificate trust.** A secured server is built from open62541's basic
   config instead of the minimal one: the SecurityPolicy#None policy answers
