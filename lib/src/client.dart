@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -11,6 +13,7 @@ import 'common.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'node_id.dart';
+import 'security.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
 import 'types/native_decode.dart';
@@ -290,12 +293,58 @@ class ClientConfig {
 
 typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
 
+const _connectRefusals = {
+  raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED,
+  raw.UA_STATUSCODE_BADCERTIFICATEINVALID,
+  raw.UA_STATUSCODE_BADCERTIFICATETIMEINVALID,
+  raw.UA_STATUSCODE_BADCERTIFICATEISSUERTIMEINVALID,
+  raw.UA_STATUSCODE_BADCERTIFICATEHOSTNAMEINVALID,
+  raw.UA_STATUSCODE_BADCERTIFICATEURIINVALID,
+  raw.UA_STATUSCODE_BADCERTIFICATEUSENOTALLOWED,
+  raw.UA_STATUSCODE_BADCERTIFICATEISSUERUSENOTALLOWED,
+  raw.UA_STATUSCODE_BADCERTIFICATEUNTRUSTED,
+  raw.UA_STATUSCODE_BADCERTIFICATEREVOCATIONUNKNOWN,
+  raw.UA_STATUSCODE_BADCERTIFICATEISSUERREVOCATIONUNKNOWN,
+  raw.UA_STATUSCODE_BADCERTIFICATEREVOKED,
+  raw.UA_STATUSCODE_BADCERTIFICATEISSUERREVOKED,
+  raw.UA_STATUSCODE_BADCERTIFICATECHAININCOMPLETE,
+  raw.UA_STATUSCODE_BADCERTIFICATEPOLICYCHECKFAILED,
+  raw.UA_STATUSCODE_BADSECURITYPOLICYREJECTED,
+  raw.UA_STATUSCODE_BADSECURITYMODEREJECTED,
+  raw.UA_STATUSCODE_BADIDENTITYTOKENINVALID,
+  raw.UA_STATUSCODE_BADIDENTITYTOKENREJECTED,
+  raw.UA_STATUSCODE_BADUSERACCESSDENIED,
+  raw.UA_STATUSCODE_BADAPPLICATIONSIGNATUREINVALID,
+  raw.UA_STATUSCODE_BADUSERSIGNATUREINVALID,
+};
+
+/// Whether a connect status is a refusal that retrying does not fix, which
+/// ends [Client.connect] with that status.
+bool isConnectRefusal(int status) => _connectRefusals.contains(status);
+
 // Installed on every client config: open62541 reads a private key password
 // from stdin when a key does not parse and no callback is set.
 int _refusePrivateKeyPassword(ffi.Pointer<raw.UA_ClientConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
     raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED;
 
 class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
+  /// A client, connected later with [connect].
+  ///
+  /// With [certificate] and [privateKey] (DER or PEM; an encrypted PEM key
+  /// with [privateKeyPassword]) the client can open signed and encrypted
+  /// channels. It then validates the server certificate against
+  /// [serverTrust]; without one it accepts every server certificate, as it
+  /// always did, and logs a warning. [applicationUri] is the ApplicationUri
+  /// the client announces; with a certificate it must be the certificate's
+  /// URI SubjectAltName (an [ArgumentError] otherwise), which servers check.
+  /// [securityMode] and [securityPolicy] restrict the endpoints the client
+  /// chooses from; among those it takes the one the server ranks highest.
+  ///
+  /// With [userCertificate] and [userPrivateKey] (an encrypted PEM key with
+  /// [userPrivateKeyPassword]) the session is activated with an X.509 user
+  /// identity token instead of [username]. The token is signed with the user
+  /// key under an encrypting SecurityPolicy, so the server must offer one;
+  /// servers refuse an X.509 token whose policy is None.
   Client({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -307,7 +356,58 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    String? privateKeyPassword,
+    String? applicationUri,
+    TrustList? serverTrust,
+    SecurityPolicy? securityPolicy,
+    Uint8List? userCertificate,
+    Uint8List? userPrivateKey,
+    String? userPrivateKeyPassword,
   }) {
+    if ((userCertificate == null) != (userPrivateKey == null)) {
+      throw ArgumentError('userCertificate and userPrivateKey go together');
+    }
+    if (userCertificate != null && username != null) {
+      throw ArgumentError.value(username, 'username', 'a session has one identity; userCertificate is given');
+    }
+    Certificate? userCertificateParsed;
+    Uint8List? userKeyDer;
+    if (userCertificate != null && userPrivateKey != null) {
+      userKeyDer = decryptPrivateKey(userPrivateKey, password: userPrivateKeyPassword);
+      userCertificateParsed = userCertificate.isNotEmpty && userCertificate[0] == 0x30
+          ? Certificate.fromDer(userCertificate)
+          : Certificate.fromPem(latin1.decode(userCertificate));
+      if (!checkKeyPair(userCertificateParsed, userKeyDer)) {
+        throw ArgumentError.value(
+          '${userPrivateKey.length} bytes',
+          'userPrivateKey',
+          'is not the key of userCertificate',
+        );
+      }
+    }
+    final hasCertificate = certificate != null && privateKey != null;
+    Uint8List? keyDer;
+    if (serverTrust != null && !hasCertificate) {
+      throw ArgumentError.value(serverTrust, 'serverTrust', 'needs a certificate and privateKey');
+    }
+    if (hasCertificate) {
+      keyDer = decryptPrivateKey(privateKey, password: privateKeyPassword);
+      final parsed = certificate.isNotEmpty && certificate[0] == 0x30
+          ? Certificate.fromDer(certificate)
+          : Certificate.fromPem(latin1.decode(certificate));
+      if (applicationUri != null && !parsed.hasApplicationUri(applicationUri)) {
+        throw ArgumentError.value(
+          applicationUri,
+          'applicationUri',
+          'is not a URI SubjectAltName of the client certificate, which names ${parsed.applicationUris}',
+        );
+      }
+      if (serverTrust != null) {
+        validateTrustList(serverTrust, 'serverTrust');
+      } else {
+        securityLog.warning('Client with a certificate and no serverTrust accepts every server certificate');
+      }
+    }
     final config = ua_calloc<raw.UA_ClientConfig>();
 
     if (logLevel != null) {
@@ -328,13 +428,17 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     if (securityMode != null) {
       config.ref.securityModeAsInt = securityMode.value;
     }
+    if (securityPolicy != null) {
+      config.ref.securityPolicyUri.set(securityPolicy.uri);
+    }
 
     config.ref.privateKeyPasswordCallback = ffi.Pointer.fromFunction(
       _refusePrivateKeyPassword,
       raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED,
     );
 
-    if (certificate != null && privateKey != null) {
+    if (certificate != null && keyDer != null) {
+      final privateKey = keyDer;
       final status = using((arena) {
         final rawCertificate = arena<raw.UA_ByteString>();
         rawCertificate.ref.data = arena<ffi.Uint8>(certificate.length);
@@ -356,18 +460,44 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
           0,
         );
       }, ua_calloc);
+      privateKey.fillRange(0, privateKey.length, 0);
+      final trustStatus = status == raw.UA_STATUSCODE_GOOD
+          ? installTrustList(
+              () => config.ref.certificateVerification,
+              (group) => config.ref.certificateVerification = group,
+              raw.UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTAPPLICATIONGROUP,
+              serverTrust ?? const TrustList.acceptAll(),
+              config.ref.logging,
+            )
+          : status;
+      if (trustStatus != raw.UA_STATUSCODE_GOOD) {
+        raw.UA_ClientConfig_clear(config);
+        ua_calloc.free(config);
+        throw UaStatusException(trustStatus);
+      }
+    }
+    if (userCertificateParsed != null && userKeyDer != null) {
+      final key = userKeyDer;
+      final der = userCertificateParsed.der;
+      // After setDefaultEncryption, which would replace the authentication
+      // policies this builds around the user key.
+      final status = using(
+        (arena) => raw.UA_ClientConfig_setAuthenticationCert(
+          config,
+          byteStringIn(arena, der).ref,
+          byteStringIn(arena, key).ref,
+        ),
+        ua_calloc,
+      );
+      key.fillRange(0, key.length, 0);
       if (status != raw.UA_STATUSCODE_GOOD) {
         raw.UA_ClientConfig_clear(config);
         ua_calloc.free(config);
         throw UaStatusException(status);
       }
-
-      // Accept all certificates
-      ffi.Pointer<raw.UA_CertificateGroup> certificateVerification = ua_calloc<raw.UA_CertificateGroup>();
-      certificateVerification.ref = config.ref.certificateVerification;
-      raw.UA_CertificateGroup_AcceptAll(certificateVerification);
-      config.ref.certificateVerification = certificateVerification.ref;
-      ua_calloc.free(certificateVerification);
+    }
+    if (applicationUri != null) {
+      config.ref.clientDescription.applicationUri.set(applicationUri);
     }
 
     if (username != null) {
@@ -403,6 +533,75 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
 
   ClientConfig get config => _clientConfig;
 
+  /// Server certificates this client refused, oldest first (at most 100).
+  /// Empty without a [TrustList] (`serverTrust`).
+  List<Certificate> get rejectedServerCertificates =>
+      rejectedCertificates(_clientConfig._clientConfig.ref.certificateVerification);
+
+  /// The endpoints the server at [url] offers (GetEndpoints over a
+  /// SecurityPolicy#None channel, which every server answers, also one that
+  /// serves None for discovery only). Runs on a throwaway client in another
+  /// isolate, because open62541 blocks for the whole exchange; [timeout]
+  /// bounds it. Throws a [UaStatusException] when the server cannot be
+  /// reached or refuses.
+  static Future<List<EndpointInfo>> getEndpoints(String url, {Duration timeout = const Duration(seconds: 10)}) =>
+      Isolate.run(() => _getEndpoints(url, timeout));
+
+  static List<EndpointInfo> _getEndpoints(String url, Duration timeout) {
+    final config = ua_calloc<raw.UA_ClientConfig>();
+    config.ref.logging = raw.UA_Log_Stdout_new(LogLevel.UA_LOGLEVEL_FATAL);
+    raw.UA_ClientConfig_setDefault(config);
+    config.ref.timeout = timeout.inMilliseconds;
+    // A preset endpoint skips open62541's endpoint selection, which would
+    // refuse a discovery-only server for want of a None endpoint.
+    config.ref.endpoint.endpointUrl.set(url);
+    config.ref.endpoint.securityModeAsInt = MessageSecurityMode.UA_MESSAGESECURITYMODE_NONE.value;
+    config.ref.endpoint.securityPolicyUri.set(SecurityPolicy.none.uri);
+    final client = raw.UA_Client_newWithConfig(config);
+    ua_calloc.free(config);
+    try {
+      return using((arena) {
+        final size = arena<ffi.Size>();
+        final endpoints = arena<ffi.Pointer<raw.UA_EndpointDescription>>();
+        final status = raw.UA_Client_getEndpoints(client, url.toNativeUtf8(allocator: arena).cast(), size, endpoints);
+        if (status != raw.UA_STATUSCODE_GOOD) {
+          throw UaStatusException(status);
+        }
+        try {
+          return [for (var i = 0; i < size.value; i++) _endpointInfo(endpoints.value[i])];
+        } finally {
+          raw.UA_Array_delete(endpoints.value.cast(), size.value, getTypeByIndex(raw.UA_TYPES_ENDPOINTDESCRIPTION));
+        }
+      }, ua_calloc);
+    } finally {
+      raw.UA_Client_delete(client);
+    }
+  }
+
+  static EndpointInfo _endpointInfo(raw.UA_EndpointDescription e) {
+    String text(raw.UA_String s) => s.length == 0 ? '' : s.value;
+    return EndpointInfo(
+      endpointUrl: text(e.endpointUrl),
+      securityMode: MessageSecurityMode.fromValue(e.securityModeAsInt),
+      securityPolicyUri: text(e.securityPolicyUri),
+      securityLevel: e.securityLevel,
+      serverCertificate: e.serverCertificate.length == 0
+          ? null
+          : leafCertificate(Uint8List.fromList(e.serverCertificate.asTypedList())),
+      applicationUri: text(e.server.applicationUri),
+      applicationName: text(e.server.applicationName.text),
+      productUri: text(e.server.productUri),
+      userTokenPolicies: [
+        for (var i = 0; i < e.userIdentityTokensSize; i++)
+          UserTokenPolicyInfo(
+            policyId: text(e.userIdentityTokens[i].policyId),
+            tokenType: UserTokenType.fromValue(e.userIdentityTokens[i].tokenTypeAsInt),
+            securityPolicyUri: text(e.userIdentityTokens[i].securityPolicyUri),
+          ),
+      ],
+    );
+  }
+
   @override
   Future<void> awaitConnect() async {
     if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
@@ -411,13 +610,36 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     await config.stateStream.firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
   }
 
+  /// Connects to [url] and completes once the session is activated.
+  ///
+  /// Fails with a [UaStatusException] when the connection is refused for a
+  /// reason a retry does not fix: a certificate either side does not trust
+  /// (`BadSecurityChecksFailed` from the server, which hides the precise
+  /// reason; `BadCertificateUntrusted`, `BadCertificateRevoked`, ... from
+  /// this client's own check), a refused identity (`BadUserAccessDenied`,
+  /// `BadIdentityTokenRejected`, ...) or a rejected security policy or mode.
+  /// Otherwise, e.g. while the server is unreachable, it keeps waiting; use
+  /// [keepConnected] to retry.
   @override
   Future<void> connect(String url) async {
+    if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
+      return;
+    }
+    // Listening before the connect is issued: the refusal arrives in a
+    // later runIterate, but nothing may slip past.
+    final outcome = config.stateStream.firstWhere(
+      (state) =>
+          state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED || isConnectRefusal(state.recoveryStatus),
+    );
     final instantReturn = _issueConnect(url);
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
+      outcome.ignore();
       throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
     }
-    await awaitConnect();
+    final reached = await outcome;
+    if (reached.sessionState != raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
+      throw UaStatusException(reached.recoveryStatus);
+    }
   }
 
   /// Issues a (re)connect to [url] without awaiting session activation.

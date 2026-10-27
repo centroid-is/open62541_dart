@@ -3,8 +3,10 @@ import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 import 'package:test/test.dart';
 
+import 'package:open62541/src/access_control.dart' show UaUserNameIdentityToken, UaX509IdentityToken;
 import 'package:open62541/src/common.dart';
 import 'package:open62541/src/extensions.dart';
+import 'package:open62541/src/security.dart' show UaKeyValuePair;
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 
 typedef _Write = void Function(Pointer<Void> p);
@@ -157,6 +159,20 @@ void main() {
     });
     // Not a UA_TYPES entry: a plain {UA_String, UA_ByteString}.
     expect(sizeOf<raw.UA_UsernamePasswordLogin>(), 2 * getTypeByIndex(raw.UA_TYPES_STRING).ref.memSize);
+    _expectLayout(raw.UA_TYPES_USERNAMEIDENTITYTOKEN, sizeOf<UaUserNameIdentityToken>(), {
+      'PolicyId': (p) => p.cast<UaUserNameIdentityToken>().ref.policyId.length = 1,
+      'UserName': (p) => p.cast<UaUserNameIdentityToken>().ref.userName.length = 1,
+      'Password': (p) => p.cast<UaUserNameIdentityToken>().ref.password.length = 1,
+      'EncryptionAlgorithm': (p) => p.cast<UaUserNameIdentityToken>().ref.encryptionAlgorithm.length = 1,
+    });
+    _expectLayout(raw.UA_TYPES_X509IDENTITYTOKEN, sizeOf<UaX509IdentityToken>(), {
+      'PolicyId': (p) => p.cast<UaX509IdentityToken>().ref.policyId.length = 1,
+      'CertificateData': (p) => p.cast<UaX509IdentityToken>().ref.certificateData.length = 1,
+    });
+    _expectLayout(raw.UA_TYPES_KEYVALUEPAIR, sizeOf<UaKeyValuePair>(), {
+      'Key': (p) => p.cast<UaKeyValuePair>().ref.key.namespaceIndex = 1,
+      'Value': (p) => p.cast<UaKeyValuePair>().ref.value.type = Pointer.fromAddress(1),
+    });
   });
   test("History types are reachable through UaTypes", () {
     for (final (type, name) in [

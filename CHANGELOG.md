@@ -66,6 +66,121 @@ changes that ship the same native library version.
   history. `readAttribute` now also reads `AccessLevel`, `UserAccessLevel` and
   `Historizing` (delivered as the value) instead of failing with
   `Unhandled attribute id`.
+- **X.509 user identity tokens.** `Client(userCertificate:,
+  userPrivateKey:, userPrivateKeyPassword:)` (and `ClientIsolate` /
+  `ClientIsolate.create`) activates the session with the user certificate
+  instead of a user name (`UA_ClientConfig_setAuthenticationCert`, after
+  the channel encryption is set up). A server with `ServerSecurity.userTrust`
+  and an `AccessControl` offering `UserTokenType.certificate` sees it as
+  `SessionActivation.userCertificate`, and a method handler as a
+  `CertificateSessionIdentity`; an untrusted user certificate is refused
+  with `BadIdentityTokenRejected` (open62541 hides the validation result)
+  and listed in `Server.rejectedUserCertificates`. On a None endpoint of a
+  secured server the token is still signed under the server's best
+  SecurityPolicy, so open62541 accepts it; the activation's `securityMode`
+  is None, for an `AccessControl` to refuse.
+- **`Client.connect` and `ClientIsolate.connect` fail on a refusal instead
+  of hanging.** A certificate either side refuses (`BadSecurityChecksFailed`
+  from the server, `BadCertificateUntrusted`, `BadCertificateRevoked`, ...
+  from the client's own check), a refused identity (`BadUserAccessDenied`,
+  `BadIdentityTokenRejected`, ...) or a rejected security policy or mode
+  completes the connect with a `UaStatusException` carrying that status.
+  Previously the future never completed (and `ClientIsolate.connect` ran
+  into its timeout). A server that cannot be reached is still waited for,
+  and `keepConnected` still retries a refused connect.
+- **`Server(accessControl:)`: who may open a session and what it may do,
+  decided in Dart.** `AccessControl` mirrors open62541's access-control
+  plugin: `userTokenTypes` are the identity tokens every endpoint offers
+  (exactly one policy per type), `activateSession(SessionActivation)`
+  accepts a session by returning its context or refuses it by throwing a
+  `UaStatusException`, `closeSession` sees it end (client close, timeout,
+  `Server.closeSession`, server deletion), and the per-node hooks
+  `userAccessLevel`, `userRightsMask`, `userExecutable`,
+  `userExecutableOnObject` (gates Call), `allowBrowse`, `allowAddNode`,
+  `allowAddReference`, `allowDeleteNode`, `allowDeleteReference`,
+  `allowTransferSubscription` and `allowHistoryUpdate` default to
+  open62541's own default plugin (allow). `SessionActivation` carries the
+  token (user name and password, zeroed after the call, or the validated
+  user certificate), the client's channel certificate and ApplicationUri,
+  the endpoint's mode and policy, the previous context on re-activation and
+  the client's remote address. The hooks run synchronously inside
+  `runIterate`; a session context is an int handle and a node is known by
+  its access tag, so a decision is a map lookup: `accessTag:` on
+  `addVariableNode`, `addDataSourceVariableNode`, `addMethodNode` and
+  `addObjectNode`, and `Server.setAccessTag` for an existing node, store an
+  int as the node's open62541 context, which the hooks read as
+  `NodeRef.tag` (the NodeId is decoded only when asked for). A throwing
+  hook denies. `DefaultAccessControl(allowAnonymous:, users:,
+  allowCertificate:)` is `UA_AccessControl_default` in Dart.
+  `MethodSessionInfo.context` hands a method handler the calling session's
+  context (and the identity comes from the activation instead of a scan of
+  the session diagnostics). `Server.closeSession(sessionId)` ends a session
+  at once. User name logins need `ServerSecurity`, certificate logins
+  `ServerSecurity.userTrust`; the constructor refuses otherwise.
+- **Client trust lists and endpoint selection.** `Client(serverTrust:)`
+  validates the server certificate against a `TrustList` (trusted
+  certificates, issuers and their CRLs, in open62541's in-memory store)
+  instead of accepting every server: an untrusted server fails the connect
+  with `BadCertificateUntrusted` (`BadCertificateRevoked` once a CRL lists
+  it), and `Client.rejectedServerCertificates` lists what was refused. A
+  client with a certificate and no `serverTrust` still accepts every server,
+  as before, and now logs a warning. `privateKeyPassword` decrypts an
+  encrypted PEM key; `applicationUri` sets the announced ApplicationUri and,
+  with a certificate, must be its URI SubjectAltName (`ArgumentError`
+  otherwise, where servers answer `BadCertificateUriInvalid`);
+  `securityPolicy` pins the endpoint's SecurityPolicy (otherwise the client
+  takes the endpoint the server ranks highest, Aes256Sha256RsaPss for an
+  open62541 server). `ClientIsolate` and `ClientIsolate.create` take the same
+  parameters and have `rejectedServerCertificates`. `Client.getEndpoints(url)`
+  lists a server's endpoints (`EndpointInfo`: URL, policy, mode, security
+  level, server certificate, application, user token policies) over a None
+  channel, also from a server that serves None for discovery only; it runs
+  in a short-lived isolate because open62541 blocks for the exchange.
+- **`Server(security: ServerSecurity(...))`: encrypted endpoints and client
+  certificate trust.** A secured server is built from open62541's basic
+  config instead of the minimal one: the SecurityPolicy#None policy answers
+  GetEndpoints/FindServers only (`securityPolicyNoneDiscoveryOnly`) unless
+  `allowNone`, and the requested `policies` (Basic256Sha256,
+  Aes128Sha256RsaOaep, Aes256Sha256RsaPss by default) each get an endpoint
+  per `modes` entry (Sign and SignAndEncrypt by default). Client application
+  certificates are validated against `applicationTrust` and X.509 user
+  tokens against `userTrust`, both in open62541's in-memory store; an empty
+  list trusts nobody, and accepting everything takes an explicit
+  `TrustList.acceptAll()` (logged as a warning). Without `userTrust` no
+  certificate login is offered. `applicationUri` is required with security
+  and must be a URI SubjectAltName of the certificate: a mismatch throws an
+  `ArgumentError` naming both (open62541 only logs it and clients then
+  refuse the server). The private key may be an encrypted PEM key with
+  `privateKeyPassword`; it is decrypted in Dart and checked against the
+  certificate, so a bad key fails the constructor instead of reaching
+  open62541. Sessions stay anonymous until access control lands.
+  `allowUnencryptedPassword` maps to `allowNonePolicyPassword`.
+  `Server.rejectedApplicationCertificates` / `rejectedUserCertificates` list
+  what the trust lists refused (the last 100). A client sees an untrusted,
+  revoked or chain-incomplete certificate as `BadSecurityChecksFailed`
+  (open62541 hides the precise reason from the peer), an expired one as
+  `BadCertificateTimeInvalid`, a CA certificate used as a leaf as
+  `BadCertificateUseNotAllowed` and an ApplicationUri that is not in its
+  certificate as `BadCertificateUriInvalid`. `Server()` without `security` is
+  unchanged.
+- **Certificates.** `Certificate` holds an X.509 certificate as DER
+  (`Certificate.fromDer` / `fromPem`, `toPem`) and is parsed on construction,
+  so a malformed entry can no longer make open62541's in-memory trust store
+  drop every entry after it. It exposes `sha1Thumbprint` (the OPC UA
+  thumbprint), `sha256Thumbprint`, `subject`, `notAfter`,
+  `applicationUris` (its `URI:` SubjectAltNames) and `hasApplicationUri`. `createSelfSignedCertificate(applicationUri:, subject:,
+  dnsNames:, ipAddresses:, keyBits:, validity:)` makes an application
+  instance certificate (RSA, CA:FALSE, serverAuth + clientAuth) with
+  open62541's `UA_CreateCertificate`; its serial number is always 1, which
+  open62541 hard-codes, so give each application a unique subject.
+  `decryptPrivateKey` turns a (possibly encrypted PEM) key into DER and
+  `checkKeyPair` tells whether a key belongs to a certificate. `TrustList`
+  (trusted certificates, issuers and their CRLs, or the explicit
+  `TrustList.acceptAll()`), `SecurityPolicy` (with the URIs and the `secure`
+  set) and `UserTokenType` are the vocabulary the server and client security
+  options build on. Test PKI fixtures (a CA, CA-issued leaves, CRLs, an
+  expired leaf, a CA used as a leaf, an encrypted key) are under
+  `test/fixtures/pki` with the openssl script that makes them.
 - **Bindings for history and security.** The FFI bindings now cover what
   HistoryRead and server/client security build on, so the feature work that
   follows needs no regeneration: the `UA_HistoryReadRequest` /

@@ -117,10 +117,17 @@ void main() {
         logLevel: LogLevel.UA_LOGLEVEL_FATAL,
       );
       try {
-        // open62541 drops the password policy on a None channel without it.
+        // open62541 drops the password policy on a None channel without it,
+        // so no endpoint suits the client.
         await expectLater(
           client.connect(server.url).timeout(const Duration(seconds: 3)),
-          throwsA(isA<TimeoutException>()),
+          throwsA(
+            isA<UaStatusException>().having(
+              (e) => e.statusCode,
+              'statusCode',
+              raw.UA_STATUSCODE_BADIDENTITYTOKENREJECTED,
+            ),
+          ),
         );
         expect((await client.state).sessionState, isNot(raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED));
       } finally {

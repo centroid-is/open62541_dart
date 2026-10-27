@@ -8,6 +8,7 @@ import 'client_api.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'node_id.dart';
+import 'security.dart';
 import 'third_party/open62541.g.dart' show UA_STATUSCODE_BADTIMEOUT;
 import 'types/errors.dart';
 
@@ -191,6 +192,10 @@ class GetStateMessage extends IsolateMessage {
   const GetStateMessage(super.requestId);
 }
 
+class RejectedServerCertificatesMessage extends IsolateMessage {
+  const RejectedServerCertificatesMessage(super.requestId);
+}
+
 class MonitorCancelMessage extends IsolateMessage {
   const MonitorCancelMessage(super.requestId);
 }
@@ -280,6 +285,13 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    String? privateKeyPassword,
+    String? applicationUri,
+    TrustList? serverTrust,
+    SecurityPolicy? securityPolicy,
+    Uint8List? userCertificate,
+    Uint8List? userPrivateKey,
+    String? userPrivateKeyPassword,
   }) {
     _initIsolate(
       secureChannelLifeTime: secureChannelLifeTime,
@@ -292,6 +304,13 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
       allowUnencryptedPassword: allowUnencryptedPassword,
+      privateKeyPassword: privateKeyPassword,
+      applicationUri: applicationUri,
+      serverTrust: serverTrust,
+      securityPolicy: securityPolicy,
+      userCertificate: userCertificate,
+      userPrivateKey: userPrivateKey,
+      userPrivateKeyPassword: userPrivateKeyPassword,
     );
   }
 
@@ -307,6 +326,13 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    String? privateKeyPassword,
+    String? applicationUri,
+    TrustList? serverTrust,
+    SecurityPolicy? securityPolicy,
+    Uint8List? userCertificate,
+    Uint8List? userPrivateKey,
+    String? userPrivateKeyPassword,
     Duration iterateInterval = const Duration(milliseconds: 10),
   }) async {
     final isolate = ClientIsolate._(
@@ -320,6 +346,13 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
       allowUnencryptedPassword: allowUnencryptedPassword,
+      privateKeyPassword: privateKeyPassword,
+      applicationUri: applicationUri,
+      serverTrust: serverTrust,
+      securityPolicy: securityPolicy,
+      userCertificate: userCertificate,
+      userPrivateKey: userPrivateKey,
+      userPrivateKeyPassword: userPrivateKeyPassword,
     );
 
     await isolate._initCompleter.future;
@@ -346,6 +379,13 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    String? privateKeyPassword,
+    String? applicationUri,
+    TrustList? serverTrust,
+    SecurityPolicy? securityPolicy,
+    Uint8List? userCertificate,
+    Uint8List? userPrivateKey,
+    String? userPrivateKeyPassword,
   }) async {
     try {
       _receivePort = ReceivePort();
@@ -375,6 +415,13 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
           logLevel: logLevel,
           connectivityCheckInterval: connectivityCheckInterval,
           allowUnencryptedPassword: allowUnencryptedPassword,
+          privateKeyPassword: privateKeyPassword,
+          applicationUri: applicationUri,
+          serverTrust: serverTrust,
+          securityPolicy: securityPolicy,
+          userCertificate: userCertificate,
+          userPrivateKey: userPrivateKey,
+          userPrivateKeyPassword: userPrivateKeyPassword,
           sendPort: _receivePort.sendPort,
         ),
         // A worker isolate must NOT die on an uncaught error. In particular, a
@@ -435,7 +482,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
   ///
   /// [timeout] bounds the attempt (default 30 s; the underlying open62541
   /// connect otherwise retries forever): on expiry the connect attempt is
-  /// abandoned and a [UaStatusException] with `Bad_Timeout` is thrown.
+  /// abandoned and a [UaStatusException] with `Bad_Timeout` is thrown. A
+  /// refused certificate, identity or security policy fails at once with
+  /// its status, as for [Client.connect].
   @override
   Future<void> connect(String url, {Duration? timeout = const Duration(seconds: 30)}) async {
     if (_isClosed) throw const ClientIsolateClosedException();
@@ -844,6 +893,24 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     return controller.stream;
   }
 
+  /// Server certificates the worker's client refused (see
+  /// [Client.rejectedServerCertificates]).
+  Future<List<Certificate>> get rejectedServerCertificates async {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final completer = Completer<List<Certificate>>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(RejectedServerCertificatesMessage(id));
+
+    try {
+      return await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
   /// Get the current client state
   Future<ClientState> get state async {
     if (_isClosed) throw const ClientIsolateClosedException();
@@ -1106,6 +1173,13 @@ class _IsolateData {
   final LogLevel? logLevel;
   final Duration connectivityCheckInterval;
   final bool allowUnencryptedPassword;
+  final String? privateKeyPassword;
+  final String? applicationUri;
+  final TrustList? serverTrust;
+  final SecurityPolicy? securityPolicy;
+  final Uint8List? userCertificate;
+  final Uint8List? userPrivateKey;
+  final String? userPrivateKeyPassword;
   final SendPort sendPort;
 
   _IsolateData({
@@ -1119,6 +1193,13 @@ class _IsolateData {
     this.logLevel,
     required this.connectivityCheckInterval,
     required this.allowUnencryptedPassword,
+    this.privateKeyPassword,
+    this.applicationUri,
+    this.serverTrust,
+    this.securityPolicy,
+    this.userCertificate,
+    this.userPrivateKey,
+    this.userPrivateKeyPassword,
     required this.sendPort,
   });
 }
@@ -1152,6 +1233,13 @@ void _isolateEntryPoint(_IsolateData data) {
       logLevel: data.logLevel,
       connectivityCheckInterval: data.connectivityCheckInterval,
       allowUnencryptedPassword: data.allowUnencryptedPassword,
+      privateKeyPassword: data.privateKeyPassword,
+      applicationUri: data.applicationUri,
+      serverTrust: data.serverTrust,
+      securityPolicy: data.securityPolicy,
+      userCertificate: data.userCertificate,
+      userPrivateKey: data.userPrivateKey,
+      userPrivateKeyPassword: data.userPrivateKeyPassword,
     );
   } catch (e) {
     receivePort.close();
@@ -1307,6 +1395,8 @@ void _isolateEntryPoint(_IsolateData data) {
           resultMask: message.resultMask,
         );
         sendPort.send(IsolateResponse.success(message.requestId, result));
+      } else if (message is RejectedServerCertificatesMessage) {
+        sendPort.send(IsolateResponse.success(message.requestId, client.rejectedServerCertificates));
       } else if (message is GetStateMessage) {
         final result = client.state;
         sendPort.send(IsolateResponse.success(message.requestId, result));
