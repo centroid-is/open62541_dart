@@ -77,6 +77,40 @@ RawHistoryDetails readRawDetails({
   return (type: getType(UaTypes.readRawModifiedDetails), data: details.cast());
 }
 
+RawHistoryDetails readAtTimeDetails(List<int> times, {bool useSimpleBounds = true}) {
+  final details = ua_calloc<raw.UA_ReadAtTimeDetails>();
+  final reqTimes = ua_calloc<ffi.Int64>(times.length);
+  reqTimes.asTypedList(times.length).setAll(0, times);
+  details.ref
+    ..reqTimes = reqTimes
+    ..reqTimesSize = times.length
+    ..useSimpleBounds = useSimpleBounds;
+  return (type: getType(UaTypes.readAtTimeDetails), data: details.cast());
+}
+
+RawHistoryDetails readProcessedDetails({
+  int startTime = 0,
+  int endTime = 0,
+  double processingInterval = 0,
+  List<NodeId> aggregateTypes = const [],
+}) {
+  final details = ua_calloc<raw.UA_ReadProcessedDetails>();
+  details.ref
+    ..startTime = startTime
+    ..endTime = endTime
+    ..processingInterval = processingInterval;
+  if (aggregateTypes.isNotEmpty) {
+    final types = ua_calloc<raw.UA_NodeId>(aggregateTypes.length);
+    for (var i = 0; i < aggregateTypes.length; i++) {
+      types[i] = aggregateTypes[i].toRaw(allocator: ua_calloc);
+    }
+    details.ref
+      ..aggregateType = types
+      ..aggregateTypeSize = aggregateTypes.length;
+  }
+  return (type: getType(UaTypes.readProcessedDetails), data: details.cast());
+}
+
 /// A raw open62541 client that sends HistoryRead through
 /// `UA_Client_AsyncService` (the library's `Client` has no HistoryRead of its
 /// own here). Pumped by a timer until [delete].
@@ -131,6 +165,7 @@ class RawHistoryClient {
     RawHistoryDetails? details,
     raw.UA_TimestampsToReturn timestampsToReturn = raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH,
     bool releaseContinuationPoints = false,
+    String? indexRange,
   }) {
     final d = details ?? readRawDetails();
     final request = raw.UA_HistoryReadRequest_new();
@@ -146,6 +181,9 @@ class RawHistoryClient {
       for (var i = 0; i < nodes.length; i++) {
         // Allocated with ua_calloc (libc), freed by UA_HistoryReadRequest_delete.
         ids[i].nodeId = nodes[i].nodeId.toRaw(allocator: ua_calloc);
+        if (indexRange != null) {
+          ids[i].indexRange.set(indexRange, allocator: ua_calloc);
+        }
         final cp = nodes[i].continuationPoint;
         if (cp != null && cp.isNotEmpty) {
           final bytes = ua_calloc<ffi.Uint8>(cp.length);
@@ -202,11 +240,13 @@ class RawHistoryClient {
     RawHistoryDetails? details,
     raw.UA_TimestampsToReturn timestampsToReturn = raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH,
     bool releaseContinuationPoints = false,
+    String? indexRange,
   }) => send(
     nodes,
     details: details,
     timestampsToReturn: timestampsToReturn,
     releaseContinuationPoints: releaseContinuationPoints,
+    indexRange: indexRange,
   ).response;
 
   /// Sends the Cancel service for the request [requestHandle]; completes with

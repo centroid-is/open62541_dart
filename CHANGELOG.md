@@ -6,6 +6,25 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **`Server.setHistoryBackend`: HistoryRead served from Dart.** Implement
+  `HistoryBackend.readRaw` (and, optionally, `readProcessed` / `readAtTime`,
+  which otherwise answer `Bad_HistoryOperationUnsupported` per node) and
+  install it; clients then read the history of the nodes made historizing
+  with `historizing:` / `setHistorizing`. The backend gets one call per
+  request with the nodes copied into Dart (`HistoryReadRawRequest`: interval,
+  `numValuesPerNode` capped by `maxReturnDataValues`, bounds,
+  `timestampsToReturn`, IndexRange, its own continuation point and the
+  calling session) and answers with a `Future` of `HistoryReadResult`s
+  (`DataValue`s, continuation point, status). The response is parked
+  natively until then (the async HistoryRead patch), bounded by
+  `asyncOperationTimeout` (`Bad_Timeout`); a read in flight at `delete` is
+  dropped. The server answers itself: `Bad_TimestampsToReturnInvalid` for
+  Neither, `Bad_NodeIdUnknown`, `Bad_HistoryOperationInvalid` for a node not
+  made historizing, and `releaseContinuationPoints` (handed to
+  `HistoryBackend.releaseContinuationPoints`, answered at once). The HistoryRead
+  access bit is left to access control, as in open62541. A
+  `UaStatusException` from the backend answers every node with its code,
+  any other error `Bad_InternalError`. `TimestampsToReturn` is exported.
 - **Native: HistoryRead can complete asynchronously** (`hook/async_history_read.patch`).
   open62541 1.5.9 answers a HistoryRead as soon as the history database's
   read callback returns. The build now patches the AsyncManager with a
