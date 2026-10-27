@@ -6,6 +6,23 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **History node bookkeeping.** `addVariableNode` and
+  `addDataSourceVariableNode` take `historizing:` (the node's Historizing
+  attribute, `false` by default). `Server.setHistorizing` /
+  `Server.readHistorizing` and `Server.setAccessLevel` /
+  `Server.readAccessLevel` change and read the attributes of an existing
+  variable (for example to add `AccessLevelMask.historyRead`), throwing a
+  `UaStatusException` with open62541's status. `AccessLevelMask` gained
+  `fromValue`, `==` and `hashCode`.
+  `Server.setHistoryServerCapabilities(...)` publishes what the server
+  supports of Historical Access in `Server/ServerCapabilities/HistoryServerCapabilities`
+  (`AccessHistoryDataCapability`, `MaxReturnDataValues`, the event, insert,
+  replace, update and delete flags) and `MaxHistoryContinuationPoints`.
+  open62541 fills those nodes from its config while it creates the server, so
+  the call writes the nodes; a server that never calls it still advertises no
+  history. `readAttribute` now also reads `AccessLevel`, `UserAccessLevel` and
+  `Historizing` (delivered as the value) instead of failing with
+  `Unhandled attribute id`.
 - **Bindings for history and security.** The FFI bindings now cover what
   HistoryRead and server/client security build on, so the feature work that
   follows needs no regeneration: the `UA_HistoryReadRequest` /

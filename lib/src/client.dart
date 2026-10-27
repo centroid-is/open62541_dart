@@ -1030,8 +1030,11 @@ class Client implements ClientApi, DataValueMonitoringApi {
                   reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
                 case AttributeId.UA_ATTRIBUTEID_VALUERANK:
                 case AttributeId.UA_ATTRIBUTEID_ARRAYDIMENSIONS:
-                  // An Int32 scalar / a UInt32 array, delivered as the value
-                  // (read one of them per call: both land in `value`).
+                case AttributeId.UA_ATTRIBUTEID_ACCESSLEVEL:
+                case AttributeId.UA_ATTRIBUTEID_USERACCESSLEVEL:
+                case AttributeId.UA_ATTRIBUTEID_HISTORIZING:
+                  // A scalar or array delivered as the value (read one of
+                  // them per call: they all land in `value`).
                   reference.value = (await _variantToValueAutoSchema(value!, null)).value;
                 case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
                   final temporary = OpcUaDynamicValueSerializer.fromDataTypeDefinition(

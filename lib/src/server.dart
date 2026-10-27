@@ -640,6 +640,8 @@ class Server {
   /// * [parentNodeId] - The parent node in the address space (defaults to Objects folder)
   /// * [parentReferenceNodeId] - The reference type to the parent (defaults to Organizes)
   /// * [basedatavariableType] - The base type for the variable (defaults to BaseDataVariableType)
+  /// * [historizing] - The node's Historizing attribute: whether the server
+  ///   collects history for it (see [setHistorizing])
   ///
   /// Throws an exception if:
   /// * The value's name is not provided (required for browse name)
@@ -663,6 +665,7 @@ class Server {
     NodeId? parentReferenceNodeId,
     NodeId? baseDataVariableType,
     NodeId? typeId,
+    bool historizing = false,
   }) {
     final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
@@ -706,6 +709,7 @@ class Server {
       // path already decodes the encoded body via variantToValue/deserialize.
       attr.value = variant.ref;
       attr.accessLevel = accessLevel.value;
+      attr.historizing = historizing;
       attr.dataType = typeId!.toRaw(allocator: arena);
 
       if (value.name == null) {
@@ -967,6 +971,8 @@ class Server {
   /// * [typeId] sets the node's DataType attribute (and marks it scalar) so
   ///   browsing clients see the correct type; when omitted the node keeps
   ///   open62541's permissive defaults.
+  /// * [historizing] sets the node's Historizing attribute (see
+  ///   [setHistorizing]).
   ///
   /// The value marshalling reuses `valueToVariant`/`variantToValue`, so scalar
   /// numeric/bool/string types work directly. Custom **structured** types are
@@ -994,6 +1000,7 @@ class Server {
     NodeId? baseDataVariableType,
     NodeId? typeId,
     AccessLevelMask? accessLevel,
+    bool historizing = false,
   }) {
     if ((onRead == null) == (onReadValue == null)) {
       throw ArgumentError('Provide exactly one of onRead / onReadValue');
@@ -1013,6 +1020,7 @@ class Server {
     final addStatus = using((arena) {
       final attr = _defaultVariableAttributes();
       attr.accessLevel = effectiveAccess.value;
+      attr.historizing = historizing;
       if (typeId != null) {
         attr.dataType = typeId.toRaw(allocator: arena);
         attr.valueRank = raw.UA_VALUERANK_SCALAR;
@@ -1937,6 +1945,134 @@ class Server {
       deleteReference(object, NodeId.hasTypeDefinition, type);
     }
     addReference(object, NodeId.hasTypeDefinition, newType);
+  }
+
+  // ---- History node bookkeeping ---------------------------------------------
+
+  /// Sets the Historizing attribute of the variable [nodeId]: whether the
+  /// server collects history for it. Clients read it to find the variables
+  /// whose history they can request with HistoryRead. It is only the
+  /// advertisement; the HistoryRead bit of the node's access level
+  /// ([setAccessLevel]) says whether a client may read that history.
+  ///
+  /// Throws a [UaStatusException] with open62541's status, e.g.
+  /// `Bad_NodeIdUnknown` for a missing node or `Bad_AttributeIdInvalid` for a
+  /// node that is not a variable.
+  void setHistorizing(NodeId nodeId, bool historizing) {
+    final status = using(
+      (arena) => raw.UA_Server_writeHistorizing(_server, nodeId.toRaw(allocator: arena), historizing),
+      ua_calloc,
+    );
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
+  }
+
+  /// The Historizing attribute of the variable [nodeId] (see
+  /// [setHistorizing]). Throws a [UaStatusException] like [setHistorizing].
+  bool readHistorizing(NodeId nodeId) {
+    return using((arena) {
+      final out = arena<ffi.Bool>();
+      final status = raw.UA_Server_readHistorizing(_server, nodeId.toRaw(allocator: arena), out);
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        throw UaStatusException(status);
+      }
+      return out.value;
+    }, ua_calloc);
+  }
+
+  /// Replaces the AccessLevel attribute of the variable [nodeId], e.g. to add
+  /// [AccessLevelMask.historyRead] to a node created without it. The access
+  /// level a client sees for its own session (UserAccessLevel) is derived
+  /// from it.
+  ///
+  /// Throws a [UaStatusException] with open62541's status, e.g.
+  /// `Bad_NodeIdUnknown` for a missing node.
+  void setAccessLevel(NodeId nodeId, AccessLevelMask accessLevel) {
+    final status = using(
+      (arena) => raw.UA_Server_writeAccessLevel(_server, nodeId.toRaw(allocator: arena), accessLevel.value),
+      ua_calloc,
+    );
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
+  }
+
+  /// The AccessLevel attribute of the variable [nodeId]. Throws a
+  /// [UaStatusException] like [setAccessLevel].
+  AccessLevelMask readAccessLevel(NodeId nodeId) {
+    return using((arena) {
+      final out = arena<ffi.Uint8>();
+      final status = raw.UA_Server_readAccessLevel(_server, nodeId.toRaw(allocator: arena), out);
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        throw UaStatusException(status);
+      }
+      return AccessLevelMask.fromValue(out.value);
+    }, ua_calloc);
+  }
+
+  /// Publishes what this server supports of Historical Access (Part 11) in
+  /// `Server/ServerCapabilities/HistoryServerCapabilities` (`i=11192`), the
+  /// properties a client checks before sending HistoryRead or HistoryUpdate,
+  /// and `ServerCapabilities/MaxHistoryContinuationPoints` (`i=2737`).
+  ///
+  /// open62541 fills these nodes from its config while it creates the server
+  /// (every flag `false`, every limit `0`), before a [Server] can change the
+  /// config, so this writes the nodes themselves. Every property is written,
+  /// so a parameter left out goes back to its default: [accessHistoryData]
+  /// `true`, every other flag `false`, every limit `0` (no limit).
+  ///
+  /// * [accessHistoryData] - `AccessHistoryDataCapability` (`i=11193`).
+  /// * [maxReturnDataValues] - `MaxReturnDataValues` (`i=11273`), the most
+  ///   values the server returns for one node per HistoryRead. Advertised
+  ///   only; open62541 does not enforce it.
+  /// * [maxHistoryContinuationPoints] - `MaxHistoryContinuationPoints`
+  ///   (`i=2737`, a UInt16), the history continuation points a session may
+  ///   hold at once.
+  /// * [accessHistoryEvents], [maxReturnEventValues] and the update and
+  ///   delete flags - the remaining properties of the same name.
+  ///
+  /// Throws a [UaStatusException] when open62541 refuses a write.
+  void setHistoryServerCapabilities({
+    bool accessHistoryData = true,
+    int maxReturnDataValues = 0,
+    int maxHistoryContinuationPoints = 0,
+    bool accessHistoryEvents = false,
+    int maxReturnEventValues = 0,
+    bool insertData = false,
+    bool replaceData = false,
+    bool updateData = false,
+    bool deleteRaw = false,
+    bool deleteAtTime = false,
+    bool insertAnnotation = false,
+    bool insertEvent = false,
+    bool replaceEvent = false,
+    bool updateEvent = false,
+    bool deleteEvent = false,
+  }) {
+    void flag(int id, bool value) =>
+        write(NodeId.fromNumeric(0, id), DynamicValue(value: value, typeId: NodeId.boolean));
+    void limit(int id, int value) =>
+        write(NodeId.fromNumeric(0, id), DynamicValue(value: value, typeId: NodeId.uint32));
+
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_ACCESSHISTORYDATACAPABILITY, accessHistoryData);
+    limit(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_MAXRETURNDATAVALUES, maxReturnDataValues);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_ACCESSHISTORYEVENTSCAPABILITY, accessHistoryEvents);
+    limit(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_MAXRETURNEVENTVALUES, maxReturnEventValues);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_INSERTDATACAPABILITY, insertData);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_REPLACEDATACAPABILITY, replaceData);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_UPDATEDATACAPABILITY, updateData);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_DELETERAWCAPABILITY, deleteRaw);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_DELETEATTIMECAPABILITY, deleteAtTime);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_INSERTANNOTATIONCAPABILITY, insertAnnotation);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_INSERTEVENTCAPABILITY, insertEvent);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_REPLACEEVENTCAPABILITY, replaceEvent);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_UPDATEEVENTCAPABILITY, updateEvent);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_DELETEEVENTCAPABILITY, deleteEvent);
+    write(
+      NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERCAPABILITIES_MAXHISTORYCONTINUATIONPOINTS),
+      DynamicValue(value: maxHistoryContinuationPoints, typeId: NodeId.uint16),
+    );
   }
 
   // ---- Redundancy (setRedundancy) ------------------------------------------
