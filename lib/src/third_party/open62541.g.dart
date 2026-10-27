@@ -20,6 +20,84 @@
 import 'dart:ffi' as ffi;
 import '' as self;
 
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_ServerConfig>,
+    ffi.Bool,
+    ffi.Pointer<UA_String>,
+    ffi.Size,
+    ffi.Pointer<UA_UsernamePasswordLogin>,
+  )
+>()
+external int UA_AccessControl_default(
+  ffi.Pointer<UA_ServerConfig> config,
+  bool allowAnonymous,
+  ffi.Pointer<UA_String> userTokenPolicyUri,
+  int usernamePasswordLoginSize,
+  ffi.Pointer<UA_UsernamePasswordLogin> usernamePasswordLogin,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_ServerConfig>,
+    ffi.Bool,
+    ffi.Pointer<UA_String>,
+    ffi.Size,
+    ffi.Pointer<UA_UsernamePasswordLogin>,
+    ffi.Pointer<
+      ffi.NativeFunction<
+        UA_StatusCode Function(
+          ffi.Pointer<UA_String> userName,
+          ffi.Pointer<UA_ByteString> password,
+          ffi.Size usernamePasswordLoginSize,
+          ffi.Pointer<UA_UsernamePasswordLogin> usernamePasswordLogin,
+          ffi.Pointer<ffi.Pointer<ffi.Void>> sessionContext,
+          ffi.Pointer<ffi.Void> loginContext,
+        )
+      >
+    >,
+    ffi.Pointer<ffi.Void>,
+  )
+>()
+external int UA_AccessControl_defaultWithLoginCallback(
+  ffi.Pointer<UA_ServerConfig> config,
+  bool allowAnonymous,
+  ffi.Pointer<UA_String> userTokenPolicyUri,
+  int usernamePasswordLoginSize,
+  ffi.Pointer<UA_UsernamePasswordLogin> usernamePasswordLogin,
+  ffi.Pointer<
+    ffi.NativeFunction<
+      UA_StatusCode Function(
+        ffi.Pointer<UA_String> userName,
+        ffi.Pointer<UA_ByteString> password,
+        ffi.Size usernamePasswordLoginSize,
+        ffi.Pointer<UA_UsernamePasswordLogin> usernamePasswordLogin,
+        ffi.Pointer<ffi.Pointer<ffi.Void>> sessionContext,
+        ffi.Pointer<ffi.Void> loginContext,
+      )
+    >
+  >
+  loginCallback,
+  ffi.Pointer<ffi.Void> loginContext,
+);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Size, ffi.Pointer<UA_DataType>)>()
+external void UA_Array_delete(ffi.Pointer<ffi.Void> p, int size, ffi.Pointer<UA_DataType> type);
+
+/// .. _array-handling:
+///
+/// Array handling
+/// --------------
+/// In OPC UA, arrays can have a length of zero or more with the usual meaning.
+/// In addition, arrays can be undefined. Then, they don't even have a length. In
+/// the binary encoding, this is indicated by an array of length -1.
+///
+/// In open62541 however, we use ``size_t`` for array lengths. An undefined array
+/// has length 0 and the data pointer is ``NULL``. An array of length 0 also has
+/// length 0 but a data pointer ``UA_EMPTY_ARRAY_SENTINEL``.
+@ffi.Native<ffi.Pointer<ffi.Void> Function(ffi.Size, ffi.Pointer<UA_DataType>)>()
+external ffi.Pointer<ffi.Void> UA_Array_new(int size, ffi.Pointer<UA_DataType> type);
+
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_BrowseDescription>)>()
 external void UA_BrowseDescription_init(ffi.Pointer<UA_BrowseDescription> p);
 
@@ -41,9 +119,79 @@ external void UA_BrowseRequest_init(ffi.Pointer<UA_BrowseRequest> p);
 @ffi.Native<ffi.Pointer<UA_BrowseRequest> Function()>()
 external ffi.Pointer<UA_BrowseRequest> UA_BrowseRequest_new();
 
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_ByteString>)>()
+external void UA_ByteString_clear(ffi.Pointer<UA_ByteString> p);
+
 /// amalgamated original file "/src/plugins/include/open62541/plugin/certificategroup_default.h"
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_CertificateGroup>)>()
 external void UA_CertificateGroup_AcceptAll(ffi.Pointer<UA_CertificateGroup> certGroup);
+
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_CertificateGroup>,
+    ffi.Pointer<UA_NodeId>,
+    ffi.Pointer<UA_TrustListDataType>,
+    ffi.Pointer<UA_Logger>,
+    ffi.Pointer<UA_KeyValueMap>,
+  )
+>()
+external int UA_CertificateGroup_Memorystore(
+  ffi.Pointer<UA_CertificateGroup> certGroup,
+  ffi.Pointer<UA_NodeId> certificateGroupId,
+  ffi.Pointer<UA_TrustListDataType> trustList,
+  ffi.Pointer<UA_Logger> logger,
+  ffi.Pointer<UA_KeyValueMap> params,
+);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ByteString>, ffi.Pointer<UA_ByteString>)>()
+external int UA_CertificateUtils_checkKeyPair(
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<UA_ByteString> privateKey,
+);
+
+@ffi.Native<UA_StatusCode Function(UA_ByteString, UA_ByteString, ffi.Pointer<UA_ByteString>)>()
+external int UA_CertificateUtils_decryptPrivateKey(
+  UA_ByteString privateKey,
+  UA_ByteString password,
+  ffi.Pointer<UA_ByteString> outDerKey,
+);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ByteString>, ffi.Pointer<ffi.Int64>)>()
+external int UA_CertificateUtils_getExpirationDate(
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<ffi.Int64> expiryDateTime,
+);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ByteString>, ffi.Pointer<ffi.Size>)>()
+external int UA_CertificateUtils_getKeySize(ffi.Pointer<UA_ByteString> certificate, ffi.Pointer<ffi.Size> keySize);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ByteString>, ffi.Pointer<UA_String>)>()
+external int UA_CertificateUtils_getSubjectName(
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<UA_String> subjectName,
+);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ByteString>, ffi.Pointer<UA_String>)>()
+external int UA_CertificateUtils_getThumbprint(
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<UA_String> thumbprint,
+);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ByteString>, ffi.Pointer<UA_String>)>()
+external int UA_CertificateUtils_verifyApplicationUri(
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<UA_String> applicationUri,
+);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_ClientConfig>)>()
+external void UA_ClientConfig_clear(ffi.Pointer<UA_ClientConfig> config);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig>, UA_ByteString, UA_ByteString)>()
+external int UA_ClientConfig_setAuthenticationCert(
+  ffi.Pointer<UA_ClientConfig> config,
+  UA_ByteString certificateAuth,
+  UA_ByteString privateKeyAuth,
+);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ClientConfig>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>()
 external int UA_ClientConfig_setAuthenticationUsername(
@@ -384,6 +532,21 @@ external ffi.Pointer<UA_DataType> UA_Client_findDataType(ffi.Pointer<UA_Client> 
 external ffi.Pointer<UA_ClientConfig> UA_Client_getConfig(ffi.Pointer<UA_Client> client);
 
 @ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Client>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Size>,
+    ffi.Pointer<ffi.Pointer<UA_EndpointDescription>>,
+  )
+>()
+external int UA_Client_getEndpoints(
+  ffi.Pointer<UA_Client> client,
+  ffi.Pointer<ffi.Char> serverUrl,
+  ffi.Pointer<ffi.Size> endpointDescriptionsSize,
+  ffi.Pointer<ffi.Pointer<UA_EndpointDescription>> endpointDescriptions,
+);
+
+@ffi.Native<
   ffi.Void Function(
     ffi.Pointer<UA_Client>,
     ffi.Pointer<ffi.UnsignedInt>,
@@ -442,6 +605,78 @@ external int UA_Client_writeValueAttribute_async(
   ffi.Pointer<UA_UInt32> reqId,
 );
 
+/// Create a self-signed certificate
+///
+/// It is recommended to store the generated certificate on disk for reuse, so the
+/// application can be recognized across several executions.
+///
+/// \param subject Elements for the subject,
+/// e.g. ["C=DE", "O=SampleOrganization", "CN=Open62541Server@localhost"]
+/// \param subjectAltName Elements for SubjectAltName,
+/// e.g. ["DNS:localhost", "URI:urn:open62541.server.application"]
+/// \param params key value map with optional parameters:
+/// - expires-in-days after these the cert expires default: 365
+/// - key-size-bits Size of the generated RSA key in bits. Possible
+/// values are: [0, 1024 (deprecated), 2048, 4096] default: 4096.
+/// Ignored when key-type is set to "EC".
+/// - key-type (UA_String) "RSA" or "EC". default: "RSA".
+/// When "EC", an ECC key is generated for the curve specified
+/// by the ecc-curve parameter. The certificate key usage is set
+/// to include keyAgreement (required for ECDH).
+/// - ecc-curve (UA_String) The EC curve name. Possible values:
+/// "prime256v1" (NIST P-256, default when key-type is "EC"),
+/// "secp384r1" (NIST P-384),
+/// "brainpoolP256r1", "brainpoolP384r1",
+/// "ed25519", "ed448" (OpenSSL only).
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_Logger>,
+    ffi.Pointer<UA_String>,
+    ffi.Size,
+    ffi.Pointer<UA_String>,
+    ffi.Size,
+    ffi.UnsignedInt,
+    ffi.Pointer<UA_KeyValueMap>,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Pointer<UA_ByteString>,
+  )
+>(symbol: 'UA_CreateCertificate')
+external int _UA_CreateCertificate(
+  ffi.Pointer<UA_Logger> logger,
+  ffi.Pointer<UA_String> subject,
+  int subjectSize,
+  ffi.Pointer<UA_String> subjectAltName,
+  int subjectAltNameSize,
+  int certFormat,
+  ffi.Pointer<UA_KeyValueMap> params,
+  ffi.Pointer<UA_ByteString> outPrivateKey,
+  ffi.Pointer<UA_ByteString> outCertificate,
+);
+
+DartUA_StatusCode UA_CreateCertificate(
+  ffi.Pointer<UA_Logger> logger,
+  ffi.Pointer<UA_String> subject,
+  int subjectSize,
+  ffi.Pointer<UA_String> subjectAltName,
+  int subjectAltNameSize,
+  UA_CertificateFormat certFormat,
+  ffi.Pointer<UA_KeyValueMap> params,
+  ffi.Pointer<UA_ByteString> outPrivateKey,
+  ffi.Pointer<UA_ByteString> outCertificate,
+) {
+  return _UA_CreateCertificate(
+    logger,
+    subject,
+    subjectSize,
+    subjectAltName,
+    subjectAltNameSize,
+    certFormat.value,
+    params,
+    outPrivateKey,
+    outCertificate,
+  );
+}
+
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_CreateMonitoredItemsRequest>)>()
 external void UA_CreateMonitoredItemsRequest_delete(ffi.Pointer<UA_CreateMonitoredItemsRequest> p);
 
@@ -486,6 +721,18 @@ external void UA_DeleteMonitoredItemsRequest_init(ffi.Pointer<UA_DeleteMonitored
 
 @ffi.Native<ffi.Pointer<UA_DeleteMonitoredItemsRequest> Function()>()
 external ffi.Pointer<UA_DeleteMonitoredItemsRequest> UA_DeleteMonitoredItemsRequest_new();
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_HistoryReadRequest>)>()
+external void UA_HistoryReadRequest_clear(ffi.Pointer<UA_HistoryReadRequest> p);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_HistoryReadRequest>)>()
+external void UA_HistoryReadRequest_delete(ffi.Pointer<UA_HistoryReadRequest> p);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_HistoryReadRequest>)>()
+external void UA_HistoryReadRequest_init(ffi.Pointer<UA_HistoryReadRequest> p);
+
+@ffi.Native<ffi.Pointer<UA_HistoryReadRequest> Function()>()
+external ffi.Pointer<UA_HistoryReadRequest> UA_HistoryReadRequest_new();
 
 @ffi.Native<ffi.Void Function(ffi.Pointer<UA_LocalizedText>)>()
 external void UA_LocalizedText_delete(ffi.Pointer<UA_LocalizedText> p);
@@ -532,6 +779,65 @@ external void UA_ReadRequest_init(ffi.Pointer<UA_ReadRequest> p);
 
 @ffi.Native<ffi.Pointer<UA_ReadRequest> Function()>()
 external ffi.Pointer<UA_ReadRequest> UA_ReadRequest_new();
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>)>()
+external int UA_ServerConfig_addAllEndpoints(ffi.Pointer<UA_ServerConfig> config);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>, UA_String, ffi.UnsignedInt)>(
+  symbol: 'UA_ServerConfig_addEndpoint',
+)
+external int _UA_ServerConfig_addEndpoint(
+  ffi.Pointer<UA_ServerConfig> config,
+  UA_String securityPolicyUri,
+  int securityMode,
+);
+
+DartUA_StatusCode UA_ServerConfig_addEndpoint(
+  ffi.Pointer<UA_ServerConfig> config,
+  UA_String securityPolicyUri,
+  UA_MessageSecurityMode securityMode,
+) {
+  return _UA_ServerConfig_addEndpoint(config, securityPolicyUri, securityMode.value);
+}
+
+@ffi.Native<
+  UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>, ffi.Pointer<UA_ByteString>, ffi.Pointer<UA_ByteString>)
+>()
+external int UA_ServerConfig_addSecurityPolicyAes128Sha256RsaOaep(
+  ffi.Pointer<UA_ServerConfig> config,
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<UA_ByteString> privateKey,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>, ffi.Pointer<UA_ByteString>, ffi.Pointer<UA_ByteString>)
+>()
+external int UA_ServerConfig_addSecurityPolicyAes256Sha256RsaPss(
+  ffi.Pointer<UA_ServerConfig> config,
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<UA_ByteString> privateKey,
+);
+
+@ffi.Native<
+  UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>, ffi.Pointer<UA_ByteString>, ffi.Pointer<UA_ByteString>)
+>()
+external int UA_ServerConfig_addSecurityPolicyBasic256Sha256(
+  ffi.Pointer<UA_ServerConfig> config,
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<UA_ByteString> privateKey,
+);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>, ffi.Pointer<UA_ByteString>)>()
+external int UA_ServerConfig_addSecurityPolicyNone(
+  ffi.Pointer<UA_ServerConfig> config,
+  ffi.Pointer<UA_ByteString> certificate,
+);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<UA_ServerConfig>)>()
+external void UA_ServerConfig_clear(ffi.Pointer<UA_ServerConfig> config);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>, UA_UInt16)>()
+external int UA_ServerConfig_setBasics_withPort(ffi.Pointer<UA_ServerConfig> conf, int portNumber);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>, UA_UInt16, ffi.Pointer<UA_ByteString>)>()
 external int UA_ServerConfig_setMinimal(
@@ -885,6 +1191,9 @@ external UA_BrowseResult UA_Server_browse(
   ffi.Pointer<UA_BrowseDescription> bd,
 );
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, ffi.Pointer<UA_NodeId>)>()
+external int UA_Server_closeSession(ffi.Pointer<UA_Server> server, ffi.Pointer<UA_NodeId> sessionId);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>)>()
 external int UA_Server_delete(ffi.Pointer<UA_Server> server);
 
@@ -997,6 +1306,49 @@ UA_LifecycleState UA_Server_getLifecycleState(ffi.Pointer<UA_Server> server) {
   return UA_LifecycleState.fromValue(_UA_Server_getLifecycleState(server));
 }
 
+/// .. _node-lifecycle:
+///
+/// Node Lifecycle: Constructors, Destructors and Node Contexts
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// To finalize the instantiation of a node, a (user-defined) constructor
+/// callback is executed. There can be both a global constructor for all nodes
+/// and node-type constructor specific to the TypeDefinition of the new node
+/// (attached to an ObjectTypeNode or VariableTypeNode).
+///
+/// In the hierarchy of ObjectTypes and VariableTypes, only the constructor of
+/// the (lowest) type defined for the new node is executed. Note that every
+/// Object and Variable can have only one ``isTypeOf`` reference. But type-nodes
+/// can technically have several ``hasSubType`` references to implement multiple
+/// inheritance. Issues of (multiple) inheritance in the constructor need to be
+/// solved by the user.
+///
+/// When a node is destroyed, the node-type destructor is called before the
+/// global destructor. So the overall node lifecycle is as follows:
+///
+/// 1. Global Constructor (set in the server config)
+/// 2. Node-Type Constructor (for VariableType or ObjectTypes)
+/// 3. (Usage-period of the Node)
+/// 4. Node-Type Destructor
+/// 5. Global Destructor
+///
+/// The constructor and destructor callbacks can be set to ``NULL`` and are not
+/// used in that case. If the node-type constructor fails, the global destructor
+/// will be called before removing the node. The destructors are assumed to never
+/// fail.
+///
+/// Every node carries a user-context and a constructor-context pointer. The
+/// user-context is used to attach custom data to a node. But the (user-defined)
+/// constructors and destructors may replace the user-context pointer if they
+/// wish to do so. The initial value for the constructor-context is ``NULL``.
+/// When the ``AddNodes`` service is used over the network, the user-context
+/// pointer of the new node is also initially set to ``NULL``.
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<ffi.Pointer<ffi.Void>>)>()
+external int UA_Server_getNodeContext(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId nodeId,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> nodeContext,
+);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<ffi.UnsignedInt>)>()
 external int UA_Server_getReaderGroupState(
   ffi.Pointer<UA_Server> server,
@@ -1036,6 +1388,12 @@ external int UA_Server_getWriterGroupState(
 
 @ffi.Native<ffi.Pointer<UA_Server> Function(ffi.Pointer<UA_ServerConfig>)>()
 external ffi.Pointer<UA_Server> UA_Server_newWithConfig(ffi.Pointer<UA_ServerConfig> config);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_Byte>)>()
+external int UA_Server_readAccessLevel(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_Byte> out);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<ffi.Bool>)>()
+external int UA_Server_readHistorizing(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<ffi.Bool> out);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_Variant>)>()
 external int UA_Server_readValue(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_Variant> out);
@@ -1113,6 +1471,13 @@ external int UA_Server_setDataSetReaderTargetVariables(
   ffi.Pointer<UA_FieldTargetDataType> targetVariables,
 );
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<ffi.Void>)>()
+external int UA_Server_setNodeContext(
+  ffi.Pointer<UA_Server> server,
+  UA_NodeId nodeId,
+  ffi.Pointer<ffi.Void> nodeContext,
+);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_CallbackValueSource)>()
 external int UA_Server_setVariableNode_callbackValueSource(
   ffi.Pointer<UA_Server> server,
@@ -1138,8 +1503,14 @@ external int UA_Server_setVariableNode_internalValueSource(
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
 external int UA_Server_triggerWriterGroupPublish(ffi.Pointer<UA_Server> server, UA_NodeId wgId);
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_Byte)>()
+external int UA_Server_writeAccessLevel(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, int accessLevel);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_LocalizedText)>()
 external int UA_Server_writeDescription(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_LocalizedText description);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Bool)>()
+external int UA_Server_writeHistorizing(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, bool historizing);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_Variant)>()
 external int UA_Server_writeValue(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_Variant value);
@@ -1682,6 +2053,37 @@ final class UA_AddPublishedDataSetResult extends ffi.Struct {
 }
 
 final class UA_AddReferencesItem extends ffi.Opaque {}
+
+final class UA_AggregateConfiguration extends ffi.Struct {
+  @ffi.Bool()
+  external bool useServerCapabilitiesDefaults;
+
+  @ffi.Bool()
+  external bool treatUncertainAsBad;
+
+  @UA_Byte()
+  external int percentDataBad;
+
+  @UA_Byte()
+  external int percentDataGood;
+
+  @ffi.Bool()
+  external bool useSlopedExtrapolation;
+
+  static ffi.Pointer<UA_AggregateConfiguration> $allocate(
+    ffi.Allocator $allocator, {
+    required bool useServerCapabilitiesDefaults,
+    required bool treatUncertainAsBad,
+    required int percentDataBad,
+    required int percentDataGood,
+    required bool useSlopedExtrapolation,
+  }) => $allocator<UA_AggregateConfiguration>()
+    ..ref.useServerCapabilitiesDefaults = useServerCapabilitiesDefaults
+    ..ref.treatUncertainAsBad = treatUncertainAsBad
+    ..ref.percentDataBad = percentDataBad
+    ..ref.percentDataGood = percentDataGood
+    ..ref.useSlopedExtrapolation = useSlopedExtrapolation;
+}
 
 final class UA_ApplicationDescription extends ffi.Struct {
   external UA_String applicationUri;
@@ -3685,7 +4087,20 @@ enum UA_HistorizingUpdateStrategy {
   };
 }
 
-final class UA_HistoryData extends ffi.Opaque {}
+final class UA_HistoryData extends ffi.Struct {
+  @ffi.Size()
+  external int dataValuesSize;
+
+  external ffi.Pointer<UA_DataValue> dataValues;
+
+  static ffi.Pointer<UA_HistoryData> $allocate(
+    ffi.Allocator $allocator, {
+    required int dataValuesSize,
+    required ffi.Pointer<UA_DataValue> dataValues,
+  }) => $allocator<UA_HistoryData>()
+    ..ref.dataValuesSize = dataValuesSize
+    ..ref.dataValues = dataValues;
+}
 
 final class UA_HistoryDatabase extends ffi.Struct {
   external ffi.Pointer<ffi.Void> context;
@@ -4053,11 +4468,87 @@ final class UA_HistoryEvent extends ffi.Opaque {}
 
 final class UA_HistoryModifiedData extends ffi.Opaque {}
 
-final class UA_HistoryReadResponse extends ffi.Opaque {}
+final class UA_HistoryReadRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
 
-final class UA_HistoryReadValueId extends ffi.Opaque {}
+  external UA_ExtensionObject historyReadDetails;
 
-final class UA_HistoryUpdateResult extends ffi.Opaque {}
+  @ffi.UnsignedInt()
+  external int timestampsToReturnAsInt;
+
+  UA_TimestampsToReturn get timestampsToReturn => UA_TimestampsToReturn.fromValue(timestampsToReturnAsInt);
+  set timestampsToReturn(UA_TimestampsToReturn value) => timestampsToReturnAsInt = value.value;
+
+  @ffi.Bool()
+  external bool releaseContinuationPoints;
+
+  @ffi.Size()
+  external int nodesToReadSize;
+
+  external ffi.Pointer<UA_HistoryReadValueId> nodesToRead;
+}
+
+final class UA_HistoryReadResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_HistoryReadResult> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
+
+final class UA_HistoryReadResult extends ffi.Struct {
+  @UA_StatusCode()
+  external int statusCode;
+
+  external UA_ByteString continuationPoint;
+
+  external UA_ExtensionObject historyData;
+}
+
+final class UA_HistoryReadValueId extends ffi.Struct {
+  external UA_NodeId nodeId;
+
+  external UA_String indexRange;
+
+  external UA_QualifiedName dataEncoding;
+
+  external UA_ByteString continuationPoint;
+}
+
+final class UA_HistoryUpdateResult extends ffi.Struct {
+  @UA_StatusCode()
+  external int statusCode;
+
+  @ffi.Size()
+  external int operationResultsSize;
+
+  external ffi.Pointer<UA_StatusCode> operationResults;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+
+  static ffi.Pointer<UA_HistoryUpdateResult> $allocate(
+    ffi.Allocator $allocator, {
+    required int statusCode,
+    required int operationResultsSize,
+    required ffi.Pointer<UA_StatusCode> operationResults,
+    required int diagnosticInfosSize,
+    required ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos,
+  }) => $allocator<UA_HistoryUpdateResult>()
+    ..ref.statusCode = statusCode
+    ..ref.operationResultsSize = operationResultsSize
+    ..ref.operationResults = operationResults
+    ..ref.diagnosticInfosSize = diagnosticInfosSize
+    ..ref.diagnosticInfos = diagnosticInfos;
+}
 
 enum UA_HistoryUpdateType {
   UA_HISTORYUPDATETYPE_INSERT(1),
@@ -56347,13 +56838,76 @@ final class UA_QualifiedName extends ffi.Struct {
   external UA_String name;
 }
 
-final class UA_ReadAtTimeDetails extends ffi.Opaque {}
+final class UA_ReadAtTimeDetails extends ffi.Struct {
+  @ffi.Size()
+  external int reqTimesSize;
+
+  external ffi.Pointer<ffi.Int64> reqTimes;
+
+  @ffi.Bool()
+  external bool useSimpleBounds;
+
+  static ffi.Pointer<UA_ReadAtTimeDetails> $allocate(
+    ffi.Allocator $allocator, {
+    required int reqTimesSize,
+    required ffi.Pointer<ffi.Int64> reqTimes,
+    required bool useSimpleBounds,
+  }) => $allocator<UA_ReadAtTimeDetails>()
+    ..ref.reqTimesSize = reqTimesSize
+    ..ref.reqTimes = reqTimes
+    ..ref.useSimpleBounds = useSimpleBounds;
+}
 
 final class UA_ReadEventDetails extends ffi.Opaque {}
 
-final class UA_ReadProcessedDetails extends ffi.Opaque {}
+final class UA_ReadProcessedDetails extends ffi.Struct {
+  @ffi.Int64()
+  external int startTime;
 
-final class UA_ReadRawModifiedDetails extends ffi.Opaque {}
+  @ffi.Int64()
+  external int endTime;
+
+  @UA_Double()
+  external double processingInterval;
+
+  @ffi.Size()
+  external int aggregateTypeSize;
+
+  external ffi.Pointer<UA_NodeId> aggregateType;
+
+  external UA_AggregateConfiguration aggregateConfiguration;
+}
+
+final class UA_ReadRawModifiedDetails extends ffi.Struct {
+  @ffi.Bool()
+  external bool isReadModified;
+
+  @ffi.Int64()
+  external int startTime;
+
+  @ffi.Int64()
+  external int endTime;
+
+  @UA_UInt32()
+  external int numValuesPerNode;
+
+  @ffi.Bool()
+  external bool returnBounds;
+
+  static ffi.Pointer<UA_ReadRawModifiedDetails> $allocate(
+    ffi.Allocator $allocator, {
+    required bool isReadModified,
+    required int startTime,
+    required int endTime,
+    required int numValuesPerNode,
+    required bool returnBounds,
+  }) => $allocator<UA_ReadRawModifiedDetails>()
+    ..ref.isReadModified = isReadModified
+    ..ref.startTime = startTime
+    ..ref.endTime = endTime
+    ..ref.numValuesPerNode = numValuesPerNode
+    ..ref.returnBounds = returnBounds;
+}
 
 final class UA_ReadRequest extends ffi.Struct {
   external UA_RequestHeader requestHeader;
@@ -58797,7 +59351,52 @@ enum UA_TimestampsToReturn {
   };
 }
 
-final class UA_TrustListDataType extends ffi.Opaque {}
+final class UA_TrustListDataType extends ffi.Struct {
+  @UA_UInt32()
+  external int specifiedLists;
+
+  @ffi.Size()
+  external int trustedCertificatesSize;
+
+  external ffi.Pointer<UA_ByteString> trustedCertificates;
+
+  @ffi.Size()
+  external int trustedCrlsSize;
+
+  external ffi.Pointer<UA_ByteString> trustedCrls;
+
+  @ffi.Size()
+  external int issuerCertificatesSize;
+
+  external ffi.Pointer<UA_ByteString> issuerCertificates;
+
+  @ffi.Size()
+  external int issuerCrlsSize;
+
+  external ffi.Pointer<UA_ByteString> issuerCrls;
+
+  static ffi.Pointer<UA_TrustListDataType> $allocate(
+    ffi.Allocator $allocator, {
+    required int specifiedLists,
+    required int trustedCertificatesSize,
+    required ffi.Pointer<UA_ByteString> trustedCertificates,
+    required int trustedCrlsSize,
+    required ffi.Pointer<UA_ByteString> trustedCrls,
+    required int issuerCertificatesSize,
+    required ffi.Pointer<UA_ByteString> issuerCertificates,
+    required int issuerCrlsSize,
+    required ffi.Pointer<UA_ByteString> issuerCrls,
+  }) => $allocator<UA_TrustListDataType>()
+    ..ref.specifiedLists = specifiedLists
+    ..ref.trustedCertificatesSize = trustedCertificatesSize
+    ..ref.trustedCertificates = trustedCertificates
+    ..ref.trustedCrlsSize = trustedCrlsSize
+    ..ref.trustedCrls = trustedCrls
+    ..ref.issuerCertificatesSize = issuerCertificatesSize
+    ..ref.issuerCertificates = issuerCertificates
+    ..ref.issuerCrlsSize = issuerCrlsSize
+    ..ref.issuerCrls = issuerCrls;
+}
 
 enum UA_TrustListMasks {
   UA_TRUSTLISTMASKS_NONE(0),
@@ -59078,6 +59677,13 @@ enum UA_UserTokenType {
     2147483647 => __UA_USERTOKENTYPE_FORCE32BIT,
     _ => throw ArgumentError('Unknown value for UA_UserTokenType: $value'),
   };
+}
+
+/// amalgamated original file "/src/plugins/include/open62541/plugin/accesscontrol_default.h"
+final class UA_UsernamePasswordLogin extends ffi.Struct {
+  external UA_String username;
+
+  external UA_ByteString password;
 }
 
 const int UA_VALUERANK_ANY = -2;

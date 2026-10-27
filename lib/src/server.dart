@@ -280,6 +280,11 @@ enum RedundancySupport {
   final int value;
 }
 
+// Installed on every server config: open62541 reads a private key password
+// from stdin when a key does not parse and no callback is set.
+int _refusePrivateKeyPassword(ffi.Pointer<raw.UA_ServerConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
+    raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED;
+
 class Server {
   /// Creates a server with open62541's minimal default configuration,
   /// listening on [port] (4840 by default; `0` lets the OS pick, see [Server.port]).
@@ -327,6 +332,10 @@ class Server {
       if (logLevel != null) {
         config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
       }
+      config.ref.privateKeyPasswordCallback = ffi.Pointer.fromFunction(
+        _refusePrivateKeyPassword,
+        raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED,
+      );
       // setMinimal sets the logging level if not set.
       int res = raw.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
       if (res != raw.UA_STATUSCODE_GOOD) {
@@ -1304,9 +1313,11 @@ class Server {
     // Fallback when the diagnostics array is unavailable but the session
     // exists: an empty clientUserId means anonymous, a non-empty one means a
     // username token (open62541 fills it from the UserNameIdentityToken; an
-    // X509 subject name would be misattributed here, but certificate tokens
-    // are not reachable without diagnostics being disabled AND a session PKI
-    // configured).
+    // X509 subject name would be misattributed here). The server advertises
+    // the certificate token, because setMinimal leaves the session PKI on
+    // AcceptAll, but no client can present one: an X509 token needs a
+    // signature by a SecurityPolicy other than None, the only one setMinimal
+    // configures.
     if (identity == null && clientUserId != null) {
       identity = clientUserId.isEmpty ? const AnonymousSessionIdentity() : UsernameSessionIdentity(clientUserId);
     }

@@ -227,9 +227,11 @@ class ClientConfig {
 
   /// The `applicationUri` of the ApplicationDescription this client presents
   /// in CreateSession. Set it **before** connecting. On the server it
-  /// surfaces as `MethodSessionInfo.applicationUri`. Note: when connecting
-  /// with a certificate, open62541 overwrites this with the URI embedded in
-  /// the certificate.
+  /// surfaces as `MethodSessionInfo.applicationUri`. It is not taken from the
+  /// client certificate: when connecting with one, it must equal the
+  /// certificate's URI SubjectAltName, which open62541 only warns about on
+  /// the client while the server rejects the session with
+  /// `BadCertificateInvalid`.
   String get applicationUri => _clientConfig.ref.clientDescription.applicationUri.value;
   set applicationUri(String uri) {
     _clientConfig.ref.clientDescription.applicationUri.set(uri);
@@ -288,6 +290,11 @@ class ClientConfig {
 
 typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
 
+// Installed on every client config: open62541 reads a private key password
+// from stdin when a key does not parse and no callback is set.
+int _refusePrivateKeyPassword(ffi.Pointer<raw.UA_ClientConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
+    raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED;
+
 class Client implements ClientApi, DataValueMonitoringApi {
   Client({
     Duration? secureChannelLifeTime,
@@ -322,27 +329,38 @@ class Client implements ClientApi, DataValueMonitoringApi {
       config.ref.securityModeAsInt = securityMode.value;
     }
 
+    config.ref.privateKeyPasswordCallback = ffi.Pointer.fromFunction(
+      _refusePrivateKeyPassword,
+      raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED,
+    );
+
     if (certificate != null && privateKey != null) {
-      ffi.Pointer<raw.UA_ByteString> rawCertificate = ua_calloc<raw.UA_ByteString>();
-      ffi.Pointer<raw.UA_ByteString> rawPrivateKey = ua_calloc<raw.UA_ByteString>();
+      final status = using((arena) {
+        final rawCertificate = arena<raw.UA_ByteString>();
+        rawCertificate.ref.data = arena<ffi.Uint8>(certificate.length);
+        rawCertificate.ref.length = certificate.length;
+        rawCertificate.ref.data.asTypedList(certificate.length).setAll(0, certificate);
 
-      rawCertificate.ref.data = ua_calloc<ffi.Uint8>(certificate.length);
-      rawCertificate.ref.length = certificate.length;
-      rawCertificate.ref.data.asTypedList(certificate.length).setRange(0, certificate.length, certificate);
+        final rawPrivateKey = arena<raw.UA_ByteString>();
+        rawPrivateKey.ref.data = arena<ffi.Uint8>(privateKey.length);
+        rawPrivateKey.ref.length = privateKey.length;
+        rawPrivateKey.ref.data.asTypedList(privateKey.length).setAll(0, privateKey);
 
-      rawPrivateKey.ref.data = ua_calloc<ffi.Uint8>(privateKey.length);
-      rawPrivateKey.ref.length = privateKey.length;
-      rawPrivateKey.ref.data.asTypedList(privateKey.length).setRange(0, privateKey.length, privateKey);
-
-      raw.UA_ClientConfig_setDefaultEncryption(
-        config,
-        rawCertificate.ref,
-        rawPrivateKey.ref,
-        ffi.nullptr,
-        0,
-        ffi.nullptr,
-        0,
-      );
+        return raw.UA_ClientConfig_setDefaultEncryption(
+          config,
+          rawCertificate.ref,
+          rawPrivateKey.ref,
+          ffi.nullptr,
+          0,
+          ffi.nullptr,
+          0,
+        );
+      }, ua_calloc);
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        raw.UA_ClientConfig_clear(config);
+        ua_calloc.free(config);
+        throw UaStatusException(status);
+      }
 
       // Accept all certificates
       ffi.Pointer<raw.UA_CertificateGroup> certificateVerification = ua_calloc<raw.UA_CertificateGroup>();
@@ -350,11 +368,6 @@ class Client implements ClientApi, DataValueMonitoringApi {
       raw.UA_CertificateGroup_AcceptAll(certificateVerification);
       config.ref.certificateVerification = certificateVerification.ref;
       ua_calloc.free(certificateVerification);
-
-      ua_calloc.free(rawCertificate.ref.data);
-      ua_calloc.free(rawPrivateKey.ref.data);
-      ua_calloc.free(rawCertificate);
-      ua_calloc.free(rawPrivateKey);
     }
 
     if (username != null) {

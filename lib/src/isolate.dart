@@ -259,6 +259,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     Uint8List? privateKey,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    bool allowUnencryptedPassword = false,
   }) {
     _initIsolate(
       secureChannelLifeTime: secureChannelLifeTime,
@@ -270,6 +271,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       privateKey: privateKey,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      allowUnencryptedPassword: allowUnencryptedPassword,
     );
   }
 
@@ -284,6 +286,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     Uint8List? privateKey,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    bool allowUnencryptedPassword = false,
     Duration iterateInterval = const Duration(milliseconds: 10),
   }) async {
     final isolate = ClientIsolate._(
@@ -296,6 +299,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
       privateKey: privateKey,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
+      allowUnencryptedPassword: allowUnencryptedPassword,
     );
 
     await isolate._initCompleter.future;
@@ -321,6 +325,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     Uint8List? privateKey,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
+    bool allowUnencryptedPassword = false,
   }) async {
     try {
       _receivePort = ReceivePort();
@@ -349,6 +354,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
           privateKey: privateKey,
           logLevel: logLevel,
           connectivityCheckInterval: connectivityCheckInterval,
+          allowUnencryptedPassword: allowUnencryptedPassword,
           sendPort: _receivePort.sendPort,
         ),
         // A worker isolate must NOT die on an uncaught error. In particular, a
@@ -372,6 +378,10 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     if (message is SendPort) {
       _sendPort = message;
       _initCompleter.complete();
+    } else if (message is _ClientInitFailed) {
+      _receivePort.close();
+      _errPort.close();
+      _initCompleter.completeError(message.error);
     } else if (message is IsolateResponse) {
       final completer = _pendingRequests[message.requestId];
       if (completer != null) {
@@ -1022,6 +1032,12 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
   }
 }
 
+/// The worker's [Client] constructor threw; the worker has exited.
+class _ClientInitFailed {
+  const _ClientInitFailed(this.error);
+  final Object error;
+}
+
 /// Data structure passed to the isolate
 class _IsolateData {
   final Duration? secureChannelLifeTime;
@@ -1033,6 +1049,7 @@ class _IsolateData {
   final Uint8List? privateKey;
   final LogLevel? logLevel;
   final Duration connectivityCheckInterval;
+  final bool allowUnencryptedPassword;
   final SendPort sendPort;
 
   _IsolateData({
@@ -1045,6 +1062,7 @@ class _IsolateData {
     this.privateKey,
     this.logLevel,
     required this.connectivityCheckInterval,
+    required this.allowUnencryptedPassword,
     required this.sendPort,
   });
 }
@@ -1066,20 +1084,27 @@ void _isolateEntryPoint(_IsolateData data) {
   bool iterateRunning = false;
   Completer<void>? iterateStopped;
 
+  try {
+    client = Client(
+      secureChannelLifeTime: data.secureChannelLifeTime,
+      requestedSessionTimeout: data.requestedSessionTimeout,
+      username: data.username,
+      password: data.password,
+      securityMode: data.securityMode,
+      certificate: data.certificate,
+      privateKey: data.privateKey,
+      logLevel: data.logLevel,
+      connectivityCheckInterval: data.connectivityCheckInterval,
+      allowUnencryptedPassword: data.allowUnencryptedPassword,
+    );
+  } catch (e) {
+    receivePort.close();
+    sendPort.send(_ClientInitFailed(sendableError(e)));
+    return;
+  }
+
   // Send our receive port back to the main isolate
   sendPort.send(receivePort.sendPort);
-
-  client = Client(
-    secureChannelLifeTime: data.secureChannelLifeTime,
-    requestedSessionTimeout: data.requestedSessionTimeout,
-    username: data.username,
-    password: data.password,
-    securityMode: data.securityMode,
-    certificate: data.certificate,
-    privateKey: data.privateKey,
-    logLevel: data.logLevel,
-    connectivityCheckInterval: data.connectivityCheckInterval,
-  );
 
   // Handle messages from the main isolate
   receivePort.listen((message) async {

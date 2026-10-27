@@ -17,14 +17,20 @@ Future<void> main() async {
     'UA_Variant_copy',
     'UA_clear',
     'UA_decodeBinary',
+    'UA_Array_new',
+    'UA_Array_delete',
+    'UA_ByteString_clear',
 
     'UA_ClientConfig_setDefault',
+    'UA_ClientConfig_clear',
     'UA_Client_delete',
     'UA_Client_disconnect',
     'UA_Client_findDataType',
     'UA_ClientConfig_setDefaultEncryption',
     'UA_CertificateGroup_AcceptAll',
     'UA_ClientConfig_setAuthenticationUsername',
+    'UA_ClientConfig_setAuthenticationCert',
+    'UA_Client_getEndpoints',
     'UA_Client_newWithConfig',
     'UA_Client_getConfig',
     'UA_Client_connectAsync',
@@ -62,7 +68,32 @@ Future<void> main() async {
     'UA_BrowseNextRequest_delete',
     'UA_BrowseDescription_init',
 
+    // History functions
+    'UA_HistoryReadRequest_new',
+    'UA_HistoryReadRequest_init',
+    'UA_HistoryReadRequest_clear',
+    'UA_HistoryReadRequest_delete',
+    'UA_Server_readHistorizing',
+    'UA_Server_writeHistorizing',
+    'UA_Server_readAccessLevel',
+    'UA_Server_writeAccessLevel',
+
     'UA_ServerConfig_setMinimal',
+    'UA_ServerConfig_setBasics_withPort',
+    // UA_ServerConfig_clean is a deprecated static inline over this one:
+    'UA_ServerConfig_clear',
+    'UA_ServerConfig_addSecurityPolicyNone',
+    'UA_ServerConfig_addSecurityPolicyBasic256Sha256',
+    'UA_ServerConfig_addSecurityPolicyAes128Sha256RsaOaep',
+    'UA_ServerConfig_addSecurityPolicyAes256Sha256RsaPss',
+    'UA_ServerConfig_addEndpoint',
+    'UA_ServerConfig_addAllEndpoints',
+    'UA_CertificateGroup_Memorystore',
+    'UA_AccessControl_default',
+    'UA_AccessControl_defaultWithLoginCallback',
+    'UA_Server_setNodeContext',
+    'UA_Server_getNodeContext',
+    'UA_Server_closeSession',
     'UA_Server_newWithConfig',
     'UA_Server_getConfig',
     'UA_Server_run_startup',
@@ -131,6 +162,16 @@ Future<void> main() async {
 
     // Session introspection (method-callback session identity)
     'UA_Server_getSessionAttribute',
+
+    // Certificate utilities
+    'UA_CreateCertificate',
+    'UA_CertificateUtils_getThumbprint',
+    'UA_CertificateUtils_getSubjectName',
+    'UA_CertificateUtils_getExpirationDate',
+    'UA_CertificateUtils_getKeySize',
+    'UA_CertificateUtils_verifyApplicationUri',
+    'UA_CertificateUtils_checkKeyPair',
+    'UA_CertificateUtils_decryptPrivateKey',
 
     // Async operations (method calls now; async data-source writes later)
     'UA_Server_setAsyncCallMethodResult',
@@ -267,6 +308,19 @@ Future<void> main() async {
     'UA_FieldTargetDataType',
     'UA_ValueCallback',
     'UA_DecodeBinaryOptions',
+    // History structs
+    'UA_HistoryReadRequest',
+    'UA_HistoryReadResponse',
+    'UA_HistoryReadResult',
+    'UA_HistoryReadValueId',
+    'UA_HistoryData',
+    'UA_ReadRawModifiedDetails',
+    'UA_ReadAtTimeDetails',
+    'UA_ReadProcessedDetails',
+    'UA_HistoryUpdateResult',
+    // Security structs
+    'UA_TrustListDataType',
+    'UA_UsernamePasswordLogin',
   };
 
   const typedefSet = {

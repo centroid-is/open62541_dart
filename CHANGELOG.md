@@ -4,8 +4,40 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## 1.5.9
+## 1.5.9+1
 
+- **Bindings for history and security.** The FFI bindings now cover what
+  HistoryRead and server/client security build on, so the feature work that
+  follows needs no regeneration: the `UA_HistoryReadRequest` /
+  `UA_HistoryReadResponse` / `UA_HistoryReadResult` / `UA_HistoryReadValueId` /
+  `UA_HistoryData` / `UA_HistoryUpdateResult` / `UA_ReadRawModifiedDetails` /
+  `UA_ReadAtTimeDetails` / `UA_ReadProcessedDetails` / `UA_TrustListDataType`
+  structs (opaque until now), `UA_UsernamePasswordLogin`, the
+  `UA_HistoryReadRequest` helpers, `UA_Server_read/writeHistorizing`,
+  `UA_Server_read/writeAccessLevel`, `UA_Server_set/getNodeContext`,
+  `UA_Server_closeSession`, `UA_Array_new/delete`, `UA_ByteString_clear`,
+  `UA_ServerConfig_setBasics_withPort` / `_clear` / `_addSecurityPolicy*` /
+  `_addEndpoint` / `_addAllEndpoints`, `UA_CertificateGroup_Memorystore`,
+  `UA_AccessControl_default[WithLoginCallback]`, `UA_CreateCertificate`, the
+  `UA_CertificateUtils_*` helpers, `UA_ClientConfig_clear`,
+  `UA_ClientConfig_setAuthenticationCert` and `UA_Client_getEndpoints`.
+  `UaTypes` gained the history request, response, result and details types.
+  The new structs are pinned to open62541's type table (size and every member
+  offset) in `verify_sizes_test`.
+- **`ClientIsolate(allowUnencryptedPassword:)`.** `Client` had it;
+  `ClientIsolate` and `ClientIsolate.create` now take it too and forward it.
+- **Fixed: a client certificate or key that open62541 cannot load was
+  ignored.** The result of `UA_ClientConfig_setDefaultEncryption` was not
+  checked, so the client was created without its certificate, and a key that
+  did not parse made open62541 prompt for its password on stdin. Client and server
+  configs now carry a private key password callback that declines, and
+  `Client(certificate:, privateKey:)` throws a `UaStatusException`
+  (`BadSecurityChecksFailed` for an unreadable key). `ClientIsolate.create`
+  fails with the same exception instead of returning a worker that never
+  answers.
+- The `ClientConfig.applicationUri` documentation said open62541 takes the
+  URI from the client certificate. It does not: it must equal the
+  certificate's URI SubjectAltName, and a server rejects a mismatch.
 - `ServerStatistics` gained `liveDataChangeNotificationCount` and
   `liveNotificationCount`: the per-subscription `dataChangeNotificationsCount`
   / `notificationsCount` (data changes + events; keep-alives carry none) of
