@@ -6,6 +6,20 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **Data-source handlers can see the session.**
+  `addDataSourceVariableNode` and `setVariableValueSource` take
+  `onWriteWithSession: (DynamicValue value, SessionInfo session)` and
+  `onReadWithSession: (SessionInfo session)` next to `onWrite` and
+  `onReadValue`, which are unchanged (giving a plain and a session variant
+  of one kind is an `ArgumentError`). The session resolves as for a method
+  call: with an `AccessControl`, `context` is what `activateSession`
+  returned for the writing or reading session. A monitored item samples in
+  the session that owns its subscription. `Server.read` and `Server.write`
+  run in open62541's admin session, reported as `SessionInfo.isAdminSession`
+  (`sessionId` is `SessionInfo.adminSessionId`, every other field `null`).
+  Errors map to statuses as for `onWrite` and
+  `onReadValue`. `MethodSessionInfo` is renamed `SessionInfo`, and
+  `MethodSessionInfo` remains as a typedef.
 - **X.509 user identity tokens.** `Client(userCertificate:,
   userPrivateKey:, userPrivateKeyPassword:)` (and `ClientIsolate` /
   `ClientIsolate.create`) activates the session with the user certificate

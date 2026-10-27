@@ -59,6 +59,7 @@ export 'src/server.dart'
         RedundancySupport,
         DataSourceValue,
         ServerStatistics,
+        SessionInfo,
         MethodSessionInfo,
         SessionIdentity,
         AnonymousSessionIdentity,
