@@ -57,8 +57,9 @@ const badInternalError = 0x80020000;
 
 /// What the default path puts on the error channel: since 1.5.7+3 a typed
 /// [UaStatusException] carrying the exact notification status (for two years
-/// before that it was an English string). The opt-in flag must not move it —
-/// a caller that never asked for qualities keeps getting the typed error.
+/// before that it was an English string). The code on it is the server's own,
+/// which is what lets a consumer map a Bad sample onto its own quality without
+/// a value it would have to invent.
 final legacyBadStatusMatcher = isA<UaStatusException>()
     .having((e) => e.statusCode, 'statusCode', badInternalError);
 
@@ -239,7 +240,7 @@ void main() {
       // subscription when it completes, and this stream is single-subscription.
     });
 
-    test('deliverBadStatus: false drops a Bad sample and says so, exactly as before', () async {
+    test('a Bad sample is a typed error with the server\'s own code, never a value', () async {
       final subId = await client.subscriptionCreate();
 
       final errors = <Object>[];
@@ -264,27 +265,23 @@ void main() {
         errors.first,
         legacyBadStatusMatcher,
         reason:
-            'a Bad sample on the default path is an error, and since 1.5.7+3 '
-            'a TYPED one — the default must keep both the shape and the exact '
-            'status code or this branch changes production behaviour on every '
-            'plant',
+            'a Bad sample is an error, and since 1.5.7+3 a TYPED one — the '
+            'consumer maps the exact status code onto its own quality, so both '
+            'the shape and the code are the contract',
       );
       expect(
         values.where((v) => v.statusCode != null),
         isEmpty,
         reason:
-            'without opting in, a Bad sample is still dropped — the caller '
-            'that never asked for qualities must not start receiving them',
+            'a Bad sample carries no payload (hasValue clear); delivering it '
+            'as a value would hand the consumer a number, or a false, that '
+            'nobody measured',
       );
     });
 
-    // Added after mutation testing: flipping monitoredItems' OWN default to
-    // true survived the suite, because monitor() forwards the flag explicitly
-    // and every case above went through monitor(). ClientWrapper in the app
-    // reaches this method too, so an unpinned default here is threat T-08-01
-    // with no tripwire — a one-word edit that changes what every panel on the
-    // plant receives.
-    test('monitoredItems has the same default, and it is pinned separately', () async {
+    // monitor() is a wrapper over monitoredItems(), but an app reaches
+    // monitoredItems() directly too, so its behaviour is pinned on its own.
+    test('monitoredItems reports a Bad sample the same way', () async {
       final subId = await client.subscriptionCreate();
 
       final errors = <Object>[];
@@ -315,9 +312,8 @@ void main() {
         errors.first,
         legacyBadStatusMatcher,
         reason:
-            'this is the entry point ClientWrapper uses; its default must '
-            'drop a Bad sample exactly as monitor() does, or the app starts '
-            'receiving values it has never been written to interpret',
+            'this is the entry point ClientWrapper uses; a Bad sample must be '
+            'the same typed error monitor() gives',
       );
       expect(
         delivered.expand((m) => m.values).where((v) => v.statusCode != null),
@@ -325,47 +321,6 @@ void main() {
         reason:
             'anti-vacuity for the arm above: an error arriving is only half '
             'the promise — nothing may ALSO arrive as a value',
-      );
-    });
-
-    test('deliverBadStatus: true delivers the Bad sample with the server\'s own code', () async {
-      final subId = await client.subscriptionCreate();
-
-      final errors = <Object>[];
-      final values = <DynamicValue>[];
-      final gotBad = Completer<DynamicValue>();
-      final sub = client.monitor(refusingNodeId, subId, deliverBadStatus: true).listen((v) {
-        values.add(v);
-        if (v.statusCode != null && v.statusCode != UA_STATUSCODE_GOOD && !gotBad.isCompleted) {
-          gotBad.complete(v);
-        }
-      }, onError: errors.add);
-
-      final bad = await gotBad.future.timeout(Duration(seconds: 10));
-      await sub.cancel();
-
-      expect(
-        bad.statusCode,
-        badInternalError,
-        reason:
-            'the relay maps the server\'s numeric StatusCode onto a relay '
-            'Quality; an English string on the error channel cannot say '
-            'BadOutOfRange to an operator',
-      );
-      expect(
-        values,
-        isNotEmpty,
-        reason:
-            'anti-vacuity: the sample must arrive AS A VALUE, not merely '
-            'not-as-an-error',
-      );
-      expect(
-        bad.sourceTimestamp,
-        isNotNull,
-        reason:
-            'the measured Bad sample carries hasSourceTimestamp set — the '
-            'server knows when it decided the tag was unreadable, and that is '
-            'the age the operator needs',
       );
     });
   });

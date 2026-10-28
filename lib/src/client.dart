@@ -1901,9 +1901,8 @@ class Client implements ClientApi, DataValueMonitoringApi {
   /// Each value whose Value attribute is monitored carries the latest sample's
   /// [DynamicValue.statusCode] and [DynamicValue.sourceTimestamp]. A sample
   /// with a non-Good status is added to the stream as a [UaStatusException]
-  /// error and nothing is delivered for it, unless [deliverBadStatus] is set:
-  /// then it is delivered with its status, as [monitoredDataValues] does. See
-  /// [ClientApi.monitoredItems].
+  /// error carrying the server's code, and nothing is delivered for it; see
+  /// [monitoredDataValues] for the sample with its status instead.
   @override
   Stream<Map<NodeId, DynamicValue>> monitoredItems(
     ReadAttributeParam nodes,
@@ -1912,7 +1911,6 @@ class Client implements ClientApi, DataValueMonitoringApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
-    bool deliverBadStatus = false,
   }) => _monitoredItemsCore<Map<NodeId, DynamicValue>>(
     nodes,
     subscriptionId,
@@ -1920,7 +1918,7 @@ class Client implements ClientApi, DataValueMonitoringApi {
     samplingInterval: samplingInterval,
     discardOldest: discardOldest,
     queueSize: queueSize,
-    deliverQuality: deliverBadStatus,
+    deliverQuality: false,
     // The one map the stream has always emitted: the same mutable object
     // every time, updated in place between events. The quality of each node's
     // latest Value sample is stamped onto its value on the way out.
@@ -2756,7 +2754,6 @@ class Client implements ClientApi, DataValueMonitoringApi {
     Duration samplingInterval = const Duration(milliseconds: 100),
     bool discardOldest = true,
     int queueSize = 1,
-    bool deliverBadStatus = false,
   }) {
     final controller = StreamController<DynamicValue>();
     final stream = monitoredItems(
@@ -2773,7 +2770,6 @@ class Client implements ClientApi, DataValueMonitoringApi {
       samplingInterval: samplingInterval,
       discardOldest: discardOldest,
       queueSize: queueSize,
-      deliverBadStatus: deliverBadStatus,
     );
     final subscription = stream.listen((event) => controller.add(event.values.first));
     subscription.onError((error) => controller.addError(error));
