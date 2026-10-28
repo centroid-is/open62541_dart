@@ -41,6 +41,7 @@
 //
 // The default lane runs this file on purpose: an `integration`/`plc` tag would
 // make it local-only and it would prove nothing in CI.
+
 import 'dart:async';
 import 'dart:math';
 
@@ -60,8 +61,7 @@ const badInternalError = 0x80020000;
 /// before that it was an English string). The code on it is the server's own,
 /// which is what lets a consumer map a Bad sample onto its own quality without
 /// a value it would have to invent.
-final legacyBadStatusMatcher = isA<UaStatusException>()
-    .having((e) => e.statusCode, 'statusCode', badInternalError);
+final legacyBadStatusMatcher = isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', badInternalError);
 
 void main() {
   final port = 23840 + Random().nextInt(1000);
@@ -110,11 +110,7 @@ void main() {
       // seconds apart, and getting that constant wrong is the classic failure
       // here — invisible without a fixed-value assertion. Tick zero itself is
       // the OPC UA null timestamp, and the conversion answers null for it.
-      expect(
-        uaDateTimeToDateTime(0),
-        isNull,
-        reason: 'tick zero is the OPC UA null timestamp, not an instant in 1601',
-      );
+      expect(uaDateTimeToDateTime(0), isNull, reason: 'tick zero is the OPC UA null timestamp, not an instant in 1601');
       expect(
         uaDateTimeToDateTime(10),
         DateTime.utc(1601, 1, 1, 0, 0, 0, 0, 1),
