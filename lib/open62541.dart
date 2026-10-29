@@ -1,5 +1,6 @@
 library;
 
+export 'src/access_control.dart' show AccessControl, DefaultAccessControl, SessionActivation, ActiveSession, NodeRef;
 export 'src/access_level.dart' show AccessLevelMask;
 export 'src/client.dart'
     show Client, ClientState, DataValue, BrowseResultItem, BrowseTreeItem, NodeClass, BrowseResultMask;
@@ -46,6 +47,8 @@ export 'src/security.dart'
         CertificateAndKey,
         TrustList,
         ServerSecurity,
+        EndpointInfo,
+        UserTokenPolicyInfo,
         createSelfSignedCertificate,
         decryptPrivateKey,
         checkKeyPair;

@@ -386,13 +386,14 @@ final class ServerSecurity {
   final bool allowUnencryptedPassword;
 }
 
-final _log = Logger('open62541.security');
+/// Where the package reports insecure configurations.
+final securityLog = Logger('open62541.security');
 
 /// Throws an [ArgumentError] naming [name] if a CRL of [list] does not
 /// parse: open62541's memory store stops loading at the first such entry.
 void validateTrustList(TrustList list, String name) {
   if (list.acceptsAll) {
-    _log.warning('$name accepts every certificate (TrustList.acceptAll)');
+    securityLog.warning('$name accepts every certificate (TrustList.acceptAll)');
     return;
   }
   for (final crl in [...list.trustedCrls, ...list.issuerCrls]) {
@@ -514,6 +515,65 @@ List<Certificate> rejectedCertificates(raw.UA_CertificateGroup group) {
     raw.UA_Array_delete(list.value.cast(), size.value, getTypeByIndex(raw.UA_TYPES_BYTESTRING));
     return result;
   }, ua_calloc);
+}
+
+/// A server endpoint as GetEndpoints describes it (`Client.getEndpoints`).
+final class EndpointInfo {
+  const EndpointInfo({
+    required this.endpointUrl,
+    required this.securityMode,
+    required this.securityPolicyUri,
+    required this.securityLevel,
+    required this.serverCertificate,
+    required this.applicationUri,
+    required this.applicationName,
+    required this.productUri,
+    required this.userTokenPolicies,
+  });
+
+  final String endpointUrl;
+  final MessageSecurityMode securityMode;
+  final String securityPolicyUri;
+
+  /// The server's ranking of its endpoints; a client picks the highest.
+  final int securityLevel;
+
+  /// The server's application instance certificate (the leaf of the chain
+  /// the endpoint carries), `null` when the endpoint has none.
+  final Certificate? serverCertificate;
+  final String applicationUri;
+  final String applicationName;
+  final String productUri;
+  final List<UserTokenPolicyInfo> userTokenPolicies;
+
+  /// The policy, or `null` for one this package does not serve.
+  SecurityPolicy? get securityPolicy => SecurityPolicy.fromUri(securityPolicyUri);
+
+  @override
+  String toString() => 'EndpointInfo($endpointUrl, ${securityMode.name}, $securityPolicyUri)';
+}
+
+/// A user identity token an endpoint accepts.
+final class UserTokenPolicyInfo {
+  const UserTokenPolicyInfo({required this.policyId, required this.tokenType, required this.securityPolicyUri});
+
+  final String policyId;
+  final UserTokenType tokenType;
+
+  /// The policy that encrypts the token, empty for the endpoint's own.
+  final String securityPolicyUri;
+}
+
+/// The leaf of a certificate chain (concatenated DER), or `null` if [chain]
+/// is empty or does not parse.
+Certificate? leafCertificate(Uint8List chain) {
+  if (chain.isEmpty) return null;
+  try {
+    final (_, _, end) = _derElement(chain, 0);
+    return Certificate.fromDer(chain.sublist(0, end));
+  } on Error {
+    return null;
+  }
 }
 
 /// A `UA_ByteString` in [arena] viewing a copy of [bytes].
