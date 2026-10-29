@@ -595,6 +595,13 @@ void checkServerSecurityArguments({
   if ((certificate == null) != (privateKey == null)) {
     throw ArgumentError('certificate and privateKey come together; got only one of them');
   }
+  if (privateKey != null && isEncryptedPrivateKey(privateKey)) {
+    throw ArgumentError.value(
+      '<${privateKey.length} bytes>',
+      'privateKey',
+      'is encrypted; pass the decrypted key (DER). open62541 would prompt for its password on stdin',
+    );
+  }
   final hasLists = trustList != null || issuerList != null || revocationList != null;
   final trusts = trustList != null && trustList.isNotEmpty;
   if (certificate == null) {
@@ -683,6 +690,11 @@ ffi.Pointer<raw.UA_ByteString> _byteStrings(Arena arena, List<Uint8List> list) {
   return array;
 }
 
+// open62541 reads a private key password from stdin when a key does not parse
+// and no callback is set.
+int _refusePrivateKeyPassword(ffi.Pointer<raw.UA_ServerConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
+    raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED;
+
 /// An OPC UA server over open62541, pumped by the caller ([runIterate]).
 ///
 /// ## Security
@@ -759,9 +771,10 @@ class Server {
   ///
   /// Without a [certificate] the configuration is open62541's
   /// `UA_ServerConfig_setMinimal`: one endpoint, SecurityPolicy#None. With a
-  /// [certificate] and [privateKey] (DER; an encrypted key would make
-  /// open62541 prompt for its password on stdin, so pass an unencrypted
-  /// one) it is `UA_ServerConfig_setDefaultWithSecurityPolicies`: the
+  /// [certificate] and [privateKey] (DER, unencrypted: an encrypted key is an
+  /// `ArgumentError` before any native call, a key open62541 cannot load a
+  /// `BadSecurityChecksFailed` [UaStatusException]) it is
+  /// `UA_ServerConfig_setDefaultWithSecurityPolicies`: the
   /// policies Basic256Sha256, Aes256Sha256RsaPss and Aes128Sha256RsaOaep,
   /// each as a Sign and a SignAndEncrypt endpoint, plus SecurityPolicy#None
   /// (`UA_ServerConfig_addAllSecurityPolicies` and `_addAllEndpoints` in
@@ -925,6 +938,10 @@ class Server {
       if (logLevel != null) {
         config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
       }
+      config.ref.privateKeyPasswordCallback = ffi.Pointer.fromFunction(
+        _refusePrivateKeyPassword,
+        raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED,
+      );
       // Both set the logging level if not set.
       final int res;
       if (certificate == null) {
@@ -950,7 +967,20 @@ class Server {
         );
       }
       if (res != raw.UA_STATUSCODE_GOOD) {
-        throw 'Failed to set default server config ${statusCodeToString(res)}';
+        throw UaStatusException(res);
+      }
+      // A DER key open62541 cannot use is copied unparsed; each secure
+      // policy then fails to build its context, which open62541 only logs,
+      // and the server would come up with the None endpoint alone.
+      if (certificate != null) {
+        var secure = 0;
+        for (var i = 0; i < config.ref.endpointsSize; i++) {
+          if (config.ref.endpoints[i].securityPolicyUri.value != securityPolicyNoneUri) secure++;
+        }
+        if (secure == 0) {
+          raw.UA_ServerConfig_clear(config);
+          throw UaStatusException(raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED);
+        }
       }
       // setMinimal sets its 2-minute asyncOperationTimeout only under
       // UA_MULTITHREADING >= 100 (plugins/ua_config_default.c); this package
@@ -2463,9 +2493,9 @@ class Server {
     // Fallback when the diagnostics array is unavailable but the session
     // exists: an empty clientUserId means anonymous, a non-empty one means a
     // username token (open62541 fills it from the UserNameIdentityToken; an
-    // X509 subject name would be misattributed here, but certificate tokens
-    // are not reachable without diagnostics being disabled AND a session PKI
-    // configured).
+    // X509 subject name would be misattributed here, but an X509 token needs
+    // a signature by a SecurityPolicy other than None, the only one setMinimal
+    // configures, and a server with a certificate has diagnostics).
     if (identity == null && clientUserId != null) {
       identity = clientUserId.isEmpty ? const AnonymousSessionIdentity() : UsernameSessionIdentity(clientUserId);
     }
