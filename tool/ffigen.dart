@@ -175,6 +175,7 @@ Future<void> main() async {
 
     // Async operations (method calls now; async data-source writes later)
     'UA_Server_setAsyncCallMethodResult',
+    'UA_Server_setAsyncHistoryReadResult',
     'UA_Server_setAsyncWriteResult',
 
     'UA_DataTypeAttributes_new',

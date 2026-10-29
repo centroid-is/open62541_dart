@@ -6,6 +6,49 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **`historyReadRaw`: the client side of HistoryRead.** `Client` and
+  `ClientIsolate` implement the new `HistoryReadApi` (a separate interface,
+  like `DataValueMonitoringApi`, so `ClientApi` implementers are unaffected):
+  `historyReadRaw(nodeIds, {start, end, numValuesPerNode, maxValues,
+  returnBounds, timestampsToReturn})` reads raw history
+  (ReadRawModifiedDetails) through the non-blocking `UA_Client_AsyncService`,
+  follows continuation points until every node is done (empty pages
+  included), and returns each node's `DataValue`s. `maxValues` stops a node
+  early and releases its continuation point on the server. A node answered
+  Bad, or a Bad service result, fails the call with a `UaStatusException`
+  after the continuation points still held are released.
+- **`Server.setHistoryBackend`: HistoryRead served from Dart.** Implement
+  `HistoryBackend.readRaw` (and, optionally, `readProcessed` / `readAtTime`,
+  which otherwise answer `Bad_HistoryOperationUnsupported` per node) and
+  install it; clients then read the history of the nodes made historizing
+  with `historizing:` / `setHistorizing`. The backend gets one call per
+  request with the nodes copied into Dart (`HistoryReadRawRequest`: interval,
+  `numValuesPerNode` capped by `maxReturnDataValues`, bounds,
+  `timestampsToReturn`, IndexRange, its own continuation point and the
+  calling session) and answers with a `Future` of `HistoryReadResult`s
+  (`DataValue`s, continuation point, status). The response is parked
+  natively until then (the async HistoryRead patch), bounded by
+  `asyncOperationTimeout` (`Bad_Timeout`); a read in flight at `delete` is
+  dropped. The server answers itself: `Bad_TimestampsToReturnInvalid` for
+  Neither, `Bad_NodeIdUnknown`, `Bad_HistoryOperationInvalid` for a node not
+  made historizing, and `releaseContinuationPoints` (handed to
+  `HistoryBackend.releaseContinuationPoints`, answered at once). The HistoryRead
+  access bit is left to access control, as in open62541. A
+  `UaStatusException` from the backend answers every node with its code,
+  any other error `Bad_InternalError`. `TimestampsToReturn` is exported.
+- **Native: HistoryRead can complete asynchronously** (`hook/async_history_read.patch`).
+  open62541 1.5.9 answers a HistoryRead as soon as the history database's
+  read callback returns. The build now patches the AsyncManager with a
+  HistoryRead operation type: a callback that sets the response's
+  `serviceResult` to `UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY` gets the
+  response parked, fills its results later and completes it with the new
+  `UA_Server_setAsyncHistoryReadResult(server, results)` (bound). Timeout
+  (`asyncOperationTimeout`, `Bad_Timeout`), the Cancel service and shutdown
+  (`Bad_Shutdown`) cancel a parked read like a parked method call, and call
+  `asyncOperationCancelCallback` with the results pointer. The patch also
+  fixes the AsyncManager's timeout sweep, which classified operation types
+  with `<= WRITE_REQUEST`. A callback that answers synchronously behaves as
+  before.
 - **History node bookkeeping.** `addVariableNode` and
   `addDataSourceVariableNode` take `historizing:` (the node's Historizing
   attribute, `false` by default). `Server.setHistorizing` /

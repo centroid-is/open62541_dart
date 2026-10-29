@@ -47646,6 +47646,20 @@ UA_EXPORT UA_THREADSAFE UA_StatusCode
 UA_Server_setAsyncWriteResult(UA_Server *server, const UA_DataValue *value,
                               UA_StatusCode result);
 
+#ifdef UA_ENABLE_HISTORIZING
+/* open62541_dart: async HistoryRead. A UA_HistoryDatabase read callback that
+ * sets response->responseHeader.serviceResult to
+ * UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY parks the response. It fills
+ * response->results[i] (status, continuation point and the historyData[i] it
+ * was handed) later and then calls this with response->results, the pointer
+ * that identifies the operation. The response struct itself is not kept; do
+ * not access it after the callback returns. On a cancel (timeout, Cancel
+ * service, shutdown) the asyncOperationCancelCallback receives the results
+ * pointer; the results must not be accessed after that. */
+UA_EXPORT UA_THREADSAFE UA_StatusCode
+UA_Server_setAsyncHistoryReadResult(UA_Server *server, UA_HistoryReadResult *results);
+#endif
+
 /**
  * The server supports asynchronous "local" read/write/call operations. The user
  * supplies a result-callback that gets called either synchronously (if the

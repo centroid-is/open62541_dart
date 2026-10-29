@@ -1,0 +1,222 @@
+--- a/include/open62541/server.h
++++ b/include/open62541/server.h
+@@ -1428,6 +1428,20 @@ UA_EXPORT UA_THREADSAFE UA_StatusCode
+ UA_Server_setAsyncWriteResult(UA_Server *server, const UA_DataValue *value,
+                               UA_StatusCode result);
+ 
++#ifdef UA_ENABLE_HISTORIZING
++/* open62541_dart: async HistoryRead. A UA_HistoryDatabase read callback that
++ * sets response->responseHeader.serviceResult to
++ * UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY parks the response. It fills
++ * response->results[i] (status, continuation point and the historyData[i] it
++ * was handed) later and then calls this with response->results, the pointer
++ * that identifies the operation. The response struct itself is not kept; do
++ * not access it after the callback returns. On a cancel (timeout, Cancel
++ * service, shutdown) the asyncOperationCancelCallback receives the results
++ * pointer; the results must not be accessed after that. */
++UA_EXPORT UA_THREADSAFE UA_StatusCode
++UA_Server_setAsyncHistoryReadResult(UA_Server *server, UA_HistoryReadResult *results);
++#endif
++
+ /**
+  * The server supports asynchronous "local" read/write/call operations. The user
+  * supplies a result-callback that gets called either synchronously (if the
+--- a/src/server/ua_server_async.c
++++ b/src/server/ua_server_async.c
+@@ -78,6 +78,11 @@ UA_AsyncOperation_cancel(UA_Server *server, UA_AsyncOperation *op,
+         cancelPtr = op->output.directCall.outputArguments;
+         op->output.directCall.statusCode = opstatus;
+         break;
++    case UA_ASYNCOPERATIONTYPE_HISTORYREAD_REQUEST:
++        cancelPtr = op->output.historyRead;
++        for(size_t i = 0; i < op->context.historyReadResultsSize; i++)
++            op->output.historyRead[i].statusCode = opstatus;
++        break;
+     default: UA_assert(false); return;
+     }
+ 
+@@ -124,6 +129,12 @@ UA_AsyncResponse_delete(UA_AsyncResponse *ar) {
+         ar->response.readResponse.results = NULL;
+         ar->response.readResponse.resultsSize = 0;
+         arrType = &UA_TYPES[UA_TYPES_DATAVALUE];
++    } else if(ar->responseType == &UA_TYPES[UA_TYPES_HISTORYREADRESPONSE]) {
++        arr = ar->response.historyReadResponse.results;
++        arrSize = ar->response.historyReadResponse.resultsSize;
++        ar->response.historyReadResponse.results = NULL;
++        ar->response.historyReadResponse.resultsSize = 0;
++        arrType = &UA_TYPES[UA_TYPES_HISTORYREADRESULT];
+     } else /* if(ar->responseType == &UA_TYPES[UA_TYPES_WRITERESPONSE]) */ {
+         UA_assert(ar->responseType == &UA_TYPES[UA_TYPES_WRITERESPONSE]);
+         arr = ar->response.writeResponse.results;
+@@ -152,6 +163,8 @@ notifyServiceEnd(UA_Server *server, UA_AsyncResponse *ar,
+         serviceTypeId = UA_TYPES[UA_TYPES_CALLREQUEST].typeId;
+     } else if(ar->responseType == &UA_TYPES[UA_TYPES_READRESPONSE]) {
+         serviceTypeId = UA_TYPES[UA_TYPES_READREQUEST].typeId;
++    } else if(ar->responseType == &UA_TYPES[UA_TYPES_HISTORYREADRESPONSE]) {
++        serviceTypeId = UA_TYPES[UA_TYPES_HISTORYREADREQUEST].typeId;
+     } else /* if(ar->responseType == &UA_TYPES[UA_TYPES_WRITERESPONSE]) */ {
+         serviceTypeId = UA_TYPES[UA_TYPES_WRITEREQUEST].typeId;
+     }
+@@ -324,7 +337,7 @@ checkTimeouts(UA_Server *server, void *_) {
+     UA_AsyncOperation *op = NULL, *op_tmp = NULL;
+     TAILQ_FOREACH_SAFE(op, &am->waitingOps, pointers, op_tmp) {
+         /* Check the timeout */
+-        if(op->asyncOperationType <= UA_ASYNCOPERATIONTYPE_WRITE_REQUEST) {
++        if(op->asyncOperationType < UA_ASYNCOPERATIONTYPE_CALL_DIRECT) {
+             if(tNow <= op->handling.response->timeout)
+                 continue;
+         } else {
+@@ -557,6 +570,59 @@ UA_Server_cancelAsync(UA_Server *server, void *context, UA_StatusCode opstatus,
+     unlockServer(server);
+ }
+ 
++#ifdef UA_ENABLE_HISTORIZING
++
++/***************/
++/* HistoryRead */
++/***************/
++
++UA_StatusCode
++allocateHistoryReadResults(UA_HistoryReadResponse *response, size_t resultsSize,
++                           UA_AsyncResponse **ar, UA_AsyncOperation **op) {
++    response->results = (UA_HistoryReadResult*)
++        allocateResultsArray(&UA_TYPES[UA_TYPES_HISTORYREADRESULT],
++                             resultsSize, ar, op);
++    if(!response->results)
++        return UA_STATUSCODE_BADOUTOFMEMORY;
++    response->resultsSize = resultsSize;
++    return UA_STATUSCODE_GOOD;
++}
++
++UA_Boolean
++persistAsyncHistoryRead(UA_Server *server, UA_Session *session,
++                        UA_HistoryReadResponse *response,
++                        UA_AsyncResponse *ar, UA_AsyncOperation *op) {
++    if(response->responseHeader.serviceResult != UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY)
++        return true;
++    response->responseHeader.serviceResult = UA_STATUSCODE_GOOD;
++    op->context.historyReadResultsSize = response->resultsSize;
++    persistAsyncResponseOperation(server, op, UA_ASYNCOPERATIONTYPE_HISTORYREAD_REQUEST,
++                                  ar, response->results);
++    if(ar->opCountdown == 0)
++        return true; /* Refused (queue full), the results carry the status */
++    ar->responseType = &UA_TYPES[UA_TYPES_HISTORYREADRESPONSE];
++    persistAsyncResponse(server, session, response, ar);
++    return false;
++}
++
++UA_StatusCode
++UA_Server_setAsyncHistoryReadResult(UA_Server *server, UA_HistoryReadResult *results) {
++    lockServer(server);
++    UA_AsyncManager *am = &server->asyncManager;
++    UA_AsyncOperation *op = NULL;
++    TAILQ_FOREACH(op, &am->waitingOps, pointers) {
++        if(op->asyncOperationType == UA_ASYNCOPERATIONTYPE_HISTORYREAD_REQUEST &&
++           op->output.historyRead == results) {
++            processOperationResult(server, op);
++            break;
++        }
++    }
++    unlockServer(server);
++    return (op) ? UA_STATUSCODE_GOOD : UA_STATUSCODE_BADNOTFOUND;
++}
++
++#endif /* UA_ENABLE_HISTORIZING */
++
+ /********/
+ /* Read */
+ /********/
+--- a/src/server/ua_server_async.h
++++ b/src/server/ua_server_async.h
+@@ -47,6 +47,9 @@ typedef enum {
+     UA_ASYNCOPERATIONTYPE_CALL_REQUEST  = 0,
+     UA_ASYNCOPERATIONTYPE_READ_REQUEST  = 1,
+     UA_ASYNCOPERATIONTYPE_WRITE_REQUEST = 2,
++    /* open62541_dart: async HistoryRead. One operation for the whole request;
++     * its output is the results array. */
++    UA_ASYNCOPERATIONTYPE_HISTORYREAD_REQUEST = 3,
+     UA_ASYNCOPERATIONTYPE_CALL_DIRECT   = (0 + 4),
+     UA_ASYNCOPERATIONTYPE_READ_DIRECT   = (1 + 4),
+     UA_ASYNCOPERATIONTYPE_WRITE_DIRECT  = (2 + 4)
+@@ -79,6 +82,7 @@ typedef struct UA_AsyncOperation {
+         UA_CallMethodResult *call;
+         UA_StatusCode *write;
+         UA_DataValue *read;
++        UA_HistoryReadResult *historyRead;
+         UA_CallMethodResult directCall;
+         UA_StatusCode directWrite;
+         UA_DataValue directRead;
+@@ -90,6 +94,7 @@ typedef struct UA_AsyncOperation {
+          * original request has been freed. But this uses a shallow copy. So
+          * don't access the writeValue after the operationCallback. */
+         UA_WriteValue writeValue;
++        size_t historyReadResultsSize;
+     } context;
+ } UA_AsyncOperation;
+ 
+@@ -108,6 +113,7 @@ struct UA_AsyncResponse {
+         UA_CallResponse callResponse;
+         UA_ReadResponse readResponse;
+         UA_WriteResponse writeResponse;
++        UA_HistoryReadResponse historyReadResponse;
+     } response;
+ };
+ 
+@@ -161,6 +167,22 @@ void
+ async_cancel(UA_Server *server, void *context, UA_StatusCode status,
+              UA_Boolean cancelSynchronous);
+ 
++#ifdef UA_ENABLE_HISTORIZING
++/* Allocates response->results (resultsSize entries) together with the memory
++ * to park the response as an async operation. */
++UA_StatusCode
++allocateHistoryReadResults(UA_HistoryReadResponse *response, size_t resultsSize,
++                           UA_AsyncResponse **ar, UA_AsyncOperation **op);
++
++/* Parks the response when the backend signalled
++ * UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY in its serviceResult. Returns
++ * whether the service is done (the response is to be sent now). */
++UA_Boolean
++persistAsyncHistoryRead(UA_Server *server, UA_Session *session,
++                        UA_HistoryReadResponse *response,
++                        UA_AsyncResponse *ar, UA_AsyncOperation *op);
++#endif
++
+ _UA_END_DECLS
+ 
+ #endif /* UA_SERVER_ASYNC_H_ */
+--- a/src/server/ua_services_attribute.c
++++ b/src/server/ua_services_attribute.c
+@@ -2203,15 +2203,16 @@ Service_HistoryRead(UA_Server *server, UA_Session *session,
+         return true;
+     }
+ 
+-    /* Allocate the results array */
+-    response->results = (UA_HistoryReadResult*)
+-        UA_Array_new(request->nodesToReadSize, &UA_TYPES[UA_TYPES_HISTORYREADRESULT]);
+-    if(!response->results) {
++    /* Allocate the results array, with room to park the response as an async
++     * operation (open62541_dart: async HistoryRead) */
++    UA_AsyncResponse *ar = NULL;
++    UA_AsyncOperation *aop = NULL;
++    if(allocateHistoryReadResults(response, request->nodesToReadSize,
++                                  &ar, &aop) != UA_STATUSCODE_GOOD) {
+         UA_free(historyData);
+         response->responseHeader.serviceResult = UA_STATUSCODE_BADOUTOFMEMORY;
+         return true;
+     }
+-    response->resultsSize = request->nodesToReadSize;
+ 
+     for(size_t i = 0; i < response->resultsSize; ++i) {
+         void * data = UA_new(historyDataType);
+@@ -2234,7 +2235,9 @@ Service_HistoryRead(UA_Server *server, UA_Session *session,
+                 response, historyData);
+     UA_free(historyData);
+ 
+-    return true;
++    /* The backend set serviceResult to UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY
++     * to complete later with UA_Server_setAsyncHistoryReadResult */
++    return persistAsyncHistoryRead(server, session, response, ar, aop);
+ }
+ 
+ UA_Boolean

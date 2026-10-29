@@ -267,6 +267,59 @@ Future<void> _applyPatches(Uri sourceDir, Uri packageRoot) async {
   await _patchDeleteByClientHandle(sourceDir, packageRoot);
   await _patchAsyncManagerSingleThread(sourceDir);
   await _patchDynamicPort(sourceDir, packageRoot);
+  await _patchAsyncHistoryRead(sourceDir, packageRoot);
+}
+
+/// Lets a HistoryRead complete asynchronously, like Read, Write and Call.
+///
+/// open62541 1.5.9 calls the `UA_HistoryDatabase` read callback once and
+/// sends the response when it returns, so a backend whose data comes from an
+/// asynchronous store (a database queried from Dart) cannot answer it. The
+/// patch adds the async operation type `UA_ASYNCOPERATIONTYPE_HISTORYREAD_REQUEST`
+/// to the AsyncManager: a backend that sets the response's serviceResult to
+/// `UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY` gets the response parked (the
+/// whole request is one operation, identified by its results array) and fills
+/// it later, then calls the new `UA_Server_setAsyncHistoryReadResult`. Timeout
+/// (`asyncOperationTimeout`), the Cancel service and shutdown cancel it like
+/// any other async operation and notify `asyncOperationCancelCallback` with
+/// the results pointer. It also fixes `checkTimeouts`, which told request
+/// operations from direct ones with `<= UA_ASYNCOPERATIONTYPE_WRITE_REQUEST`
+/// and would read a direct operation's timeout from the new type.
+/// Same delivery mechanism as [_patchDynamicPort].
+Future<void> _patchAsyncHistoryRead(Uri sourceDir, Uri packageRoot) async {
+  final asyncFile = File.fromUri(sourceDir.resolve('src/server/ua_server_async.c'));
+  final serverHeader = File.fromUri(sourceDir.resolve('include/open62541/server.h'));
+  if (!await asyncFile.exists() || !await serverHeader.exists()) {
+    throw Exception(
+      'Cannot apply async-history-read patch: src/server/ua_server_async.c / '
+      'include/open62541/server.h not found under $sourceDir.',
+    );
+  }
+
+  const marker = 'UA_Server_setAsyncHistoryReadResult';
+  if ((await asyncFile.readAsString()).contains(marker)) {
+    return;
+  }
+
+  final patchFile = File.fromUri(packageRoot.resolve('hook/async_history_read.patch'));
+  if (!await patchFile.exists()) {
+    throw Exception(
+      'Cannot apply async-history-read patch: patch file not found at ${patchFile.path}. '
+      'It must ship with the package (check .pubignore does not exclude hook/).',
+    );
+  }
+
+  await _applyUnifiedDiff(sourceDir: sourceDir, patchFile: patchFile, what: 'async-history-read');
+
+  final asyncSource = await asyncFile.readAsString();
+  if (!asyncSource.contains(marker) ||
+      !asyncSource.contains('UA_ASYNCOPERATIONTYPE_HISTORYREAD_REQUEST') ||
+      !(await serverHeader.readAsString()).contains(marker)) {
+    throw Exception(
+      'async-history-read patch tool reported success but the fix is absent from '
+      'ua_server_async.c / server.h. The upstream source likely changed shape; re-verify the patch.',
+    );
+  }
 }
 
 /// Gives a server started on port 0 ONE port for every address family.

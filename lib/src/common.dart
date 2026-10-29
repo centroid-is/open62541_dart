@@ -54,7 +54,7 @@ ffi.Pointer<raw.UA_DataType> getTypeByIndex(int type) {
 /// length 0 (empty array) from a null variant (`data == NULL`) or a scalar
 /// (`data` above the sentinel). Mirrors `UA_EMPTY_ARRAY_SENTINEL` which is a C
 /// macro (`(void*)0x01`) and therefore not emitted into the generated bindings.
-final ffi.Pointer<ffi.Void> _uaEmptyArraySentinel = ffi.Pointer.fromAddress(0x01);
+final ffi.Pointer<ffi.Void> uaEmptyArraySentinel = ffi.Pointer.fromAddress(0x01);
 
 ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
   final isEmptyArray = value.isArray && value.asArray.isEmpty;
@@ -113,7 +113,7 @@ ffi.Pointer<raw.UA_Variant> valueToVariant(DynamicValue value) {
   if (isEmptyArray) {
     // Empty array: no payload. Point at the sentinel so open62541 reads this
     // back as an array of length 0 rather than a null variant or a scalar.
-    variant.ref.data = _uaEmptyArraySentinel;
+    variant.ref.data = uaEmptyArraySentinel;
   } else {
     final pointer = ua_calloc<ffi.Uint8>(wr.length);
     pointer.asTypedList(wr.length).setRange(0, wr.length, wr.toBytes());
@@ -154,7 +154,7 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
   // Empty array: arrayLength 0 with data pointing at the empty-array sentinel
   // (as opposed to a real pointer, which would be a scalar). Read it back as an
   // array of length 0 rather than dereferencing the sentinel.
-  if (data.arrayLength == 0 && data.data.address == _uaEmptyArraySentinel.address) {
+  if (data.arrayLength == 0 && data.data.address == uaEmptyArraySentinel.address) {
     return DynamicValue(value: <DynamicValue>[], typeId: typeId);
   }
 
