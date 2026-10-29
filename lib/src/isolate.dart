@@ -62,6 +62,26 @@ class ReadValueMessage extends IsolateMessage {
   const ReadValueMessage(super.requestId, this.nodeId);
 }
 
+class HistoryReadRawMessage extends IsolateMessage {
+  final List<NodeId> nodeIds;
+  final DateTime? start;
+  final DateTime? end;
+  final int numValuesPerNode;
+  final int? maxValues;
+  final bool returnBounds;
+  final TimestampsToReturn timestampsToReturn;
+  const HistoryReadRawMessage(
+    super.requestId,
+    this.nodeIds, {
+    required this.start,
+    required this.end,
+    required this.numValuesPerNode,
+    required this.maxValues,
+    required this.returnBounds,
+    required this.timestampsToReturn,
+  });
+}
+
 class WriteMessage extends IsolateMessage {
   final NodeId nodeId;
   final DynamicValue value;
@@ -248,7 +268,7 @@ class IsolateResponse<T> {
 /// are not reliably sendable.
 Object sendableError(Object e) => e is UaStatusException ? e : e.toString();
 
-class ClientIsolate implements ClientApi, DataValueMonitoringApi {
+class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   ClientIsolate._({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -461,6 +481,42 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi {
     _pendingRequests[id] = completer;
 
     _sendPort.send(ReadValueMessage(id, nodeId));
+
+    try {
+      return await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
+  @override
+  Future<Map<NodeId, List<DataValue>>> historyReadRaw(
+    List<NodeId> nodeIds, {
+    DateTime? start,
+    DateTime? end,
+    int numValuesPerNode = 0,
+    int? maxValues,
+    bool returnBounds = false,
+    TimestampsToReturn timestampsToReturn = TimestampsToReturn.UA_TIMESTAMPSTORETURN_SOURCE,
+  }) async {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final completer = Completer<Map<NodeId, List<DataValue>>>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(
+      HistoryReadRawMessage(
+        id,
+        nodeIds,
+        start: start,
+        end: end,
+        numValuesPerNode: numValuesPerNode,
+        maxValues: maxValues,
+        returnBounds: returnBounds,
+        timestampsToReturn: timestampsToReturn,
+      ),
+    );
 
     try {
       return await completer.future;
@@ -1148,6 +1204,17 @@ void _isolateEntryPoint(_IsolateData data) {
         sendPort.send(IsolateResponse.success(message.requestId, result));
       } else if (message is ReadValueMessage) {
         final result = await client.readValue(message.nodeId);
+        sendPort.send(IsolateResponse.success(message.requestId, result));
+      } else if (message is HistoryReadRawMessage) {
+        final result = await client.historyReadRaw(
+          message.nodeIds,
+          start: message.start,
+          end: message.end,
+          numValuesPerNode: message.numValuesPerNode,
+          maxValues: message.maxValues,
+          returnBounds: message.returnBounds,
+          timestampsToReturn: message.timestampsToReturn,
+        );
         sendPort.send(IsolateResponse.success(message.requestId, result));
       } else if (message is WriteMessage) {
         await client.write(message.nodeId, message.value);
