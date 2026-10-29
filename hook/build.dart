@@ -319,7 +319,7 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
   return installPrefix;
 }
 
-Future<Uri> download(Uri outputDirectory, String version) async {
+Future<Uri> download(Uri outputDirectory, String version, {String? stamp}) async {
   // Use short directory names to avoid Windows MAX_PATH (260 char) limit.
   final extractDir = Directory.fromUri(outputDirectory.resolve('dl/'));
 
@@ -330,7 +330,9 @@ Future<Uri> download(Uri outputDirectory, String version) async {
   // the old library against the new bindings.
   final srcDir = Directory.fromUri(extractDir.uri.resolve('src/'));
   final versionStamp = File.fromUri(extractDir.uri.resolve('version'));
-  if (await srcDir.exists() && await versionStamp.exists() && (await versionStamp.readAsString()).trim() == version) {
+  // [stamp] also names the patch set, so a changed patch re-extracts.
+  stamp ??= version;
+  if (await srcDir.exists() && await versionStamp.exists() && (await versionStamp.readAsString()).trim() == stamp) {
     return srcDir.uri;
   }
   if (await extractDir.exists()) {
@@ -358,8 +360,26 @@ Future<Uri> download(Uri outputDirectory, String version) async {
     throw Exception('Error extracting open62541 version $version: extracted directory not found');
   }
   await (folder as Directory).rename(srcDir.path);
-  await versionStamp.writeAsString(version);
+  await versionStamp.writeAsString(stamp);
   return srcDir.uri;
+}
+
+/// The `hook/*.patch` files, sorted.
+List<File> _patchFiles(Uri packageRoot) {
+  final dir = Directory.fromUri(packageRoot.resolve('hook/'));
+  final files = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.patch')).toList();
+  return files..sort((a, b) => a.path.compareTo(b.path));
+}
+
+/// A digest of [patches]: names the patch set applied to a tree.
+String _patchSetDigest(List<File> patches) {
+  final bytes = <int>[];
+  for (final patch in patches) {
+    bytes
+      ..addAll(patch.uri.pathSegments.last.codeUnits)
+      ..addAll(patch.readAsStringSync().replaceAll('\r\n', '\n').codeUnits);
+  }
+  return sha256.convert(bytes).toString().substring(0, 16);
 }
 
 /// Applies every open62541 source patch this package carries against the
@@ -371,7 +391,7 @@ Future<void> _applyPatches(Uri sourceDir, Uri packageRoot) async {
   await _patchSubscriptionCleanup(sourceDir);
   await _patchBoundedSend(sourceDir, packageRoot);
   await _patchSessionRecreateRace(sourceDir, packageRoot);
-  await _patchDeleteByClientHandle(sourceDir, packageRoot);
+  await _patchForgetMonitoredItemsOnSend(sourceDir, packageRoot);
   await _patchAsyncManagerSingleThread(sourceDir);
   await _patchDynamicPort(sourceDir, packageRoot);
 }
@@ -577,47 +597,42 @@ Future<void> _patchSessionRecreateRace(Uri sourceDir, Uri packageRoot) async {
   }
 }
 
-/// Fixes the orphaned-monitored-item bookkeeping race in open62541's
-/// DeleteMonitoredItems response handling.
+/// Fixes the orphaned-monitored-item race in open62541's DeleteMonitoredItems.
 ///
-/// ROOT CAUSE (stale-keys / orphaned monitored items): the delete-response
-/// handler removes local MonitoredItems by their server-assigned
-/// `monitoredItemId` at response-processing time. That id is server-recyclable,
-/// so when a delete and a create interleave the handler can erase the NEW live
-/// item locally while the server keeps sampling and publishing it — the
-/// notification then arrives for a clientHandle the client has forgotten
-/// ("Could not process a notification with clienthandle N") and the key freezes
-/// silently. The patch snapshots the client-assigned, monotonically-unique
-/// `clientHandle` of each requested id at request-build time and removes by that
-/// handle at response time, so the collision is structurally impossible.
-///
-/// Delivered as a build-time source patch (same mechanism as
-/// [_patchBoundedSend]); submitted upstream in parallel.
-Future<void> _patchDeleteByClientHandle(Uri sourceDir, Uri packageRoot) async {
+/// The client removed its local MonitoredItems when the delete RESPONSE
+/// arrived, matching by the server-assigned `monitoredItemId`. A server may
+/// recycle that id into a new item whose CreateMonitoredItems response is
+/// processed first; the delete then removed the NEW item while the server
+/// kept publishing it ("Could not process a notification with clienthandle
+/// N"), and its value froze. The patch forgets the items when the delete is
+/// sent, so the response has nothing to match. A client must drop
+/// notifications for deleted items anyway (OPC UA Part 4, 5.12.6).
+Future<void> _patchForgetMonitoredItemsOnSend(Uri sourceDir, Uri packageRoot) async {
   final targetFile = File.fromUri(sourceDir.resolve('src/client/ua_client_subscriptions.c'));
   if (!await targetFile.exists()) {
-    throw Exception('Cannot apply delete-by-client-handle patch: ua_client_subscriptions.c not found under $sourceDir');
+    throw Exception('Cannot apply forget-on-send patch: ua_client_subscriptions.c not found under $sourceDir');
   }
 
-  if ((await targetFile.readAsString()).contains('UA62541_DART_DELETE_BY_HANDLE')) {
+  const marker = 'UA62541_DART_FORGET_ON_SEND';
+  if ((await targetFile.readAsString()).contains(marker)) {
     return; // already patched (warm shared source dir)
   }
 
-  final patchFile = File.fromUri(packageRoot.resolve('hook/delete_by_client_handle.patch'));
+  final patchFile = File.fromUri(packageRoot.resolve('hook/forget_monitored_items_on_send.patch'));
   if (!await patchFile.exists()) {
     throw Exception(
-      'Cannot apply delete-by-client-handle patch: patch file not found at ${patchFile.path}. '
+      'Cannot apply forget-on-send patch: patch file not found at ${patchFile.path}. '
       'It must ship with the package (check .pubignore does not exclude hook/).',
     );
   }
 
-  await _applyUnifiedDiff(sourceDir: sourceDir, patchFile: patchFile, what: 'delete-by-client-handle');
+  await _applyUnifiedDiff(sourceDir: sourceDir, patchFile: patchFile, what: 'forget-on-send');
 
-  if (!(await targetFile.readAsString()).contains('UA62541_DART_DELETE_BY_HANDLE')) {
+  if (!(await targetFile.readAsString()).contains(marker)) {
     throw Exception(
-      'delete-by-client-handle patch tool reported success but UA62541_DART_DELETE_BY_HANDLE '
-      'is absent from ua_client_subscriptions.c — refusing to ship the orphaned-monitored-item '
-      'bookkeeping race. The upstream source likely changed shape; re-verify the patch.',
+      'forget-on-send patch tool reported success but $marker is absent from '
+      'ua_client_subscriptions.c: refusing to ship the orphaned-monitored-item race. '
+      'The upstream source likely changed shape; re-verify the patch.',
     );
   }
 }
@@ -848,7 +863,13 @@ Future<void> main(List<String> args) async {
     // (`open62541_types.dart`) is exactly what such a build imports.
     if (!input.config.buildCodeAssets) return;
 
-    final extractedFiles = await download(input.outputDirectoryShared, version);
+    final patches = _patchFiles(input.packageRoot);
+    output.dependencies.addAll([for (final patch in patches) patch.uri]);
+    final extractedFiles = await download(
+      input.outputDirectoryShared,
+      version,
+      stamp: '$version ${_patchSetDigest(patches)}',
+    );
     await _applyPatches(extractedFiles, input.packageRoot);
 
     final name = 'open62541';
