@@ -260,3 +260,19 @@ DynamicValue variantToValue(raw.UA_Variant data, {Schema? defs, NodeId? dataType
 
   return retValue;
 }
+
+/// Whether [key] is an encrypted private key: a PKCS#8
+/// `EncryptedPrivateKeyInfo` in DER (a SEQUENCE whose first element is the
+/// encryption AlgorithmIdentifier, itself a SEQUENCE; an unencrypted key
+/// starts with its version INTEGER) or PEM, or a legacy encrypted PEM.
+bool isEncryptedPrivateKey(Uint8List key) {
+  if (key.length > 2 && key[0] == 0x30) {
+    var offset = 2;
+    final length = key[1];
+    // Long-form length: 0x80 | number of length bytes.
+    if (length & 0x80 != 0) offset += length & 0x7f;
+    return offset < key.length && key[offset] == 0x30;
+  }
+  final text = String.fromCharCodes(key);
+  return text.contains('-----BEGIN ENCRYPTED PRIVATE KEY-----') || text.contains('Proc-Type: 4,ENCRYPTED');
+}

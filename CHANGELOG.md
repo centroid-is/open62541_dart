@@ -4,6 +4,38 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## 1.5.9+1
+
+- **Bindings for history and security.** The FFI bindings now cover what
+  HistoryRead and the server-side security work build on, so the feature
+  work that follows needs no regeneration: the `UA_HistoryReadRequest` /
+  `UA_HistoryReadResponse` / `UA_HistoryReadResult` / `UA_HistoryReadValueId` /
+  `UA_HistoryData` / `UA_HistoryUpdateResult` / `UA_ReadRawModifiedDetails` /
+  `UA_ReadAtTimeDetails` / `UA_ReadProcessedDetails` structs (opaque until
+  now), the `UA_HistoryReadRequest` helpers, `UA_Server_read/writeHistorizing`,
+  `UA_Server_read/writeAccessLevel`, `UA_Server_set/getNodeContext`,
+  `UA_Server_closeSession`, `UA_Array_new`, `UA_ByteString_clear`,
+  `UA_ServerConfig_setBasics_withPort` / `_clear` / `_addSecurityPolicy*` /
+  `_addEndpoint` / `_addAllEndpoints`, `UA_CertificateGroup_Memorystore`,
+  `UA_AccessControl_defaultWithLoginCallback`, the remaining
+  `UA_CertificateUtils_*` helpers (thumbprint, subject name, expiration, key
+  size, key-pair check, key decryption), `UA_ClientConfig_clear` and
+  `UA_ClientConfig_setAuthenticationCert`. `UaTypes` gained the history
+  request, response, result and details types. The new structs are pinned to
+  open62541's type table (size and every member offset) in
+  `verify_sizes_test`.
+- **Fixed: a server private key that open62541 cannot load made it prompt
+  for the password on stdin, or left the server with no endpoint.** An
+  encrypted key is an `ArgumentError` before any native call (the client's
+  check, now shared). A key open62541 refuses to parse is a
+  `BadSecurityChecksFailed` `UaStatusException`: the server config carries the
+  same declining password callback as the client's. A DER key open62541
+  copies unparsed (`UA_CertificateUtils_decryptPrivateKey` returns anything
+  tagged SEQUENCE verbatim) made every security policy fail to build its
+  context, which open62541 only logs, so `Server()` came up with the None
+  endpoint alone; that is the same `UaStatusException` now. A failed base
+  configuration was a thrown `String`; it is a `UaStatusException` too.
+
 ## 1.5.9
 
 - **Tooling:** the header bitfield transform now runs inside

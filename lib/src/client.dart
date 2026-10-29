@@ -333,7 +333,7 @@ void checkClientCertificateArguments({
   if ((certificate == null) != (privateKey == null)) {
     throw ArgumentError('certificate and privateKey come together; got only one of them');
   }
-  if (privateKey != null && _isEncryptedPrivateKey(privateKey)) {
+  if (privateKey != null && isEncryptedPrivateKey(privateKey)) {
     throw ArgumentError.value(
       '<${privateKey.length} bytes>',
       'privateKey',
@@ -365,22 +365,6 @@ void checkClientCertificateArguments({
       'trust list as "accept every certificate", so an empty one is refused rather than silently accepting any server',
     );
   }
-}
-
-/// Whether [key] is an encrypted private key: a PKCS#8
-/// `EncryptedPrivateKeyInfo` in DER (a SEQUENCE whose first element is the
-/// encryption AlgorithmIdentifier, itself a SEQUENCE; an unencrypted key
-/// starts with its version INTEGER) or PEM, or a legacy encrypted PEM.
-bool _isEncryptedPrivateKey(Uint8List key) {
-  if (key.length > 2 && key[0] == 0x30) {
-    var offset = 2;
-    final length = key[1];
-    // Long-form length: 0x80 | number of length bytes.
-    if (length & 0x80 != 0) offset += length & 0x7f;
-    return offset < key.length && key[offset] == 0x30;
-  }
-  final text = String.fromCharCodes(key);
-  return text.contains('-----BEGIN ENCRYPTED PRIVATE KEY-----') || text.contains('Proc-Type: 4,ENCRYPTED');
 }
 
 /// open62541's `privateKeyPasswordCallback`, which it calls when the key
