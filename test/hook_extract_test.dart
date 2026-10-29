@@ -44,6 +44,31 @@ void main() {
     });
   });
 
+  // native_toolchain_cmake reconfigures on every run, and on Apple targets
+  // its ios.toolchain.cmake prepends its flags to the cached ones each time,
+  // so flags.make changed on every run and everything recompiled. The hook
+  // configures only when what it configures with changed.
+  group('configureStamp', () {
+    final defines = {'CMAKE_BUILD_TYPE': 'Release', 'CMAKE_PROJECT_INCLUDE': '/b/hardening-open62541.cmake'};
+    const config = {'target_os': 'macos', 'target_architecture': 'arm64'};
+    const script = 'add_compile_options(-fstack-protector-strong)\n';
+
+    test('is the same for the same inputs in any order', () {
+      final reordered = Map.fromEntries(defines.entries.toList().reversed);
+      expect(configureStamp(reordered, config, script), configureStamp(defines, config, script));
+    });
+
+    test('changes with a define, the target config or the hardening script', () {
+      final stamp = configureStamp(defines, config, script);
+      expect(
+        configureStamp({...defines, 'CMAKE_PROJECT_INCLUDE': '/b/hardening-open62541-asan.cmake'}, config, script),
+        isNot(stamp),
+      );
+      expect(configureStamp(defines, {...config, 'target_architecture': 'x64'}, script), isNot(stamp));
+      expect(configureStamp(defines, config, '$script-fsanitize=address\n'), isNot(stamp));
+    });
+  });
+
   late Directory sandbox;
   late Directory extractDir;
 
@@ -117,5 +142,63 @@ void main() {
 
     await expectLater(extractArchiveInto(decoded, extractDir), throwsA(isA<Exception>()));
     expect(await File('${sandbox.path}/escaped.txt').exists(), isFalse);
+  });
+
+  // A skipped configure keeps the build directory's tools, so a CMake, Xcode
+  // or SDK that has since moved or been removed must configure again.
+  group('missingCachedTools', () {
+    test('names the cached tool paths that no longer exist', () async {
+      final cmake = await File('${sandbox.path}/cmake').create();
+      final sdk = await Directory('${sandbox.path}/MacOSX15.2.sdk').create();
+      final cache = [
+        '# This is the CMakeCache file.',
+        'CMAKE_COMMAND:INTERNAL=${cmake.path}',
+        'CMAKE_OSX_SYSROOT:INTERNAL=${sdk.path}',
+        'CMAKE_AR:FILEPATH=${sandbox.path}/gone/ar',
+        'CMAKE_MAKE_PROGRAM:FILEPATH=make',
+        'CMAKE_C_FLAGS:INTERNAL=/not/a/tool',
+      ].join('\n');
+
+      expect(await missingCachedTools(cache), ['${sandbox.path}/gone/ar']);
+    });
+
+    test('is empty when every cached tool is still there', () async {
+      final cmake = await File('${sandbox.path}/cmake').create();
+      expect(await missingCachedTools('CMAKE_COMMAND:INTERNAL=${cmake.path}\n'), isEmpty);
+    });
+  });
+
+  // The hardening script is CMake's CMAKE_PROJECT_INCLUDE: a new mtime on it
+  // reconfigures and recompiles, the relinked library is a hook dependency
+  // modified during the run, and the hooks runner then reruns the hook on the
+  // next start. Unchanged content must leave the file alone.
+  group('writeIfChanged', () {
+    final past = DateTime(2020, 1, 1);
+
+    test('leaves a file with the same content untouched', () async {
+      final file = File('${sandbox.path}/hardening-open62541.cmake');
+      await file.writeAsString('add_compile_options(-fstack-protector-strong)\n');
+      await file.setLastModified(past);
+
+      expect(await writeIfChanged(file, 'add_compile_options(-fstack-protector-strong)\n'), isFalse);
+      expect(await file.lastModified(), past);
+    });
+
+    test('rewrites a file whose content differs', () async {
+      final file = File('${sandbox.path}/flags');
+      await file.writeAsString('old');
+      await file.setLastModified(past);
+
+      expect(await writeIfChanged(file, 'new'), isTrue);
+      expect(await file.readAsString(), 'new');
+      expect(await file.lastModified(), isNot(past));
+    });
+
+    test('creates a missing file and its directory', () async {
+      final file = File('${sandbox.path}/nested/dir/version');
+
+      expect(await writeIfChanged(file, 'v1.5.9'), isTrue);
+      expect(await file.readAsString(), 'v1.5.9');
+    });
   });
 }

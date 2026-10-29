@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -116,7 +117,7 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
   // Rename extracted folder (e.g. mbedtls-3.6.7) to 'src' for shorter paths
   final folder = extractDir.listSync().firstWhere((element) => element is Directory);
   await (folder as Directory).rename(srcDir.path);
-  await versionStamp.writeAsString(_mbedtlsVersion);
+  await writeIfChanged(versionStamp, _mbedtlsVersion);
   return srcDir.uri;
 }
 
@@ -230,20 +231,84 @@ String hardeningCmake(OS targetOS, {bool floatLittleEndian = false, bool sanitiz
   ].join('\n');
 }
 
+/// Writes [content] to [file] unless it already holds exactly that, and
+/// returns whether it wrote.
+///
+/// The files the hook writes are build inputs, and an mtime is what
+/// invalidates a build: the hardening script is CMake's
+/// `CMAKE_PROJECT_INCLUDE`, a dependency of the generated build system, so
+/// touching it makes the build regenerate itself. Anything that relinks the
+/// library is worse: the library is a hook output, so a hook dependency, and
+/// the hooks runner treats one modified during the run as changed and reruns
+/// the hook on the next start.
+Future<bool> writeIfChanged(File file, String content) async {
+  if (await file.exists() && await file.readAsString() == content) return false;
+  await file.parent.create(recursive: true);
+  await file.writeAsString(content);
+  return true;
+}
+
 /// Writes [script] to `hardening-<name>.cmake` under [dir] and returns the
 /// path to hand to `CMAKE_PROJECT_INCLUDE`.
 Future<String> _writeHardening(Uri dir, String name, String script) async {
   final file = File.fromUri(dir.resolve('hardening-$name.cmake'));
-  await file.parent.create(recursive: true);
-  await file.writeAsString(script);
+  await writeIfChanged(file, script);
   return file.path;
+}
+
+/// What a CMake project was last configured with: the [defines], the hook's
+/// target [config] and the [hardening] script, as one string.
+///
+/// The hook configures only when this changed (see [_buildCmakeProject]).
+String configureStamp(Map<String, String?> defines, Object? config, String hardening) {
+  final sorted = Map.fromEntries(defines.entries.toList()..sort((a, b) => a.key.compareTo(b.key)));
+  return jsonEncode({'defines': sorted, 'config': config, 'hardening': hardening});
+}
+
+/// The tool paths in the CMake cache text [cmakeCache] (CMake itself, the
+/// compiler tools, make and the Apple SDK) that no longer exist.
+///
+/// Configuring finds the tools again, and a skipped configure would build
+/// with the ones a CMake or Xcode update has since removed. Only absolute
+/// paths are checked; a bare program name is looked up on PATH at build time.
+Future<List<String>> missingCachedTools(String cmakeCache) async {
+  final entry = RegExp(
+    r'^(CMAKE_COMMAND|CMAKE_C_COMPILER|CMAKE_CXX_COMPILER|CMAKE_LINKER|CMAKE_AR|CMAKE_RANLIB|CMAKE_MAKE_PROGRAM|CMAKE_OSX_SYSROOT):\w+=(.+)$',
+    multiLine: true,
+  );
+  final missing = <String>[];
+  for (final match in entry.allMatches(cmakeCache)) {
+    final path = match.group(2)!.trim();
+    if (!File(path).isAbsolute) continue;
+    if (await FileSystemEntity.type(path) == FileSystemEntityType.notFound) missing.add(path);
+  }
+  return missing;
 }
 
 /// Configures + builds + installs a CMake project via `native_toolchain_cmake`.
 ///
-/// [CMakeBuilder] manages its own build directory via `buildLocal`, and honors
+/// The build directory is `build/<platform>/<arch>/` under [sourceDir], where
+/// [CMakeBuilder]'s `buildLocal` puts it, and [CMakeBuilder] honors
 /// `CMAKE_INSTALL_PREFIX` passed in [defines], so callers pick up the install
-/// output the same way.
+/// output the same way. [hardening] is written to
+/// `hardening-<hardeningName>.cmake` and passed as `CMAKE_PROJECT_INCLUDE`.
+///
+/// The project is configured only when its [configureStamp] differs from the
+/// one recorded after the last successful build; otherwise only the build
+/// step runs, and finds everything up to date. `native_toolchain_cmake`
+/// would configure on every run, and on macOS and iOS that is not idempotent:
+/// its `ios.toolchain.cmake` sets `CMAKE_<LANG>_FLAGS` to its own flags
+/// followed by the cached value, so each configure adds another copy of
+/// `-target ... -fvisibility=default`, `flags.make` changes, every object
+/// recompiles and the library relinks, and the relinked library reruns the
+/// hook on the next start (see [writeIfChanged]). Passing those flags empty on
+/// the command line is no way out: a command-line value wins over the
+/// toolchain file's, which drops the toolchain's flags altogether.
+///
+/// The directory is passed as `outDir` rather than left to `buildLocal`:
+/// `native_toolchain_cmake` 0.3.2 builds that path without a trailing slash,
+/// so it looks for `CMakeCache.txt` one level up, never finds it, and
+/// `skipGenerateIfCached` never skips.
 Future<void> _buildCmakeProject({
   required BuildInput input,
   required BuildOutputBuilder output,
@@ -252,18 +317,41 @@ Future<void> _buildCmakeProject({
   required Uri sourceDir,
   required Map<String, String?> defines,
   required List<String> targets,
+  required String hardeningName,
+  required String hardening,
 }) async {
+  final allDefines = {
+    ...defines,
+    'CMAKE_PROJECT_INCLUDE': await _writeHardening(input.outputDirectoryShared, hardeningName, hardening),
+  };
+  final config = {'config': input.json['config'], 'user_defines': input.json['user_defines']};
+  final stamp = configureStamp(allDefines, config, hardening);
+  final code = input.config.code;
+  final platform = code.targetOS == OS.iOS && code.iOS.targetSdk == IOSSdk.iPhoneSimulator
+      ? 'iossimulator'
+      : code.targetOS.name.toLowerCase();
+  final buildDir = sourceDir.resolve('build/$platform/${code.targetArchitecture.name.toLowerCase()}/');
+  final stampFile = File.fromUri(input.outputDirectoryShared.resolve('configured-$name-${_targetKey(input)}'));
+  final cache = File.fromUri(buildDir.resolve('CMakeCache.txt'));
+  final configured =
+      await stampFile.exists() &&
+      await stampFile.readAsString() == stamp &&
+      await cache.exists() &&
+      (await missingCachedTools(await cache.readAsString())).isEmpty;
   final builder = CMakeBuilder.create(
     name: name,
     sourceDir: sourceDir,
+    outDir: buildDir,
     buildMode: BuildMode.release,
     generator: Generator.defaultGenerator,
-    defines: defines,
+    defines: allDefines,
     targets: targets,
-    buildLocal: true,
     logger: logger,
   );
-  await builder.run(input: input, output: output, logger: logger);
+  // Without a CMakeCache.txt from a successful configure (a fresh or
+  // discarded build directory) the builder configures regardless.
+  await builder.run(input: input, output: output, logger: logger, skipGenerateIfCached: configured);
+  await writeIfChanged(stampFile, stamp);
 }
 
 Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger logger) async {
@@ -310,11 +398,12 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
       'USE_STATIC_MBEDTLS_LIBRARY': 'ON',
       'BUILD_SHARED_LIBS': 'OFF',
       'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
-      'CMAKE_PROJECT_INCLUDE': await _writeHardening(input.outputDirectoryShared, 'mbedtls', hardening),
     },
     targets: ['install'],
+    hardeningName: 'mbedtls',
+    hardening: hardening,
   );
-  await flagsStamp.writeAsString(flags);
+  await writeIfChanged(flagsStamp, flags);
 
   return installPrefix;
 }
@@ -358,7 +447,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
     throw Exception('Error extracting open62541 version $version: extracted directory not found');
   }
   await (folder as Directory).rename(srcDir.path);
-  await versionStamp.writeAsString(version);
+  await writeIfChanged(versionStamp, version);
   return srcDir.uri;
 }
 
@@ -868,11 +957,15 @@ Future<void> main(List<String> args) async {
     // library with ASan + UBSan (CI's test-asan job), on top of the hardening
     // flags. The hooks runner starts hooks with a scrubbed environment, so an
     // environment variable never reaches this point, and `dart test` passes no
-    // user-defines; a file is the one switch that does. It is registered as a
-    // dependency so creating or removing it reruns the hook.
+    // user-defines; a file is the one switch that does. While it exists it is
+    // registered as a dependency, so removing it reruns the hook. An absent
+    // one is not: the hooks runner counts a missing dependency as modified
+    // during the run and reruns the hook on every start. Create it before the
+    // first build (as CI does), or delete .dart_tool/hooks_runner/open62541/
+    // after creating it.
     final marker = input.packageRoot.resolve('.open62541_sanitizer');
     final sanitizer = await File.fromUri(marker).exists();
-    output.dependencies.add(marker);
+    if (sanitizer) output.dependencies.add(marker);
     final hardening = hardeningCmake(input.config.code.targetOS, floatLittleEndian: true, sanitizer: sanitizer);
 
     await _buildCmakeProject(
@@ -907,15 +1000,12 @@ Future<void> main(List<String> args) async {
         'MBEDTLS_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedtls$libSuffix').toFilePath(),
         'MBEDX509_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedx509$libSuffix').toFilePath(),
         'MBEDCRYPTO_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedcrypto$libSuffix').toFilePath(),
-        // Also forces UA_FLOAT_LITTLE_ENDIAN=1: open62541's config.h leaves it 0 under clang
-        // (macOS arm64), which selects the pack754 codec that corrupts subnormal floats.
-        'CMAKE_PROJECT_INCLUDE': await _writeHardening(
-          input.outputDirectoryShared,
-          sanitizer ? '$name-asan' : name,
-          hardening,
-        ),
       },
       targets: ['install'],
+      // Also forces UA_FLOAT_LITTLE_ENDIAN=1: open62541's config.h leaves it 0 under clang
+      // (macOS arm64), which selects the pack754 codec that corrupts subnormal floats.
+      hardeningName: sanitizer ? '$name-asan' : name,
+      hardening: hardening,
     );
 
     // Manually add assets. Switch on OS.name (a String with primitive
