@@ -73,6 +73,10 @@ void main() {
       generated: raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_REDUNDANCYSUPPORT,
     ),
     'serverUriArray': (actual: NodeId.serverUriArray, generated: raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERURIARRAY),
+    'serverNetworkGroups': (
+      actual: NodeId.serverNetworkGroups,
+      generated: raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERNETWORKGROUPS,
+    ),
     // Reference types.
     'hierarchicalReferences': (actual: NodeId.hierarchicalReferences, generated: raw.UA_NS0ID_HIERARCHICALREFERENCES),
     'hasSubtype': (actual: NodeId.hasSubtype, generated: raw.UA_NS0ID_HASSUBTYPE),

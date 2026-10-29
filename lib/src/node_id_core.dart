@@ -140,6 +140,12 @@ class NodeId {
   /// [serverRedundancy] with [hasProperty].
   static NodeId get serverUriArray => NodeId.fromNumeric(0, 11314);
 
+  /// `Server/ServerRedundancy/ServerNetworkGroups`, `i=14415`: a
+  /// `NetworkGroupDataType[]` mapping each ServerUri of [serverUriArray] to
+  /// its network paths (lists of endpoint URLs), Part 5 §6.3.10. Published
+  /// by `Server.setRedundancy(networkGroups:)`.
+  static NodeId get serverNetworkGroups => NodeId.fromNumeric(0, 14415);
+
   /// The HierarchicalReferences reference type, `i=33`.
   static NodeId get hierarchicalReferences => NodeId.fromNumeric(0, 33);
 

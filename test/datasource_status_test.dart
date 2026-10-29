@@ -60,6 +60,39 @@ void main() {
       expect(good.sourceTimestamp, fixedTs);
     });
 
+    test('an Uncertain status (Uncertain_LastUsableValue) is served and is neither Good nor Bad', () async {
+      // A proxy whose device has gone quiet serves its last usable value as
+      // Uncertain, not Bad: the client gets the value, the exported code and
+      // the original timestamp. (The codes used here are exported by the
+      // package so an application never needs the raw bindings for them.)
+      expect(UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE, 0x40900000);
+      expect(UA_STATUSCODE_BADNODATA, 0x809B0000);
+      expect(UA_STATUSCODE_BADNODEIDUNKNOWN, 0x80340000);
+      final nodeId = NodeId.fromString(1, 'datasource.uncertain');
+      final fixedTs = DateTime.utc(2024, 5, 17, 12, 0, 0);
+      server.addDataSourceVariableNode(
+        nodeId,
+        browseName: 'Uncertain',
+        typeId: NodeId.int32,
+        onReadValue: () => DataSourceValue(
+          value: DynamicValue(name: 'Uncertain', value: 7, typeId: NodeId.int32),
+          statusCode: UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE,
+          sourceTimestamp: fixedTs,
+        ),
+      );
+      final dv = await client.readValue(nodeId);
+      expect(dv.statusCode, UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE);
+      expect(dv.isGood, isFalse);
+      expect(dv.isBad, isFalse);
+      expect(dv.value.value, 7);
+      expect(dv.sourceTimestamp, fixedTs);
+
+      // A node that does not exist reads as Bad_NodeIdUnknown, with no value.
+      final unknown = await client.readValue(NodeId.fromString(1, 'datasource.does_not_exist'));
+      expect(unknown.statusCode, UA_STATUSCODE_BADNODEIDUNKNOWN);
+      expect(unknown.value.value, isNull);
+    });
+
     test('plain read() still throws on a non-Good status (behavior unchanged)', () async {
       final nodeId = NodeId.fromString(1, 'datasource.bad_for_read');
       server.addDataSourceVariableNode(
