@@ -49,6 +49,7 @@ import 'dart:async';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'package:open62541/src/common.dart' show uaDateTimeToDateTime;
 import 'common.dart' show clientTypes, setupClientOfType;
 import 'data_value_rewriting_proxy.dart';
 

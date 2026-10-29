@@ -1898,10 +1898,8 @@ class Client implements ClientApi, DataValueMonitoringApi {
 
   /// Creates a monitored item on the server.
   ///
-  /// Each value whose Value attribute is monitored carries the latest sample's
-  /// [DynamicValue.statusCode] and [DynamicValue.sourceTimestamp]. A sample
-  /// with a non-Good status is added to the stream as a [UaStatusException]
-  /// error carrying the server's code, and nothing is delivered for it; see
+  /// A sample with a non-Good status is added to the stream as a
+  /// [UaStatusException] error and nothing is delivered for it; see
   /// [monitoredDataValues] for the sample with its status instead.
   @override
   Stream<Map<NodeId, DynamicValue>> monitoredItems(
@@ -1920,17 +1918,8 @@ class Client implements ClientApi, DataValueMonitoringApi {
     queueSize: queueSize,
     deliverQuality: false,
     // The one map the stream has always emitted: the same mutable object
-    // every time, updated in place between events. The quality of each node's
-    // latest Value sample is stamped onto its value on the way out.
-    project: (latestValues, qualities) {
-      for (final MapEntry(key: nodeId, value: quality) in qualities.entries) {
-        final value = latestValues[nodeId];
-        if (value == null) continue;
-        value.statusCode = quality.statusCode;
-        value.sourceTimestamp = quality.sourceTimestamp;
-      }
-      return latestValues;
-    },
+    // every time, updated in place between events.
+    project: (latestValues, _) => latestValues,
   );
 
   @override

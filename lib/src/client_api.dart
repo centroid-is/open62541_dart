@@ -47,10 +47,6 @@ abstract class ClientApi {
   ///
   /// Returns a stream that emits the latest value whenever it changes.
   /// Requires a [subscriptionId] from [subscriptionCreate].
-  ///
-  /// Emitted values carry [DynamicValue.statusCode] and
-  /// [DynamicValue.sourceTimestamp] as the server sent them. A sample the
-  /// server marked non-Good is an error, as in [monitoredItems].
   Stream<DynamicValue> monitor(
     NodeId nodeId,
     int subscriptionId, {
@@ -65,15 +61,6 @@ abstract class ClientApi {
   /// Returns a stream that emits a map of node values whenever any
   /// monitored value changes. Requires a [subscriptionId] from
   /// [subscriptionCreate].
-  ///
-  /// Each value whose Value attribute is monitored carries the latest sample's
-  /// [DynamicValue.statusCode] and [DynamicValue.sourceTimestamp].
-  ///
-  /// A sample with a non-Good status is not delivered: it is added to the
-  /// stream as a [UaStatusException] carrying the server's own numeric
-  /// StatusCode, so a consumer can tell BadOutOfRange from
-  /// BadCommunicationError without a value it would have to invent (a Bad
-  /// DataValue usually arrives with `hasValue` clear).
   Stream<Map<NodeId, DynamicValue>> monitoredItems(
     ReadAttributeParam nodes,
     int subscriptionId, {
