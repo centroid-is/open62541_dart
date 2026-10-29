@@ -57,7 +57,7 @@ class MonitoredItemsRefused extends UaStatusException {
 /// UaStatusException` handler sees it and it crosses the `ClientIsolate`
 /// boundary as itself (its [expected] / [actual] NodeIds survive).
 class UaTypeMismatch extends UaStatusException {
-  UaTypeMismatch({required this.expected, required this.actual}) : super(0x80730000 /* Bad_TypeMismatch */);
+  UaTypeMismatch({required this.expected, required this.actual}) : super(0x80740000 /* Bad_TypeMismatch */);
 
   /// The type the server advertised for the value (the DataType hint).
   final NodeId expected;
@@ -66,7 +66,8 @@ class UaTypeMismatch extends UaStatusException {
   final NodeId actual;
 
   @override
-  String toString() => 'UaTypeMismatch: the value is typed $expected but the wire carries $actual';
+  String toString() =>
+      'UaTypeMismatch(${statusCodeToString(statusCode)}): the value is typed $expected but the wire carries $actual';
 }
 
 /// The DataTypeDefinitions a server serves for a structured type lead back to
