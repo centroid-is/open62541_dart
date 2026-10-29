@@ -285,6 +285,38 @@ enum RedundancySupport {
 int _refusePrivateKeyPassword(ffi.Pointer<raw.UA_ServerConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
     raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED;
 
+/// The native signature of the `UA_HistoryDatabase` read callbacks, which
+/// differ only in their details type [D].
+typedef _HistoryReadNative<D extends ffi.NativeType> =
+    ffi.Void Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_RequestHeader>,
+      ffi.Pointer<D>,
+      ffi.UnsignedInt,
+      ffi.Bool,
+      ffi.Size,
+      ffi.Pointer<raw.UA_HistoryReadValueId>,
+      ffi.Pointer<raw.UA_HistoryReadResponse>,
+      ffi.Pointer<ffi.Pointer<raw.UA_HistoryData>>,
+    );
+
+/// One node of a HistoryRead request that goes to the backend: its position
+/// in the request and what was copied out of its `UA_HistoryReadValueId`.
+typedef _HistoryNode = ({int index, NodeId nodeId, String? indexRange, Uint8List? continuationPoint});
+
+/// A HistoryRead parked for the backend. [historyData] holds every node's
+/// `UA_HistoryData` (owned by [results]); [indexes] are the nodes the
+/// backend answers, in its order.
+typedef _HistoryReadInFlight = ({
+  ffi.Pointer<raw.UA_HistoryReadResult> results,
+  List<ffi.Pointer<raw.UA_HistoryData>> historyData,
+  List<int> indexes,
+  TimestampsToReturn timestamps,
+});
+
 class Server {
   /// Creates a server with open62541's minimal default configuration,
   /// listening on [port] (4840 by default; `0` lets the OS pick, see [Server.port]).
@@ -495,6 +527,7 @@ class Server {
           // not touch it (the completion finds no entry and drops).
           _inFlightMethodCalls.remove(out.address);
           _inFlightWrites.remove(out.address);
+          _inFlightHistoryReads.remove(out.address);
         });
     _config.ref.asyncOperationCancelCallback = _asyncCancelDispatcher!.nativeFunction;
   }
@@ -640,6 +673,8 @@ class Server {
   /// * [parentNodeId] - The parent node in the address space (defaults to Objects folder)
   /// * [parentReferenceNodeId] - The reference type to the parent (defaults to Organizes)
   /// * [basedatavariableType] - The base type for the variable (defaults to BaseDataVariableType)
+  /// * [historizing] - The node's Historizing attribute: whether the server
+  ///   collects history for it (see [setHistorizing])
   ///
   /// Throws an exception if:
   /// * The value's name is not provided (required for browse name)
@@ -663,6 +698,7 @@ class Server {
     NodeId? parentReferenceNodeId,
     NodeId? baseDataVariableType,
     NodeId? typeId,
+    bool historizing = false,
   }) {
     final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
@@ -706,6 +742,7 @@ class Server {
       // path already decodes the encoded body via variantToValue/deserialize.
       attr.value = variant.ref;
       attr.accessLevel = accessLevel.value;
+      attr.historizing = historizing;
       attr.dataType = typeId!.toRaw(allocator: arena);
 
       if (value.name == null) {
@@ -726,6 +763,9 @@ class Server {
       );
       if (returnCode != raw.UA_STATUSCODE_GOOD) {
         throw 'Failed to add variable node ${statusCodeToString(returnCode)}, nodeId: $variableNodeId';
+      }
+      if (historizing) {
+        _historizingNodes.add(variableNodeId);
       }
     }, ua_calloc);
   }
@@ -967,6 +1007,8 @@ class Server {
   /// * [typeId] sets the node's DataType attribute (and marks it scalar) so
   ///   browsing clients see the correct type; when omitted the node keeps
   ///   open62541's permissive defaults.
+  /// * [historizing] sets the node's Historizing attribute (see
+  ///   [setHistorizing]).
   ///
   /// The value marshalling reuses `valueToVariant`/`variantToValue`, so scalar
   /// numeric/bool/string types work directly. Custom **structured** types are
@@ -994,6 +1036,7 @@ class Server {
     NodeId? baseDataVariableType,
     NodeId? typeId,
     AccessLevelMask? accessLevel,
+    bool historizing = false,
   }) {
     if ((onRead == null) == (onReadValue == null)) {
       throw ArgumentError('Provide exactly one of onRead / onReadValue');
@@ -1013,6 +1056,7 @@ class Server {
     final addStatus = using((arena) {
       final attr = _defaultVariableAttributes();
       attr.accessLevel = effectiveAccess.value;
+      attr.historizing = historizing;
       if (typeId != null) {
         attr.dataType = typeId.toRaw(allocator: arena);
         attr.valueRank = raw.UA_VALUERANK_SCALAR;
@@ -1061,6 +1105,9 @@ class Server {
     }
     if (typeId != null) {
       _dataSourceTypeIds[nodeId] = typeId;
+    }
+    if (historizing) {
+      _historizingNodes.add(nodeId);
     }
   }
 
@@ -1787,6 +1834,7 @@ class Server {
     _dataSourceReads.remove(nodeId);
     _dataSourceWrites.remove(nodeId);
     _dataSourceTypeIds.remove(nodeId);
+    _historizingNodes.remove(nodeId);
     _valueChangeControllers.remove(nodeId)?.close();
   }
 
@@ -1937,6 +1985,579 @@ class Server {
       deleteReference(object, NodeId.hasTypeDefinition, type);
     }
     addReference(object, NodeId.hasTypeDefinition, newType);
+  }
+
+  // ---- History node bookkeeping ---------------------------------------------
+
+  /// Sets the Historizing attribute of the variable [nodeId]: whether the
+  /// server collects history for it. Clients read it to find the variables
+  /// whose history they can request with HistoryRead. It is only the
+  /// advertisement; the HistoryRead bit of the node's access level
+  /// ([setAccessLevel]) says whether a client may read that history.
+  ///
+  /// Throws a [UaStatusException] with open62541's status, e.g.
+  /// `Bad_NodeIdUnknown` for a missing node or `Bad_AttributeIdInvalid` for a
+  /// node that is not a variable.
+  void setHistorizing(NodeId nodeId, bool historizing) {
+    final status = using(
+      (arena) => raw.UA_Server_writeHistorizing(_server, nodeId.toRaw(allocator: arena), historizing),
+      ua_calloc,
+    );
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
+    if (historizing) {
+      _historizingNodes.add(nodeId);
+    } else {
+      _historizingNodes.remove(nodeId);
+    }
+  }
+
+  /// The Historizing attribute of the variable [nodeId] (see
+  /// [setHistorizing]). Throws a [UaStatusException] like [setHistorizing].
+  bool readHistorizing(NodeId nodeId) {
+    return using((arena) {
+      final out = arena<ffi.Bool>();
+      final status = raw.UA_Server_readHistorizing(_server, nodeId.toRaw(allocator: arena), out);
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        throw UaStatusException(status);
+      }
+      return out.value;
+    }, ua_calloc);
+  }
+
+  /// Replaces the AccessLevel attribute of the variable [nodeId], e.g. to add
+  /// [AccessLevelMask.historyRead] to a node created without it. The access
+  /// level a client sees for its own session (UserAccessLevel) is derived
+  /// from it.
+  ///
+  /// Throws a [UaStatusException] with open62541's status, e.g.
+  /// `Bad_NodeIdUnknown` for a missing node.
+  void setAccessLevel(NodeId nodeId, AccessLevelMask accessLevel) {
+    final status = using(
+      (arena) => raw.UA_Server_writeAccessLevel(_server, nodeId.toRaw(allocator: arena), accessLevel.value),
+      ua_calloc,
+    );
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
+  }
+
+  /// The AccessLevel attribute of the variable [nodeId]. Throws a
+  /// [UaStatusException] like [setAccessLevel].
+  AccessLevelMask readAccessLevel(NodeId nodeId) {
+    return using((arena) {
+      final out = arena<ffi.Uint8>();
+      final status = raw.UA_Server_readAccessLevel(_server, nodeId.toRaw(allocator: arena), out);
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        throw UaStatusException(status);
+      }
+      return AccessLevelMask.fromValue(out.value);
+    }, ua_calloc);
+  }
+
+  /// Publishes what this server supports of Historical Access (Part 11) in
+  /// `Server/ServerCapabilities/HistoryServerCapabilities` (`i=11192`), the
+  /// properties a client checks before sending HistoryRead or HistoryUpdate,
+  /// and `ServerCapabilities/MaxHistoryContinuationPoints` (`i=2737`).
+  ///
+  /// open62541 fills these nodes from its config while it creates the server
+  /// (every flag `false`, every limit `0`), before a [Server] can change the
+  /// config, so this writes the nodes themselves. Every property is written,
+  /// so a parameter left out goes back to its default: [accessHistoryData]
+  /// `true`, every other flag `false`, every limit `0` (no limit).
+  ///
+  /// * [accessHistoryData] - `AccessHistoryDataCapability` (`i=11193`).
+  /// * [maxReturnDataValues] - `MaxReturnDataValues` (`i=11273`), the most
+  ///   values the server returns for one node per HistoryRead. Advertised
+  ///   only; open62541 does not enforce it.
+  /// * [maxHistoryContinuationPoints] - `MaxHistoryContinuationPoints`
+  ///   (`i=2737`, a UInt16), the history continuation points a session may
+  ///   hold at once.
+  /// * [accessHistoryEvents], [maxReturnEventValues] and the update and
+  ///   delete flags - the remaining properties of the same name.
+  ///
+  /// Throws a [UaStatusException] when open62541 refuses a write.
+  void setHistoryServerCapabilities({
+    bool accessHistoryData = true,
+    int maxReturnDataValues = 0,
+    int maxHistoryContinuationPoints = 0,
+    bool accessHistoryEvents = false,
+    int maxReturnEventValues = 0,
+    bool insertData = false,
+    bool replaceData = false,
+    bool updateData = false,
+    bool deleteRaw = false,
+    bool deleteAtTime = false,
+    bool insertAnnotation = false,
+    bool insertEvent = false,
+    bool replaceEvent = false,
+    bool updateEvent = false,
+    bool deleteEvent = false,
+  }) {
+    void flag(int id, bool value) =>
+        write(NodeId.fromNumeric(0, id), DynamicValue(value: value, typeId: NodeId.boolean));
+    void limit(int id, int value) =>
+        write(NodeId.fromNumeric(0, id), DynamicValue(value: value, typeId: NodeId.uint32));
+
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_ACCESSHISTORYDATACAPABILITY, accessHistoryData);
+    limit(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_MAXRETURNDATAVALUES, maxReturnDataValues);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_ACCESSHISTORYEVENTSCAPABILITY, accessHistoryEvents);
+    limit(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_MAXRETURNEVENTVALUES, maxReturnEventValues);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_INSERTDATACAPABILITY, insertData);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_REPLACEDATACAPABILITY, replaceData);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_UPDATEDATACAPABILITY, updateData);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_DELETERAWCAPABILITY, deleteRaw);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_DELETEATTIMECAPABILITY, deleteAtTime);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_INSERTANNOTATIONCAPABILITY, insertAnnotation);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_INSERTEVENTCAPABILITY, insertEvent);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_REPLACEEVENTCAPABILITY, replaceEvent);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_UPDATEEVENTCAPABILITY, updateEvent);
+    flag(raw.UA_NS0ID_HISTORYSERVERCAPABILITIES_DELETEEVENTCAPABILITY, deleteEvent);
+    write(
+      NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERCAPABILITIES_MAXHISTORYCONTINUATIONPOINTS),
+      DynamicValue(value: maxHistoryContinuationPoints, typeId: NodeId.uint16),
+    );
+  }
+
+  // ---- Historical Access (setHistoryBackend) --------------------------------
+  //
+  // The variables this server made historizing (`historizing:` /
+  // [setHistorizing]). A HistoryRead of any other node is answered without the
+  // backend.
+  final Set<NodeId> _historizingNodes = {};
+
+  HistoryBackend? _historyBackend;
+  int _maxReturnDataValues = 0;
+  ffi.NativeCallable<_HistoryReadNative<raw.UA_ReadRawModifiedDetails>>? _historyReadRaw;
+  ffi.NativeCallable<_HistoryReadNative<raw.UA_ReadProcessedDetails>>? _historyReadProcessed;
+  ffi.NativeCallable<_HistoryReadNative<raw.UA_ReadAtTimeDetails>>? _historyReadAtTime;
+
+  // In-flight HistoryReads, keyed by the address of the response's results
+  // array (the async operation's identity, see
+  // UA_Server_setAsyncHistoryReadResult). Same retire-exactly-once discipline
+  // as [_inFlightMethodCalls]: open62541 frees the results, and the
+  // HistoryData blocks they own, right after a cancel.
+  final Map<int, _HistoryReadInFlight> _inFlightHistoryReads = {};
+
+  /// Serves the HistoryRead service from [backend] (OPC UA Part 11), or stops
+  /// serving it with `null` (the service then answers `Bad_NotSupported`, as
+  /// it does on a server that never called this).
+  ///
+  /// A HistoryRead is answered per node. The server answers these itself,
+  /// without the backend:
+  ///
+  /// * `Bad_TimestampsToReturnInvalid` for the whole request when it asks
+  ///   for neither timestamp (Part 11) or an unknown value;
+  /// * `Bad_NodeIdUnknown` for a node that does not exist;
+  /// * `Bad_HistoryOperationInvalid` for a node whose Historizing attribute
+  ///   is false (see `historizing:` on [addVariableNode] /
+  ///   [addDataSourceVariableNode] and [setHistorizing]);
+  /// * a request with `releaseContinuationPoints` hands the continuation
+  ///   points to [HistoryBackend.releaseContinuationPoints] and is answered
+  ///   at once, with no data.
+  ///
+  /// The other nodes go to the backend in one call per request, which
+  /// answers asynchronously ([HistoryBackend]). The HistoryRead bit of a
+  /// node's access level is not checked here: open62541 leaves that to the
+  /// access control plugin, which this server does not configure for history.
+  /// Raw reads go to [HistoryBackend.readRaw], aggregates to
+  /// [HistoryBackend.readProcessed] and reads at given times to
+  /// [HistoryBackend.readAtTime]; a request for modified values or events
+  /// answers `Bad_NotSupported`.
+  ///
+  /// [maxReturnDataValues] caps the values per node and response
+  /// ([HistoryReadRawRequest.numValuesPerNode]), `0` for no cap. Advertise it
+  /// to clients with [setHistoryServerCapabilities].
+  ///
+  /// A read the backend has not answered within [asyncOperationTimeout] is
+  /// answered `Bad_Timeout` per node, one in flight at [delete] `Bad_Shutdown`;
+  /// a later answer is dropped. Replacing or removing the backend leaves the
+  /// reads in flight to the backend that took them.
+  void setHistoryBackend(HistoryBackend? backend, {int maxReturnDataValues = 0}) {
+    if (maxReturnDataValues < 0) {
+      throw ArgumentError.value(maxReturnDataValues, 'maxReturnDataValues', 'must not be negative');
+    }
+    final database = _config.ref.historyDatabase;
+    _historyBackend = backend;
+    _maxReturnDataValues = maxReturnDataValues;
+    if (backend == null) {
+      database.context = ffi.nullptr;
+      database.readRaw = ffi.nullptr;
+      database.readProcessed = ffi.nullptr;
+      database.readAtTime = ffi.nullptr;
+      _closeHistoryDispatchers();
+      return;
+    }
+    _ensureAsyncCancelDispatcher();
+    final readRaw = _historyReadRaw ??=
+        ffi.NativeCallable<_HistoryReadNative<raw.UA_ReadRawModifiedDetails>>.isolateLocal(_onHistoryReadRaw);
+    final readProcessed = _historyReadProcessed ??=
+        ffi.NativeCallable<_HistoryReadNative<raw.UA_ReadProcessedDetails>>.isolateLocal(_onHistoryReadProcessed);
+    final readAtTime = _historyReadAtTime ??=
+        ffi.NativeCallable<_HistoryReadNative<raw.UA_ReadAtTimeDetails>>.isolateLocal(_onHistoryReadAtTime);
+    // open62541 only requires the context to be non-NULL; with clear and
+    // setValue NULL it never hands the context to anything.
+    database.context = ffi.Pointer.fromAddress(1);
+    database.clear = ffi.nullptr;
+    database.setValue = ffi.nullptr;
+    database.readRaw = readRaw.nativeFunction;
+    database.readProcessed = readProcessed.nativeFunction;
+    database.readAtTime = readAtTime.nativeFunction;
+  }
+
+  void _closeHistoryDispatchers() {
+    _historyReadRaw?.close();
+    _historyReadProcessed?.close();
+    _historyReadAtTime?.close();
+    _historyReadRaw = null;
+    _historyReadProcessed = null;
+    _historyReadAtTime = null;
+  }
+
+  void _onHistoryReadRaw(
+    ffi.Pointer<raw.UA_Server> server,
+    ffi.Pointer<ffi.Void> hdbContext,
+    ffi.Pointer<raw.UA_NodeId> sessionId,
+    ffi.Pointer<ffi.Void> sessionContext,
+    ffi.Pointer<raw.UA_RequestHeader> requestHeader,
+    ffi.Pointer<raw.UA_ReadRawModifiedDetails> details,
+    int timestampsToReturn,
+    bool releaseContinuationPoints,
+    int nodesToReadSize,
+    ffi.Pointer<raw.UA_HistoryReadValueId> nodesToRead,
+    ffi.Pointer<raw.UA_HistoryReadResponse> response,
+    ffi.Pointer<ffi.Pointer<raw.UA_HistoryData>> historyData,
+  ) {
+    final start = uaDateTimeToDateTime(details.ref.startTime);
+    final end = uaDateTimeToDateTime(details.ref.endTime);
+    final requested = details.ref.numValuesPerNode;
+    final numValuesPerNode = _maxReturnDataValues == 0 || (requested != 0 && requested < _maxReturnDataValues)
+        ? requested
+        : _maxReturnDataValues;
+    final returnBounds = details.ref.returnBounds;
+    _dispatchHistoryRead(
+      sessionId,
+      timestampsToReturn,
+      releaseContinuationPoints,
+      nodesToReadSize,
+      nodesToRead,
+      response,
+      historyData,
+      (node, timestamps, session) => HistoryReadRawRequest(
+        nodeId: node.nodeId,
+        start: start,
+        end: end,
+        numValuesPerNode: numValuesPerNode,
+        returnBounds: returnBounds,
+        timestampsToReturn: timestamps,
+        indexRange: node.indexRange,
+        continuationPoint: node.continuationPoint,
+        session: session,
+      ),
+      (backend, requests) => backend.readRaw(requests),
+    );
+  }
+
+  void _onHistoryReadProcessed(
+    ffi.Pointer<raw.UA_Server> server,
+    ffi.Pointer<ffi.Void> hdbContext,
+    ffi.Pointer<raw.UA_NodeId> sessionId,
+    ffi.Pointer<ffi.Void> sessionContext,
+    ffi.Pointer<raw.UA_RequestHeader> requestHeader,
+    ffi.Pointer<raw.UA_ReadProcessedDetails> details,
+    int timestampsToReturn,
+    bool releaseContinuationPoints,
+    int nodesToReadSize,
+    ffi.Pointer<raw.UA_HistoryReadValueId> nodesToRead,
+    ffi.Pointer<raw.UA_HistoryReadResponse> response,
+    ffi.Pointer<ffi.Pointer<raw.UA_HistoryData>> historyData,
+  ) {
+    final d = details.ref;
+    final start = uaDateTimeToDateTime(d.startTime);
+    final end = uaDateTimeToDateTime(d.endTime);
+    final interval = Duration(microseconds: (d.processingInterval * 1000).round());
+    final aggregateTypes = [for (var i = 0; i < d.aggregateTypeSize; i++) d.aggregateType[i].toNodeId()];
+    _dispatchHistoryRead(
+      sessionId,
+      timestampsToReturn,
+      releaseContinuationPoints,
+      nodesToReadSize,
+      nodesToRead,
+      response,
+      historyData,
+      (node, timestamps, session) => HistoryReadProcessedRequest(
+        nodeId: node.nodeId,
+        start: start,
+        end: end,
+        processingInterval: interval,
+        aggregateType: node.index < aggregateTypes.length ? aggregateTypes[node.index] : null,
+        timestampsToReturn: timestamps,
+        indexRange: node.indexRange,
+        continuationPoint: node.continuationPoint,
+        session: session,
+      ),
+      (backend, requests) => backend.readProcessed(requests),
+    );
+  }
+
+  void _onHistoryReadAtTime(
+    ffi.Pointer<raw.UA_Server> server,
+    ffi.Pointer<ffi.Void> hdbContext,
+    ffi.Pointer<raw.UA_NodeId> sessionId,
+    ffi.Pointer<ffi.Void> sessionContext,
+    ffi.Pointer<raw.UA_RequestHeader> requestHeader,
+    ffi.Pointer<raw.UA_ReadAtTimeDetails> details,
+    int timestampsToReturn,
+    bool releaseContinuationPoints,
+    int nodesToReadSize,
+    ffi.Pointer<raw.UA_HistoryReadValueId> nodesToRead,
+    ffi.Pointer<raw.UA_HistoryReadResponse> response,
+    ffi.Pointer<ffi.Pointer<raw.UA_HistoryData>> historyData,
+  ) {
+    final d = details.ref;
+    final times = List<DateTime>.unmodifiable([
+      for (var i = 0; i < d.reqTimesSize; i++)
+        uaDateTimeToDateTime(d.reqTimes[i]) ?? DateTime.fromMicrosecondsSinceEpoch(0, isUtc: true),
+    ]);
+    final useSimpleBounds = d.useSimpleBounds;
+    _dispatchHistoryRead(
+      sessionId,
+      timestampsToReturn,
+      releaseContinuationPoints,
+      nodesToReadSize,
+      nodesToRead,
+      response,
+      historyData,
+      (node, timestamps, session) => HistoryReadAtTimeRequest(
+        nodeId: node.nodeId,
+        times: times,
+        useSimpleBounds: useSimpleBounds,
+        timestampsToReturn: timestamps,
+        indexRange: node.indexRange,
+        continuationPoint: node.continuationPoint,
+        session: session,
+      ),
+      (backend, requests) => backend.readAtTime(requests),
+    );
+  }
+
+  /// The common part of every HistoryRead dispatcher: the server's own
+  /// checks, release, the backend call and parking the response. The
+  /// request is open62541's and is freed when the service returns, so all of
+  /// it is copied into Dart here.
+  void _dispatchHistoryRead<R>(
+    ffi.Pointer<raw.UA_NodeId> sessionId,
+    int timestampsToReturn,
+    bool releaseContinuationPoints,
+    int nodesToReadSize,
+    ffi.Pointer<raw.UA_HistoryReadValueId> nodesToRead,
+    ffi.Pointer<raw.UA_HistoryReadResponse> response,
+    ffi.Pointer<ffi.Pointer<raw.UA_HistoryData>> historyData,
+    R Function(_HistoryNode node, TimestampsToReturn timestamps, MethodSessionInfo session) request,
+    Future<List<HistoryReadResult>> Function(HistoryBackend backend, List<R> requests) read,
+  ) {
+    final results = response.ref.results;
+    try {
+      final backend = _historyBackend;
+      if (backend == null) {
+        response.ref.responseHeader.serviceResult = raw.UA_STATUSCODE_BADNOTSUPPORTED;
+        return;
+      }
+      if (timestampsToReturn >= raw.UA_TimestampsToReturn.UA_TIMESTAMPSTORETURN_NEITHER.value) {
+        response.ref.responseHeader.serviceResult = raw.UA_STATUSCODE_BADTIMESTAMPSTORETURNINVALID;
+        return;
+      }
+      final timestamps = TimestampsToReturn.fromValue(timestampsToReturn);
+
+      final nodes = <_HistoryNode>[];
+      for (var i = 0; i < nodesToReadSize; i++) {
+        final valueId = nodesToRead[i];
+        final nodeId = valueId.nodeId.toNodeId();
+        final status = _historyNodeStatus(nodeId);
+        if (status != raw.UA_STATUSCODE_GOOD) {
+          results[i].statusCode = status;
+          continue;
+        }
+        final cp = valueId.continuationPoint;
+        nodes.add((
+          index: i,
+          nodeId: nodeId,
+          indexRange: valueId.indexRange.length == 0 ? null : valueId.indexRange.value,
+          continuationPoint: cp.length == 0 ? null : Uint8List.fromList(cp.data.asTypedList(cp.length)),
+        ));
+      }
+
+      if (releaseContinuationPoints) {
+        final released = [for (final node in nodes) ?node.continuationPoint];
+        if (released.isNotEmpty) {
+          try {
+            backend.releaseContinuationPoints(released);
+          } catch (_) {
+            // The points are released as far as the client is concerned.
+          }
+        }
+        for (final node in nodes) {
+          historyData[node.index].ref.dataValues = uaEmptyArraySentinel.cast();
+        }
+        return;
+      }
+      if (nodes.isEmpty) {
+        return;
+      }
+
+      // Session info is captured now: the session can be gone by the time
+      // the backend answers.
+      final session = _resolveSessionInfo(sessionId);
+      final requests = [for (final node in nodes) request(node, timestamps, session)];
+      final inFlight = (
+        results: results,
+        historyData: [for (var i = 0; i < nodesToReadSize; i++) historyData[i]],
+        indexes: [for (final node in nodes) node.index],
+        timestamps: timestamps,
+      );
+
+      final Future<List<HistoryReadResult>> future;
+      try {
+        future = read(backend, requests);
+      } catch (e) {
+        _failHistoryRead(inFlight, e);
+        return;
+      }
+
+      // Park the response: the results pointer identifies it until the
+      // backend answers or open62541 cancels it (see [_asyncCancelDispatcher]).
+      final key = results.address;
+      _inFlightHistoryReads[key] = inFlight;
+      response.ref.responseHeader.serviceResult = raw.UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY;
+      future.then(
+        (values) {
+          final call = _inFlightHistoryReads.remove(key);
+          if (call == null) return;
+          _completeHistoryRead(call, values);
+          raw.UA_Server_setAsyncHistoryReadResult(_server, call.results);
+        },
+        onError: (Object e) {
+          final call = _inFlightHistoryReads.remove(key);
+          if (call == null) return;
+          _failHistoryRead(call, e);
+          raw.UA_Server_setAsyncHistoryReadResult(_server, call.results);
+        },
+      );
+    } catch (_) {
+      _inFlightHistoryReads.remove(results.address);
+      response.ref.responseHeader.serviceResult = raw.UA_STATUSCODE_BADINTERNALERROR;
+    }
+  }
+
+  /// Whether the server lets a HistoryRead of [nodeId] reach the backend
+  /// (Good), else the status the node is answered with.
+  int _historyNodeStatus(NodeId nodeId) {
+    if (_historizingNodes.contains(nodeId)) {
+      return raw.UA_STATUSCODE_GOOD;
+    }
+    return using((arena) {
+      // Only to tell a missing node from one this server did not make
+      // historizing.
+      final status = raw.UA_Server_readHistorizing(_server, nodeId.toRaw(allocator: arena), arena<ffi.Bool>());
+      return status == raw.UA_STATUSCODE_BADNODEIDUNKNOWN
+          ? raw.UA_STATUSCODE_BADNODEIDUNKNOWN
+          : raw.UA_STATUSCODE_BADHISTORYOPERATIONINVALID;
+    }, ua_calloc);
+  }
+
+  void _failHistoryRead(_HistoryReadInFlight call, Object error) {
+    final status = error is UaStatusException ? error.statusCode : raw.UA_STATUSCODE_BADINTERNALERROR;
+    for (final i in call.indexes) {
+      call.results[i].statusCode = status;
+    }
+  }
+
+  /// Fills the forwarded nodes' results from [values]. Everything put into
+  /// the results is heap memory open62541 frees with the response: the
+  /// DataValue arrays (UA_Array_new), their deep-copied variants and the
+  /// continuation points (libc calloc, which UA_free releases).
+  void _completeHistoryRead(_HistoryReadInFlight call, List<HistoryReadResult> values) {
+    if (values.length != call.indexes.length) {
+      _failHistoryRead(call, StateError('${values.length} results for ${call.indexes.length} nodes'));
+      return;
+    }
+    for (var k = 0; k < values.length; k++) {
+      final i = call.indexes[k];
+      final result = call.results + i;
+      final data = call.historyData[i];
+      try {
+        _fillHistoryData(data, values[k].values, call.timestamps);
+        final cp = values[k].continuationPoint;
+        if (cp != null && cp.isNotEmpty) {
+          final bytes = ua_calloc<ffi.Uint8>(cp.length);
+          bytes.asTypedList(cp.length).setAll(0, cp);
+          result.ref.continuationPoint.data = bytes;
+          result.ref.continuationPoint.length = cp.length;
+        }
+        result.ref.statusCode = values[k].statusCode;
+      } catch (e) {
+        raw.UA_clear(data.cast(), getType(UaTypes.historyData));
+        result.ref.statusCode = e is UaStatusException ? e.statusCode : raw.UA_STATUSCODE_BADINTERNALERROR;
+      }
+    }
+  }
+
+  void _fillHistoryData(ffi.Pointer<raw.UA_HistoryData> data, List<DataValue> values, TimestampsToReturn timestamps) {
+    if (values.isEmpty) {
+      // Encodes as an empty array; NULL would be a null array (length -1).
+      data.ref.dataValues = uaEmptyArraySentinel.cast();
+      return;
+    }
+    final array = raw.UA_Array_new(values.length, getType(UaTypes.dataValue)).cast<raw.UA_DataValue>();
+    if (array == ffi.nullptr) {
+      throw const UaStatusException(raw.UA_STATUSCODE_BADOUTOFMEMORY);
+    }
+    // Owned by the HistoryData from here on, so a value that fails below is
+    // freed with it.
+    data.ref.dataValues = array;
+    data.ref.dataValuesSize = values.length;
+    final source =
+        timestamps == TimestampsToReturn.UA_TIMESTAMPSTORETURN_SOURCE ||
+        timestamps == TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH;
+    final server =
+        timestamps == TimestampsToReturn.UA_TIMESTAMPSTORETURN_SERVER ||
+        timestamps == TimestampsToReturn.UA_TIMESTAMPSTORETURN_BOTH;
+    for (var j = 0; j < values.length; j++) {
+      final value = values[j];
+      final out = array + j;
+      // The flag bits of UA_DataValue as in the data-source read dispatcher:
+      // hasValue 0x01, hasStatus 0x02, hasSourceTimestamp 0x04,
+      // hasServerTimestamp 0x08.
+      var flags = 0;
+      if (!value.value.isNull) {
+        final variant = valueToVariant(value.value);
+        try {
+          final status = raw.UA_Variant_copy(variant, out.cast<raw.UA_Variant>());
+          if (status != raw.UA_STATUSCODE_GOOD) {
+            throw UaStatusException(status);
+          }
+        } finally {
+          raw.UA_Variant_delete(variant);
+        }
+        flags |= 0x01;
+      }
+      if (value.statusCode != raw.UA_STATUSCODE_GOOD) {
+        out.ref.status = value.statusCode;
+        flags |= 0x02;
+      }
+      final sourceTimestamp = value.sourceTimestamp;
+      if (source && sourceTimestamp != null) {
+        out.ref.sourceTimestamp = dateTimeToUaDateTime(sourceTimestamp);
+        flags |= 0x04;
+      }
+      final serverTimestamp = value.serverTimestamp;
+      if (server && serverTimestamp != null) {
+        out.ref.serverTimestamp = dateTimeToUaDateTime(serverTimestamp);
+        flags |= 0x08;
+      }
+      out.ref.substitute = flags;
+    }
   }
 
   // ---- Redundancy (setRedundancy) ------------------------------------------
@@ -3259,6 +3880,10 @@ class Server {
     // freed server.
     _inFlightMethodCalls.clear();
     _inFlightWrites.clear();
+    _inFlightHistoryReads.clear();
+    _closeHistoryDispatchers();
+    _historyBackend = null;
+    _historizingNodes.clear();
     _asyncCancelDispatcher?.close();
     _asyncCancelDispatcher = null;
     if (ret != 0) {

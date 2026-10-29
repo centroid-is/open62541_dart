@@ -190,3 +190,44 @@ abstract class DataValueMonitoringApi {
     int queueSize = 1,
   });
 }
+
+/// Historical Access (OPC UA Part 11): reading a node's stored history with
+/// the HistoryRead service.
+///
+/// A separate interface, like [DataValueMonitoringApi]: adding members to
+/// [ClientApi] would break every class that implements it. [Client] and
+/// `ClientIsolate` implement it; code that holds a [ClientApi] checks
+/// `is HistoryReadApi`.
+abstract class HistoryReadApi {
+  /// Reads the raw history of [nodeIds] (ReadRawModifiedDetails) between
+  /// [start] and [end], and returns each node's values in the server's order
+  /// (oldest first, or newest first when [start] is after [end]).
+  ///
+  /// [start] and [end] left `null` are unspecified (Part 11 then needs
+  /// [numValuesPerNode] and the other bound). [numValuesPerNode] is the most
+  /// values per node in one response, `0` for the server's choice; the
+  /// server answers more in pages, and this follows their continuation
+  /// points until every node is done (an empty page with a continuation
+  /// point is followed too). [maxValues] stops a node after that many values:
+  /// the result keeps the first [maxValues] and the server is told to release
+  /// the node's continuation point. [returnBounds] asks for the bounding
+  /// values; [timestampsToReturn] for the source timestamps (default), the
+  /// server's or both (`neither` is refused by the server with
+  /// `Bad_TimestampsToReturnInvalid`).
+  ///
+  /// Each [DataValue] carries the value's own status and the requested
+  /// timestamps. A node answered with a Bad status (`Bad_NodeIdUnknown`,
+  /// `Bad_HistoryOperationInvalid`, ...) fails the call with a
+  /// [UaStatusException] carrying it, as does a Bad service result; the
+  /// continuation points still held are released first. A repeated NodeId
+  /// is read once.
+  Future<Map<NodeId, List<DataValue>>> historyReadRaw(
+    List<NodeId> nodeIds, {
+    DateTime? start,
+    DateTime? end,
+    int numValuesPerNode = 0,
+    int? maxValues,
+    bool returnBounds = false,
+    TimestampsToReturn timestampsToReturn = TimestampsToReturn.UA_TIMESTAMPSTORETURN_SOURCE,
+  });
+}

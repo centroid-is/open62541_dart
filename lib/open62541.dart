@@ -10,6 +10,7 @@ export 'src/extensions.dart'
         UaTypes,
         MonitoringMode,
         AttributeId,
+        TimestampsToReturn,
         MessageSecurityMode,
         Namespace0Id,
         SecureChannelState,
@@ -21,6 +22,9 @@ export 'src/third_party/open62541.g.dart'
         UA_STATUSCODE_BADNOCOMMUNICATION,
         UA_STATUSCODE_BADNOTWRITABLE,
         UA_STATUSCODE_BADUSERACCESSDENIED,
+        UA_STATUSCODE_GOODNODATA,
+        UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED,
+        UA_STATUSCODE_BADCONTINUATIONPOINTINVALID,
         UA_STATUSCODE_BADINTERNALERROR,
         UA_STATUSCODE_BADSERVERNOTCONNECTED,
         UA_OPEN62541_VER_MAJOR,
@@ -52,6 +56,13 @@ export 'src/server.dart'
         CertificateSessionIdentity;
 export 'src/types/errors.dart'
     show Inactivity, MonitoredItemsRefused, SecureChannelClosed, SubscriptionDeleted, UaStatusException;
+export 'src/history.dart'
+    show
+        HistoryBackend,
+        HistoryReadRawRequest,
+        HistoryReadAtTimeRequest,
+        HistoryReadProcessedRequest,
+        HistoryReadResult;
 export 'src/isolate.dart' show ClientIsolate;
-export 'src/client_api.dart' show ClientApi, DataValueMonitoringApi;
+export 'src/client_api.dart' show ClientApi, DataValueMonitoringApi, HistoryReadApi;
 export 'src/types/opcua_serializer.dart' show OpcUaDynamicValueSerializer;

@@ -295,7 +295,7 @@ typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
 int _refusePrivateKeyPassword(ffi.Pointer<raw.UA_ClientConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
     raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED;
 
-class Client implements ClientApi, DataValueMonitoringApi {
+class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   Client({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -828,31 +828,8 @@ class Client implements ClientApi, DataValueMonitoringApi {
           ua_calloc.free(source);
 
           try {
-            // UA_DataValue flag bits (see the header's bitfield, replaced by
-            // the `substitute` byte in the patched bindings): hasValue 0x01,
-            // hasStatus 0x02, hasSourceTimestamp 0x04, hasServerTimestamp 0x08.
-            final flags = copy.ref.substitute;
-            final statusCode = (flags & _hasStatusFlag) != 0 ? copy.ref.status : raw.UA_STATUSCODE_GOOD;
-            final sourceTimestamp = (flags & _hasSourceTimestampFlag) != 0
-                ? uaDateTimeToDateTime(copy.ref.sourceTimestamp)
-                : null;
-            final serverTimestamp = (flags & _hasServerTimestampFlag) != 0
-                ? uaDateTimeToDateTime(copy.ref.serverTimestamp)
-                : null;
-            DynamicValue value = DynamicValue();
-            if ((flags & _hasValueFlag) != 0 && copy.ref.value.data != ffi.nullptr) {
-              value = await _variantToValueAutoSchema(copy.ref.value);
-            }
-            if (!completer.isCompleted) {
-              completer.complete(
-                DataValue(
-                  value: value,
-                  statusCode: statusCode,
-                  sourceTimestamp: sourceTimestamp,
-                  serverTimestamp: serverTimestamp,
-                ),
-              );
-            }
+            final dataValue = await _decodeDataValue(copy);
+            if (!completer.isCompleted) completer.complete(dataValue);
           } catch (e, st) {
             if (!completer.isCompleted) completer.completeError(e, st);
           } finally {
@@ -876,6 +853,242 @@ class Client implements ClientApi, DataValueMonitoringApi {
       completer.completeError('Failed to read value: ${statusCodeToString(res)}');
     }
 
+    return completer.future;
+  }
+
+  /// Decodes a [DataValue] from a native one the caller owns (a deep copy:
+  /// the decode may await, past the life of a service response).
+  Future<DataValue> _decodeDataValue(ffi.Pointer<raw.UA_DataValue> native) async {
+    // UA_DataValue flag bits (see the header's bitfield, replaced by the
+    // `substitute` byte in the patched bindings): hasValue 0x01, hasStatus
+    // 0x02, hasSourceTimestamp 0x04, hasServerTimestamp 0x08.
+    final flags = native.ref.substitute;
+    final statusCode = (flags & _hasStatusFlag) != 0 ? native.ref.status : raw.UA_STATUSCODE_GOOD;
+    final sourceTimestamp = (flags & _hasSourceTimestampFlag) != 0
+        ? uaDateTimeToDateTime(native.ref.sourceTimestamp)
+        : null;
+    final serverTimestamp = (flags & _hasServerTimestampFlag) != 0
+        ? uaDateTimeToDateTime(native.ref.serverTimestamp)
+        : null;
+    DynamicValue value = DynamicValue();
+    if ((flags & _hasValueFlag) != 0 && native.ref.value.data != ffi.nullptr) {
+      value = await _variantToValueAutoSchema(native.ref.value);
+    }
+    return DataValue(
+      value: value,
+      statusCode: statusCode,
+      sourceTimestamp: sourceTimestamp,
+      serverTimestamp: serverTimestamp,
+    );
+  }
+
+  @override
+  Future<Map<NodeId, List<DataValue>>> historyReadRaw(
+    List<NodeId> nodeIds, {
+    DateTime? start,
+    DateTime? end,
+    int numValuesPerNode = 0,
+    int? maxValues,
+    bool returnBounds = false,
+    TimestampsToReturn timestampsToReturn = TimestampsToReturn.UA_TIMESTAMPSTORETURN_SOURCE,
+  }) async {
+    if (maxValues != null && maxValues < 0) {
+      throw ArgumentError.value(maxValues, 'maxValues', 'must not be negative');
+    }
+    final values = {for (final nodeId in nodeIds) nodeId: <DataValue>[]};
+    if (values.isEmpty) return values;
+    // The nodes to read next, with the continuation point of their next page
+    // (null for the first). Once a response is in, the points in it are the
+    // server's to keep until followed or released.
+    var pending = <(NodeId, Uint8List?)>[for (final nodeId in values.keys) (nodeId, null)];
+    var outstanding = <(NodeId, Uint8List?)>[];
+    try {
+      while (pending.isNotEmpty) {
+        final pages = await _historyReadRawPage(
+          pending,
+          start: start,
+          end: end,
+          numValuesPerNode: numValuesPerNode,
+          returnBounds: returnBounds,
+          timestampsToReturn: timestampsToReturn,
+        );
+        outstanding = [
+          for (var i = 0; i < pages.length; i++)
+            if (pages[i].continuationPoint != null) (pending[i].$1, pages[i].continuationPoint),
+        ];
+        UaStatusException? failure;
+        for (var i = 0; i < pages.length; i++) {
+          final page = pages[i];
+          try {
+            for (final copy in page.values) {
+              values[pending[i].$1]!.add(await _decodeDataValue(copy));
+            }
+          } finally {
+            for (final copy in page.values) {
+              raw.UA_DataValue_delete(copy);
+            }
+          }
+          if ((page.statusCode >> 30) == 0x2) {
+            failure ??= UaStatusException(page.statusCode);
+          }
+        }
+        if (failure != null) {
+          throw failure;
+        }
+        final full = [
+          if (maxValues != null)
+            for (final node in outstanding)
+              if (values[node.$1]!.length >= maxValues) node,
+        ];
+        pending = [
+          for (final node in outstanding)
+            if (!full.contains(node)) node,
+        ];
+        outstanding = pending;
+        if (full.isNotEmpty) {
+          await _releaseHistoryContinuationPoints(full);
+        }
+      }
+    } catch (_) {
+      if (outstanding.isNotEmpty) {
+        await _releaseHistoryContinuationPoints(outstanding).then((_) {}, onError: (_) {});
+      }
+      rethrow;
+    }
+    if (maxValues != null) {
+      for (final list in values.values) {
+        if (list.length > maxValues) list.removeRange(maxValues, list.length);
+      }
+    }
+    return values;
+  }
+
+  /// Tells the server the client is done with these nodes' continuation
+  /// points (a HistoryRead with `releaseContinuationPoints`).
+  Future<void> _releaseHistoryContinuationPoints(List<(NodeId, Uint8List?)> nodes) => _historyReadRawPage(
+    nodes,
+    start: null,
+    end: null,
+    numValuesPerNode: 0,
+    returnBounds: false,
+    timestampsToReturn: TimestampsToReturn.UA_TIMESTAMPSTORETURN_SOURCE,
+    release: true,
+  );
+
+  /// One HistoryRead (ReadRawModifiedDetails) for [nodes] with their
+  /// continuation points. Completes with one page per node, in order; the
+  /// DataValues are deep copies the caller deletes.
+  Future<List<({int statusCode, Uint8List? continuationPoint, List<ffi.Pointer<raw.UA_DataValue>> values})>>
+  _historyReadRawPage(
+    List<(NodeId, Uint8List?)> nodes, {
+    required DateTime? start,
+    required DateTime? end,
+    required int numValuesPerNode,
+    required bool returnBounds,
+    required TimestampsToReturn timestampsToReturn,
+    bool release = false,
+  }) {
+    final completer =
+        Completer<List<({int statusCode, Uint8List? continuationPoint, List<ffi.Pointer<raw.UA_DataValue>> values})>>();
+
+    // Everything the request points at is malloc'd (UA_Array_new, ua_calloc):
+    // UA_HistoryReadRequest_delete frees it all.
+    final request = raw.UA_HistoryReadRequest_new();
+    final details = ua_calloc<raw.UA_ReadRawModifiedDetails>();
+    details.ref
+      ..startTime = start == null ? 0 : dateTimeToUaDateTime(start)
+      ..endTime = end == null ? 0 : dateTimeToUaDateTime(end)
+      ..numValuesPerNode = numValuesPerNode
+      ..returnBounds = returnBounds;
+    request.ref.historyReadDetails.encoding = raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_DECODED;
+    request.ref.historyReadDetails.content.decoded.type = getType(UaTypes.readRawModifiedDetails);
+    request.ref.historyReadDetails.content.decoded.data = details.cast();
+    request.ref.timestampsToReturn = timestampsToReturn;
+    request.ref.releaseContinuationPoints = release;
+    final ids = raw.UA_Array_new(nodes.length, getType(UaTypes.historyReadValueId)).cast<raw.UA_HistoryReadValueId>();
+    request.ref.nodesToRead = ids;
+    request.ref.nodesToReadSize = nodes.length;
+    for (var i = 0; i < nodes.length; i++) {
+      ids[i].nodeId = nodes[i].$1.toRaw(allocator: ua_calloc);
+      final cp = nodes[i].$2;
+      if (cp != null && cp.isNotEmpty) {
+        final bytes = ua_calloc<ffi.Uint8>(cp.length);
+        bytes.asTypedList(cp.length).setAll(0, cp);
+        ids[i].continuationPoint.data = bytes;
+        ids[i].continuationPoint.length = cp.length;
+      }
+    }
+
+    late ffi.NativeCallable<
+      ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+    >
+    callback;
+    callback =
+        ffi.NativeCallable<
+          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, raw.UA_UInt32, ffi.Pointer<ffi.Void>)
+        >.isolateLocal((
+          ffi.Pointer<raw.UA_Client> client,
+          ffi.Pointer<ffi.Void> userdata,
+          int requestId,
+          ffi.Pointer<ffi.Void> voidPointer,
+        ) {
+          callback.close();
+          raw.UA_HistoryReadRequest_delete(request);
+          if (voidPointer == ffi.nullptr) {
+            completer.completeError(const UaStatusException(raw.UA_STATUSCODE_BADINTERNALERROR));
+            return;
+          }
+          final response = voidPointer.cast<raw.UA_HistoryReadResponse>().ref;
+          if (response.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
+            completer.completeError(UaStatusException(response.responseHeader.serviceResult));
+            return;
+          }
+          if (response.resultsSize != nodes.length) {
+            completer.completeError(const UaStatusException(raw.UA_STATUSCODE_BADUNEXPECTEDERROR));
+            return;
+          }
+          // open62541 frees the response when this callback returns: copy the
+          // continuation points into Dart and deep-copy every DataValue now.
+          final pages = [
+            for (var i = 0; i < response.resultsSize; i++)
+              () {
+                final result = response.results[i];
+                final cp = result.continuationPoint;
+                final copies = <ffi.Pointer<raw.UA_DataValue>>[];
+                final data = result.historyData;
+                if (data.encoding == raw.UA_ExtensionObjectEncoding.UA_EXTENSIONOBJECT_DECODED &&
+                    data.content.decoded.type == getType(UaTypes.historyData)) {
+                  final history = data.content.decoded.data.cast<raw.UA_HistoryData>().ref;
+                  for (var j = 0; j < history.dataValuesSize; j++) {
+                    final copy = raw.UA_DataValue_new();
+                    raw.UA_DataValue_copy(history.dataValues + j, copy);
+                    copies.add(copy);
+                  }
+                }
+                return (
+                  statusCode: result.statusCode,
+                  continuationPoint: cp.length == 0 ? null : Uint8List.fromList(cp.data.asTypedList(cp.length)),
+                  values: copies,
+                );
+              }(),
+          ];
+          completer.complete(pages);
+        });
+
+    final status = raw.UA_Client_AsyncService(
+      _client,
+      request.cast(),
+      getType(UaTypes.historyReadRequest),
+      callback.nativeFunction,
+      getType(UaTypes.historyReadResponse),
+      ffi.nullptr,
+      ffi.nullptr,
+    );
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      callback.close();
+      raw.UA_HistoryReadRequest_delete(request);
+      completer.completeError(UaStatusException(status));
+    }
     return completer.future;
   }
 
@@ -1030,8 +1243,11 @@ class Client implements ClientApi, DataValueMonitoringApi {
                   reference.extObjEncodingId = reference.extObjEncodingId ?? temporary.extObjEncodingId;
                 case AttributeId.UA_ATTRIBUTEID_VALUERANK:
                 case AttributeId.UA_ATTRIBUTEID_ARRAYDIMENSIONS:
-                  // An Int32 scalar / a UInt32 array, delivered as the value
-                  // (read one of them per call: both land in `value`).
+                case AttributeId.UA_ATTRIBUTEID_ACCESSLEVEL:
+                case AttributeId.UA_ATTRIBUTEID_USERACCESSLEVEL:
+                case AttributeId.UA_ATTRIBUTEID_HISTORIZING:
+                  // A scalar or array delivered as the value (read one of
+                  // them per call: they all land in `value`).
                   reference.value = (await _variantToValueAutoSchema(value!, null)).value;
                 case AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION:
                   final temporary = OpcUaDynamicValueSerializer.fromDataTypeDefinition(
