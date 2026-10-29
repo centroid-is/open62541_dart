@@ -5,8 +5,10 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:ffi/ffi.dart';
+import 'package:logging/logging.dart';
 
 import 'common.dart';
+import 'extensions.dart' show MessageSecurityMode;
 import 'third_party/open62541.g.dart' as raw;
 import 'types/errors.dart';
 import 'ua_allocation.dart';
@@ -339,6 +341,239 @@ final class TrustList {
 
   /// Whether this is [TrustList.acceptAll].
   final bool acceptsAll;
+}
+
+/// How a secured `Server` encrypts and whom it trusts (`Server(security:)`).
+///
+/// * [certificate] and [privateKey] (DER or PEM; an encrypted PEM key with
+///   [privateKeyPassword]) are the server's application instance
+///   certificate. The server's `applicationUri` must be the certificate's
+///   URI SubjectAltName.
+/// * [policies] and [modes] give the endpoints: one per policy and mode.
+/// * [allowNone] adds a SecurityPolicy#None endpoint. Without it the None
+///   policy still answers GetEndpoints and FindServers, so clients can
+///   discover the secure endpoints, but opens no session.
+/// * [applicationTrust] validates client application certificates (Open
+///   SecureChannel and CreateSession). The empty default trusts nobody.
+/// * [userTrust] validates X.509 user identity tokens. `null`, the default,
+///   offers no certificate login.
+/// * [allowUnencryptedPassword] lets a password travel unencrypted on a
+///   None channel (open62541's `allowNonePolicyPassword`).
+final class ServerSecurity {
+  const ServerSecurity({
+    required this.certificate,
+    required this.privateKey,
+    this.privateKeyPassword,
+    this.policies = SecurityPolicy.secure,
+    this.modes = const {
+      MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGN,
+      MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
+    },
+    this.allowNone = false,
+    this.applicationTrust = const TrustList(),
+    this.userTrust,
+    this.allowUnencryptedPassword = false,
+  });
+
+  final Certificate certificate;
+  final Uint8List privateKey;
+  final String? privateKeyPassword;
+  final Set<SecurityPolicy> policies;
+  final Set<MessageSecurityMode> modes;
+  final bool allowNone;
+  final TrustList applicationTrust;
+  final TrustList? userTrust;
+  final bool allowUnencryptedPassword;
+}
+
+/// Where the package reports insecure configurations.
+final securityLog = Logger('open62541.security');
+
+/// Throws an [ArgumentError] naming [name] if a CRL of [list] does not
+/// parse: open62541's memory store stops loading at the first such entry.
+void validateTrustList(TrustList list, String name) {
+  if (list.acceptsAll) {
+    securityLog.warning('$name accepts every certificate (TrustList.acceptAll)');
+    return;
+  }
+  for (final crl in [...list.trustedCrls, ...list.issuerCrls]) {
+    if (!_isCrl(crl)) {
+      throw ArgumentError.value('${crl.length} bytes', name, 'contains a CRL that does not parse');
+    }
+  }
+}
+
+bool _isCrl(Uint8List bytes) => using((arena) {
+  final data = byteStringIn(arena, bytes);
+  // getSubjectName falls back to parsing a CRL when the bytes are no
+  // certificate; getExpirationDate tells the two apart.
+  if (raw.UA_CertificateUtils_getExpirationDate(data, arena<ffi.Int64>()) == raw.UA_STATUSCODE_GOOD) return false;
+  final subject = arena<raw.UA_String>();
+  final status = raw.UA_CertificateUtils_getSubjectName(data, subject);
+  raw.UA_ByteString_clear(subject);
+  return status == raw.UA_STATUSCODE_GOOD;
+}, ua_calloc);
+
+/// Runs [update] on a copy of the certificate group that [get] reads out of
+/// a config struct and writes it back with [set]. The certificate group
+/// plugins keep no pointer to the group struct itself, only to its context.
+T _withCertificateGroup<T>(
+  raw.UA_CertificateGroup Function() get,
+  void Function(raw.UA_CertificateGroup) set,
+  T Function(ffi.Pointer<raw.UA_CertificateGroup> group, Arena arena) update,
+) => using((arena) {
+  final group = arena<raw.UA_CertificateGroup>()..ref = get();
+  try {
+    return update(group, arena);
+  } finally {
+    set(group.ref);
+  }
+}, ua_calloc);
+
+/// Replaces the certificate group in a config field with one validating
+/// against [list] (open62541's memory store, or AcceptAll for
+/// [TrustList.acceptAll]). [groupId] is the group's NS0 node, [logger] the
+/// config's, which the group keeps.
+int installTrustList(
+  raw.UA_CertificateGroup Function() get,
+  void Function(raw.UA_CertificateGroup) set,
+  int groupId,
+  TrustList list,
+  ffi.Pointer<raw.UA_Logger> logger,
+) => _withCertificateGroup(get, set, (group, arena) {
+  if (list.acceptsAll) {
+    raw.UA_CertificateGroup_AcceptAll(group);
+    return raw.UA_STATUSCODE_GOOD;
+  }
+  ffi.Pointer<raw.UA_ByteString> array(List<List<int>> entries) {
+    final out = arena<raw.UA_ByteString>(entries.isEmpty ? 1 : entries.length);
+    for (var i = 0; i < entries.length; i++) {
+      out[i] = byteStringIn(arena, entries[i]).ref;
+    }
+    return out;
+  }
+
+  final trust = arena<raw.UA_TrustListDataType>();
+  trust.ref.specifiedLists = raw.UA_TrustListMasks.UA_TRUSTLISTMASKS_ALL.value;
+  trust.ref.trustedCertificatesSize = list.trusted.length;
+  trust.ref.trustedCertificates = array([for (final c in list.trusted) c.der]);
+  trust.ref.issuerCertificatesSize = list.issuers.length;
+  trust.ref.issuerCertificates = array([for (final c in list.issuers) c.der]);
+  trust.ref.trustedCrlsSize = list.trustedCrls.length;
+  trust.ref.trustedCrls = array(list.trustedCrls);
+  trust.ref.issuerCrlsSize = list.issuerCrls.length;
+  trust.ref.issuerCrls = array(list.issuerCrls);
+  final id = arena<raw.UA_NodeId>()..ref = raw.UA_NODEID_NUMERIC(0, groupId);
+  // The trust list is copied in; 0 lifts the 64 KiB cap on later additions,
+  // and the rejected list keeps open62541's default of 100.
+  final params = keyValueMap(arena, {
+    'max-trust-listsize': (raw.UA_TYPES_UINT32, 0),
+    'max-rejected-listsize': (raw.UA_TYPES_UINT32, 100),
+  });
+  return raw.UA_CertificateGroup_Memorystore(group, id, trust, logger, params);
+});
+
+/// Clears the certificate group in a config field and leaves it empty (no
+/// `verifyCertificate`).
+void clearCertificateGroup(raw.UA_CertificateGroup Function() get, void Function(raw.UA_CertificateGroup) set) =>
+    _withCertificateGroup(get, set, (group, arena) {
+      final clear = group.ref.clear;
+      if (clear != ffi.nullptr) {
+        clear.asFunction<void Function(ffi.Pointer<raw.UA_CertificateGroup>)>()(group);
+      }
+      group.ref = ffi.Struct.create<raw.UA_CertificateGroup>();
+    });
+
+/// The certificates [group] refused, oldest first (empty for a group
+/// without a rejected list, such as AcceptAll). Entries that do not parse
+/// as a certificate are left out.
+List<Certificate> rejectedCertificates(raw.UA_CertificateGroup group) {
+  final getRejectedList = group.getRejectedList;
+  if (getRejectedList == ffi.nullptr) return const [];
+  return using((arena) {
+    final copy = arena<raw.UA_CertificateGroup>()..ref = group;
+    final list = arena<ffi.Pointer<raw.UA_ByteString>>();
+    final size = arena<ffi.Size>();
+    final status = getRejectedList
+        .asFunction<
+          int Function(
+            ffi.Pointer<raw.UA_CertificateGroup>,
+            ffi.Pointer<ffi.Pointer<raw.UA_ByteString>>,
+            ffi.Pointer<ffi.Size>,
+          )
+        >()(copy, list, size);
+    if (status != raw.UA_STATUSCODE_GOOD) throw UaStatusException(status);
+    final result = <Certificate>[];
+    for (var i = 0; i < size.value; i++) {
+      final entry = list.value[i];
+      try {
+        result.add(Certificate.fromDer(Uint8List.fromList(entry.data.asTypedList(entry.length))));
+      } on ArgumentError {
+        continue;
+      }
+    }
+    raw.UA_Array_delete(list.value.cast(), size.value, getTypeByIndex(raw.UA_TYPES_BYTESTRING));
+    return result;
+  }, ua_calloc);
+}
+
+/// A server endpoint as GetEndpoints describes it (`Client.getEndpoints`).
+final class EndpointInfo {
+  const EndpointInfo({
+    required this.endpointUrl,
+    required this.securityMode,
+    required this.securityPolicyUri,
+    required this.securityLevel,
+    required this.serverCertificate,
+    required this.applicationUri,
+    required this.applicationName,
+    required this.productUri,
+    required this.userTokenPolicies,
+  });
+
+  final String endpointUrl;
+  final MessageSecurityMode securityMode;
+  final String securityPolicyUri;
+
+  /// The server's ranking of its endpoints; a client picks the highest.
+  final int securityLevel;
+
+  /// The server's application instance certificate (the leaf of the chain
+  /// the endpoint carries), `null` when the endpoint has none.
+  final Certificate? serverCertificate;
+  final String applicationUri;
+  final String applicationName;
+  final String productUri;
+  final List<UserTokenPolicyInfo> userTokenPolicies;
+
+  /// The policy, or `null` for one this package does not serve.
+  SecurityPolicy? get securityPolicy => SecurityPolicy.fromUri(securityPolicyUri);
+
+  @override
+  String toString() => 'EndpointInfo($endpointUrl, ${securityMode.name}, $securityPolicyUri)';
+}
+
+/// A user identity token an endpoint accepts.
+final class UserTokenPolicyInfo {
+  const UserTokenPolicyInfo({required this.policyId, required this.tokenType, required this.securityPolicyUri});
+
+  final String policyId;
+  final UserTokenType tokenType;
+
+  /// The policy that encrypts the token, empty for the endpoint's own.
+  final String securityPolicyUri;
+}
+
+/// The leaf of a certificate chain (concatenated DER), or `null` if [chain]
+/// is empty or does not parse.
+Certificate? leafCertificate(Uint8List chain) {
+  if (chain.isEmpty) return null;
+  try {
+    final (_, _, end) = _derElement(chain, 0);
+    return Certificate.fromDer(chain.sublist(0, end));
+  } on Error {
+    return null;
+  }
 }
 
 /// A `UA_ByteString` in [arena] viewing a copy of [bytes].
