@@ -6,6 +6,35 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **`Server(accessControl:)`: who may open a session and what it may do,
+  decided in Dart.** `AccessControl` mirrors open62541's access-control
+  plugin: `userTokenTypes` are the identity tokens every endpoint offers
+  (exactly one policy per type), `activateSession(SessionActivation)`
+  accepts a session by returning its context or refuses it by throwing a
+  `UaStatusException`, `closeSession` sees it end (client close, timeout,
+  `Server.closeSession`, server deletion), and the per-node hooks
+  `userAccessLevel`, `userRightsMask`, `userExecutable`,
+  `userExecutableOnObject` (gates Call), `allowBrowse`, `allowAddNode`,
+  `allowAddReference`, `allowDeleteNode`, `allowDeleteReference`,
+  `allowTransferSubscription` and `allowHistoryUpdate` default to
+  open62541's own default plugin (allow). `SessionActivation` carries the
+  token (user name and password, zeroed after the call, or the validated
+  user certificate), the client's channel certificate and ApplicationUri,
+  the endpoint's mode and policy, the previous context on re-activation and
+  the client's remote address. The hooks run synchronously inside
+  `runIterate`; a session context is an int handle and a node is known by
+  its access tag, so a decision is a map lookup: `accessTag:` on
+  `addVariableNode`, `addDataSourceVariableNode`, `addMethodNode` and
+  `addObjectNode`, and `Server.setAccessTag` for an existing node, store an
+  int as the node's open62541 context, which the hooks read as
+  `NodeRef.tag` (the NodeId is decoded only when asked for). A throwing
+  hook denies. `DefaultAccessControl(allowAnonymous:, users:,
+  allowCertificate:)` is `UA_AccessControl_default` in Dart.
+  `MethodSessionInfo.context` hands a method handler the calling session's
+  context (and the identity comes from the activation instead of a scan of
+  the session diagnostics). `Server.closeSession(sessionId)` ends a session
+  at once. User name logins need `ServerSecurity`, certificate logins
+  `ServerSecurity.userTrust`; the constructor refuses otherwise.
 - **Client trust lists and endpoint selection.** `Client(serverTrust:)`
   validates the server certificate against a `TrustList` (trusted
   certificates, issuers and their CRLs, in open62541's in-memory store)

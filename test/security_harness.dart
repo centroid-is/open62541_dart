@@ -7,12 +7,13 @@ const securedServerUri = 'urn:open62541.dart.test.secured';
 const signAndEncrypt = MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
 
 class SecuredServer {
-  SecuredServer(ServerSecurity security, {String applicationUri = securedServerUri})
+  SecuredServer(ServerSecurity security, {String applicationUri = securedServerUri, AccessControl? accessControl})
     : server = Server(
         port: 0,
         logLevel: LogLevel.UA_LOGLEVEL_FATAL,
         applicationUri: applicationUri,
         security: security,
+        accessControl: accessControl,
       ) {
     server.start();
     _pump = Timer.periodic(const Duration(milliseconds: 2), (_) => server.runIterate());
