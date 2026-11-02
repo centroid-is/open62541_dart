@@ -1656,6 +1656,11 @@ const int UA_ACCESSLEVELMASK_WRITE = 2;
 /// The ``sessionId`` and ``sessionContext`` can be both NULL. This is the case
 /// when, for example, a MonitoredItem (the underlying Subscription) is detached
 /// from its Session but continues to run.
+///
+/// The callbacks ``activateSession``, ``getUserRightsMask``,
+/// ``getUserAccessLevel``, ``getUserExecutable``, ``getUserExecutableOnObject``
+/// and ``allowBrowseNode`` are mandatory. The server does not start without
+/// them. The other callbacks can be NULL.
 final class UA_AccessControl extends ffi.Struct {
   external ffi.Pointer<ffi.Void> context;
 
@@ -56410,7 +56415,7 @@ final class UA_NumericRange extends ffi.Struct {
 /// with a single element (min==max).
 final class UA_NumericRangeDimension extends ffi.Opaque {}
 
-const String UA_OPEN62541_VERSION = 'v1.5.9';
+const String UA_OPEN62541_VERSION = 'v1.5.10';
 
 const String UA_OPEN62541_VER_COMMIT = 'unknown-commit';
 
@@ -56420,7 +56425,7 @@ const int UA_OPEN62541_VER_MAJOR = 1;
 
 const int UA_OPEN62541_VER_MINOR = 5;
 
-const int UA_OPEN62541_VER_PATCH = 9;
+const int UA_OPEN62541_VER_PATCH = 10;
 
 final class UA_ObjectAttributes extends ffi.Struct {
   @UA_UInt32()

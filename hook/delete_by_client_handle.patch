@@ -1,6 +1,6 @@
 --- a/src/client/ua_client_subscriptions.c
 +++ b/src/client/ua_client_subscriptions.c
-@@ -984,10 +984,57 @@
+@@ -1029,10 +1029,57 @@
      return res;
  }
  
@@ -59,12 +59,12 @@
  #ifdef __clang_analyzer__
      return;
  #endif
-@@ -1003,6 +1050,21 @@
+@@ -1051,6 +1098,24 @@
+     for(size_t i = 0; i < request->monitoredItemIdsSize; i++) {
+         if(response->results[i] != UA_STATUSCODE_GOOD &&
             response->results[i] != UA_STATUSCODE_BADMONITOREDITEMIDINVALID) {
-             continue;
-         }
-+        if(i >= request->monitoredItemIdsSize)
-+            break;
++            continue;
++        }
 +        if(clientHandles) {
 +            /* Remove exactly the item the request referred to at send time.
 +             * If it is already gone (or the id had no local item then), do
@@ -74,14 +74,17 @@
 +                continue;
 +            UA_Client_MonitoredItem *mon =
 +                findMonitoredItemByHandle(sub, clientHandles[i]);
-+            if(mon)
-+                MonitoredItem_delete(client, sub, mon);
-+            continue;
-+        }
++            if(!mon)
++                continue;
++            MonitoredItem_delete(client, sub, mon);
++            /* The item's deleteCallback may have deleted the Subscription
++             * (same re-entrancy check as the id path below). */
++            if(findSubscriptionById(client, subId) != sub)
++                return;
+             continue;
+         }
          deleteMonitoredItem.monitoredItemId = &request->monitoredItemIds[i];
-         /* Delete the internal representation */
-         ZIP_ITER(MonitorItemsTree,&sub->monitoredItems,
-@@ -1015,8 +1077,9 @@
+@@ -1067,8 +1132,9 @@
      UA_Client_Subscription *sub = NULL;
      CustomCallback *cc = (CustomCallback *)d;
      UA_DeleteMonitoredItemsResponse *response = (UA_DeleteMonitoredItemsResponse *)r;
@@ -93,7 +96,7 @@
  
      lockClient(client);
  
-@@ -1032,12 +1095,14 @@
+@@ -1084,12 +1150,14 @@
      }
  
      /* Delete MonitoredItems from the internal representation */
@@ -109,7 +112,7 @@
      UA_free(cc);
  
      unlockClient(client);
-@@ -1046,14 +1111,27 @@
+@@ -1098,14 +1166,27 @@
  UA_DeleteMonitoredItemsResponse
  UA_Client_MonitoredItems_delete(UA_Client *client,
                                  const UA_DeleteMonitoredItemsRequest request) {
@@ -138,7 +141,7 @@
  
      lockClient(client);
  
-@@ -1064,13 +1142,15 @@
+@@ -1116,13 +1197,15 @@
                      "No internal representation of subscription %" PRIu32,
                      request.subscriptionId);
          unlockClient(client);
@@ -155,7 +158,7 @@
  
      return response;
  }
-@@ -1091,8 +1171,25 @@
+@@ -1143,8 +1226,25 @@
          return UA_STATUSCODE_BADOUTOFMEMORY;
      }
  
@@ -182,7 +185,7 @@
      cc->userCallback = (UA_ClientAsyncServiceCallback)callback;
      cc->userData = userdata;
  
-@@ -1104,6 +1201,8 @@
+@@ -1156,6 +1256,8 @@
                                   cc, requestId);
      if(res != UA_STATUSCODE_GOOD) {
          UA_DeleteMonitoredItemsRequest_delete(req_copy);
