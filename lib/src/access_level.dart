@@ -23,6 +23,20 @@ class AccessLevelMask {
     this.timestampWrite = false,
   });
 
+  /// The mask of an AccessLevel attribute value (a Byte of
+  /// `UA_ACCESSLEVELMASK_*` bits).
+  factory AccessLevelMask.fromValue(int value) => AccessLevelMask(
+    read: value & raw.UA_ACCESSLEVELMASK_READ != 0,
+    write: value & raw.UA_ACCESSLEVELMASK_WRITE != 0,
+    currentRead: value & raw.UA_ACCESSLEVELMASK_CURRENTREAD != 0,
+    currentWrite: value & raw.UA_ACCESSLEVELMASK_CURRENTWRITE != 0,
+    historyRead: value & raw.UA_ACCESSLEVELMASK_HISTORYREAD != 0,
+    historyWrite: value & raw.UA_ACCESSLEVELMASK_HISTORYWRITE != 0,
+    semanticChange: value & raw.UA_ACCESSLEVELMASK_SEMANTICCHANGE != 0,
+    statusWrite: value & raw.UA_ACCESSLEVELMASK_STATUSWRITE != 0,
+    timestampWrite: value & raw.UA_ACCESSLEVELMASK_TIMESTAMPWRITE != 0,
+  );
+
   int get value {
     var ret = read ? raw.UA_ACCESSLEVELMASK_READ : 0;
     ret |= currentRead ? raw.UA_ACCESSLEVELMASK_CURRENTREAD : 0;
@@ -35,4 +49,13 @@ class AccessLevelMask {
     ret |= timestampWrite ? raw.UA_ACCESSLEVELMASK_TIMESTAMPWRITE : 0;
     return ret;
   }
+
+  @override
+  bool operator ==(Object other) => other is AccessLevelMask && other.value == value;
+
+  @override
+  int get hashCode => value.hashCode;
+
+  @override
+  String toString() => 'AccessLevelMask(0x${value.toRadixString(16)})';
 }

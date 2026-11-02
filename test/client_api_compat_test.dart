@@ -1,7 +1,8 @@
 // A class written against ClientApi as it is on main must keep compiling.
 //
 // Monitoring with quality (DataValueMonitoringApi: monitorDataValue and
-// monitoredDataValues) is a SEPARATE interface, not new members of ClientApi.
+// monitoredDataValues) and HistoryRead (HistoryReadApi) are SEPARATE
+// interfaces, not new members of ClientApi.
 // Dart requires a class that `implements` an interface to define every member
 // of it, bodies included, so any member added to ClientApi — abstract or with
 // a default body — breaks every wrapper and test fake out there with
@@ -100,18 +101,23 @@ void main() {
     final ClientApi api = MainClientApiFake();
     expect(api, isA<ClientApi>());
     expect(api, isNot(isA<DataValueMonitoringApi>()));
+    expect(api, isNot(isA<HistoryReadApi>()));
   });
 
-  test('Client and ClientIsolate carry the quality surface next to ClientApi', () async {
+  test('Client and ClientIsolate carry the quality and history surfaces next to ClientApi', () async {
     // Static: both assignments must type-check without a cast.
     final Client direct = Client();
     final DataValueMonitoringApi directQuality = direct;
+    final HistoryReadApi directHistory = direct;
     expect(directQuality, same(direct));
+    expect(directHistory, same(direct));
     await direct.delete();
 
     final isolate = await ClientIsolate.create();
     final DataValueMonitoringApi isolateQuality = isolate;
+    final HistoryReadApi isolateHistory = isolate;
     expect(isolateQuality, same(isolate));
+    expect(isolateHistory, same(isolate));
     await isolate.delete();
   });
 }

@@ -4,6 +4,105 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## 1.5.9+1
+
+- **`historyReadRaw`: the client side of HistoryRead.** `Client` and
+  `ClientIsolate` implement the new `HistoryReadApi` (a separate interface,
+  like `DataValueMonitoringApi`, so `ClientApi` implementers are unaffected):
+  `historyReadRaw(nodeIds, {start, end, numValuesPerNode, maxValues,
+  returnBounds, timestampsToReturn})` reads raw history
+  (ReadRawModifiedDetails) through the non-blocking `UA_Client_AsyncService`,
+  follows continuation points until every node is done (empty pages
+  included), and returns each node's `DataValue`s. `maxValues` stops a node
+  early and releases its continuation point on the server. A node answered
+  Bad, or a Bad service result, fails the call with a `UaStatusException`
+  after the continuation points still held are released.
+- **`Server.setHistoryBackend`: HistoryRead served from Dart.** Implement
+  `HistoryBackend.readRaw` (and, optionally, `readProcessed` / `readAtTime`,
+  which otherwise answer `Bad_HistoryOperationUnsupported` per node) and
+  install it; clients then read the history of the nodes made historizing
+  with `historizing:` / `setHistorizing`. The backend gets one call per
+  request with the nodes copied into Dart (`HistoryReadRawRequest`: interval,
+  `numValuesPerNode` capped by `maxReturnDataValues`, bounds,
+  `timestampsToReturn`, IndexRange, its own continuation point and the
+  calling session) and answers with a `Future` of `HistoryReadResult`s
+  (`DataValue`s, continuation point, status). The response is parked
+  natively until then (the async HistoryRead patch), bounded by
+  `asyncOperationTimeout` (`Bad_Timeout`); a read in flight at `delete` is
+  dropped. The server answers itself: `Bad_TimestampsToReturnInvalid` for
+  Neither, `Bad_NodeIdUnknown`, `Bad_HistoryOperationInvalid` for a node not
+  made historizing, and `releaseContinuationPoints` (handed to
+  `HistoryBackend.releaseContinuationPoints`, answered at once). A
+  `UaStatusException` from the backend answers every node with its code,
+  any other error `Bad_InternalError`. `TimestampsToReturn` is exported.
+- **HistoryRead honours the session's UserAccessLevel.** open62541 1.5.9
+  never checks the HistoryRead bit of UserAccessLevel on a HistoryRead (its
+  history database only checks HistoryWrite, for updates). The server now
+  does, per node, before the backend is called: the node's AccessLevel,
+  ANDed with `ServerAuthorization.userAccessLevel` when the server has one,
+  must carry `AccessLevelMask.historyRead`, or the node is answered
+  `Bad_UserAccessDenied` (as is every node of a hook that throws). A release
+  of continuation points reads nothing and is not checked.
+- **Native: HistoryRead can complete asynchronously** (`hook/async_history_read.patch`).
+  open62541 1.5.9 answers a HistoryRead as soon as the history database's
+  read callback returns. The build now patches the AsyncManager with a
+  HistoryRead operation type: a callback that sets the response's
+  `serviceResult` to `UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY` gets the
+  response parked, fills its results later and completes it with the new
+  `UA_Server_setAsyncHistoryReadResult(server, results)` (bound). Timeout
+  (`asyncOperationTimeout`, `Bad_Timeout`), the Cancel service and shutdown
+  (`Bad_Shutdown`) cancel a parked read like a parked method call, and call
+  `asyncOperationCancelCallback` with the results pointer. The patch also
+  fixes the AsyncManager's timeout sweep, which classified operation types
+  with `<= WRITE_REQUEST`. A callback that answers synchronously behaves as
+  before.
+- **History node bookkeeping.** `addVariableNode` and
+  `addDataSourceVariableNode` take `historizing:` (the node's Historizing
+  attribute, `false` by default). `Server.setHistorizing` /
+  `Server.readHistorizing` and `Server.setAccessLevel` /
+  `Server.readAccessLevel` change and read the attributes of an existing
+  variable (for example to add `AccessLevelMask.historyRead`), throwing a
+  `UaStatusException` with open62541's status. `AccessLevelMask` gained
+  `fromValue`, `==` and `hashCode`.
+  `Server.setHistoryServerCapabilities(...)` publishes what the server
+  supports of Historical Access in `Server/ServerCapabilities/HistoryServerCapabilities`
+  (`AccessHistoryDataCapability`, `MaxReturnDataValues`, the event, insert,
+  replace, update and delete flags) and `MaxHistoryContinuationPoints`.
+  open62541 fills those nodes from its config while it creates the server, so
+  the call writes the nodes; a server that never calls it still advertises no
+  history. `readAttribute` now also reads `AccessLevel`, `UserAccessLevel` and
+  `Historizing` (delivered as the value) instead of failing with
+  `Unhandled attribute id`.
+- **Bindings for history and security.** The FFI bindings now cover what
+  HistoryRead and the server-side security work build on, so the feature
+  work that follows needs no regeneration: the `UA_HistoryReadRequest` /
+  `UA_HistoryReadResponse` / `UA_HistoryReadResult` / `UA_HistoryReadValueId` /
+  `UA_HistoryData` / `UA_HistoryUpdateResult` / `UA_ReadRawModifiedDetails` /
+  `UA_ReadAtTimeDetails` / `UA_ReadProcessedDetails` structs (opaque until
+  now), the `UA_HistoryReadRequest` helpers, `UA_Server_read/writeHistorizing`,
+  `UA_Server_read/writeAccessLevel`, `UA_Server_set/getNodeContext`,
+  `UA_Server_closeSession`, `UA_Array_new`, `UA_ByteString_clear`,
+  `UA_ServerConfig_setBasics_withPort` / `_clear` / `_addSecurityPolicy*` /
+  `_addEndpoint` / `_addAllEndpoints`, `UA_CertificateGroup_Memorystore`,
+  `UA_AccessControl_defaultWithLoginCallback`, the remaining
+  `UA_CertificateUtils_*` helpers (thumbprint, subject name, expiration, key
+  size, key-pair check, key decryption), `UA_ClientConfig_clear` and
+  `UA_ClientConfig_setAuthenticationCert`. `UaTypes` gained the history
+  request, response, result and details types. The new structs are pinned to
+  open62541's type table (size and every member offset) in
+  `verify_sizes_test`.
+- **Fixed: a server private key that open62541 cannot load made it prompt
+  for the password on stdin, or left the server with no endpoint.** An
+  encrypted key is an `ArgumentError` before any native call (the client's
+  check, now shared). A key open62541 refuses to parse is a
+  `BadSecurityChecksFailed` `UaStatusException`: the server config carries the
+  same declining password callback as the client's. A DER key open62541
+  copies unparsed (`UA_CertificateUtils_decryptPrivateKey` returns anything
+  tagged SEQUENCE verbatim) made every security policy fail to build its
+  context, which open62541 only logs, so `Server()` came up with the None
+  endpoint alone; that is the same `UaStatusException` now. A failed base
+  configuration was a thrown `String`; it is a `UaStatusException` too.
+
 ## 1.5.9
 
 - **Tooling:** the header bitfield transform now runs inside

@@ -11,6 +11,7 @@ import 'ua_allocation.dart';
 
 typedef MonitoringMode = raw.UA_MonitoringMode;
 typedef AttributeId = raw.UA_AttributeId;
+typedef TimestampsToReturn = raw.UA_TimestampsToReturn;
 typedef MessageSecurityMode = raw.UA_MessageSecurityMode;
 typedef SecureChannelState = raw.UA_SecureChannelState;
 typedef SessionState = raw.UA_SessionState;
@@ -253,7 +254,16 @@ enum UaTypes {
   dataTypeAttributes(raw.UA_TYPES_DATATYPEATTRIBUTES),
   objectAttributes(raw.UA_TYPES_OBJECTATTRIBUTES),
   objectTypeAttributes(raw.UA_TYPES_OBJECTTYPEATTRIBUTES),
-  browseResult(raw.UA_TYPES_BROWSERESULT);
+  browseResult(raw.UA_TYPES_BROWSERESULT),
+  historyReadValueId(raw.UA_TYPES_HISTORYREADVALUEID),
+  historyReadResult(raw.UA_TYPES_HISTORYREADRESULT),
+  historyReadRequest(raw.UA_TYPES_HISTORYREADREQUEST),
+  historyReadResponse(raw.UA_TYPES_HISTORYREADRESPONSE),
+  historyData(raw.UA_TYPES_HISTORYDATA),
+  historyUpdateResult(raw.UA_TYPES_HISTORYUPDATERESULT),
+  readRawModifiedDetails(raw.UA_TYPES_READRAWMODIFIEDDETAILS),
+  readAtTimeDetails(raw.UA_TYPES_READATTIMEDETAILS),
+  readProcessedDetails(raw.UA_TYPES_READPROCESSEDDETAILS);
 
   final int value;
   const UaTypes(this.value);
