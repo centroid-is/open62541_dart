@@ -298,6 +298,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    Uint8List? userCertificate,
+    Uint8List? userPrivateKey,
+    String? userPrivateKeyPassword,
     String? privateKeyPassword,
     String? applicationUri,
     SecurityPolicy? securityPolicy,
@@ -318,6 +321,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
       allowUnencryptedPassword: allowUnencryptedPassword,
+      userCertificate: userCertificate,
+      userPrivateKey: userPrivateKey,
+      userPrivateKeyPassword: userPrivateKeyPassword,
       privateKeyPassword: privateKeyPassword,
       applicationUri: applicationUri,
       securityPolicy: securityPolicy,
@@ -356,6 +362,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     int schemaCacheSize = Client.defaultSchemaCacheSize,
     Duration iterateInterval = const Duration(milliseconds: 10),
     bool allowUnencryptedPassword = false,
+    Uint8List? userCertificate,
+    Uint8List? userPrivateKey,
+    String? userPrivateKeyPassword,
     String? privateKeyPassword,
     String? applicationUri,
     SecurityPolicy? securityPolicy,
@@ -372,6 +381,10 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       acceptAllCertificates: acceptAllCertificates,
       privateKeyPassword: privateKeyPassword,
       applicationUri: applicationUri,
+      userCertificate: userCertificate,
+      userPrivateKey: userPrivateKey,
+      userPrivateKeyPassword: userPrivateKeyPassword,
+      username: username,
     );
     final isolate = ClientIsolate._(
       secureChannelLifeTime: secureChannelLifeTime,
@@ -388,6 +401,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
       allowUnencryptedPassword: allowUnencryptedPassword,
+      userCertificate: userCertificate,
+      userPrivateKey: userPrivateKey,
+      userPrivateKeyPassword: userPrivateKeyPassword,
       privateKeyPassword: privateKeyPassword,
       applicationUri: applicationUri,
       securityPolicy: securityPolicy,
@@ -430,6 +446,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    Uint8List? userCertificate,
+    Uint8List? userPrivateKey,
+    String? userPrivateKeyPassword,
     String? privateKeyPassword,
     String? applicationUri,
     SecurityPolicy? securityPolicy,
@@ -467,6 +486,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
           logLevel: logLevel,
           connectivityCheckInterval: connectivityCheckInterval,
           allowUnencryptedPassword: allowUnencryptedPassword,
+          userCertificate: userCertificate,
+          userPrivateKey: userPrivateKey,
+          userPrivateKeyPassword: userPrivateKeyPassword,
           privateKeyPassword: privateKeyPassword,
           applicationUri: applicationUri,
           securityPolicy: securityPolicy,
@@ -1218,6 +1240,9 @@ class _IsolateData {
   final LogLevel? logLevel;
   final Duration connectivityCheckInterval;
   final bool allowUnencryptedPassword;
+  final Uint8List? userCertificate;
+  final Uint8List? userPrivateKey;
+  final String? userPrivateKeyPassword;
   final String? privateKeyPassword;
   final String? applicationUri;
   final SecurityPolicy? securityPolicy;
@@ -1239,6 +1264,9 @@ class _IsolateData {
     this.logLevel,
     required this.connectivityCheckInterval,
     required this.allowUnencryptedPassword,
+    this.userCertificate,
+    this.userPrivateKey,
+    this.userPrivateKeyPassword,
     this.privateKeyPassword,
     this.applicationUri,
     this.securityPolicy,
@@ -1287,6 +1315,9 @@ void _isolateEntryPoint(_IsolateData data) {
       connectivityCheckInterval: data.connectivityCheckInterval,
       schemaCacheSize: data.schemaCacheSize,
       allowUnencryptedPassword: data.allowUnencryptedPassword,
+      userCertificate: data.userCertificate,
+      userPrivateKey: data.userPrivateKey,
+      userPrivateKeyPassword: data.userPrivateKeyPassword,
       privateKeyPassword: data.privateKeyPassword,
       applicationUri: data.applicationUri,
       securityPolicy: data.securityPolicy,

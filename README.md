@@ -151,7 +151,10 @@ every certificate". `securityPolicy` pins the endpoint's SecurityPolicy
 `applicationUri` is the ApplicationUri the client announces (with a
 certificate it must be the certificate's URI, an `ArgumentError`
 otherwise), and `rejectedServerCertificates` lists the server certificates
-the trust list refused. `ClientIsolate.create` takes the same arguments. The
+the trust list refused. `userCertificate` and `userPrivateKey` (with
+`userPrivateKeyPassword` for an encrypted PEM key) log in with an X.509
+identity token instead of a username; the server verifies it against its
+`trustList`. `ClientIsolate.create` takes the same arguments. The
 endpoint hostname is not checked against the server certificate.
 
 **Discovery, and trust on first use.** The trust list needs the server

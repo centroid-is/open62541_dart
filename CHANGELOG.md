@@ -6,6 +6,26 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **X.509 user identity tokens.** `Client(userCertificate:,
+  userPrivateKey:, userPrivateKeyPassword:)` (and `ClientIsolate` /
+  `ClientIsolate.create`) activates the session with the user certificate
+  instead of a user name (`UA_ClientConfig_setAuthenticationCert`, after the
+  channel encryption is set up). The key (DER, or an encrypted PEM key with
+  its password, decrypted in Dart) is checked against the certificate, and a
+  certificate without its key, a user name as well, or an encrypted key
+  without its password is an `ArgumentError`, also from
+  `checkClientCertificateArguments` on the calling isolate. The server
+  verifies the certificate against its `trustList` (the same store as the
+  client application certificates) and offers the certificate token only
+  with one; its `AccessControl` sees `SessionActivation.userCertificate`, a
+  method handler a `CertificateSessionIdentity` with the certificate's
+  subject. An untrusted user certificate is refused with
+  `BadIdentityTokenRejected` (open62541 hides the verification result) and
+  listed in `Server.rejectedUserCertificates`; `connect` fails with it at
+  once, on both clients. On the None endpoint of a secured server the token
+  is still signed under the server's best SecurityPolicy, so open62541
+  accepts it; the activation's `securityMode` is None, for an
+  `AccessControl` to refuse.
 - **Breaking: `ServerAuthorization` is now `AccessControl`.**
   `Server(authorization: ServerAuthorization(...))` is gone;
   `Server(accessControl:)` takes an `AccessControl`, open62541's
