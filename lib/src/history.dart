@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'client.dart' show DataValue;
 import 'extensions.dart';
 import 'node_id.dart';
-import 'server.dart' show MethodSessionInfo;
+import 'server.dart' show SessionInfo;
 import 'third_party/open62541.g.dart' as raw;
 import 'types/errors.dart';
 
@@ -54,7 +54,7 @@ class HistoryReadRawRequest {
   final Uint8List? continuationPoint;
 
   /// The session that sent the request, resolved when it arrived.
-  final MethodSessionInfo session;
+  final SessionInfo session;
 
   @override
   String toString() =>
@@ -82,7 +82,7 @@ class HistoryReadAtTimeRequest {
   final TimestampsToReturn timestampsToReturn;
   final String? indexRange;
   final Uint8List? continuationPoint;
-  final MethodSessionInfo session;
+  final SessionInfo session;
 }
 
 /// What a client asked of one node in a HistoryRead with
@@ -114,7 +114,7 @@ class HistoryReadProcessedRequest {
   final TimestampsToReturn timestampsToReturn;
   final String? indexRange;
   final Uint8List? continuationPoint;
-  final MethodSessionInfo session;
+  final SessionInfo session;
 }
 
 /// A backend's answer for one node.

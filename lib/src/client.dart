@@ -230,7 +230,7 @@ class ClientConfig {
 
   /// The `applicationUri` of the ApplicationDescription this client presents
   /// in CreateSession. Set it **before** connecting. On the server it
-  /// surfaces as `MethodSessionInfo.applicationUri`. Note: when connecting
+  /// surfaces as `SessionInfo.applicationUri`. Note: when connecting
   /// with a certificate, open62541 overwrites this with the URI embedded in
   /// the certificate.
   String get applicationUri => _clientConfig.ref.clientDescription.applicationUri.value;
@@ -241,7 +241,7 @@ class ClientConfig {
   /// The text of the `applicationName` LocalizedText this client presents in
   /// CreateSession (the locale is left as configured, "en" by default). Set
   /// it **before** connecting. On the server it surfaces as
-  /// `MethodSessionInfo.applicationName`.
+  /// `SessionInfo.applicationName`.
   String get applicationName => _clientConfig.ref.clientDescription.applicationName.text.value;
   set applicationName(String name) {
     _clientConfig.ref.clientDescription.applicationName.text.set(name);
@@ -249,7 +249,7 @@ class ClientConfig {
 
   /// The client-defined session name sent in CreateSession. Set it **before**
   /// connecting. On the server it surfaces as
-  /// `MethodSessionInfo.sessionName`. When unset open62541 generates one from
+  /// `SessionInfo.sessionName`. When unset open62541 generates one from
   /// the application URI.
   String get sessionName => _clientConfig.ref.sessionName.value;
   set sessionName(String name) {
@@ -328,6 +328,10 @@ class _BrowseResultError implements Exception {
 ///  * [applicationUri], with a certificate, is one of its `URI:`
 ///    SubjectAltNames: servers refuse a client whose certificate does not
 ///    carry the ApplicationUri it announces (`BadCertificateUriInvalid`).
+///  * [userCertificate] and [userPrivateKey] (the X.509 identity token) come
+///    together, not with a [username] (a session has one identity), and the
+///    key is the certificate's; an encrypted key needs its
+///    [userPrivateKeyPassword], which is checked here by decrypting it.
 void checkClientCertificateArguments({
   required Uint8List? certificate,
   required Uint8List? privateKey,
@@ -337,7 +341,12 @@ void checkClientCertificateArguments({
   required bool acceptAllCertificates,
   String? privateKeyPassword,
   String? applicationUri,
+  Uint8List? userCertificate,
+  Uint8List? userPrivateKey,
+  String? userPrivateKeyPassword,
+  String? username,
 }) {
+  _checkUserCertificate(userCertificate, userPrivateKey, userPrivateKeyPassword, username);
   if ((certificate == null) != (privateKey == null)) {
     throw ArgumentError('certificate and privateKey come together; got only one of them');
   }
@@ -385,6 +394,34 @@ void checkClientCertificateArguments({
       'them, DER), or acceptAllCertificates: true to skip server authentication. open62541 treats an empty '
       'trust list as "accept every certificate", so an empty one is refused rather than silently accepting any server',
     );
+  }
+}
+
+void _checkUserCertificate(Uint8List? certificate, Uint8List? key, String? password, String? username) {
+  if ((certificate == null) != (key == null)) {
+    throw ArgumentError('userCertificate and userPrivateKey come together; got only one of them');
+  }
+  if (password != null && key == null) {
+    throw ArgumentError('userPrivateKeyPassword needs a userPrivateKey');
+  }
+  if (certificate == null || key == null) return;
+  if (username != null) {
+    throw ArgumentError.value(username, 'username', 'a session has one identity, and userCertificate is given');
+  }
+  final plain = password == null ? key : decryptPrivateKey(key, password: password);
+  try {
+    if (isEncryptedPrivateKey(plain)) {
+      throw ArgumentError.value(
+        '<${key.length} bytes>',
+        'userPrivateKey',
+        'is encrypted; pass the decrypted key (DER), or an encrypted PEM key with its userPrivateKeyPassword',
+      );
+    }
+    if (!checkKeyPair(Certificate.fromDer(certificate), plain)) {
+      throw ArgumentError.value('<${key.length} bytes>', 'userPrivateKey', 'is not the key of userCertificate');
+    }
+  } finally {
+    if (!identical(plain, key)) plain.fillRange(0, plain.length, 0);
   }
 }
 
@@ -506,6 +543,16 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   /// without it the client takes the endpoint the server ranks highest
   /// among those of [securityMode].
   ///
+  /// [userCertificate] and [userPrivateKey] (DER; an encrypted PEM key with
+  /// [userPrivateKeyPassword]) activate the session with an X.509 identity
+  /// token instead of a [username] (`UA_ClientConfig_setAuthenticationCert`).
+  /// The token is signed with the user key under an encrypting
+  /// SecurityPolicy, so the server must offer one, also for its None
+  /// endpoint; the server verifies the certificate against its trust list.
+  /// A refused token fails [connect] with its status
+  /// (`BadIdentityTokenRejected` for a certificate the server does not
+  /// trust).
+  ///
   /// [schemaCacheSize] caps the DataType definitions the client keeps for
   /// decoding (see [defs]).
   Client({
@@ -527,6 +574,9 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     String? privateKeyPassword,
     String? applicationUri,
     SecurityPolicy? securityPolicy,
+    Uint8List? userCertificate,
+    Uint8List? userPrivateKey,
+    String? userPrivateKeyPassword,
   }) {
     if (privateKeyPassword != null && privateKey != null) {
       // Decrypted here, so that open62541 never sees an encrypted key.
@@ -541,6 +591,10 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
       acceptAllCertificates: acceptAllCertificates,
       privateKeyPassword: privateKey == null ? privateKeyPassword : null,
       applicationUri: applicationUri,
+      userCertificate: userCertificate,
+      userPrivateKey: userPrivateKey,
+      userPrivateKeyPassword: userPrivateKeyPassword,
+      username: username,
     );
     final config = ua_calloc<raw.UA_ClientConfig>();
 
@@ -576,6 +630,27 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
         rethrow;
       } finally {
         if (privateKeyPassword != null) privateKey.fillRange(0, privateKey.length, 0);
+      }
+    }
+    if (userCertificate != null && userPrivateKey != null) {
+      final key = userPrivateKeyPassword == null
+          ? userPrivateKey
+          : decryptPrivateKey(userPrivateKey, password: userPrivateKeyPassword);
+      // After setDefaultEncryption, which would replace the authentication
+      // security policies this builds around the user key.
+      final status = using(
+        (arena) => raw.UA_ClientConfig_setAuthenticationCert(
+          config,
+          _byteString(arena, userCertificate).ref,
+          _byteString(arena, key).ref,
+        ),
+        ua_calloc,
+      );
+      if (!identical(key, userPrivateKey)) key.fillRange(0, key.length, 0);
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        raw.UA_Client_delete(raw.UA_Client_newWithConfig(config));
+        ua_calloc.free(config);
+        throw UaStatusException(status);
       }
     }
     if (applicationUri != null) {
