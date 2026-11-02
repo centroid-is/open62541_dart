@@ -8,7 +8,7 @@ import 'client_api.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'node_id.dart';
-import 'third_party/open62541.g.dart' show UA_STATUSCODE_BADTIMEOUT;
+import 'types/endpoint_description.dart';
 import 'types/errors.dart';
 
 // Guarded stderr: on a detached GUI process (release launch) stderr has an
@@ -32,12 +32,8 @@ void _safeErr(Object? m) {
 }
 
 /// Exception thrown when an operation is attempted on a closed [ClientIsolate].
-class ClientIsolateClosedException implements Exception {
-  final String message;
-  const ClientIsolateClosedException([this.message = 'ClientIsolate is closed']);
-
-  @override
-  String toString() => message;
+class ClientIsolateClosedException extends ClientDeletedException {
+  const ClientIsolateClosedException([super.message = 'ClientIsolate is closed']);
 }
 
 /// Message types for communication between main isolate and client isolate
@@ -213,12 +209,14 @@ class KeepConnectedMessage extends IsolateMessage {
   final Duration retryInterval;
   final Duration maxBackoff;
   final Duration iterateInterval;
+  final Duration? connectTimeout;
   const KeepConnectedMessage(
     super.requestId,
     this.url, {
     required this.retryInterval,
     required this.maxBackoff,
     required this.iterateInterval,
+    required this.connectTimeout,
   });
 }
 
@@ -261,13 +259,24 @@ class IsolateResponse<T> {
 }
 
 /// Maps an error to what crosses the isolate boundary: a [UaStatusException]
-/// travels as itself (its status code survives — callers on the main isolate
+/// (and a [TimeoutException]) travels as itself (its status code survives — callers on the main isolate
 /// can `on UaStatusException catch` and read `statusCode`), and so does a
 /// [MonitoredItemsRefused], with its per-item statuses; anything else is
 /// stringified, because arbitrary exception types (native handles, closures)
 /// are not reliably sendable.
-Object sendableError(Object e) => e is UaStatusException ? e : e.toString();
+Object sendableError(Object e) => e is UaStatusException || e is TimeoutException ? e : e.toString();
 
+/// A [Client] on its own isolate, driven through messages: the same API, with
+/// the native event loop and its callbacks off the calling isolate.
+///
+/// The security of the connection is the [Client]'s, see its class
+/// documentation: SecurityPolicy#None without a certificate; with a
+/// `certificate`/`privateKey` and `SignAndEncrypt` the server is
+/// authenticated only against a `trustList` (plus `issuerList`,
+/// `revocationList`), and `acceptAllCertificates: true` opts out of that
+/// authentication (encrypted, so safe from passive eavesdropping, but open to
+/// an active attacker). [create] checks the combination up front and throws
+/// an [ArgumentError] before any isolate is spawned.
 class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   ClientIsolate._({
     Duration? secureChannelLifeTime,
@@ -277,9 +286,14 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     MessageSecurityMode? securityMode,
     Uint8List? certificate,
     Uint8List? privateKey,
+    List<Uint8List>? trustList,
+    List<Uint8List>? issuerList,
+    List<Uint8List>? revocationList,
+    bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    int schemaCacheSize = Client.defaultSchemaCacheSize,
   }) {
     _initIsolate(
       secureChannelLifeTime: secureChannelLifeTime,
@@ -289,13 +303,31 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       securityMode: securityMode,
       certificate: certificate,
       privateKey: privateKey,
+      trustList: trustList,
+      issuerList: issuerList,
+      revocationList: revocationList,
+      acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
       allowUnencryptedPassword: allowUnencryptedPassword,
+      schemaCacheSize: schemaCacheSize,
     );
   }
 
-  /// Factory constructor that creates a ClientIsolate with the specified configuration
+  /// [Client.getEndpoints], the same static: the endpoints of the server at
+  /// [endpointUrl] with their server certificate, for a [trustList]. It
+  /// needs no session, so no worker: the call makes its own short-lived
+  /// native client on an isolate of its own and keeps nothing.
+  static Future<List<EndpointDescription>> getEndpoints(
+    String endpointUrl, {
+    Duration timeout = const Duration(seconds: 10),
+    LogLevel logLevel = LogLevel.UA_LOGLEVEL_WARNING,
+  }) => Client.getEndpoints(endpointUrl, timeout: timeout, logLevel: logLevel);
+
+  /// Creates the worker isolate and the [Client] on it; the arguments are
+  /// the [Client] constructor's (the certificate ones are checked here
+  /// first, see [checkClientCertificateArguments]; `allowUnencryptedPassword`
+  /// sends a password over SecurityPolicy#None in clear text, as there).
   static Future<ClientIsolate> create({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -304,11 +336,27 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     MessageSecurityMode? securityMode,
     Uint8List? certificate,
     Uint8List? privateKey,
+    List<Uint8List>? trustList,
+    List<Uint8List>? issuerList,
+    List<Uint8List>? revocationList,
+    bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
-    bool allowUnencryptedPassword = false,
+    int schemaCacheSize = Client.defaultSchemaCacheSize,
     Duration iterateInterval = const Duration(milliseconds: 10),
+    bool allowUnencryptedPassword = false,
   }) async {
+    // The worker's Client constructor would throw where nobody awaits it
+    // (errorsAreFatal is false there) and every later call would find no
+    // client: check on this isolate, where the caller gets the exception.
+    checkClientCertificateArguments(
+      certificate: certificate,
+      privateKey: privateKey,
+      trustList: trustList,
+      issuerList: issuerList,
+      revocationList: revocationList,
+      acceptAllCertificates: acceptAllCertificates,
+    );
     final isolate = ClientIsolate._(
       secureChannelLifeTime: secureChannelLifeTime,
       requestedSessionTimeout: requestedSessionTimeout,
@@ -317,12 +365,25 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       securityMode: securityMode,
       certificate: certificate,
       privateKey: privateKey,
+      trustList: trustList,
+      issuerList: issuerList,
+      revocationList: revocationList,
+      acceptAllCertificates: acceptAllCertificates,
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
       allowUnencryptedPassword: allowUnencryptedPassword,
+      schemaCacheSize: schemaCacheSize,
     );
 
-    await isolate._initCompleter.future;
+    try {
+      await isolate._initCompleter.future;
+    } catch (_) {
+      // The worker made no client and has returned; nothing else to free.
+      isolate._isClosed = true;
+      isolate._receivePort.close();
+      isolate._errPort.close();
+      rethrow;
+    }
     return isolate;
   }
 
@@ -343,9 +404,14 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     MessageSecurityMode? securityMode,
     Uint8List? certificate,
     Uint8List? privateKey,
+    List<Uint8List>? trustList,
+    List<Uint8List>? issuerList,
+    List<Uint8List>? revocationList,
+    bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    int schemaCacheSize = Client.defaultSchemaCacheSize,
   }) async {
     try {
       _receivePort = ReceivePort();
@@ -372,9 +438,14 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
           securityMode: securityMode,
           certificate: certificate,
           privateKey: privateKey,
+          trustList: trustList,
+          issuerList: issuerList,
+          revocationList: revocationList,
+          acceptAllCertificates: acceptAllCertificates,
           logLevel: logLevel,
           connectivityCheckInterval: connectivityCheckInterval,
           allowUnencryptedPassword: allowUnencryptedPassword,
+          schemaCacheSize: schemaCacheSize,
           sendPort: _receivePort.sendPort,
         ),
         // A worker isolate must NOT die on an uncaught error. In particular, a
@@ -398,9 +469,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     if (message is SendPort) {
       _sendPort = message;
       _initCompleter.complete();
-    } else if (message is _ClientInitFailed) {
-      _receivePort.close();
-      _errPort.close();
+    } else if (message is _WorkerInitFailed) {
       _initCompleter.completeError(message.error);
     } else if (message is IsolateResponse) {
       final completer = _pendingRequests[message.requestId];
@@ -433,9 +502,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
   /// [keepConnected] (preferred — it owns the pump) or a [runIterate] loop
   /// to process traffic.
   ///
-  /// [timeout] bounds the attempt (default 30 s; the underlying open62541
-  /// connect otherwise retries forever): on expiry the connect attempt is
-  /// abandoned and a [UaStatusException] with `Bad_Timeout` is thrown.
+  /// [timeout] is [Client.connect]'s: it bounds the handshake (default
+  /// 30 s, `null` waits as long as it takes); on expiry the attempt is
+  /// abandoned and a [TimeoutException] is thrown.
   @override
   Future<void> connect(String url, {Duration? timeout = const Duration(seconds: 30)}) async {
     if (_isClosed) throw const ClientIsolateClosedException();
@@ -901,6 +970,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     Duration retryInterval = const Duration(milliseconds: 500),
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
+    Duration? connectTimeout = const Duration(seconds: 30),
   }) async {
     if (_isClosed) throw const ClientIsolateClosedException();
 
@@ -915,6 +985,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
         retryInterval: retryInterval,
         maxBackoff: maxBackoff,
         iterateInterval: iterateInterval,
+        connectTimeout: connectTimeout,
       ),
     );
 
@@ -1088,12 +1159,6 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
   }
 }
 
-/// The worker's [Client] constructor threw; the worker has exited.
-class _ClientInitFailed {
-  const _ClientInitFailed(this.error);
-  final Object error;
-}
-
 /// Data structure passed to the isolate
 class _IsolateData {
   final Duration? secureChannelLifeTime;
@@ -1103,9 +1168,14 @@ class _IsolateData {
   final MessageSecurityMode? securityMode;
   final Uint8List? certificate;
   final Uint8List? privateKey;
+  final List<Uint8List>? trustList;
+  final List<Uint8List>? issuerList;
+  final List<Uint8List>? revocationList;
+  final bool acceptAllCertificates;
   final LogLevel? logLevel;
   final Duration connectivityCheckInterval;
   final bool allowUnencryptedPassword;
+  final int schemaCacheSize;
   final SendPort sendPort;
 
   _IsolateData({
@@ -1116,11 +1186,22 @@ class _IsolateData {
     this.securityMode,
     this.certificate,
     this.privateKey,
+    this.trustList,
+    this.issuerList,
+    this.revocationList,
+    required this.acceptAllCertificates,
     this.logLevel,
     required this.connectivityCheckInterval,
     required this.allowUnencryptedPassword,
+    required this.schemaCacheSize,
     required this.sendPort,
   });
+}
+
+/// The worker's answer when its [Client] constructor threw.
+class _WorkerInitFailed {
+  const _WorkerInitFailed(this.error);
+  final Object error;
 }
 
 /// Entry point for the isolate
@@ -1149,13 +1230,18 @@ void _isolateEntryPoint(_IsolateData data) {
       securityMode: data.securityMode,
       certificate: data.certificate,
       privateKey: data.privateKey,
+      trustList: data.trustList,
+      issuerList: data.issuerList,
+      revocationList: data.revocationList,
+      acceptAllCertificates: data.acceptAllCertificates,
       logLevel: data.logLevel,
       connectivityCheckInterval: data.connectivityCheckInterval,
+      schemaCacheSize: data.schemaCacheSize,
       allowUnencryptedPassword: data.allowUnencryptedPassword,
     );
   } catch (e) {
     receivePort.close();
-    sendPort.send(_ClientInitFailed(sendableError(e)));
+    sendPort.send(_WorkerInitFailed(sendableError(e)));
     return;
   }
 
@@ -1173,7 +1259,7 @@ void _isolateEntryPoint(_IsolateData data) {
         // owns one, but must not be required just to connect). The pump ends
         // with the connect — session traffic afterwards is the caller's
         // pump's job.
-        final connectFuture = client.connect(message.url);
+        final connectFuture = client.connect(message.url, timeout: message.timeout);
         var connecting = true;
         connectFuture.whenComplete(() => connecting = false).ignore();
         unawaited(() async {
@@ -1182,22 +1268,7 @@ void _isolateEntryPoint(_IsolateData data) {
             await Future<void>.delayed(const Duration(milliseconds: 5));
           }
         }());
-        if (message.timeout == null) {
-          await connectFuture;
-        } else {
-          await connectFuture.timeout(
-            message.timeout!,
-            onTimeout: () {
-              // Abandon the attempt: stop the state machine so a later
-              // connect/keepConnected starts clean, and answer Bad_Timeout.
-              connecting = false;
-              try {
-                client.disconnect();
-              } catch (_) {}
-              throw const UaStatusException(UA_STATUSCODE_BADTIMEOUT);
-            },
-          );
-        }
+        await connectFuture;
         sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is ReadMessage) {
         final result = await client.read(message.nodeId);
@@ -1378,6 +1449,7 @@ void _isolateEntryPoint(_IsolateData data) {
                 retryInterval: message.retryInterval,
                 maxBackoff: message.maxBackoff,
                 iterateInterval: message.iterateInterval,
+                connectTimeout: message.connectTimeout,
               )
               .then((_) => sendPort.send(IsolateResponse.success(message.requestId, null)))
               .catchError((Object e) => sendPort.send(IsolateResponse.error(message.requestId, sendableError(e)))),

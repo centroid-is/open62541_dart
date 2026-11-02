@@ -4,8 +4,30 @@ import 'dart:core';
 import 'package:ffigen/ffigen.dart';
 import 'package:logging/logging.dart';
 
+/// Dart FFI cannot represent C bitfields; writes a copy of the amalgamated
+/// header with them replaced by plain fields.
+void removeBitfields(Uri packageRoot) {
+  final dir = packageRoot.resolve('third_party/open62541/');
+  final result = Process.runSync('patch', [
+    dir.resolve('open62541.h').toFilePath(),
+    '--fuzz=0',
+    '-o',
+    dir.resolve('open62541_modified.h').toFilePath(),
+    '-i',
+    packageRoot.resolve('tool/remove_bitfields.patch').toFilePath(),
+  ]);
+  if (result.exitCode != 0) {
+    stderr.write('${result.stdout}${result.stderr}');
+    throw StateError(
+      'tool/remove_bitfields.patch does not apply to open62541.h; '
+      'update the patch for this open62541 version',
+    );
+  }
+}
+
 Future<void> main() async {
   final packageRoot = Platform.script.resolve('../');
+  removeBitfields(packageRoot);
   const functionSet = {
     '__UA_Client_AsyncService',
     '__UA_Server_addNode',
@@ -16,10 +38,10 @@ Future<void> main() async {
     'UA_Variant_delete',
     'UA_Variant_copy',
     'UA_clear',
-    'UA_decodeBinary',
-    'UA_Array_new',
     'UA_Array_delete',
+    'UA_Array_new',
     'UA_ByteString_clear',
+    'UA_decodeBinary',
 
     'UA_ClientConfig_setDefault',
     'UA_ClientConfig_clear',
@@ -28,15 +50,16 @@ Future<void> main() async {
     'UA_Client_findDataType',
     'UA_ClientConfig_setDefaultEncryption',
     'UA_CertificateGroup_AcceptAll',
+    'UA_CreateCertificate',
     'UA_ClientConfig_setAuthenticationUsername',
     'UA_ClientConfig_setAuthenticationCert',
-    'UA_Client_getEndpoints',
     'UA_Client_newWithConfig',
     'UA_Client_getConfig',
     'UA_Client_connectAsync',
     'UA_Client_run_iterate',
     'UA_Client_writeValueAttribute_async',
     'UA_Client_getState',
+    'UA_Client_getEndpoints',
     'UA_ReadRequest_init',
     'UA_ReadRequest_new',
     'UA_ReadRequest_delete',
@@ -89,8 +112,16 @@ Future<void> main() async {
     'UA_ServerConfig_addEndpoint',
     'UA_ServerConfig_addAllEndpoints',
     'UA_CertificateGroup_Memorystore',
+    'UA_ServerConfig_setDefaultWithSecurityPolicies',
     'UA_AccessControl_default',
     'UA_AccessControl_defaultWithLoginCallback',
+    'UA_CertificateUtils_verifyApplicationUri',
+    'UA_CertificateUtils_getThumbprint',
+    'UA_CertificateUtils_getSubjectName',
+    'UA_CertificateUtils_getExpirationDate',
+    'UA_CertificateUtils_getKeySize',
+    'UA_CertificateUtils_checkKeyPair',
+    'UA_CertificateUtils_decryptPrivateKey',
     'UA_Server_setNodeContext',
     'UA_Server_getNodeContext',
     'UA_Server_closeSession',
@@ -163,19 +194,8 @@ Future<void> main() async {
     // Session introspection (method-callback session identity)
     'UA_Server_getSessionAttribute',
 
-    // Certificate utilities
-    'UA_CreateCertificate',
-    'UA_CertificateUtils_getThumbprint',
-    'UA_CertificateUtils_getSubjectName',
-    'UA_CertificateUtils_getExpirationDate',
-    'UA_CertificateUtils_getKeySize',
-    'UA_CertificateUtils_verifyApplicationUri',
-    'UA_CertificateUtils_checkKeyPair',
-    'UA_CertificateUtils_decryptPrivateKey',
-
     // Async operations (method calls now; async data-source writes later)
     'UA_Server_setAsyncCallMethodResult',
-    'UA_Server_setAsyncHistoryReadResult',
     'UA_Server_setAsyncWriteResult',
 
     'UA_DataTypeAttributes_new',
@@ -239,6 +259,33 @@ Future<void> main() async {
 
   const structSet = {
     'UA_ClientConfig',
+    'UA_UsernamePasswordLogin',
+    // Node-management service requests (a test sends them from a client)
+    'UA_AddNodesItem',
+    'UA_AddNodesRequest',
+    'UA_AddNodesResponse',
+    'UA_AddNodesResult',
+    'UA_DeleteNodesItem',
+    'UA_DeleteNodesRequest',
+    'UA_DeleteNodesResponse',
+    'UA_AddReferencesItem',
+    'UA_AddReferencesRequest',
+    'UA_AddReferencesResponse',
+    'UA_DeleteReferencesItem',
+    'UA_DeleteReferencesRequest',
+    'UA_DeleteReferencesResponse',
+    'UA_TrustListDataType',
+    // History structs
+    'UA_HistoryReadRequest',
+    'UA_HistoryReadResponse',
+    'UA_HistoryReadResult',
+    'UA_HistoryReadValueId',
+    'UA_HistoryData',
+    'UA_ReadRawModifiedDetails',
+    'UA_ReadAtTimeDetails',
+    'UA_ReadProcessedDetails',
+    'UA_HistoryUpdateResult',
+    'UA_KeyValuePair',
     'UA_Variant',
     'UA_EnumDefinition',
     'UA_EnumField',
@@ -309,19 +356,6 @@ Future<void> main() async {
     'UA_FieldTargetDataType',
     'UA_ValueCallback',
     'UA_DecodeBinaryOptions',
-    // History structs
-    'UA_HistoryReadRequest',
-    'UA_HistoryReadResponse',
-    'UA_HistoryReadResult',
-    'UA_HistoryReadValueId',
-    'UA_HistoryData',
-    'UA_ReadRawModifiedDetails',
-    'UA_ReadAtTimeDetails',
-    'UA_ReadProcessedDetails',
-    'UA_HistoryUpdateResult',
-    // Security structs
-    'UA_TrustListDataType',
-    'UA_UsernamePasswordLogin',
   };
 
   const typedefSet = {

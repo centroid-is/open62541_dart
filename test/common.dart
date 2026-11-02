@@ -211,19 +211,23 @@ final stringNodeId = NodeId.fromString(1, "the.string");
 
 // Not all tests need this and it is annoying me to have this
 // be added while I am debugging other tests.
+/// The access level of the nodes [addBasicVariables] adds: tests write to
+/// them through a client, and `addVariableNode` defaults to read-only.
+const readWrite = AccessLevelMask(read: true, write: true);
+
 void addBasicVariables(Server server) {
   // Create a boolean variable to read and write
   DynamicValue boolValue = DynamicValue(value: true, typeId: NodeId.boolean, name: "the.bool");
-  server.addVariableNode(boolNodeId, boolValue);
+  server.addVariableNode(boolNodeId, boolValue, accessLevel: readWrite);
   // Create a int variables to read and write
   DynamicValue intValue = DynamicValue(value: 1, typeId: NodeId.int32, name: "the.int");
-  server.addVariableNode(intNodeId, intValue);
+  server.addVariableNode(intNodeId, intValue, accessLevel: readWrite);
   // Create a double variables to read and write
   DynamicValue doubleValue = DynamicValue(value: 3.14, typeId: NodeId.double, name: "the.double");
-  server.addVariableNode(doubleNodeId, doubleValue);
+  server.addVariableNode(doubleNodeId, doubleValue, accessLevel: readWrite);
   // Create a string variables to read and write
   DynamicValue stringValue = DynamicValue(value: "Hello World!", typeId: NodeId.uastring, name: "the.string");
-  server.addVariableNode(stringNodeId, stringValue);
+  server.addVariableNode(stringNodeId, stringValue, accessLevel: readWrite);
 }
 
 /// Starts a server on a port the OS picks (read it from `Server.port`) and
@@ -273,16 +277,17 @@ Future<ClientApi> setupClientOfType(
   String clientType,
   String url, {
   LogLevel logLevel = LogLevel.UA_LOGLEVEL_FATAL,
+  int schemaCacheSize = Client.defaultSchemaCacheSize,
 }) async {
   switch (clientType) {
     case 'isolate':
-      final client = await ClientIsolate.create(logLevel: logLevel);
+      final client = await ClientIsolate.create(logLevel: logLevel, schemaCacheSize: schemaCacheSize);
       // runIterate fails once the client is deleted (expected in tearDown).
       unawaited(client.runIterate().catchError((_) {}));
       await client.connect(url);
       return client;
     case 'direct':
-      final client = Client(logLevel: logLevel);
+      final client = Client(logLevel: logLevel, schemaCacheSize: schemaCacheSize);
       () async {
         while (client.runIterate(Duration(milliseconds: 10))) {
           await Future.delayed(Duration(milliseconds: 5));
@@ -293,4 +298,29 @@ Future<ClientApi> setupClientOfType(
     default:
       throw ArgumentError('Unknown client type: $clientType');
   }
+}
+
+/// `ns=1;s=Dia<i>`, level [i] of [addDiamond].
+NodeId diamondType(int i) => NodeId.fromString(1, 'Dia$i');
+
+/// Registers the types D0 {a: D1[], b: D1[]}, ..., Dk {x: Int32} on
+/// [server]: k + 1 types with 2^k paths from D0 to Dk, whose schema expands
+/// to about 5 * 2^k nodes. Array fields keep each struct small (open62541
+/// refuses a struct over 64 KiB, which two inline fields per level reach).
+/// Returns a D0 value with empty arrays.
+DynamicValue addDiamond(Server server, int k) {
+  DynamicValue? previous;
+  for (var i = k; i >= 0; i--) {
+    final v = DynamicValue(name: 'Dia$i', typeId: diamondType(i));
+    if (i == k) {
+      v['x'] = DynamicValue(value: 1, typeId: NodeId.int32);
+    } else {
+      v['a'] = DynamicValue(value: <DynamicValue>[], typeId: diamondType(i + 1));
+      v['b'] = DynamicValue(value: <DynamicValue>[], typeId: diamondType(i + 1));
+    }
+    server.addCustomType(diamondType(i), v);
+    server.addDataTypeNode(diamondType(i), 'Dia$i');
+    previous = v;
+  }
+  return previous!;
 }

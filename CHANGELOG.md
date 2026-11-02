@@ -67,37 +67,398 @@ changes that ship the same native library version.
   `Historizing` (delivered as the value) instead of failing with
   `Unhandled attribute id`.
 - **Bindings for history and security.** The FFI bindings now cover what
-  HistoryRead and server/client security build on, so the feature work that
-  follows needs no regeneration: the `UA_HistoryReadRequest` /
+  HistoryRead and the server-side security work build on, so the feature
+  work that follows needs no regeneration: the `UA_HistoryReadRequest` /
   `UA_HistoryReadResponse` / `UA_HistoryReadResult` / `UA_HistoryReadValueId` /
   `UA_HistoryData` / `UA_HistoryUpdateResult` / `UA_ReadRawModifiedDetails` /
-  `UA_ReadAtTimeDetails` / `UA_ReadProcessedDetails` / `UA_TrustListDataType`
-  structs (opaque until now), `UA_UsernamePasswordLogin`, the
-  `UA_HistoryReadRequest` helpers, `UA_Server_read/writeHistorizing`,
+  `UA_ReadAtTimeDetails` / `UA_ReadProcessedDetails` structs (opaque until
+  now), the `UA_HistoryReadRequest` helpers, `UA_Server_read/writeHistorizing`,
   `UA_Server_read/writeAccessLevel`, `UA_Server_set/getNodeContext`,
-  `UA_Server_closeSession`, `UA_Array_new/delete`, `UA_ByteString_clear`,
+  `UA_Server_closeSession`, `UA_Array_new`, `UA_ByteString_clear`,
   `UA_ServerConfig_setBasics_withPort` / `_clear` / `_addSecurityPolicy*` /
   `_addEndpoint` / `_addAllEndpoints`, `UA_CertificateGroup_Memorystore`,
-  `UA_AccessControl_default[WithLoginCallback]`, `UA_CreateCertificate`, the
-  `UA_CertificateUtils_*` helpers, `UA_ClientConfig_clear`,
-  `UA_ClientConfig_setAuthenticationCert` and `UA_Client_getEndpoints`.
-  `UaTypes` gained the history request, response, result and details types.
-  The new structs are pinned to open62541's type table (size and every member
-  offset) in `verify_sizes_test`.
-- **`ClientIsolate(allowUnencryptedPassword:)`.** `Client` had it;
-  `ClientIsolate` and `ClientIsolate.create` now take it too and forward it.
-- **Fixed: a client certificate or key that open62541 cannot load was
-  ignored.** The result of `UA_ClientConfig_setDefaultEncryption` was not
-  checked, so the client was created without its certificate, and a key that
-  did not parse made open62541 prompt for its password on stdin. Client and server
-  configs now carry a private key password callback that declines, and
-  `Client(certificate:, privateKey:)` throws a `UaStatusException`
-  (`BadSecurityChecksFailed` for an unreadable key). `ClientIsolate.create`
-  fails with the same exception instead of returning a worker that never
-  answers.
-- The `ClientConfig.applicationUri` documentation said open62541 takes the
-  URI from the client certificate. It does not: it must equal the
-  certificate's URI SubjectAltName, and a server rejects a mismatch.
+  `UA_AccessControl_defaultWithLoginCallback`, the remaining
+  `UA_CertificateUtils_*` helpers (thumbprint, subject name, expiration, key
+  size, key-pair check, key decryption), `UA_ClientConfig_clear` and
+  `UA_ClientConfig_setAuthenticationCert`. `UaTypes` gained the history
+  request, response, result and details types. The new structs are pinned to
+  open62541's type table (size and every member offset) in
+  `verify_sizes_test`.
+- **Fixed: a server private key that open62541 cannot load made it prompt
+  for the password on stdin, or left the server with no endpoint.** An
+  encrypted key is an `ArgumentError` before any native call (the client's
+  check, now shared). A key open62541 refuses to parse is a
+  `BadSecurityChecksFailed` `UaStatusException`: the server config carries the
+  same declining password callback as the client's. A DER key open62541
+  copies unparsed (`UA_CertificateUtils_decryptPrivateKey` returns anything
+  tagged SEQUENCE verbatim) made every security policy fail to build its
+  context, which open62541 only logs, so `Server()` came up with the None
+  endpoint alone; that is the same `UaStatusException` now. A failed base
+  configuration was a thrown `String`; it is a `UaStatusException` too.
+
+## 1.5.9
+
+- **Tooling:** the header bitfield transform now runs inside
+  `tool/ffigen.dart` (patch kept as `tool/remove_bitfields.patch`), so
+  regenerating bindings is one command; `open62541_tooling/` is gone.
+- **Security: the `Server` takes a certificate, a trust list, users, a
+  listen address and limits; clients may no longer add or delete nodes.**
+  `Server(certificate:, privateKey:, trustList:, issuerList:, revocationList:,
+  acceptAllClientCertificates:, allowNone:, allowAnonymous:, users:,
+  allowUnencryptedPassword:, allowClientNodeManagement:, hostname:, limits:)`.
+  With a certificate (DER) the configuration is open62541's
+  `UA_ServerConfig_setDefaultWithSecurityPolicies`: Basic256Sha256,
+  Aes256Sha256RsaPss and Aes128Sha256RsaOaep in Sign and SignAndEncrypt,
+  the client certificates verified against the in-memory store built from
+  the lists (`UA_CertificateGroup_Memorystore`); `acceptAllClientCertificates`
+  is the explicit opt-out, and a certificate with neither a non-empty trust
+  list nor the opt-out is an `ArgumentError` (`checkServerSecurityArguments`;
+  open62541 keeps accept-all for an empty trust list). The certificate must
+  carry the `applicationUri` (checked with
+  `UA_CertificateUtils_verifyApplicationUri`, an `ArgumentError` otherwise,
+  where open62541 only warns at startup). `allowNone` (default false with a
+  certificate) drops the None endpoint and leaves the None policy for
+  discovery only (`securityPolicyNoneDiscoveryOnly`). `allowAnonymous` and
+  `users` go to `UA_AccessControl_default` (logins copied, stored in plain
+  text, compared in constant time); `allowUnencryptedPassword` is
+  `UA_ServerConfig.allowNonePolicyPassword`. `hostname` sets
+  `serverUrls[0]` to `opc.tcp://hostname:port`. `ServerLimits` maps to the
+  `UA_ServerConfig` limit fields (`Server.limits` reads them back), and
+  every server has bounded ones: `ServerLimits.defaults` (100 channels and
+  sessions, 1000 subscriptions, 50 per session, 100 000 monitored items,
+  10 000 per subscription, 10 000 nodes per Read/Write/Browse, 1000 per
+  Call, 16 MiB per message, 512 chunks) where open62541 checks nothing
+  beyond 100 channels and sessions. A field left `null` is its default, an
+  explicit 0 lifts the cap (0 = no check in open62541 for every UInt32
+  field; `maxSessions`/`maxSecureChannels` are compared with `>=`, so 0
+  there is an `ArgumentError` and 65535 the ceiling), and
+  `ServerLimits.unlimited` lifts them all.
+  `Server.endpoints` lists the endpoints on offer. Without a trust list the
+  X509 user-token policy is dropped, so a certificate login means a trusted
+  certificate.
+  - **Breaking:** a client session may no longer add or delete nodes or
+    references: AddNodes, DeleteNodes, AddReferences and DeleteReferences
+    answer `BadUserAccessDenied` (the default plugin's `allowAddNode` and
+    the other three are replaced by a refusal; open62541 never consults
+    them for the server's own admin session, so the host's `addVariableNode`
+    etc. are unchanged). `allowClientNodeManagement: true` restores the old
+    behaviour. Everything else about `Server()` is as it was: None,
+    anonymous, all interfaces; the limits are now `ServerLimits.defaults`
+    instead of open62541's unchecked ones.
+  - `ClientIsolate.create` takes `allowUnencryptedPassword`, which it lacked
+    (only the direct `Client` could send a password over None).
+  - Bindings: `UA_AccessControl_default`, `UA_CertificateUtils_verifyApplicationUri`,
+    `UA_UsernamePasswordLogin`, and the AddNodes/DeleteNodes/AddReferences/
+    DeleteReferences request, item and response structs (additions only).
+- The web barrel (`open62541_types.dart`) compiles again: it pulled in `dart:ffi` through the value-size limit.
+- `subscriptionCreate` fails with a `UaStatusException` carrying the server's status (e.g. `BadTooManySubscriptions`) when the server refuses, on `Client` and `ClientIsolate`; it was a plain string.
+- The native library is built without XML encoding (`UA_ENABLE_XML_ENCODING=OFF`): the XML decoder was unreachable from the Dart API and the network, and the library is about 9% smaller.
+- **`Client.connect(timeout:)`** (default 30 s, `null` waits): a peer that
+  never answers, or a session never activated, is a `TimeoutException` and
+  the attempt is abandoned; `keepConnected(connectTimeout:)` abandons and
+  retries such an attempt. `ClientIsolate` forwards both, and its connect
+  timeout is now a `TimeoutException` (was `UaStatusException(Bad_Timeout)`).
+- **The client's DataType definition cache is bounded** (`schemaCacheSize`,
+  default 4096, on `Client` and `ClientIsolate`): it grew by every distinct
+  type id a server served; past the cap it is emptied and refilled on demand.
+- **Fixed: `buildSchema` read a DataType once per path, not once per type.**
+  A definition graph where each type has two fields of the next one (a
+  diamond) cost 2^(k+1) reads for one `read` of a k-level value: 16 levels
+  did not finish in a minute. Each distinct type is now read once per call
+  (16 levels: 19 reads, about a second), a field's type already cached is not
+  read again, and a type needing more than `schemaCacheSize` definitions is
+  refused with the new `DataTypeDefinitionTooMany`.
+- **A value is decoded into at most `ValueTooLarge.limit` (1,000,000)
+  nodes.** A type whose fields share a type is read once, but decoding a value
+  copied the shared definition per field: a 20-level diamond expanded to 3
+  million `DynamicValue`s (467 MB) for one value. `buildSchema` now refuses a
+  type that expands past the limit, and an array whose length times its
+  element type's nodes passes it is refused before anything is copied, both
+  with the new `ValueTooLarge`.
+- **Fixed: `Client.delete()` during a pending operation crashed the
+  process.** A `read` still building its schema (or one a `timeout` had
+  abandoned), a browse following continuation points or a monitor started
+  late made its next service call through the freed client: SIGSEGV in
+  `__UA_Client_AsyncService`, for `ClientIsolate` too. Every service call now
+  checks the client first and fails with the new `ClientDeletedException`
+  (`ClientIsolateClosedException` is now a subtype of it), and so do
+  `connect` and `awaitConnect` when `delete()` ends the wait (they failed
+  with `StateError("No element")` or a `BadConnectionClosed`).
+- **Fixed: a ReadResponse with fewer results than attributes read** left
+  `readAttribute` (and `read`) with a partial map, or never completing with
+  assertions enabled. It now fails with `UaStatusException(Bad_UnexpectedError)`.
+- **An encrypted client private key is an `ArgumentError`**, not an
+  open62541 password prompt on stdin that blocked the process, and a key
+  open62541 cannot load is a `UaStatusException` from the constructor (its
+  `setDefaultEncryption` status was ignored).
+- **CI's ASan/UBSan lane now sanitises.** The hooks runner starts build hooks
+  with a scrubbed environment, so `OPEN62541_DART_SANITIZER` (and
+  `ENABLE_SANITIZER` before it) never reached the hook and `test-asan` ran
+  against a plain library. The switch is now an empty `.open62541_sanitizer`
+  file in the package root (gitignored; the hook reruns when it appears or
+  goes). The job asserts `__asan_` symbols in the built library, and
+  `test/native_sanitizer_test.dart` checks the loaded one.
+- **Fixed (security): a server could make the client read out-of-bounds native
+  memory by sending a value whose type disagreed with the type it declared.**
+  `Client.read` passed the node's DataType attribute to the variant decoder as
+  a hint and chose the native payload reader from it, rather than from the type
+  open62541 actually decoded from the wire. A server that advertised one
+  built-in type but put another on the wire (a DataType attribute that
+  disagrees with the value on the wire) could therefore have the raw bytes read
+  under the wrong layout — an out-of-bounds read that could crash the client or
+  leak memory. The decoder now keys the reader on the wire type and raises a
+  typed `UaTypeMismatch` (an `on UaStatusException`, carrying `Bad_TypeMismatch`
+  and the expected/actual NodeIds; it crosses the `ClientIsolate` boundary as
+  itself) when the declared and wire types are different built-ins; the client
+  stays usable. `readValue` and the monitored-item callbacks were never
+  affected (they pass no hint).
+- **The compile and link hardening reaches the native build again.** The hook
+  passed `-fstack-protector-strong -D_FORTIFY_SOURCE=2` and
+  `UA_FLOAT_LITTLE_ENDIAN=1` as `CMAKE_C_FLAGS`, which the toolchain files of
+  `native_toolchain_cmake` overwrite (`-march=...`), so a fresh build dropped
+  them. They now go in a script given as `CMAKE_PROJECT_INCLUDE`, which runs
+  after the toolchain.
+- **A custom structure is laid out the way C lays it out.**
+  `Server.addCustomType` packed the members of the `UA_DataType` it
+  registers with open62541 with no padding, so a member after a narrower one
+  sat at an unaligned offset (`ST_Test { Int32 Id; Double Value; Boolean
+  Enabled; String Label }` put `Value` at 4 and `Label` at 13). open62541
+  read and wrote those members misaligned: UBSan reported it on x86-64, and a
+  strict-alignment CPU (32-bit ARM, Android armv7) can fault. Each member now
+  starts at a multiple of its C alignment and the size is rounded up to the
+  struct's, as open62541's `UA_DataType_fromStructureDescription` computes it;
+  every structure in `UA_TYPES` gets back the padding its C compiler gave it.
+  A structure with an optional field is now registered as a structure with
+  optional fields (the field a pointer, the body led by the encoding mask the
+  Dart side already wrote): before, a client write to such a struct failed
+  with `Bad_DecodingError`, and open62541 read a pointer out of the inline
+  value while clearing the failed decode (a heap overflow under ASan).
+
+- **The `Server` authorizes per user: `Server(authorization:
+  ServerAuthorization(...))`.** Three optional hooks, each given the session
+  (`MethodSessionInfo`, with its `identity`): `userAccessLevel(session,
+  node)` is open62541's `getUserAccessLevel`, the `UserAccessLevel` of a
+  variable (`null` keeps the node's own), ANDed by open62541 with the node's
+  `AccessLevel`, so it restricts and never grants; a Read or Write it does not
+  allow is `BadUserAccessDenied`. `userExecutable(session, method, object)`
+  is `getUserExecutableOnObject` (a refused Call is `BadUserAccessDenied`)
+  and `getUserExecutable` (`object` null). `allowBrowse(session, node)` is
+  `allowBrowseNode`: a refused node cannot be browsed, translated through,
+  or read except for its Value (`BadUserAccessDenied`); it still appears in
+  its parent's Browse, since open62541 only asks about the node a Browse
+  starts from. Only the hooks given are installed, so a `Server` without
+  `authorization` keeps open62541's default functions. The host's own
+  calls (the admin session) are never asked. The hooks run synchronously
+  on the server's isolate inside `runIterate`; the session identity is
+  resolved once per activation (the plugin's `activateSession` and
+  `closeSession` are wrapped to key a cache by the session context), so a
+  trivial `userAccessLevel` adds about 0.1 µs per read. A hook that throws
+  denies, and the first exception of each hook is logged on the
+  `open62541.Server` logger (package:logging).
+- **Breaking: `Server.addVariableNode` adds a read-only node by default.**
+  `accessLevel` defaulted to `AccessLevelMask(read: true, write: true)`, so
+  every variable a server published without thinking about it was writable by
+  any client that could connect, including the anonymous one the default
+  server config admits. The default is now `AccessLevelMask(read: true)`: a
+  client write to such a node is refused with `Bad_UserAccessDenied`
+  (open62541 masks the node's AccessLevel into the session's UserAccessLevel
+  and reports that one). `Server.write` is unaffected, the server's own
+  writes bypass the access level. Migration, for every node clients are meant
+  to write: `server.addVariableNode(id, value, accessLevel: const
+  AccessLevelMask(read: true, write: true))`. `addDataSourceVariableNode` is
+  unchanged, it has always derived write access from whether `onWrite` is
+  given.
+- **Fixed: a monitored sample the client could not decode was dropped
+  without a trace.** The monitored-item data callback caught the conversion
+  error, wrote one line to stderr and moved on; the consumer of `monitor`,
+  `monitoredItems`, `monitorDataValue` or `monitoredDataValues` saw nothing,
+  and a second later the backfill read of the item it never saw a sample for
+  put the server's current value in its place. The error is now an error
+  event on the stream (`addError`; a `String` once it has crossed the
+  `ClientIsolate` boundary, like every non-status error), the stream stays
+  open and the subscription stays up, so the next sample is delivered as
+  before. `test/monitor_data_value_test.dart` (both clients): through the
+  rewriting proxy a notification is turned into a Guid, a type this client
+  has no conversion for; the error arrives on the stream without a value
+  event, and a value written after the proxy stops rewriting is delivered
+  on the same stream.
+- **Build hook: archive extraction stays inside its directory.** The hook
+  unpacks the open62541 zip and the mbedTLS tarball with a plain loop that
+  wrote every entry at `extractDir/entry.name`, so an entry named
+  `../../x` or `/etc/x`, or a symlink entry, would have landed wherever its
+  name said. Both archives are checked against a pinned SHA-256 before
+  extraction, so this only matters if that line falls; it now also skips
+  symbolic links and refuses, naming the entry, any entry whose resolved
+  path is not under the extract directory (`extractArchiveInto` in
+  `hook/build.dart`, shared by both archives;
+  `test/hook_extract_test.dart`). The dead `hook/ua_client_subscriptions.patch`
+  is deleted: nothing referenced it, it does not apply to v1.5.9, and
+  `_patchSubscriptionCleanup` has long done its job in code.
+- **Fixed: `Server.asyncOperationTimeout` was 0, never, not the 2 minutes its
+  dartdoc promised.** `UA_ServerConfig_setMinimal` sets the 2-minute default
+  only under `UA_MULTITHREADING >= 100`, and this package builds
+  single-threaded, so a parked method call or data-source write whose handler
+  never completed stayed in flight for the life of the server, together with
+  its output memory and its entry in the server's in-flight registries. The
+  constructor now sets 2 minutes; the setter is unchanged for anyone who wants
+  another deadline (`Duration.zero` is still "never").
+  `test/server_async_timeout_test.dart`: a fresh `Server` reports 2 minutes,
+  and (both clients) a data-source write whose handler never completes is
+  answered Bad_Timeout by the server at a 1-second deadline, well before the
+  client's own 5-second request timeout, with the server intact afterwards.
+- **Security: the client verifies the server certificate; `Client` and
+  `ClientIsolate.create` take `trustList`, `issuerList`, `revocationList`
+  and `acceptAllCertificates`.** A client with a `certificate` called
+  `UA_ClientConfig_setDefaultEncryption` with empty lists and then
+  `UA_CertificateGroup_AcceptAll`: the channel was encrypted (safe from
+  passive eavesdropping), the server never authenticated, any certificate
+  opened the session. Now the lists (DER) go to open62541's in-memory
+  certificate store: `trustList` holds the server certificates, or the CA
+  certificates that issued them, to trust; `issuerList` intermediate CAs
+  that complete a chain without being trusted themselves (installed through
+  the store's `addToTrustList`, since `setDefaultEncryption` takes no issuer
+  list); `revocationList` CRLs. open62541 verifies the server certificate
+  before the channel opens and refuses a server that does not match:
+  `BadCertificateUntrusted` for a certificate in no list,
+  `BadCertificateChainIncomplete` for an issuer it cannot find,
+  `BadCertificateRevoked` for one on a CRL. `acceptAllCertificates: true` is
+  the explicit opt-out (encryption without authentication, open to an active
+  attacker). open62541 copies the lists into its store, so the scratch
+  memory is an arena freed after the calls; `test/client_trust_list_test.dart`
+  measures the heap.
+  - **Breaking for a client that passed a certificate and relied on
+    accept-all:** a certificate with neither a non-empty `trustList` nor
+    `acceptAllCertificates: true` is an `ArgumentError` (open62541 keeps the
+    accept-all verification for an empty trust list, with only a warning in
+    the log, so the safe behaviour has to be explicit). Migration: pass
+    `trustList: [serverCertificateDer]`, or `acceptAllCertificates: true` to
+    keep the old behaviour. The combinations are checked by
+    `checkClientCertificateArguments`, also from `ClientIsolate.create` on
+    the calling isolate; a certificate without its key (or the reverse), the
+    lists or `acceptAllCertificates` without a certificate, and a trust list
+    together with `acceptAllCertificates: true` are `ArgumentError`s too.
+  - **`connect()` throws a `UaStatusException` when the handshake fails**
+    (the connect status: a rejected server certificate, no endpoint for the
+    security mode, a refused identity token) instead of waiting forever for
+    an activation that cannot come: open62541 stops its state machine on a
+    bad connect status and only another `connect()` restarts it. On
+    `ClientIsolate` the exception crosses the isolate with its status code.
+    `awaitConnect()` and `keepConnected()` are unchanged.
+  - The bindings gain `UA_CreateCertificate`,
+    `UA_ServerConfig_setDefaultWithSecurityPolicies` and the
+    `UA_TrustListDataType` / `UA_KeyValuePair` structs (the tests build an
+    encrypted open62541 server with them; the Dart `Server` has no security
+    API).
+- **Endpoint discovery: `Client.getEndpoints` (and `ClientIsolate.getEndpoints`)
+  returns the server's endpoints with its certificate, for the trust list.**
+  The question the trust list raises is where the server certificate comes
+  from before the first secure connection; the OPC UA answer is the
+  GetEndpoints service, which runs over a SecurityPolicy#None channel
+  without a session and describes every endpoint with its
+  `serverCertificate`. `getEndpoints(url, {timeout, logLevel})` needs no
+  certificate and no trust list and keeps no state: a native client of its
+  own for the call (`UA_Client_getEndpoints`: connect without a session,
+  GetEndpoints, disconnect) on an isolate of its own, since the native call
+  drives its own event loop and blocks until the answer; `ClientIsolate`
+  gets the same static, as there is no session for a worker to hold. Each
+  `EndpointDescription` has `endpointUrl`, `securityPolicyUri`,
+  `securityMode`, `securityLevel`, `serverCertificate` (DER, empty for a
+  server without one), `applicationUri`, `productUri`, `applicationName`,
+  `transportProfileUri`, `userIdentityTokens` (`UserTokenPolicy`: policy id
+  and `UserTokenType` anonymous/username/certificate/issued) and a
+  `certificateThumbprint` (SHA-1 of the DER, uppercase hex, the thumbprint
+  OPC UA tooling shows) to compare out of band. A host that does not answer
+  within `timeout` is a `TimeoutException`; a refused connection, a bad URL
+  or a Bad service result a `UaStatusException`. The trust-on-first-use
+  flow (discover, confirm the thumbprint out of band, persist the DER, pass
+  it as `trustList`, and why a MITM at discovery time is what the thumbprint
+  check catches) is in README's Security section and the `Client` dartdoc;
+  `example/discover_endpoints.dart` prints a server's endpoints and
+  thumbprints. Bindings: `UA_Client_getEndpoints`, `UA_Array_delete`. The
+  encrypted test server and client of `client_trust_list_test.dart` moved
+  to `test/secure_fixtures.dart`, shared with
+  `test/endpoint_discovery_test.dart`.
+- **Docs: what the security of each side is.** README (Features, a Security
+  section), `example/README.md`, the pubspec description and the `Client` /
+  `ClientIsolate` dartdoc say that `SignAndEncrypt` authenticates the server
+  only with a trust list, that accept-all is opt-in and protects against
+  passive eavesdropping only, and that `allowUnencryptedPassword` sends the
+  password in clear text. The `Server` dartdoc and README state what a
+  `Server` is: SecurityPolicy None only, anonymous login with open62541's
+  permissive default access control (any client can add/delete nodes and
+  write any node whose access level allows it; `addVariableNode` defaults to
+  read+write, `addDataSourceVariableNode` is read-only unless `onWrite` is
+  given), bound on all interfaces, no API yet to change it, trusted networks
+  only. `example/server_example.dart` carries the warning. The sentence
+  about the ApplicationUri having to match the server certificate "once
+  security is configured" is gone: a `Server` has no certificate. Server
+  behaviour and defaults are unchanged.
+- **`package:open62541/open62541_types.dart`: the value types without
+  `dart:ffi`.** A new barrel exporting `DynamicValue`, `DynamicType`,
+  `LocalizedText`, `EnumField`, `Schema` and `NodeId`, importable from code that
+  must also compile for the browser (`flutter build web`, `dart compile js`).
+  `NodeId` is split in two: `lib/src/node_id_core.dart` is the pure value type
+  (the three identifier kinds, equality, every namespace-0 static such as
+  `NodeId.serverStatusCurrentTime`, `NodeId.server`, `NodeId.namespaceArray`),
+  and `lib/src/node_id.dart` keeps the FFI conversions as
+  `extension NodeIdFfi on NodeId` and re-exports the core. The NS0 statics are
+  literals in the core (reading `UA_NS0ID_*` from the generated bindings is
+  what pulled `dart:ffi` in); `test/ns0_literals_test.dart` pins every one
+  against its generated constant, and refuses a static added to the core
+  without a row there. `test/web/types_web_test.dart` (`@TestOn('browser')`)
+  compiles the barrel with dart2js, so a stray FFI import in the pure half
+  fails CI instead of someone's web build. `dynamic_value.dart` now imports
+  the core, which is what breaks the chain.
+  - **Breaking for callers of `NodeId.fromRaw`:** it is `NodeIdFfi.fromRaw(...)`
+    now (a static on the extension; a factory cannot live outside its class).
+    `import 'package:open62541/open62541.dart'` exports `NodeIdFfi`, so the
+    only change is the receiver name. `toRaw({allocator})` and `toRawPointer()`
+    are unchanged for every caller: they are instance extension methods and
+    resolve as before.
+- **Fixed: `flutter build web` ran (or failed) the native build hook.** A web
+  build asks the hook for no code assets, and there is nothing it could link
+  for dart2js; it now returns before downloading or building open62541 when
+  `input.config.buildCodeAssets` is false. Before, a Flutter web app that
+  imported only `open62541_types.dart` either died in the hook (where
+  `input.config.code` throws for a build without code assets) or sat through a
+  full cmake build of a C library it can never call.
+- **Fixed: a custom structure was an opaque ExtensionObject in UaExpert and
+  asyncua.** The server encoded every ExtensionObject of a custom type
+  (`addCustomType`) under the type's DataType id, while the DataType node's
+  `DataTypeDefinition.defaultEncodingId` (which open62541 derives from the
+  registered type) named a different id, and no node existed at either: a
+  1.04 client matches the wire id against the `defaultEncodingId` it fetched
+  (UaExpert, asyncua `load_data_type_definitions`) and found no type. The
+  Dart client never noticed because it resolves the schema from the
+  variable's DataType attribute. Now the wire carries the type's DefaultBinary
+  DataTypeEncoding id, `addDataTypeNode` publishes the `Default Binary`
+  object (TypeDefinition DataTypeEncodingType i=76, parentless as in NS0)
+  and the HasEncoding (i=38) reference from the DataType node to it, and the
+  encoding id follows the OPC UA naming convention: `ns=N;s=Name` →
+  `ns=N;s=Name_Encoding_DefaultBinary` (a numeric id: `ns=N;i=42` →
+  `ns=N;s=42_Encoding_DefaultBinary`; the rule is documented on
+  `addCustomType`). Nested struct types auto-registered by `addCustomType`
+  get theirs too. On the client, `readValue` and `Client.call` outputs (which
+  have no DataType at hand) resolve the wire id to its DataType through the
+  inverse HasEncoding reference, as a browser does; `read`, `readAttribute`
+  and the monitors are unchanged. A write from a client that carries the
+  encoding id is now decoded natively by open62541 and reaches a data-source
+  `onWrite` through the native-struct path; one built from scratch under the
+  DataType id decodes against the local schema as before. A definition
+  fetched with `readAttribute(DATATYPEDEFINITION)` carries its
+  `defaultEncodingId` as `extObjEncodingId`, so a value built from it
+  (`DynamicValue.from`) writes with the encoding id the server expects.
+  A bundled NS0 structure the reduced nodeset lacks as a node, published
+  with `addDataTypeNode` (`NetworkGroupDataType` i=11944,
+  `EndpointUrlListDataType` i=11943), gets its bundled `Default Binary`
+  object (i=11958 / i=11957) via HasEncoding too. An ExtensionObject whose
+  encoding id resolves to no DataType in the address space (a relayed value
+  under a foreign id, a variable typed `BaseDataType`) is returned as its
+  body with `extObjEncodingId` set by `readValue`, `read` and `Client.call`
+  instead of failing (`Failed to read attribute: BadNodeIdUnknown` with the
+  encoding id, or `Unsupported nodeId type: ns=0;i=24`); a Browse that
+  fails for any other reason still throws. `NodeId.hasEncoding` and
+  `NodeId.dataTypeEncodingType` are new.
 - `ServerStatistics` gained `liveDataChangeNotificationCount` and
   `liveNotificationCount`: the per-subscription `dataChangeNotificationsCount`
   / `notificationsCount` (data changes + events; keep-alives carry none) of
@@ -120,9 +481,29 @@ changes that ship the same native library version.
   `BuildInfo.productUri` (`Server/ServerStatus/BuildInfo/ProductUri`); left
   out it stays open62541's `http://open62541.org` even when `productName` /
   `manufacturerName` are set. Each one is opt-in: `Server()` still announces
-  the defaults.
-  Once security is configured the ApplicationUri must match the URI in the
-  server certificate.
+  the defaults. A `Server` has no certificate (SecurityPolicy None only), so
+  nothing checks the ApplicationUri against one.
+- **Fixed: a hostile server could take the client down with one struct.** A
+  struct's array member is sized from an Int32 the server put on the wire,
+  and the deserializer cloned the member's template that many times before
+  reading an element, with no bound: a 4-byte body claiming 2^31-1 elements
+  was an uncatchable OutOfMemoryError (for `ClientIsolate`, the end of the
+  isolate that owns the connection). Now a negative length is a null array
+  (decoded as empty, Part 6), a length greater than the bytes left is refused
+  with a `FormatException` at the length's offset before anything is sized by
+  it (what open62541's `Array_decodeBinary` does), and the elements are
+  decoded one at a time into a list that grows with them; the read fails and
+  the client stays usable.
+- **Fixed: a DataTypeDefinition that contained itself hung every read of the
+  type.** `buildSchema` followed a field's DataType into its own definition
+  with no memory of where it had been, so a type with a field of its own type
+  (or A → B → A) was fetched forever, one readAttribute per level, and a
+  `read`, `readValue`, `call` or monitor of such a value never completed.
+  Now the chain of types being resolved travels down the recursion: a type
+  met again fails the read with `DataTypeDefinitionCycle` naming the cycle,
+  and more than 100 nested levels (open62541's own decoder bound) with
+  `DataTypeDefinitionTooDeep`; both are exported, nothing of a refused schema
+  is cached, and the client stays usable.
 - **Fixed: a second `Client.keepConnected()` doubled the pump.** The call
   reset its stop flag and set it again synchronously, so the pump and the
   reconnect supervisor already running never observed the stop and kept
@@ -130,8 +511,41 @@ changes that ship the same native library version.
   two supervisors reconnecting. Each call now starts a new generation and the
   previous loops end on their next turn. `stopKeepConnected()` behaviour is
   unchanged.
-
-## 1.5.9
+- **Exported `UA_STATUSCODE_BADNODATA`, `UA_STATUSCODE_BADNODEIDUNKNOWN` and
+  `UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE`** from the package, next to the
+  codes it already exported, so a data-source proxy can serve a quiet
+  device's last usable value as Uncertain, or report "never had data", and
+  a client can test a read for an unknown node, without reaching for the raw
+  bindings.
+- **Example: redundant METAR servers with ServiceLevel failover.**
+  `example/metar_redundant_server.dart` publishes live weather for every
+  Icelandic METAR station (`icelandMetarStations` in `metar_common.dart`,
+  `--station` filters it) as a custom structured type, one data-source node
+  per station named by its ICAO id (`ns=1;s=BIRK`) with every field of the
+  structure as a HasComponent child generated from the schema
+  (`ns=1;s=BIRK.TemperatureC`, ...), each carrying the struct's status and
+  source timestamp (`onReadValue` — the last-known value is served
+  `Bad_NoCommunication` when the feed is down, `Uncertain_LastUsableValue`
+  when only the station has gone quiet, and a station that never reported
+  reads `Bad_NoData`; none of which touches the ServiceLevel). It computes
+  its `ServiceLevel` in the bands of OPC 10000-4 Table 105 (served through
+  `Server.setVariableValueSource`), and publishes the hot-redundant set the
+  Part 5 way through `Server.setRedundancy(RedundancySupport.hot,
+  serverUris:, networkGroups:)`: `ServerRedundancy` typed
+  `NonTransparentNetworkRedundancyType`, `ServerUriArray` holding the
+  members' ApplicationUris (each instance announcing its own through
+  `Server(applicationUri:)`) and `ServerNetworkGroups` mapping them to
+  endpoints. It shuts down orderly with `Server.shutdown(delay:,
+  announceServiceLevel: true)`. `example/metar_redundant_client.dart` is a
+  Part 4 non-transparent redundant client seeded with ONE endpoint: it
+  identifies the server by `ServerArray[0]`, reads `ServerUriArray` and
+  `ServerNetworkGroups`, connects to the other members, polls every
+  member's `ServiceLevel` and `ServerStatus.State` and switches by the Table
+  105 bands (no failover from a Healthy server; a Degraded one is left for
+  any Healthy one; a NoData member is polled but never given data; a
+  Maintenance or shutting-down member is disconnected and retried much
+  later). See `example/README.md` for what is spec-exact and what is
+  simplified.
 
 - **Known structures decode from their native layout.** A value whose
   DataType is a structure the bundled open62541 knows (every NS0 DataType in
@@ -221,6 +635,29 @@ changes that ship the same native library version.
     next regeneration; their sizes are pinned in `verify_sizes_test`.
   - `Client.readAttribute` reads `ValueRank` and `ArrayDimensions` (one of
     them per call; both land in the value).
+  - **`setRedundancy(..., networkGroups:)` publishes `ServerNetworkGroups`**
+    (Part 5 §6.3.10), so a client can find every member of the set from one
+    of them: a ServerUri is an identity, and this property is the spec's map
+    from it to endpoints. Given `Map<String serverUri, List<String>
+    endpointUrls>`, the call types `ServerRedundancy` as
+    `NonTransparentNetworkRedundancyType` (`i=11945`, created as a subtype of
+    `NonTransparentRedundancyType` with the mandatory `ServerNetworkGroups`
+    declaration `i=11948`) and adds `ServerNetworkGroups` (`i=14415`, a
+    `NetworkGroupDataType[]` of `PropertyType`, ValueRank 1): one group per
+    `ServerUriArray` entry, in its order, with that member's URLs as its
+    single network path (an `EndpointUrlListDataType`; a member mapped to
+    `[]` has no path). The map's keys must be exactly the members, the local
+    ApplicationUri included (`ArgumentError` naming the stranger or the
+    missing member, before anything changes). The DataType nodes
+    `EndpointUrlListDataType` (`i=11943`) and `NetworkGroupDataType`
+    (`i=11944`), absent from the reduced NS0 though open62541 knows both
+    types, are added as `Structure` subtypes with `0:` names, so the
+    property's DataType and DataTypeDefinition read as Part 5 says. Calling
+    again updates the groups in place; a call without `networkGroups` removes
+    the property and types the object `NonTransparentRedundancyType` again;
+    `none` removes both properties. The value is read back decoded on both
+    client types and by `Server.read`, which the native-layout decoding
+    above makes possible.
 - **Orderly shutdown: `Server.shutdown(delay:)` and `Server.shutdownDelay`.**
   With a delay the server first announces the shutdown, keeps serving for
   the delay, then shuts down: during the delay `ServerStatus.State`
@@ -314,10 +751,11 @@ changes that ship the same native library version.
   an implementation import. `NodeId.server`, `serverArray`,
   `namespaceArray`, `serverStatus`, `serverStatusStartTime`,
   `serverStatusState`, `serverStatusBuildInfo`, `serviceLevel`,
-  `serverRedundancy`, `redundancySupport`, `serverUriArray`, `organizes`,
-  `hasComponent`, `hasProperty`, `hasTypeDefinition`, `baseObjectType`,
-  `folderType`, `baseDataVariableType` and `propertyType` join the existing
-  folder and reference-type statics, each backed by the generated constant
+  `serverRedundancy`, `redundancySupport`, `serverUriArray`,
+  `serverNetworkGroups`, `organizes`, `hasComponent`, `hasProperty`,
+  `hasTypeDefinition`, `baseObjectType`, `folderType`,
+  `baseDataVariableType` and `propertyType` join the existing folder and
+  reference-type statics, each backed by the generated constant
   (`serverStatusCurrentTime` was a literal `2258`).
 - **`Client.keepConnected(nonBlocking: true)`: a pump that does not block the
   owning isolate.** By default the supervisor's pump calls
@@ -484,6 +922,50 @@ changes that ship the same native library version.
   cache predates the stamp re-downloads and rebuilds mbedTLS once on the next
   build (well under a minute on a fast workstation, a couple of minutes on CI
   or a laptop); later builds reuse the stamped tree as before.
+- **Build: mbedTLS 3.6.5 → 3.6.7.** The bundled TLS library moves to the
+  current 3.6 LTS release, which closes, among the advisories of 3.6.6 and
+  3.6.7: CVE-2026-25835 (the random generator state was duplicated across
+  `fork()`, so parent and child drew the same bytes; the child now reseeds),
+  CVE-2026-34874 (NULL dereference in `mbedtls_x509_string_to_names()` when
+  an allocation fails) and CVE-2026-49300 (two X.509 parser bugs accepted a
+  malformed `basicConstraints` extension, so a certificate other
+  implementations treat as end-entity could parse as a CA). 3.6.6 also moved
+  the Linux fallback entropy device from `/dev/urandom` to `/dev/random`;
+  immaterial here, `getrandom()` is used wherever it exists. The release
+  asset's SHA-256 is pinned as before (verified against the sum published on
+  the release page); a warm `.dart_tool` re-downloads and rebuilds mbedTLS
+  once on the next build, as described above.
+- **Build: the native library is compiled and linked with hardening flags.**
+  open62541 and the mbedTLS linked into it are built, per toolchain, with
+  GCC/clang `-fstack-protector-strong -D_FORTIFY_SOURCE=2` (a canary in every
+  frame that holds an array; bounded `__*_chk` libc calls wherever the
+  compiler knows the destination size — active, since the build is
+  Release/-O3) and, on Linux and Android, linked with `-Wl,-z,relro,-z,now`
+  (full RELRO: the GOT is resolved at load and then read-only, so a write
+  primitive cannot redirect a call through it); MSVC gets `/GS /guard:cf`
+  and the DLL `/DYNAMICBASE /NXCOMPAT /guard:cf`. The toolchain follows the
+  target OS the way the build does (Visual Studio for a Windows target, the
+  NDK and Xcode toolchain files otherwise), not the host.
+  `test/native_hardening_test.dart` (Linux) reads the ELF the VM loaded and
+  asserts BIND_NOW with a GNU_RELRO segment, a FORTIFY `__*_chk` import and
+  `__stack_chk_fail`; skipped where `readelf`/`nm` are absent. The mbedTLS
+  install prefix is now stamped with the flags it was built under and
+  rebuilt on a mismatch, so a warm `.dart_tool` does not keep linking an
+  install built without them (one rebuild on the first build after this
+  upgrade). The sanitizer switch for CI's ASan job is renamed from
+  `ENABLE_SANITIZER` to `OPEN62541_DART_SANITIZER`; its flags go on top of
+  the hardening ones.
+- **CI: actions pinned to commit SHAs, read-only token, the iOS job can
+  fail.** Every `uses:` in `run_tests.yml` and `flutter_test.yml` names the
+  full commit of the release it resolved to (`actions/checkout` v7.0.1,
+  `dart-lang/setup-dart` v1.8.1, `subosito/flutter-action` v2.23.0,
+  `actions/setup-java` v6.1.0, `reactivecircus/android-emulator-runner`
+  v2.38.0), with the version as a trailing comment; Dependabot's
+  `github-actions` entry keeps the pins current. Both workflows run with
+  `permissions: contents: read`. The iOS job's `flutter test ... || true`
+  reported every run green; the step now fails with the test (`pipefail`
+  through the `tee`), and the output tail and crash-log listing moved to a
+  step that runs on failure.
 - **Dev tooling: `ffigen` 22 / 23.** The binding generator (`tool/ffigen.dart`)
   is ported to ffigen 22's visitor-based config API, which replaced the one it
   was written against; ffigen 23 keeps that API. The generated bindings are

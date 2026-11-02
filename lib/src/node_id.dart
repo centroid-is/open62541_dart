@@ -3,41 +3,30 @@ import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 
 import 'extensions.dart';
+import 'node_id_core.dart' as core;
 import 'third_party/open62541.g.dart' as raw;
 import 'ua_allocation.dart';
 
-class NodeId {
-  NodeId._internal(this._namespaceIndex, {dynamic id, String? guid})
-    : _stringId = id is String ? id : null,
-      _numericId = id is int ? id : null,
-      _guidId = guid {
-    if (_stringId == null && _numericId == null && _guidId == null) {
-      throw 'NodeId is not initialized or unimplemented';
-    }
-  }
+export 'node_id_core.dart';
 
-  factory NodeId.from(NodeId other) {
-    if (other.isString()) {
-      return NodeId.fromString(other.namespace, other.string);
-    } else if (other.isNumeric()) {
-      return NodeId.fromNumeric(other.namespace, other.numeric);
-    } else if (other.isGuid()) {
-      return NodeId.fromGuid(other.namespace, other.guid);
-    } else {
-      throw 'NodeId is not initialized or unimplemented';
-    }
-  }
-
-  factory NodeId.fromRaw(raw.UA_NodeId nodeId) {
+/// The FFI half of [core.NodeId], kept out of `node_id_core.dart` so the value
+/// type itself compiles on a platform with no `dart:ffi`. Importing this file
+/// at all requires the native library; importing `node_id_core.dart` does not.
+extension NodeIdFfi on core.NodeId {
+  /// Reads a [core.NodeId] out of a raw `UA_NodeId` struct.
+  ///
+  /// Static rather than a factory because the class it belongs to no longer
+  /// lives in this file — call it as `NodeIdFfi.fromRaw(...)`.
+  static core.NodeId fromRaw(raw.UA_NodeId nodeId) {
     if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_STRING) {
       // Drop the __DefaultBinary if attached to string, don't know why it is there
       var str = nodeId.identifier.string.value;
       if (str.endsWith('__DefaultBinary')) {
         str = str.substring(0, str.length - 15);
       }
-      return NodeId._internal(nodeId.namespaceIndex, id: str);
+      return core.NodeId.fromString(nodeId.namespaceIndex, str);
     } else if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_NUMERIC) {
-      return NodeId._internal(nodeId.namespaceIndex, id: nodeId.identifier.numeric);
+      return core.NodeId.fromNumeric(nodeId.namespaceIndex, nodeId.identifier.numeric);
     } else if (nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_GUID) {
       final g = nodeId.identifier.guid;
       String hex(int value, int width) => value.toRadixString(16).padLeft(width, '0');
@@ -45,258 +34,10 @@ class NodeId {
       final guid =
           '${hex(g.data1, 8)}-${hex(g.data2, 4)}-${hex(g.data3, 4)}-'
           '${hex(g.data4[0], 2)}${hex(g.data4[1], 2)}-$tail';
-      return NodeId._internal(nodeId.namespaceIndex, guid: guid);
+      return core.NodeId.fromGuid(nodeId.namespaceIndex, guid);
     } else {
       throw 'NodeId todo implement';
     }
-  }
-
-  factory NodeId.fromNumeric(int nsIndex, int identifier) {
-    return NodeId._internal(nsIndex, id: identifier);
-  }
-
-  factory NodeId.fromString(int nsIndex, String chars) {
-    return NodeId._internal(nsIndex, id: chars);
-  }
-
-  /// Creates a GUID NodeId from its canonical textual form, e.g.
-  /// `NodeId.fromGuid(1, '09087e75-8e5e-499b-954f-f2a9603db28a')`.
-  factory NodeId.fromGuid(int nsIndex, String guid) {
-    if (!_guidPattern.hasMatch(guid)) {
-      throw 'Invalid GUID "$guid" (expected 8-4-4-4-12 hexadecimal groups)';
-    }
-    return NodeId._internal(nsIndex, guid: guid.toLowerCase());
-  }
-
-  static final RegExp _guidPattern = RegExp(
-    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
-  );
-
-  // Handy methods for namespace 0 types
-  static NodeId get nullId {
-    return NodeId.fromNumeric(0, 0);
-  }
-
-  static NodeId get boolean {
-    return NodeId.fromNumeric(0, Namespace0Id.boolean.value);
-  }
-
-  static NodeId get uint16 {
-    return NodeId.fromNumeric(0, Namespace0Id.uint16.value);
-  }
-
-  static NodeId get int16 {
-    return NodeId.fromNumeric(0, Namespace0Id.int16.value);
-  }
-
-  static NodeId get uint32 {
-    return NodeId.fromNumeric(0, Namespace0Id.uint32.value);
-  }
-
-  static NodeId get int32 {
-    return NodeId.fromNumeric(0, Namespace0Id.int32.value);
-  }
-
-  static NodeId get uint64 {
-    return NodeId.fromNumeric(0, Namespace0Id.uint64.value);
-  }
-
-  static NodeId get int64 {
-    return NodeId.fromNumeric(0, Namespace0Id.int64.value);
-  }
-
-  static NodeId get uastring {
-    return NodeId.fromNumeric(0, Namespace0Id.string.value);
-  }
-
-  static NodeId get double {
-    return NodeId.fromNumeric(0, Namespace0Id.double.value);
-  }
-
-  static NodeId get float {
-    return NodeId.fromNumeric(0, Namespace0Id.float.value);
-  }
-
-  static NodeId get datetime {
-    return NodeId.fromNumeric(0, Namespace0Id.datetime.value);
-  }
-
-  static NodeId get byte {
-    return NodeId.fromNumeric(0, Namespace0Id.byte.value);
-  }
-
-  static NodeId get sbyte {
-    return NodeId.fromNumeric(0, Namespace0Id.sbyte.value);
-  }
-
-  static NodeId get structure {
-    return NodeId.fromNumeric(0, Namespace0Id.structure.value);
-  }
-
-  static NodeId get structureDefinition {
-    return NodeId.fromNumeric(0, Namespace0Id.structureDefinition.value);
-  }
-
-  static NodeId get structureDefinitionDefaultBinary {
-    return NodeId.fromNumeric(0, Namespace0Id.structureDefinitionDefaultBinary.value);
-  }
-
-  static NodeId get enumDefinitionDefaultBinary {
-    return NodeId.fromNumeric(0, Namespace0Id.enumDefinitionDefaultBinary.value);
-  }
-
-  static NodeId get nodeId {
-    return NodeId.fromNumeric(0, Namespace0Id.nodeId.value);
-  }
-
-  static NodeId get localizedText {
-    return NodeId.fromNumeric(0, Namespace0Id.localizedText.value);
-  }
-
-  // Well-known nodes of namespace 0 (OPC UA Part 5), each backed by the
-  // generated `UA_NS0ID_*` constant: the standard folders, the Server object
-  // and the variables under it an application reads or serves, and the
-  // reference and type nodes standard properties and components are added
-  // with. Every open62541 server has them.
-
-  /// The Root folder, `i=84`.
-  static NodeId get rootFolder {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_ROOTFOLDER);
-  }
-
-  /// The Objects folder, `i=85`.
-  static NodeId get objectsFolder {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
-  }
-
-  /// The Types folder, `i=86`.
-  static NodeId get typesFolder {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_TYPESFOLDER);
-  }
-
-  /// The Views folder, `i=87`.
-  static NodeId get viewsFolder {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_VIEWSFOLDER);
-  }
-
-  /// The Server object, `i=2253`.
-  static NodeId get server {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER);
-  }
-
-  /// `Server/ServerArray`, `i=2254`: the URIs of the servers the server
-  /// knows, index 0 its own.
-  static NodeId get serverArray {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERARRAY);
-  }
-
-  /// `Server/NamespaceArray`, `i=2255`: the namespace URIs by index.
-  static NodeId get namespaceArray {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_NAMESPACEARRAY);
-  }
-
-  /// `Server/ServerStatus`, `i=2256`: the ServerStatusDataType structure.
-  static NodeId get serverStatus {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS);
-  }
-
-  /// `Server/ServerStatus/StartTime`, `i=2257`.
-  static NodeId get serverStatusStartTime {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_STARTTIME);
-  }
-
-  /// `Server/ServerStatus/CurrentTime`, `i=2258`: the server's clock, a
-  /// `DateTime`.
-  static NodeId get serverStatusCurrentTime {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_CURRENTTIME);
-  }
-
-  /// `Server/ServerStatus/State`, `i=2259`: the ServerState enumeration
-  /// (0 is Running).
-  static NodeId get serverStatusState {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_STATE);
-  }
-
-  /// `Server/ServerStatus/BuildInfo`, `i=2260`.
-  static NodeId get serverStatusBuildInfo {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_BUILDINFO);
-  }
-
-  /// `Server/ServiceLevel`, `i=2267`: a Byte, 255 for a server fully able
-  /// to serve; a redundant set's clients pick the server with the highest.
-  static NodeId get serviceLevel {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVICELEVEL);
-  }
-
-  /// `Server/ServerRedundancy`, `i=2296`.
-  static NodeId get serverRedundancy {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY);
-  }
-
-  /// `Server/ServerRedundancy/RedundancySupport`, `i=3709`: the
-  /// RedundancySupport enumeration (0 None, 1 Cold, 2 Warm, 3 Hot, ...).
-  static NodeId get redundancySupport {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_REDUNDANCYSUPPORT);
-  }
-
-  /// `Server/ServerRedundancy/ServerUriArray`, `i=11314`: the URIs of the
-  /// servers in the redundant set. open62541 removes this property at
-  /// startup; a server that is part of a set adds it back under
-  /// [serverRedundancy] with [hasProperty].
-  static NodeId get serverUriArray {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERURIARRAY);
-  }
-
-  /// The HierarchicalReferences reference type, `i=33`.
-  static NodeId get hierarchicalReferences {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_HIERARCHICALREFERENCES);
-  }
-
-  /// The HasSubtype reference type, `i=45`.
-  static NodeId get hasSubtype {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_HASSUBTYPE);
-  }
-
-  /// The Organizes reference type, `i=35`: a folder to what it holds.
-  static NodeId get organizes {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
-  }
-
-  /// The HasComponent reference type, `i=47`: an object to its variables
-  /// and sub-objects.
-  static NodeId get hasComponent {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
-  }
-
-  /// The HasProperty reference type, `i=46`: a node to its properties.
-  static NodeId get hasProperty {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_HASPROPERTY);
-  }
-
-  /// The HasTypeDefinition reference type, `i=40`.
-  static NodeId get hasTypeDefinition {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_HASTYPEDEFINITION);
-  }
-
-  /// The BaseObjectType, `i=58`.
-  static NodeId get baseObjectType {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_BASEOBJECTTYPE);
-  }
-
-  /// The FolderType, `i=61`.
-  static NodeId get folderType {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_FOLDERTYPE);
-  }
-
-  /// The BaseDataVariableType, `i=63`: the type definition of a plain
-  /// variable.
-  static NodeId get baseDataVariableType {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
-  }
-
-  /// The PropertyType, `i=68`: the type definition of a property.
-  static NodeId get propertyType {
-    return NodeId.fromNumeric(0, raw.UA_NS0ID_PROPERTYTYPE);
   }
 
   /// This NodeId as a by-value `UA_NodeId`.
@@ -309,18 +50,18 @@ class NodeId {
   /// otherwise the caller. Where the NodeId is only passed by value to a call
   /// that copies it, pass an [Arena] so the buffer goes with the scope.
   raw.UA_NodeId toRaw({Allocator allocator = ua_calloc}) {
-    if (_stringId != null) {
-      return raw.UA_NODEID_STRING(_namespaceIndex, _stringId!.toNativeUtf8(allocator: allocator).cast());
-    } else if (_numericId != null) {
-      return raw.UA_NODEID_NUMERIC(_namespaceIndex, _numericId!);
-    } else if (_guidId != null) {
+    if (isString()) {
+      return raw.UA_NODEID_STRING(namespace, string.toNativeUtf8(allocator: allocator).cast());
+    } else if (isNumeric()) {
+      return raw.UA_NODEID_NUMERIC(namespace, numeric);
+    } else if (isGuid()) {
       // No UA_NODEID_GUID helper is exported (it is a C macro); build the
       // struct directly. A GUID identifier is inline, so - like a numeric
       // NodeId - the result owns no heap memory.
       final nodeId = Struct.create<raw.UA_NodeId>();
-      nodeId.namespaceIndex = _namespaceIndex;
+      nodeId.namespaceIndex = namespace;
       nodeId.identifierTypeAsInt = raw.UA_NodeIdType.UA_NODEIDTYPE_GUID.value;
-      final parts = _guidId!.split('-');
+      final parts = guid.split('-');
       nodeId.identifier.guid.data1 = int.parse(parts[0], radix: 16);
       nodeId.identifier.guid.data2 = int.parse(parts[1], radix: 16);
       nodeId.identifier.guid.data3 = int.parse(parts[2], radix: 16);
@@ -339,62 +80,4 @@ class NodeId {
     nodeId.ref = toRaw();
     return nodeId;
   }
-
-  int get namespace => _namespaceIndex;
-  int get numeric => _numericId!;
-  String get string => _stringId!;
-
-  /// The canonical lowercase textual form of a GUID identifier
-  /// (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`).
-  String get guid => _guidId!;
-  // String get byteString => _byteStringId!;
-
-  bool isNumeric() {
-    return _numericId != null;
-  }
-
-  bool isString() {
-    return _stringId != null;
-  }
-
-  bool isGuid() {
-    return _guidId != null;
-  }
-
-  // bool isByteString() {
-  //   return _nodeId.identifierType == raw.UA_NodeIdType.UA_NODEIDTYPE_BYTESTRING;
-  // }
-
-  @override
-  String toString() {
-    if (_stringId != null) {
-      return "ns=$namespace;s=$_stringId";
-    } else if (_numericId != null) {
-      return "ns=$namespace;i=$_numericId";
-    } else if (_guidId != null) {
-      return "ns=$namespace;g=$_guidId";
-    } else {
-      return 'NodeId(TODO)';
-    }
-  }
-
-  @override
-  bool operator ==(Object other) {
-    if (other is NodeId) {
-      return _namespaceIndex == other._namespaceIndex &&
-          _stringId == other._stringId &&
-          _numericId == other._numericId &&
-          _guidId == other._guidId;
-    }
-    return false;
-  }
-
-  @override
-  int get hashCode => _namespaceIndex.hashCode ^ _stringId.hashCode ^ _numericId.hashCode ^ _guidId.hashCode;
-
-  String? _stringId;
-  int? _numericId;
-  String? _guidId;
-  // String? _byteStringId;
-  int _namespaceIndex;
 }

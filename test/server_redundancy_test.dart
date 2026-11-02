@@ -325,4 +325,195 @@ void main() {
       }
     });
   });
+  group('setRedundancy(networkGroups:) -- ServerNetworkGroups, Part 5 §6.3.10', () {
+    const uris = ['urn:plant:opcua:a', 'urn:plant:opcua:b'];
+    final networkType = ns0(raw.UA_NS0ID_NONTRANSPARENTNETWORKREDUNDANCYTYPE); // i=11945
+    final declaration = ns0(raw.UA_NS0ID_NONTRANSPARENTNETWORKREDUNDANCYTYPE_SERVERNETWORKGROUPS); // i=11948
+    final serverNetworkGroups = ns0(raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERNETWORKGROUPS); // i=14415
+    final networkGroupType = ns0(raw.UA_NS0ID_NETWORKGROUPDATATYPE); // i=11944
+    final endpointUrlListType = ns0(raw.UA_NS0ID_ENDPOINTURLLISTDATATYPE); // i=11943
+
+    /// The groups as a client reads them, in array order: one
+    /// `{ServerUri: uri, NetworkPaths: [[urls of path 0], ...]}` per group
+    /// (maps, which the matchers compare deeply; records holding lists would
+    /// compare the lists by identity).
+    Future<List<Map<String, Object>>> readGroups(NodeId node) async {
+      final groups = await client.read(node);
+      expect(groups.isArray, isTrue, reason: 'expected a NetworkGroupDataType[], got ${groups.value}');
+      return [
+        for (final g in groups.asArray)
+          {
+            'ServerUri': g['ServerUri'].asString,
+            'NetworkPaths': [
+              for (final path in g['NetworkPaths'].asArray)
+                path['EndpointUrlList'].asArray.map((u) => u.asString).toList(),
+            ],
+          },
+      ];
+    }
+
+    Map<String, Object> group(String uri, List<List<String>> paths) => {'ServerUri': uri, 'NetworkPaths': paths};
+
+    test(
+      'hot with networkGroups: NonTransparentNetworkRedundancyType and a NetworkGroupDataType[] a client decodes',
+      () async {
+        final own = await ownUri();
+        server.setRedundancy(
+          RedundancySupport.hot,
+          serverUris: uris,
+          networkGroups: {
+            own: ['opc.tcp://me:4840'],
+            'urn:plant:opcua:a': ['opc.tcp://a:4840', 'opc.tcp://a:4841'],
+            'urn:plant:opcua:b': [],
+          },
+        );
+
+        // The object is retyped one step further: 2034 -> 2039 -> 11945.
+        expect(await typeDefinitionOf(NodeId.serverRedundancy), [networkType]);
+        expect((await client.read(NodeId.redundancySupport)).asInt, 3);
+        expect(await readServerUris(), [own, ...uris]);
+        final subtypes = await client.browse(nonTransparentRedundancyType, referenceTypeId: NodeId.hasSubtype);
+        expect(subtypes.map((t) => t.nodeId), [networkType]);
+        expect(subtypes.single.browseName, 'NonTransparentNetworkRedundancyType');
+        expect(subtypes.single.nodeClass, NodeClass.UA_NODECLASS_OBJECTTYPE);
+
+        // The type declares the mandatory ServerNetworkGroups property (i=11948).
+        final declarations = await client.browse(networkType, referenceTypeId: NodeId.hasProperty);
+        expect(declarations.map((p) => p.nodeId), [declaration]);
+        expect(declarations.single.browseName, 'ServerNetworkGroups');
+        expect((await client.browse(declaration, referenceTypeId: hasModellingRule)).map((r) => r.nodeId), [mandatory]);
+
+        // The instance (i=14415) sits next to ServerUriArray, of PropertyType,
+        // declared as a one-dimensional NetworkGroupDataType array.
+        final properties = await client.browse(NodeId.serverRedundancy, referenceTypeId: NodeId.hasProperty);
+        expect(
+          properties.map((p) => p.nodeId),
+          unorderedEquals([NodeId.redundancySupport, NodeId.serverUriArray, serverNetworkGroups]),
+          reason: 'next to RedundancySupport and ServerUriArray',
+        );
+        final property = properties.singleWhere((p) => p.nodeId == serverNetworkGroups);
+        expect(property.browseName, 'ServerNetworkGroups');
+        expect(property.typeDefinition, NodeId.propertyType);
+        for (final node in [serverNetworkGroups, declaration]) {
+          expect(
+            (await attribute(node, AttributeId.UA_ATTRIBUTEID_DATATYPE)).typeId,
+            networkGroupType,
+            reason: '$node',
+          );
+          expect((await attribute(node, AttributeId.UA_ATTRIBUTEID_VALUERANK)).asInt, 1, reason: '$node');
+        }
+
+        // §6.3.10: the ServerUris equal the ServerUriArray entries, in its
+        // order; each member's endpoints form one network path, a member
+        // without known endpoints has no path.
+        expect(await readGroups(serverNetworkGroups), [
+          group(own, [
+            ['opc.tcp://me:4840'],
+          ]),
+          group('urn:plant:opcua:a', [
+            ['opc.tcp://a:4840', 'opc.tcp://a:4841'],
+          ]),
+          group('urn:plant:opcua:b', []),
+        ]);
+        expect(await readGroups(declaration), isEmpty, reason: 'the declaration carries an empty array');
+        // Server.read decodes the same value without a wire trip.
+        expect(server.read(serverNetworkGroups).asArray.map((g) => g['ServerUri'].asString), [own, ...uris]);
+
+        // The DataType nodes open62541's reduced NS0 lacks are there, as
+        // Structure subtypes with 0: names, and their definitions are readable.
+        final structures = await client.browse(NodeId.structure, referenceTypeId: NodeId.hasSubtype);
+        expect(structures.singleWhere((t) => t.nodeId == networkGroupType).browseName, 'NetworkGroupDataType');
+        expect(structures.singleWhere((t) => t.nodeId == endpointUrlListType).browseName, 'EndpointUrlListDataType');
+        final definition = await attribute(networkGroupType, AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION);
+        expect(definition.asObject.keys.toList(), ['ServerUri', 'NetworkPaths']);
+      },
+    );
+
+    test(
+      'calling again updates the groups in place; without networkGroups the property goes and the type steps back',
+      () async {
+        final own = await ownUri();
+        server.setRedundancy(
+          RedundancySupport.hot,
+          serverUris: uris,
+          networkGroups: {
+            own: ['opc.tcp://me:4840'],
+            'urn:plant:opcua:a': ['opc.tcp://a:4840'],
+            'urn:plant:opcua:b': [],
+          },
+        );
+        server.setRedundancy(
+          RedundancySupport.hot,
+          serverUris: ['urn:plant:opcua:a'],
+          networkGroups: {
+            own: ['opc.tcp://me:4840'],
+            'urn:plant:opcua:a': ['opc.tcp://a:4842'],
+          },
+        );
+        expect(await readServerUris(), [own, 'urn:plant:opcua:a']);
+        expect(await readGroups(serverNetworkGroups), [
+          group(own, [
+            ['opc.tcp://me:4840'],
+          ]),
+          group('urn:plant:opcua:a', [
+            ['opc.tcp://a:4842'],
+          ]),
+        ]);
+        // Still one type, one declaration, one property.
+        expect(await client.browse(nonTransparentRedundancyType, referenceTypeId: NodeId.hasSubtype), hasLength(1));
+        expect(await client.browse(networkType, referenceTypeId: NodeId.hasProperty), hasLength(1));
+        expect(await client.browse(NodeId.serverRedundancy, referenceTypeId: NodeId.hasProperty), hasLength(3));
+
+        server.setRedundancy(RedundancySupport.hot, serverUris: uris);
+        expect(await typeDefinitionOf(NodeId.serverRedundancy), [nonTransparentRedundancyType]);
+        final properties = await client.browse(NodeId.serverRedundancy, referenceTypeId: NodeId.hasProperty);
+        expect(properties.map((p) => p.nodeId), unorderedEquals([NodeId.redundancySupport, NodeId.serverUriArray]));
+        await expectLater(client.read(serverNetworkGroups), throwsA(anything));
+        // The type stays, for the next call.
+        expect(await client.browse(nonTransparentRedundancyType, referenceTypeId: NodeId.hasSubtype), hasLength(1));
+
+        server.setRedundancy(RedundancySupport.none);
+        expect(await typeDefinitionOf(NodeId.serverRedundancy), [serverRedundancyType]);
+        final left = await client.browse(NodeId.serverRedundancy, referenceTypeId: NodeId.hasProperty);
+        expect(left.map((p) => p.nodeId), [NodeId.redundancySupport]);
+      },
+    );
+
+    test(
+      'the groups must cover the set exactly: a stranger or a missing member is refused before anything changes',
+      () async {
+        final own = await ownUri();
+        // A URI that is not in the set.
+        expect(
+          () => server.setRedundancy(
+            RedundancySupport.hot,
+            serverUris: uris,
+            networkGroups: {
+              own: [],
+              'urn:plant:opcua:a': [],
+              'urn:plant:opcua:b': [],
+              'urn:stranger': ['opc.tcp://x'],
+            },
+          ),
+          throwsA(isA<ArgumentError>().having((e) => e.message, 'message', contains('urn:stranger'))),
+        );
+        // A member without a group, the local server included.
+        expect(
+          () => server.setRedundancy(
+            RedundancySupport.hot,
+            serverUris: uris,
+            networkGroups: {'urn:plant:opcua:a': [], 'urn:plant:opcua:b': []},
+          ),
+          throwsA(isA<ArgumentError>().having((e) => e.message, 'message', contains(own))),
+        );
+        // none publishes nothing.
+        expect(() => server.setRedundancy(RedundancySupport.none, networkGroups: {}), throwsArgumentError);
+        expect(await typeDefinitionOf(NodeId.serverRedundancy), [serverRedundancyType]);
+        expect(await client.browse(serverRedundancyType, referenceTypeId: NodeId.hasSubtype), isEmpty);
+        final structures = await client.browse(NodeId.structure, referenceTypeId: NodeId.hasSubtype);
+        expect(structures.map((t) => t.nodeId), isNot(contains(networkGroupType)));
+        expect(structures.map((t) => t.nodeId), isNot(contains(endpointUrlListType)));
+      },
+    );
+  });
 }

@@ -15,11 +15,15 @@ export 'src/extensions.dart'
         Namespace0Id,
         SecureChannelState,
         SessionState,
-        LogLevel;
+        LogLevel,
+        UserTokenType;
 export 'src/third_party/open62541.g.dart'
     show
         UA_STATUSCODE_GOOD,
         UA_STATUSCODE_BADNOCOMMUNICATION,
+        UA_STATUSCODE_BADNODATA,
+        UA_STATUSCODE_BADNODEIDUNKNOWN,
+        UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE,
         UA_STATUSCODE_BADNOTWRITABLE,
         UA_STATUSCODE_BADUSERACCESSDENIED,
         UA_STATUSCODE_GOODNODATA,
@@ -33,7 +37,7 @@ export 'src/third_party/open62541.g.dart'
         UA_OPEN62541_VER_LABEL,
         UA_OPEN62541_VER_COMMIT,
         UA_OPEN62541_VERSION;
-export 'src/node_id.dart' show NodeId;
+export 'src/node_id.dart' show NodeId, NodeIdFfi;
 export 'src/pubsub.dart'
     show
         PubSubPublisherId,
@@ -45,6 +49,12 @@ export 'src/pubsub.dart'
 export 'src/server.dart'
     show
         Server,
+        ServerLimits,
+        ServerAuthorization,
+        ServerEndpoint,
+        checkServerSecurityArguments,
+        securityPolicyNoneUri,
+        defaultServerApplicationUri,
         Argument,
         RedundancySupport,
         DataSourceValue,
@@ -54,8 +64,20 @@ export 'src/server.dart'
         AnonymousSessionIdentity,
         UsernameSessionIdentity,
         CertificateSessionIdentity;
+export 'src/types/endpoint_description.dart' show EndpointDescription, UserTokenPolicy;
 export 'src/types/errors.dart'
-    show Inactivity, MonitoredItemsRefused, SecureChannelClosed, SubscriptionDeleted, UaStatusException;
+    show
+        ClientDeletedException,
+        DataTypeDefinitionCycle,
+        DataTypeDefinitionTooDeep,
+        DataTypeDefinitionTooMany,
+        Inactivity,
+        MonitoredItemsRefused,
+        SecureChannelClosed,
+        SubscriptionDeleted,
+        UaStatusException,
+        UaTypeMismatch,
+        ValueTooLarge;
 export 'src/history.dart'
     show
         HistoryBackend,

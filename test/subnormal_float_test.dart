@@ -25,8 +25,16 @@ void main() {
 
   setUpAll(() async {
     server = setupServer();
-    server.addVariableNode(doubleNode, DynamicValue(value: 0.0, typeId: NodeId.double, name: 'the.subnormal.double'));
-    server.addVariableNode(floatNode, DynamicValue(value: 0.0, typeId: NodeId.float, name: 'the.subnormal.float'));
+    server.addVariableNode(
+      doubleNode,
+      DynamicValue(value: 0.0, typeId: NodeId.double, name: 'the.subnormal.double'),
+      accessLevel: const AccessLevelMask(read: true, write: true),
+    );
+    server.addVariableNode(
+      floatNode,
+      DynamicValue(value: 0.0, typeId: NodeId.float, name: 'the.subnormal.float'),
+      accessLevel: const AccessLevelMask(read: true, write: true),
+    );
     client = await setupClient(server.port);
   });
 

@@ -839,6 +839,33 @@ external void UA_ServerConfig_clear(ffi.Pointer<UA_ServerConfig> config);
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>, UA_UInt16)>()
 external int UA_ServerConfig_setBasics_withPort(ffi.Pointer<UA_ServerConfig> conf, int portNumber);
 
+@ffi.Native<
+  UA_StatusCode Function(
+    ffi.Pointer<UA_ServerConfig>,
+    UA_UInt16,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Size,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Size,
+    ffi.Pointer<UA_ByteString>,
+    ffi.Size,
+  )
+>()
+external int UA_ServerConfig_setDefaultWithSecurityPolicies(
+  ffi.Pointer<UA_ServerConfig> conf,
+  int portNumber,
+  ffi.Pointer<UA_ByteString> certificate,
+  ffi.Pointer<UA_ByteString> privateKey,
+  ffi.Pointer<UA_ByteString> trustList,
+  int trustListSize,
+  ffi.Pointer<UA_ByteString> issuerList,
+  int issuerListSize,
+  ffi.Pointer<UA_ByteString> revocationList,
+  int revocationListSize,
+);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_ServerConfig>, UA_UInt16, ffi.Pointer<UA_ByteString>)>()
 external int UA_ServerConfig_setMinimal(
   ffi.Pointer<UA_ServerConfig> config,
@@ -2044,7 +2071,55 @@ final class UA_AccessControl extends ffi.Struct {
     ..ref.allowHistoryUpdateDeleteRawModified = allowHistoryUpdateDeleteRawModified;
 }
 
-final class UA_AddNodesItem extends ffi.Opaque {}
+final class UA_AddNodesItem extends ffi.Struct {
+  external UA_ExpandedNodeId parentNodeId;
+
+  external UA_NodeId referenceTypeId;
+
+  external UA_ExpandedNodeId requestedNewNodeId;
+
+  external UA_QualifiedName browseName;
+
+  @ffi.UnsignedInt()
+  external int nodeClassAsInt;
+
+  UA_NodeClass get nodeClass => UA_NodeClass.fromValue(nodeClassAsInt);
+  set nodeClass(UA_NodeClass value) => nodeClassAsInt = value.value;
+
+  external UA_ExtensionObject nodeAttributes;
+
+  external UA_ExpandedNodeId typeDefinition;
+}
+
+final class UA_AddNodesRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Size()
+  external int nodesToAddSize;
+
+  external ffi.Pointer<UA_AddNodesItem> nodesToAdd;
+}
+
+final class UA_AddNodesResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_AddNodesResult> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
+
+final class UA_AddNodesResult extends ffi.Struct {
+  @UA_StatusCode()
+  external int statusCode;
+
+  external UA_NodeId addedNodeId;
+}
 
 final class UA_AddPublishedDataSetResult extends ffi.Struct {
   @UA_StatusCode()
@@ -2058,7 +2133,47 @@ final class UA_AddPublishedDataSetResult extends ffi.Struct {
   external UA_ConfigurationVersionDataType configurationVersion;
 }
 
-final class UA_AddReferencesItem extends ffi.Opaque {}
+final class UA_AddReferencesItem extends ffi.Struct {
+  external UA_NodeId sourceNodeId;
+
+  external UA_NodeId referenceTypeId;
+
+  @ffi.Bool()
+  external bool isForward;
+
+  external UA_String targetServerUri;
+
+  external UA_ExpandedNodeId targetNodeId;
+
+  @ffi.UnsignedInt()
+  external int targetNodeClassAsInt;
+
+  UA_NodeClass get targetNodeClass => UA_NodeClass.fromValue(targetNodeClassAsInt);
+  set targetNodeClass(UA_NodeClass value) => targetNodeClassAsInt = value.value;
+}
+
+final class UA_AddReferencesRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Size()
+  external int referencesToAddSize;
+
+  external ffi.Pointer<UA_AddReferencesItem> referencesToAdd;
+}
+
+final class UA_AddReferencesResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_StatusCode> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
 
 final class UA_AggregateConfiguration extends ffi.Struct {
   @ffi.Bool()
@@ -3621,11 +3736,74 @@ final class UA_DeleteMonitoredItemsResponse extends ffi.Struct {
   external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
 }
 
-final class UA_DeleteNodesItem extends ffi.Opaque {}
+final class UA_DeleteNodesItem extends ffi.Struct {
+  external UA_NodeId nodeId;
+
+  @ffi.Bool()
+  external bool deleteTargetReferences;
+}
+
+final class UA_DeleteNodesRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Size()
+  external int nodesToDeleteSize;
+
+  external ffi.Pointer<UA_DeleteNodesItem> nodesToDelete;
+}
+
+final class UA_DeleteNodesResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_StatusCode> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
 
 final class UA_DeleteRawModifiedDetails extends ffi.Opaque {}
 
-final class UA_DeleteReferencesItem extends ffi.Opaque {}
+final class UA_DeleteReferencesItem extends ffi.Struct {
+  external UA_NodeId sourceNodeId;
+
+  external UA_NodeId referenceTypeId;
+
+  @ffi.Bool()
+  external bool isForward;
+
+  external UA_ExpandedNodeId targetNodeId;
+
+  @ffi.Bool()
+  external bool deleteBidirectional;
+}
+
+final class UA_DeleteReferencesRequest extends ffi.Struct {
+  external UA_RequestHeader requestHeader;
+
+  @ffi.Size()
+  external int referencesToDeleteSize;
+
+  external ffi.Pointer<UA_DeleteReferencesItem> referencesToDelete;
+}
+
+final class UA_DeleteReferencesResponse extends ffi.Struct {
+  external UA_ResponseHeader responseHeader;
+
+  @ffi.Size()
+  external int resultsSize;
+
+  external ffi.Pointer<UA_StatusCode> results;
+
+  @ffi.Size()
+  external int diagnosticInfosSize;
+
+  external ffi.Pointer<UA_DiagnosticInfo> diagnosticInfos;
+}
 
 /// DiagnosticInfo
 /// ^^^^^^^^^^^^^^
@@ -4708,7 +4886,11 @@ final class UA_KeyValueMap extends ffi.Struct {
     ..ref.map = map;
 }
 
-final class UA_KeyValuePair extends ffi.Opaque {}
+final class UA_KeyValuePair extends ffi.Struct {
+  external UA_QualifiedName key;
+
+  external UA_Variant value;
+}
 
 /// Lifecycle States
 /// ----------------

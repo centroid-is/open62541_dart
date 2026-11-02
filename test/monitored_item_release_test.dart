@@ -277,7 +277,11 @@ void main() {
     server = Server(port: 0, logLevel: LogLevel.UA_LOGLEVEL_ERROR);
     server.start();
     serverPort = server.port;
-    server.addVariableNode(intNodeId, DynamicValue(value: 42, typeId: NodeId.int32, name: "the.int"));
+    server.addVariableNode(
+      intNodeId,
+      DynamicValue(value: 42, typeId: NodeId.int32, name: "the.int"),
+      accessLevel: const AccessLevelMask(read: true, write: true),
+    );
     serverTimer = Timer.periodic(Duration(milliseconds: 10), (_) {
       server.runIterate();
     });

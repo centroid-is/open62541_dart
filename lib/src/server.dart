@@ -3,11 +3,14 @@ import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:logging/logging.dart';
 
 import 'package:open62541/open62541.dart';
 import 'common.dart';
 import 'extensions.dart';
 import 'third_party/open62541.g.dart' as raw;
+import 'types/custom_type_registry.dart';
+import 'types/struct_layout.dart';
 import 'ua_allocation.dart';
 
 /// Describes a single input or output argument of a method node.
@@ -223,6 +226,116 @@ class MethodSessionInfo {
       'identity: $identity)';
 }
 
+typedef _ActivateSessionNative =
+    raw.UA_StatusCode Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_EndpointDescription>,
+      ffi.Pointer<raw.UA_ByteString>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<raw.UA_ExtensionObject>,
+      ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    );
+typedef _ActivateSession =
+    int Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_EndpointDescription>,
+      ffi.Pointer<raw.UA_ByteString>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<raw.UA_ExtensionObject>,
+      ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    );
+typedef _CloseSessionNative =
+    ffi.Void Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+    );
+typedef _CloseSession =
+    void Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+    );
+
+/// getUserAccessLevel, getUserExecutable and allowBrowseNode: (server, ac,
+/// sessionId, sessionContext, nodeId, nodeContext).
+typedef _NodeHookNative<R extends ffi.NativeType> =
+    R Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+    );
+typedef _ExecutableOnObjectNative =
+    ffi.Bool Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+    );
+
+/// Per-user authorization of client sessions, see the `authorization`
+/// argument of [Server].
+///
+/// Each hook is optional; open62541's own answer (everything allowed) stands
+/// for a hook left `null`, and a [Server] without an authorization keeps
+/// open62541's default functions untouched. Every hook gets the session as
+/// a [MethodSessionInfo]: its [MethodSessionInfo.identity] says who logged
+/// in (anonymous, a username, a certificate subject). It is resolved once
+/// per session activation and kept until the session closes or activates
+/// again.
+///
+/// The hooks restrict, they never grant: open62541 ANDs what they return
+/// with the node's own attributes (`src/server/ua_services_attribute.c`,
+/// `getUserAccessLevel` and the Call service's `executable` check), so a
+/// read-only node stays read-only whatever [userAccessLevel] answers. They
+/// apply to client sessions only: the host's own [Server.read],
+/// [Server.write], [Server.addVariableNode] and the rest run as open62541's
+/// admin session, which is never asked.
+///
+/// The hooks are called synchronously on the isolate that created the
+/// server, from [Server.runIterate], while a request is being served:
+/// [userAccessLevel] once per Read or Write of a variable's value (and per
+/// sample of a monitored item), so it must be cheap and must not wait for
+/// anything. A hook that throws denies (no access, not executable, not
+/// browsable); the first exception of each hook is logged on the
+/// `open62541.Server` logger (package:logging), later ones are not.
+class ServerAuthorization {
+  const ServerAuthorization({this.userAccessLevel, this.userExecutable, this.allowBrowse});
+
+  /// The access a session has to a variable node's value: the
+  /// `UserAccessLevel` attribute, ANDed with the node's `AccessLevel`.
+  /// `null` leaves the node's own access level. A Read or Write the result
+  /// does not allow is `BadUserAccessDenied`.
+  final AccessLevelMask? Function(MethodSessionInfo session, NodeId node)? userAccessLevel;
+
+  /// Whether a session may call the method [method] (on [object]; `null`
+  /// when a client reads the method's `UserExecutable` attribute). A
+  /// refused Call is `BadUserAccessDenied`.
+  final bool Function(MethodSessionInfo session, NodeId method, NodeId? object)? userExecutable;
+
+  /// Whether a session may browse [node], and read its attributes other
+  /// than the Value: a refused Browse of the node is `BadUserAccessDenied`,
+  /// TranslateBrowsePathsToNodeIds does not pass through it
+  /// (`src/server/ua_services_view.c`), and a Read of any attribute but
+  /// Value and RolePermissions is `BadUserAccessDenied`
+  /// (`src/server/ua_services_attribute.c`, `ReadWithNodeMaybeAsync`; the
+  /// Value is [userAccessLevel]'s). open62541 asks only about the node a
+  /// Browse starts from: the node still appears among its parent's
+  /// references.
+  final bool Function(MethodSessionInfo session, NodeId node)? allowBrowse;
+}
+
 /// The complete read result of a data-source variable node: the [value] plus
 /// the OPC UA operation [statusCode] and an optional [sourceTimestamp].
 ///
@@ -280,8 +393,305 @@ enum RedundancySupport {
   final int value;
 }
 
-// Installed on every server config: open62541 reads a private key password
-// from stdin when a key does not parse and no callback is set.
+/// The resource limits of a [Server]: `UA_ServerConfig`'s limit fields,
+/// what one client (or all of them together) may ask of the server.
+///
+/// A field left `null` takes its default, [defaults], chosen so that a
+/// runaway or hostile client cannot exhaust the server while an ordinary one
+/// never notices them. An explicit `0` lifts a cap: open62541 1.5.9 skips
+/// the check for every UInt32 field that is 0 (each field says where). The
+/// two UInt16 fields, [maxSecureChannels] and [maxSessions], cannot be 0:
+/// open62541 compares the current count against them with `>=`, so 0 would
+/// refuse every channel and session; an explicit 0 there is an
+/// [ArgumentError], and 65535 is the ceiling. [unlimited] lifts every cap as
+/// far as open62541 allows. [Server.limits] reports the values in force.
+class ServerLimits {
+  const ServerLimits({
+    this.maxSecureChannels,
+    this.maxSessions,
+    this.maxSubscriptions,
+    this.maxSubscriptionsPerSession,
+    this.maxMonitoredItems,
+    this.maxMonitoredItemsPerSubscription,
+    this.maxNodesPerRead,
+    this.maxNodesPerWrite,
+    this.maxNodesPerBrowse,
+    this.maxNodesPerMethodCall,
+    this.maxMessageSize,
+    this.maxChunkCount,
+  });
+
+  /// What a field left `null` takes: 100 secure channels and 100 sessions,
+  /// 1000 subscriptions (50 per session), 100 000 monitored items (10 000
+  /// per subscription), 10 000 nodes per Read, Write and Browse, 1000
+  /// methods per Call, 16 MiB per message in at most 512 chunks.
+  static const ServerLimits defaults = ServerLimits(
+    maxSecureChannels: 100,
+    maxSessions: 100,
+    maxSubscriptions: 1000,
+    maxSubscriptionsPerSession: 50,
+    maxMonitoredItems: 100000,
+    maxMonitoredItemsPerSubscription: 10000,
+    maxNodesPerRead: 10000,
+    maxNodesPerWrite: 10000,
+    maxNodesPerBrowse: 10000,
+    maxNodesPerMethodCall: 1000,
+    maxMessageSize: 16 * 1024 * 1024,
+    maxChunkCount: 512,
+  );
+
+  /// Every cap lifted as far as open62541 allows: 0 (no check) for every
+  /// UInt32 field, 65535 for [maxSecureChannels] and [maxSessions]. For a
+  /// server on a network trusted end to end whose clients are known to be
+  /// well-behaved; anywhere else one client can take the whole server down.
+  static const ServerLimits unlimited = ServerLimits(
+    maxSecureChannels: 0xFFFF,
+    maxSessions: 0xFFFF,
+    maxSubscriptions: 0,
+    maxSubscriptionsPerSession: 0,
+    maxMonitoredItems: 0,
+    maxMonitoredItemsPerSubscription: 0,
+    maxNodesPerRead: 0,
+    maxNodesPerWrite: 0,
+    maxNodesPerBrowse: 0,
+    maxNodesPerMethodCall: 0,
+    maxMessageSize: 0,
+    maxChunkCount: 0,
+  );
+
+  /// Secure channels open at once (`maxSecureChannels`, a UInt16; default
+  /// 100, at most 65535, never 0). At the limit the server first purges a
+  /// channel without a session; if there is none the new connection is
+  /// dropped without an answer (`src/server/ua_server_binary.c`,
+  /// `createServerSecureChannel`, `currentChannelCount >= maxSecureChannels`).
+  /// Keep it at or above [maxSessions]: open62541 warns at startup otherwise.
+  final int? maxSecureChannels;
+
+  /// Sessions at once (`maxSessions`, a UInt16; default 100, at most 65535,
+  /// never 0). CreateSession beyond it is answered `BadTooManySessions`
+  /// (`src/server/ua_services_session.c`, `UA_Session_create`,
+  /// `sessionCount >= maxSessions`).
+  final int? maxSessions;
+
+  /// Subscriptions on the whole server (`maxSubscriptions`; default 1000,
+  /// 0 = no check). CreateSubscription beyond it is answered
+  /// `BadTooManySubscriptions` (`src/server/ua_services_subscription.c`,
+  /// `Service_CreateSubscription`).
+  final int? maxSubscriptions;
+
+  /// Subscriptions per session (`maxSubscriptionsPerSession`; default 50,
+  /// 0 = no check). The 51st CreateSubscription of a session is answered
+  /// `BadTooManySubscriptions`, and so is a TransferSubscriptions that would
+  /// exceed it.
+  final int? maxSubscriptionsPerSession;
+
+  /// Monitored items on the whole server (`maxMonitoredItems`; default
+  /// 100 000, 0 = no check). An item beyond it is answered
+  /// `BadTooManyMonitoredItems` in its CreateMonitoredItems result
+  /// (`src/server/ua_services_monitoreditem.c`, `Operation_CreateMonitoredItem`).
+  final int? maxMonitoredItems;
+
+  /// Monitored items per subscription (`maxMonitoredItemsPerSubscription`;
+  /// default 10 000, 0 = no check), `BadTooManyMonitoredItems` per item.
+  final int? maxMonitoredItemsPerSubscription;
+
+  /// Nodes (attributes) in one Read request (`maxNodesPerRead`; default
+  /// 10 000, 0 = no check). A request over it is answered
+  /// `BadTooManyOperations` as a whole, nothing in it is served
+  /// (`src/server/ua_services_attribute.c`, `Service_Read`).
+  final int? maxNodesPerRead;
+
+  /// Nodes in one Write request (`maxNodesPerWrite`; default 10 000, 0 =
+  /// no check), `BadTooManyOperations` (`src/server/ua_server_async.c`,
+  /// `Service_Write`).
+  final int? maxNodesPerWrite;
+
+  /// Nodes in one Browse request (`maxNodesPerBrowse`; default 10 000, 0 =
+  /// no check), `BadTooManyOperations` (`src/server/ua_services_view.c`,
+  /// `Service_Browse`).
+  final int? maxNodesPerBrowse;
+
+  /// Methods in one Call request (`maxNodesPerMethodCall`; default 1000,
+  /// 0 = no check), `BadTooManyOperations` (`src/server/ua_server_async.c`,
+  /// `Service_Call`).
+  final int? maxNodesPerMethodCall;
+
+  /// The largest message, in bytes, on a connection to this server
+  /// (`tcpMaxMsgSize`; default 16 MiB, 0 = no check). Announced to the
+  /// client in the Acknowledge of the TCP handshake; a request larger than
+  /// it is `BadTcpMessageTooLarge` and the connection is closed, a response
+  /// larger than it fails with `BadResponseTooLarge` (`src/ua_securechannel.c`,
+  /// `adjustCheckMessageLimitsSym` and `UA_SecureChannel_processBuffer`). A
+  /// value of 50 000 doubles is 400 KiB, so 16 MiB is far above what a
+  /// variable read carries; the package's own client announces 512 MiB
+  /// (`UA_ConnectionConfig_default`).
+  final int? maxMessageSize;
+
+  /// The most chunks one message may consist of (`tcpMaxChunks`; default
+  /// 512, 0 = no check), the same statuses. A chunk is at most the 64 KiB
+  /// receive buffer, so 512 chunks are 32 MiB and [maxMessageSize] is the
+  /// cap that binds first.
+  final int? maxChunkCount;
+
+  @override
+  String toString() =>
+      'ServerLimits(maxSecureChannels: $maxSecureChannels, maxSessions: $maxSessions, '
+      'maxSubscriptions: $maxSubscriptions, maxSubscriptionsPerSession: $maxSubscriptionsPerSession, '
+      'maxMonitoredItems: $maxMonitoredItems, maxMonitoredItemsPerSubscription: $maxMonitoredItemsPerSubscription, '
+      'maxNodesPerRead: $maxNodesPerRead, maxNodesPerWrite: $maxNodesPerWrite, '
+      'maxNodesPerBrowse: $maxNodesPerBrowse, maxNodesPerMethodCall: $maxNodesPerMethodCall, '
+      'maxMessageSize: $maxMessageSize, maxChunkCount: $maxChunkCount)';
+}
+
+/// One endpoint a [Server] offers: a security policy with a message security
+/// mode. See [Server.endpoints].
+typedef ServerEndpoint = ({String securityPolicyUri, MessageSecurityMode securityMode});
+
+/// The URI of SecurityPolicy#None.
+const String securityPolicyNoneUri = 'http://opcfoundation.org/UA/SecurityPolicy#None';
+
+/// open62541's default ApplicationUri (`APPLICATION_URI` in
+/// `plugins/ua_config_default.c`), the one a [Server] announces unless
+/// given an `applicationUri`.
+const String defaultServerApplicationUri = 'urn:open62541.unconfigured.application';
+
+/// Checks that the security arguments of a [Server] make sense together and
+/// throws an [ArgumentError] when they do not. Runs before anything native
+/// is allocated. The rules:
+///
+///  * [certificate] and [privateKey] come together.
+///  * The lists, [acceptAllClientCertificates] and `allowNone: false` need
+///    a certificate: without one the server offers SecurityPolicy#None only
+///    and never sees a client certificate.
+///  * With a certificate, either a non-empty [trustList] or
+///    `acceptAllClientCertificates: true`; not both, and not neither.
+///    open62541's `UA_ServerConfig_setDefaultWithSecurityPolicies` leaves
+///    the accept-all verification of its base config in place for an empty
+///    trust list (`plugins/ua_config_default.c`, "Empty trustlist passed"),
+///    so accepting any client certificate has to be an explicit choice. An
+///    [issuerList] or [revocationList] alone is refused for the same reason:
+///    issuer certificates only complete a chain, they cannot anchor trust
+///    (open62541 installs them only together with a trust list).
+///  * Someone must be able to log in: with `allowAnonymous: false` there
+///    must be [users], or a trust list (a client certificate in it can be
+///    presented as an X509 identity token).
+///  * [hostname], when given, is not empty.
+///  * The [limits] are non-negative, `maxSecureChannels`/`maxSessions` fit a
+///    UInt16 and are not 0 (open62541 would refuse every channel and
+///    session), the rest fit a UInt32.
+void checkServerSecurityArguments({
+  required Uint8List? certificate,
+  required Uint8List? privateKey,
+  required List<Uint8List>? trustList,
+  required List<Uint8List>? issuerList,
+  required List<Uint8List>? revocationList,
+  required bool acceptAllClientCertificates,
+  required bool? allowNone,
+  required bool allowAnonymous,
+  required Map<String, String>? users,
+  required String? hostname,
+  required ServerLimits limits,
+}) {
+  if ((certificate == null) != (privateKey == null)) {
+    throw ArgumentError('certificate and privateKey come together; got only one of them');
+  }
+  if (privateKey != null && isEncryptedPrivateKey(privateKey)) {
+    throw ArgumentError.value(
+      '<${privateKey.length} bytes>',
+      'privateKey',
+      'is encrypted; pass the decrypted key (DER). open62541 would prompt for its password on stdin',
+    );
+  }
+  final hasLists = trustList != null || issuerList != null || revocationList != null;
+  final trusts = trustList != null && trustList.isNotEmpty;
+  if (certificate == null) {
+    if (hasLists || acceptAllClientCertificates) {
+      throw ArgumentError(
+        'trustList, issuerList, revocationList and acceptAllClientCertificates need a certificate and privateKey: '
+        'without them the server offers SecurityPolicy#None only and never sees a client certificate to verify',
+      );
+    }
+    if (allowNone == false) {
+      throw ArgumentError('allowNone: false needs a certificate: without one SecurityPolicy#None is all there is');
+    }
+  } else if (acceptAllClientCertificates) {
+    if (hasLists) {
+      throw ArgumentError(
+        'acceptAllClientCertificates: true and a trustList/issuerList/revocationList contradict each other',
+      );
+    }
+  } else if (!trusts) {
+    throw ArgumentError(
+      'a certificate needs a non-empty trustList (the client certificates, or the CA certificates that issued '
+      'them, DER), or acceptAllClientCertificates: true to skip client authentication. open62541 keeps "accept '
+      'every certificate" for an empty trust list, so an empty one is refused rather than silently accepting any client',
+    );
+  }
+  if (!allowAnonymous && (users == null || users.isEmpty) && !trusts) {
+    throw ArgumentError(
+      'allowAnonymous: false needs users (username/password), or a trustList whose client certificates can be '
+      'presented as X509 identity tokens: as given, no client could log in',
+    );
+  }
+  if (users != null) {
+    for (final username in users.keys) {
+      if (username.isEmpty) {
+        throw ArgumentError('users: an empty username is not a login open62541 accepts');
+      }
+    }
+  }
+  if (hostname != null && hostname.isEmpty) {
+    throw ArgumentError.value(hostname, 'hostname', 'must not be empty; leave it null to bind all interfaces');
+  }
+  void checkLimit(String name, int? value, int max, {int min = 0}) {
+    if (value == null) return;
+    if (value < min || value > max) {
+      throw ArgumentError.value(
+        value,
+        'limits.$name',
+        min == 0 ? 'must be between 0 (no check) and $max' : 'must be between $min and $max; 0 would refuse everything',
+      );
+    }
+  }
+
+  checkLimit('maxSecureChannels', limits.maxSecureChannels, 0xFFFF, min: 1);
+  checkLimit('maxSessions', limits.maxSessions, 0xFFFF, min: 1);
+  checkLimit('maxSubscriptions', limits.maxSubscriptions, 0xFFFFFFFF);
+  checkLimit('maxSubscriptionsPerSession', limits.maxSubscriptionsPerSession, 0xFFFFFFFF);
+  checkLimit('maxMonitoredItems', limits.maxMonitoredItems, 0xFFFFFFFF);
+  checkLimit('maxMonitoredItemsPerSubscription', limits.maxMonitoredItemsPerSubscription, 0xFFFFFFFF);
+  checkLimit('maxNodesPerRead', limits.maxNodesPerRead, 0xFFFFFFFF);
+  checkLimit('maxNodesPerWrite', limits.maxNodesPerWrite, 0xFFFFFFFF);
+  checkLimit('maxNodesPerBrowse', limits.maxNodesPerBrowse, 0xFFFFFFFF);
+  checkLimit('maxNodesPerMethodCall', limits.maxNodesPerMethodCall, 0xFFFFFFFF);
+  checkLimit('maxMessageSize', limits.maxMessageSize, 0xFFFFFFFF);
+  checkLimit('maxChunkCount', limits.maxChunkCount, 0xFFFFFFFF);
+}
+
+/// A `UA_ByteString` in [arena] holding a copy of [bytes].
+ffi.Pointer<raw.UA_ByteString> _byteString(Arena arena, Uint8List bytes) {
+  final string = arena<raw.UA_ByteString>();
+  string.ref.length = bytes.length;
+  string.ref.data = arena<ffi.Uint8>(bytes.length);
+  string.ref.data.asTypedList(bytes.length).setAll(0, bytes);
+  return string;
+}
+
+/// An array of `UA_ByteString` in [arena], one per element of [list], each
+/// holding a copy. `nullptr` for an empty list.
+ffi.Pointer<raw.UA_ByteString> _byteStrings(Arena arena, List<Uint8List> list) {
+  if (list.isEmpty) return ffi.nullptr;
+  final array = arena<raw.UA_ByteString>(list.length);
+  for (var i = 0; i < list.length; i++) {
+    array[i].length = list[i].length;
+    array[i].data = arena<ffi.Uint8>(list[i].length);
+    array[i].data.asTypedList(list[i].length).setAll(0, list[i]);
+  }
+  return array;
+}
+
+// open62541 reads a private key password from stdin when a key does not parse
+// and no callback is set.
 int _refusePrivateKeyPassword(ffi.Pointer<raw.UA_ServerConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
     raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED;
 
@@ -317,9 +727,49 @@ typedef _HistoryReadInFlight = ({
   TimestampsToReturn timestamps,
 });
 
+/// An OPC UA server over open62541, pumped by the caller ([runIterate]).
+///
+/// ## Security
+///
+/// What a server offers is fixed by its constructor; the defaults are those
+/// of a plain `Server()`, which faces a trusted network only (a machine
+/// network behind its own firewall, a lab, `localhost`): never the internet,
+/// never an untrusted LAN.
+///
+/// * **Encryption.** Without a `certificate` the server offers
+///   SecurityPolicy#None only: nothing on the wire is signed or encrypted,
+///   and nothing authenticates the server to its clients. With a
+///   `certificate` and `privateKey` (DER) it offers every policy the build
+///   has (Basic256Sha256, Aes256Sha256RsaPss, Aes128Sha256RsaOaep) in both
+///   Sign and SignAndEncrypt, and verifies each client's application
+///   certificate against the `trustList` (plus `issuerList` and
+///   `revocationList`) before the channel opens, or accepts any with
+///   `acceptAllClientCertificates: true`. `allowNone` says whether
+///   SecurityPolicy#None stays on offer next to them: it defaults to `false`
+///   with a certificate, so a secured server is not also an open one. See
+///   [endpoints].
+/// * **Authentication.** `allowAnonymous` (default `true`) and `users`
+///   (username to password). A password over SecurityPolicy#None travels in
+///   clear text, so open62541 refuses it there unless
+///   `allowUnencryptedPassword` is set; over an encrypted channel it is
+///   always accepted.
+/// * **Authorization.** A client session may read every node, write every
+///   node whose access level allows it ([addVariableNode] defaults to
+///   `AccessLevelMask(read: true, write: true)`; [addDataSourceVariableNode]
+///   is read-only unless `onWrite` is given), browse and call methods. It
+///   may NOT add or delete nodes or references: those services answer
+///   `BadUserAccessDenied` unless `allowClientNodeManagement: true`. The
+///   host's own [addVariableNode], [deleteNode], [addReference], ... are
+///   not affected, they run as the server's internal admin session.
+///   `authorization` ([ServerAuthorization]) restricts reads, writes,
+///   calls and browsing per user.
+/// * **Listen address.** All interfaces, or `hostname` only.
+/// * **Limits.** [ServerLimits], see [limits].
 class Server {
-  /// Creates a server with open62541's minimal default configuration,
-  /// listening on [port] (4840 by default; `0` lets the OS pick, see [Server.port]).
+  /// Creates a server listening on [port] (4840 by default; `0` lets the OS
+  /// pick, see [Server.port]).
+  ///
+  /// ### Identity
   ///
   /// The optional identity strings replace what open62541 announces about the
   /// server (`open62541-based OPC UA Application`, `urn:open62541.unconfigured.application`,
@@ -330,10 +780,16 @@ class Server {
   ///   (locale `en`), the name an OPC UA browser lists the server under.
   /// * [applicationUri] - the `ApplicationDescription.applicationUri`.
   ///   open62541 also publishes it as `ServerArray[0]` (`ns=0;i=2254`) and as
-  ///   `NamespaceArray[1]`, the server's own namespace. Once security is
-  ///   configured it **must** match the URI embedded in the server certificate
-  ///   (open62541 logs a warning at startup when it does not, and clients
-  ///   validating the certificate reject the session).
+  ///   `NamespaceArray[1]`, the server's own namespace. With a [certificate]
+  ///   it must be the URI the certificate carries in its subjectAltName
+  ///   (`URI:...`): a client checks the server certificate against the
+  ///   ApplicationDescription it gets in CreateSession and refuses a
+  ///   mismatch (`BadCertificateUriInvalid`). The constructor checks it
+  ///   with `UA_CertificateUtils_verifyApplicationUri` and throws an
+  ///   [ArgumentError] on a mismatch, where open62541 alone would only log
+  ///   a warning at startup (`src/server/ua_server.c`,
+  ///   `verifyServerApplicationUri`). The default
+  ///   [defaultServerApplicationUri] is checked the same way.
   /// * [productName] / [manufacturerName] - `BuildInfo.productName` and
   ///   `BuildInfo.manufacturerName` (`Server/ServerStatus/BuildInfo/ProductName`,
   ///   `.../ManufacturerName`).
@@ -343,24 +799,174 @@ class Server {
   ///   Left `null` it stays open62541's `http://open62541.org` even when the
   ///   product name is set.
   ///
-  /// Each one left `null` keeps open62541's default, so an existing
-  /// `Server()` is unchanged.
+  /// ### Encryption
+  ///
+  /// Without a [certificate] the configuration is open62541's
+  /// `UA_ServerConfig_setMinimal`: one endpoint, SecurityPolicy#None. With a
+  /// [certificate] and [privateKey] (DER, unencrypted: an encrypted key is an
+  /// `ArgumentError` before any native call, a key open62541 cannot load a
+  /// `BadSecurityChecksFailed` [UaStatusException]) it is
+  /// `UA_ServerConfig_setDefaultWithSecurityPolicies`: the
+  /// policies Basic256Sha256, Aes256Sha256RsaPss and Aes128Sha256RsaOaep,
+  /// each as a Sign and a SignAndEncrypt endpoint, plus SecurityPolicy#None
+  /// (`UA_ServerConfig_addAllSecurityPolicies` and `_addAllEndpoints` in
+  /// `plugins/ua_config_default.c`). The client's application certificate
+  /// is verified at OpenSecureChannel against the in-memory certificate
+  /// store (`UA_CertificateGroup_Memorystore`) built from the [trustList]
+  /// (the client certificates, or the CA certificates that issued them,
+  /// DER), [issuerList] (intermediate CAs, which complete a chain and are
+  /// not trusted by themselves) and [revocationList] (CRLs); the same store
+  /// verifies X509 identity tokens at ActivateSession (`sessionPKI`). A
+  /// client whose certificate does not verify gets no channel. With
+  /// [acceptAllClientCertificates] no store is built and every client
+  /// certificate is accepted (open62541 keeps the accept-all verification
+  /// of its base config): the channel is still encrypted, which stops
+  /// passive eavesdropping, but the client application is not
+  /// authenticated. It is an explicit opt-in: a certificate with neither a
+  /// non-empty [trustList] nor `acceptAllClientCertificates: true` is an
+  /// [ArgumentError], see [checkServerSecurityArguments]. Without a trust
+  /// list the server offers no X509 user-token policy either: an identity
+  /// certificate is accepted only against the trust list.
+  ///
+  /// [allowNone] keeps the SecurityPolicy#None endpoint next to the secure
+  /// ones. It defaults to `true` without a certificate (it is all there is)
+  /// and to `false` with one: then the None endpoint is dropped and the
+  /// None policy serves discovery only (`securityPolicyNoneDiscoveryOnly`:
+  /// a None channel may call GetEndpoints and FindServers, anything else is
+  /// answered `BadSecurityPolicyRejected`, `src/server/ua_services.c`), which
+  /// a client needs to find the secure endpoints. A client that offers only
+  /// None then finds no endpoint it can use (open62541's client reports
+  /// `BadIdentityTokenRejected`, "No suitable endpoint found").
+  ///
+  /// ### Authentication
+  ///
+  /// [allowAnonymous] (default `true`) offers the anonymous user-token
+  /// policy; [users] (username to password) the username one, with those
+  /// logins. Both go to open62541's default access-control plugin
+  /// (`UA_AccessControl_default`, `plugins/ua_accesscontrol_default.c`),
+  /// which copies the logins and keeps them in memory as given: the
+  /// password is stored in plain text and compared in constant time
+  /// (`UA_constantTimeEqual`) with what the client sent; nothing is hashed.
+  /// What is not allowed is not offered: the endpoints list no anonymous
+  /// UserTokenPolicy when `allowAnonymous` is false, so a client that only
+  /// has an anonymous token finds no endpoint for it (open62541's client
+  /// reports `BadIdentityTokenRejected` without sending a session request);
+  /// one that sends the token anyway is refused with
+  /// `BadIdentityTokenInvalid` (no matching UserTokenPolicy,
+  /// `src/server/ua_services_session.c`, `Service_ActivateSession`). A wrong
+  /// password, or a username the server does not know, is
+  /// `BadUserAccessDenied` (the plugin). The same rules hold on an encrypted
+  /// channel: an anonymous session over SignAndEncrypt is allowed exactly
+  /// when `allowAnonymous` is.
+  ///
+  /// A password over a SecurityPolicy#None channel travels in clear text.
+  /// open62541 refuses it there unless [allowUnencryptedPassword] is set
+  /// (`UA_ServerConfig.allowNonePolicyPassword`, which the [Client] mirrors
+  /// with its own `allowUnencryptedPassword`): GetEndpoints leaves the
+  /// username policy out of the None endpoint
+  /// (`src/server/ua_services_discovery.c`), so again the client finds no
+  /// endpoint (`BadIdentityTokenRejected`), and ActivateSession refuses the
+  /// token if sent (`BadIdentityTokenInvalid`). Over a Sign or
+  /// SignAndEncrypt channel the password is protected by the channel and
+  /// accepted regardless.
+  ///
+  /// ### Authorization
+  ///
+  /// open62541's default access control grants every session every right;
+  /// this server keeps it for sessions, reads, writes, browsing and method
+  /// calls, and refuses the node-management services to clients:
+  /// AddNodes, DeleteNodes, AddReferences and DeleteReferences answer
+  /// `BadUserAccessDenied` per item (`src/server/ua_services_nodemanagement.c`
+  /// consults `accessControl.allowAddNode` and the others for every session
+  /// but the server's own admin session, which is how the host's
+  /// [addVariableNode], [deleteNode], [addReference] and the rest go
+  /// through unchecked). [allowClientNodeManagement] restores the old
+  /// behaviour, where any client may reshape the address space.
+  /// [authorization] decides per session what open62541's plugin would
+  /// allow everyone: a variable's user access level, whether a method may
+  /// be called, whether a node may be browsed, see [ServerAuthorization].
+  ///
+  /// ### Listen address
+  ///
+  /// By default the server listens on all interfaces (`opc.tcp://:port`).
+  /// With a [hostname] it listens on the addresses that name resolves to
+  /// only (`opc.tcp://hostname:port` in `UA_ServerConfig.serverUrls`):
+  /// `localhost` for a server that only its own machine may reach.
+  ///
+  /// ### Limits
+  ///
+  /// [limits], see [ServerLimits]: what is left `null` takes
+  /// [ServerLimits.defaults], an explicit 0 lifts a cap,
+  /// [ServerLimits.unlimited] lifts them all.
+  ///
+  /// A `Server()` with none of the security arguments is what it always
+  /// was (SecurityPolicy#None, anonymous, all interfaces), except that
+  /// clients may no longer add or delete nodes, and that the limits are
+  /// [ServerLimits.defaults] instead of open62541's (100 channels and
+  /// sessions, everything else unchecked).
   Server({
     LogLevel? logLevel,
     int? port,
+    String? hostname,
     String? applicationName,
     String? applicationUri,
     String? productName,
     String? manufacturerName,
     String? productUri,
-  }) {
+    Uint8List? certificate,
+    Uint8List? privateKey,
+    List<Uint8List>? trustList,
+    List<Uint8List>? issuerList,
+    List<Uint8List>? revocationList,
+    bool acceptAllClientCertificates = false,
+    bool? allowNone,
+    bool allowAnonymous = true,
+    Map<String, String>? users,
+    bool allowUnencryptedPassword = false,
+    bool allowClientNodeManagement = false,
+    ServerLimits limits = const ServerLimits(),
+    ServerAuthorization? authorization,
+  }) : allowNone = allowNone ?? certificate == null,
+       allowAnonymous = allowAnonymous,
+       allowClientNodeManagement = allowClientNodeManagement,
+       hostname = hostname,
+       hasCertificate = certificate != null,
+       acceptAllClientCertificates = acceptAllClientCertificates {
+    checkServerSecurityArguments(
+      certificate: certificate,
+      privateKey: privateKey,
+      trustList: trustList,
+      issuerList: issuerList,
+      revocationList: revocationList,
+      acceptAllClientCertificates: acceptAllClientCertificates,
+      allowNone: allowNone,
+      allowAnonymous: allowAnonymous,
+      users: users,
+      hostname: hostname,
+      limits: limits,
+    );
+    final logins = users ?? const <String, String>{};
+    final portNumber = port ?? 4840;
     // The config struct is scratch. UA_Server_newWithConfig moves its contents
     // into the server and zeroes the struct it was given, and a failing
-    // UA_ServerConfig_setMinimal clears it, so either way only the struct
-    // itself is left, for the arena to free.
+    // UA_ServerConfig_setMinimal / _setDefaultWithSecurityPolicies clears it,
+    // so either way only the struct itself is left, for the arena to free.
     using((arena) {
-      final config = arena<raw.UA_ServerConfig>();
+      if (certificate != null) {
+        // Before anything is allocated that a throw would leak: the server's
+        // certificate must carry the ApplicationUri it announces.
+        final uri = applicationUri ?? defaultServerApplicationUri;
+        final uriString = arena<raw.UA_String>()..ref.set(uri, allocator: arena);
+        final match = raw.UA_CertificateUtils_verifyApplicationUri(_byteString(arena, certificate), uriString);
+        if (match != raw.UA_STATUSCODE_GOOD) {
+          throw ArgumentError(
+            'the certificate does not carry the applicationUri "$uri" in its subjectAltName '
+            '(${statusCodeToString(match)}): clients check the two against each other, give the certificate\'s URI',
+          );
+        }
+      }
 
+      final config = arena<raw.UA_ServerConfig>();
       if (logLevel != null) {
         config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
       }
@@ -368,15 +974,95 @@ class Server {
         _refusePrivateKeyPassword,
         raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED,
       );
-      // setMinimal sets the logging level if not set.
-      int res = raw.UA_ServerConfig_setMinimal(config, port ?? 4840, ffi.nullptr);
-      if (res != raw.UA_STATUSCODE_GOOD) {
-        throw 'Failed to set default server config ${statusCodeToString(res)}';
+      // Both set the logging level if not set.
+      final int res;
+      if (certificate == null) {
+        res = raw.UA_ServerConfig_setMinimal(config, portNumber, ffi.nullptr);
+      } else {
+        // The certificate store copies the lists (UA_Array_copy into a
+        // UA_TrustListDataType) and the policies copy the certificate and
+        // the decrypted key, so all of this is scratch.
+        final trust = trustList ?? const <Uint8List>[];
+        final issuers = issuerList ?? const <Uint8List>[];
+        final crls = revocationList ?? const <Uint8List>[];
+        res = raw.UA_ServerConfig_setDefaultWithSecurityPolicies(
+          config,
+          portNumber,
+          _byteString(arena, certificate),
+          _byteString(arena, privateKey!),
+          _byteStrings(arena, trust),
+          trust.length,
+          _byteStrings(arena, issuers),
+          issuers.length,
+          _byteStrings(arena, crls),
+          crls.length,
+        );
       }
+      if (res != raw.UA_STATUSCODE_GOOD) {
+        throw UaStatusException(res);
+      }
+      // A DER key open62541 cannot use is copied unparsed; each secure
+      // policy then fails to build its context, which open62541 only logs,
+      // and the server would come up with the None endpoint alone.
+      if (certificate != null) {
+        var secure = 0;
+        for (var i = 0; i < config.ref.endpointsSize; i++) {
+          if (config.ref.endpoints[i].securityPolicyUri.value != securityPolicyNoneUri) secure++;
+        }
+        if (secure == 0) {
+          raw.UA_ServerConfig_clear(config);
+          throw UaStatusException(raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED);
+        }
+      }
+      // setMinimal sets its 2-minute asyncOperationTimeout only under
+      // UA_MULTITHREADING >= 100 (plugins/ua_config_default.c); this package
+      // builds single-threaded, which leaves 0, "never cancel": a parked
+      // method call or data-source write whose handler never completes
+      // would stay in flight (and in _inFlightMethodCalls/_inFlightWrites)
+      // for the life of the server. See [asyncOperationTimeout].
+      config.ref.asyncOperationTimeout = 120000;
+
+      // Authentication. Both set* functions installed the default plugin
+      // with anonymous only; it is re-created when the logins differ (the
+      // plugin copies the logins: plugins/ua_accesscontrol_default.c,
+      // UA_AccessControl_default, so the array is scratch).
+      if (!allowAnonymous || logins.isNotEmpty) {
+        final array = arena<raw.UA_UsernamePasswordLogin>(logins.length);
+        var i = 0;
+        for (final entry in logins.entries) {
+          array[i].username.set(entry.key, allocator: arena);
+          array[i].password.set(entry.value, allocator: arena);
+          i++;
+        }
+        final status = raw.UA_AccessControl_default(config, allowAnonymous, ffi.nullptr, logins.length, array);
+        if (status != raw.UA_STATUSCODE_GOOD) {
+          throw 'Failed to set up the server access control ${statusCodeToString(status)}';
+        }
+      }
+      config.ref.allowNonePolicyPassword = allowUnencryptedPassword;
+      // The plugin offers an X509 user-token policy whenever sessionPKI has
+      // a verifier, and the accept-all verifier is one: drop those policies
+      // unless a trust list backs them, so that a certificate login means
+      // a trusted certificate.
+      if (trustList == null || trustList.isEmpty) {
+        _dropUserTokenPolicies(config, raw.UA_UserTokenType.UA_USERTOKENTYPE_CERTIFICATE);
+      }
+      if (!this.allowNone) {
+        _dropNoneEndpoints(config);
+      }
+
+      // Listen address. setDefaultConfig put one URL, `opc.tcp://:port`, in
+      // serverUrls (UA_malloc'd); `set` frees that data and leaves a malloc'd
+      // copy that UA_ServerConfig_clean releases with the array.
+      if (hostname != null) {
+        config.ref.serverUrls[0].set('opc.tcp://$hostname:$portNumber');
+      }
+
+      _applyLimits(config, limits);
 
       // The identity strings go in before UA_Server_newWithConfig: server
       // init copies applicationUri into NamespaceArray[1], and startup writes
-      // it to ServerArray[0]. setMinimal allocated the defaults with UA_malloc
+      // it to ServerArray[0]. The defaults were allocated with UA_malloc
       // (plain malloc); `UA_String.set` frees that data and leaves a malloc'd
       // copy in its place, which UA_ServerConfig_clean releases with the rest
       // of the ApplicationDescription / BuildInfo when the server is deleted.
@@ -403,10 +1089,438 @@ class Server {
       _server = raw.UA_Server_newWithConfig(config);
       _config = raw.UA_Server_getConfig(_server);
     }, ua_calloc);
+
+    if (!allowClientNodeManagement) {
+      _installNodeManagementGuard();
+    }
+    if (authorization != null) {
+      _installAuthorization(authorization);
+    }
   }
 
   late ffi.Pointer<raw.UA_Server> _server;
   late ffi.Pointer<raw.UA_ServerConfig> _config;
+
+  /// Whether a SecurityPolicy#None endpoint is offered (see the
+  /// constructor's `allowNone`).
+  final bool allowNone;
+
+  /// Whether anonymous sessions are accepted.
+  final bool allowAnonymous;
+
+  /// Whether client sessions may add and delete nodes and references.
+  final bool allowClientNodeManagement;
+
+  /// The hostname the server binds, or `null` for all interfaces.
+  final String? hostname;
+
+  /// Whether the server has a certificate, and so offers the secure
+  /// policies.
+  final bool hasCertificate;
+
+  /// Whether every client certificate is accepted without verification.
+  final bool acceptAllClientCertificates;
+
+  /// Whether a username/password is accepted over a SecurityPolicy#None
+  /// channel, where it travels in clear text (`allowNonePolicyPassword`).
+  bool get allowUnencryptedPassword => _config.ref.allowNonePolicyPassword;
+
+  /// The endpoints on offer, each a security policy with a message security
+  /// mode, in the order open62541 lists them in GetEndpoints.
+  List<ServerEndpoint> get endpoints => [
+    for (var i = 0; i < _config.ref.endpointsSize; i++)
+      (
+        securityPolicyUri: _config.ref.endpoints[i].securityPolicyUri.value,
+        securityMode: _config.ref.endpoints[i].securityMode,
+      ),
+  ];
+
+  /// The limits in force, see [ServerLimits]: the defaults where the
+  /// constructor was given none; 0 is a lifted cap.
+  ServerLimits get limits => ServerLimits(
+    maxSecureChannels: _config.ref.maxSecureChannels,
+    maxSessions: _config.ref.maxSessions,
+    maxSubscriptions: _config.ref.maxSubscriptions,
+    maxSubscriptionsPerSession: _config.ref.maxSubscriptionsPerSession,
+    maxMonitoredItems: _config.ref.maxMonitoredItems,
+    maxMonitoredItemsPerSubscription: _config.ref.maxMonitoredItemsPerSubscription,
+    maxNodesPerRead: _config.ref.maxNodesPerRead,
+    maxNodesPerWrite: _config.ref.maxNodesPerWrite,
+    maxNodesPerBrowse: _config.ref.maxNodesPerBrowse,
+    maxNodesPerMethodCall: _config.ref.maxNodesPerMethodCall,
+    maxMessageSize: _config.ref.tcpMaxMsgSize,
+    maxChunkCount: _config.ref.tcpMaxChunks,
+  );
+
+  /// Writes [limits] to the config, a field left `null` as its default.
+  static void _applyLimits(ffi.Pointer<raw.UA_ServerConfig> config, ServerLimits limits) {
+    const d = ServerLimits.defaults;
+    final c = config.ref;
+    c.maxSecureChannels = limits.maxSecureChannels ?? d.maxSecureChannels!;
+    c.maxSessions = limits.maxSessions ?? d.maxSessions!;
+    c.maxSubscriptions = limits.maxSubscriptions ?? d.maxSubscriptions!;
+    c.maxSubscriptionsPerSession = limits.maxSubscriptionsPerSession ?? d.maxSubscriptionsPerSession!;
+    c.maxMonitoredItems = limits.maxMonitoredItems ?? d.maxMonitoredItems!;
+    c.maxMonitoredItemsPerSubscription = limits.maxMonitoredItemsPerSubscription ?? d.maxMonitoredItemsPerSubscription!;
+    c.maxNodesPerRead = limits.maxNodesPerRead ?? d.maxNodesPerRead!;
+    c.maxNodesPerWrite = limits.maxNodesPerWrite ?? d.maxNodesPerWrite!;
+    c.maxNodesPerBrowse = limits.maxNodesPerBrowse ?? d.maxNodesPerBrowse!;
+    c.maxNodesPerMethodCall = limits.maxNodesPerMethodCall ?? d.maxNodesPerMethodCall!;
+    c.tcpMaxMsgSize = limits.maxMessageSize ?? d.maxMessageSize!;
+    c.tcpMaxChunks = limits.maxChunkCount ?? d.maxChunkCount!;
+  }
+
+  /// Removes the SecurityPolicy#None endpoints from the config and leaves
+  /// the None policy for discovery only. The endpoint array is open62541's
+  /// (UA_realloc'd, released with `endpointsSize` entries by
+  /// `UA_ServerConfig_clean`), so the dropped entries are cleared and the
+  /// rest moved down in place.
+  static void _dropNoneEndpoints(ffi.Pointer<raw.UA_ServerConfig> config) {
+    final endpoints = config.ref.endpoints;
+    final size = ffi.sizeOf<raw.UA_EndpointDescription>();
+    var kept = 0;
+    for (var i = 0; i < config.ref.endpointsSize; i++) {
+      final endpoint = endpoints + i;
+      if (endpoint.ref.securityPolicyUri.value == securityPolicyNoneUri) {
+        raw.UA_clear(endpoint.cast(), getTypeByIndex(raw.UA_TYPES_ENDPOINTDESCRIPTION));
+        continue;
+      }
+      if (kept != i) {
+        (endpoints + kept).cast<ffi.Uint8>().asTypedList(size).setAll(0, endpoint.cast<ffi.Uint8>().asTypedList(size));
+      }
+      kept++;
+    }
+    config.ref.endpointsSize = kept;
+    config.ref.securityPolicyNoneDiscoveryOnly = true;
+  }
+
+  /// Removes the user-token policies of [tokenType] from the access-control
+  /// plugin's array (`UA_Array_new`'d, released with `userTokenPoliciesSize`
+  /// entries by the plugin's `clear`), the same way as [_dropNoneEndpoints].
+  static void _dropUserTokenPolicies(ffi.Pointer<raw.UA_ServerConfig> config, raw.UA_UserTokenType tokenType) {
+    final ac = config.ref.accessControl;
+    final policies = ac.userTokenPolicies;
+    final size = ffi.sizeOf<raw.UA_UserTokenPolicy>();
+    var kept = 0;
+    for (var i = 0; i < ac.userTokenPoliciesSize; i++) {
+      final policy = policies + i;
+      if (policy.ref.tokenType == tokenType) {
+        raw.UA_clear(policy.cast(), getTypeByIndex(raw.UA_TYPES_USERTOKENPOLICY));
+        continue;
+      }
+      if (kept != i) {
+        (policies + kept).cast<ffi.Uint8>().asTypedList(size).setAll(0, policy.cast<ffi.Uint8>().asTypedList(size));
+      }
+      kept++;
+    }
+    config.ref.accessControl.userTokenPoliciesSize = kept;
+  }
+
+  // ---- Node-management guard ----------------------------------------------
+  //
+  // open62541 consults accessControl.allowAddNode / allowAddReference /
+  // allowDeleteNode / allowDeleteReference for every session but its own
+  // admin session (src/server/ua_services_nodemanagement.c), and the default
+  // plugin answers true to all four. These replace them with a flat refusal:
+  // what reaches them is a client session by construction, so there is
+  // nothing to decide and nothing that can throw. The plugin's context and
+  // its other callbacks stay as they are. Like every native callback of the
+  // server they are called from run_iterate on the owning isolate and must
+  // outlive the server: closed in [delete], after UA_Server_delete.
+  ffi.NativeCallable<
+    ffi.Bool Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_AddNodesItem>,
+    )
+  >?
+  _allowAddNodeGuard;
+  ffi.NativeCallable<
+    ffi.Bool Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_AddReferencesItem>,
+    )
+  >?
+  _allowAddReferenceGuard;
+  ffi.NativeCallable<
+    ffi.Bool Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_DeleteNodesItem>,
+    )
+  >?
+  _allowDeleteNodeGuard;
+  ffi.NativeCallable<
+    ffi.Bool Function(
+      ffi.Pointer<raw.UA_Server>,
+      ffi.Pointer<raw.UA_AccessControl>,
+      ffi.Pointer<raw.UA_NodeId>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<raw.UA_DeleteReferencesItem>,
+    )
+  >?
+  _allowDeleteReferenceGuard;
+
+  void _installNodeManagementGuard() {
+    _allowAddNodeGuard =
+        ffi.NativeCallable<
+          ffi.Bool Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_AccessControl>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_AddNodesItem>,
+          )
+        >.isolateLocal(
+          (
+            ffi.Pointer<raw.UA_Server> server,
+            ffi.Pointer<raw.UA_AccessControl> ac,
+            ffi.Pointer<raw.UA_NodeId> sessionId,
+            ffi.Pointer<ffi.Void> sessionContext,
+            ffi.Pointer<raw.UA_AddNodesItem> item,
+          ) => false,
+          exceptionalReturn: false,
+        );
+    _allowAddReferenceGuard =
+        ffi.NativeCallable<
+          ffi.Bool Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_AccessControl>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_AddReferencesItem>,
+          )
+        >.isolateLocal(
+          (
+            ffi.Pointer<raw.UA_Server> server,
+            ffi.Pointer<raw.UA_AccessControl> ac,
+            ffi.Pointer<raw.UA_NodeId> sessionId,
+            ffi.Pointer<ffi.Void> sessionContext,
+            ffi.Pointer<raw.UA_AddReferencesItem> item,
+          ) => false,
+          exceptionalReturn: false,
+        );
+    _allowDeleteNodeGuard =
+        ffi.NativeCallable<
+          ffi.Bool Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_AccessControl>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_DeleteNodesItem>,
+          )
+        >.isolateLocal(
+          (
+            ffi.Pointer<raw.UA_Server> server,
+            ffi.Pointer<raw.UA_AccessControl> ac,
+            ffi.Pointer<raw.UA_NodeId> sessionId,
+            ffi.Pointer<ffi.Void> sessionContext,
+            ffi.Pointer<raw.UA_DeleteNodesItem> item,
+          ) => false,
+          exceptionalReturn: false,
+        );
+    _allowDeleteReferenceGuard =
+        ffi.NativeCallable<
+          ffi.Bool Function(
+            ffi.Pointer<raw.UA_Server>,
+            ffi.Pointer<raw.UA_AccessControl>,
+            ffi.Pointer<raw.UA_NodeId>,
+            ffi.Pointer<ffi.Void>,
+            ffi.Pointer<raw.UA_DeleteReferencesItem>,
+          )
+        >.isolateLocal(
+          (
+            ffi.Pointer<raw.UA_Server> server,
+            ffi.Pointer<raw.UA_AccessControl> ac,
+            ffi.Pointer<raw.UA_NodeId> sessionId,
+            ffi.Pointer<ffi.Void> sessionContext,
+            ffi.Pointer<raw.UA_DeleteReferencesItem> item,
+          ) => false,
+          exceptionalReturn: false,
+        );
+    final ac = _config.ref.accessControl;
+    ac.allowAddNode = _allowAddNodeGuard!.nativeFunction;
+    ac.allowAddReference = _allowAddReferenceGuard!.nativeFunction;
+    ac.allowDeleteNode = _allowDeleteNodeGuard!.nativeFunction;
+    ac.allowDeleteReference = _allowDeleteReferenceGuard!.nativeFunction;
+  }
+
+  // ---- Authorization ------------------------------------------------------
+  //
+  // The hooks of [ServerAuthorization] replace the plugin's
+  // getUserAccessLevel, getUserExecutable(OnObject) and allowBrowseNode, each
+  // only when given. activateSession and closeSession are wrapped around the
+  // plugin's own: every successful activation gets a fresh key in the
+  // session context (the default plugin leaves it NULL and never reads it),
+  // under which the session's identity is cached on first use, so a hook
+  // costs a map lookup. Closed in [delete], after UA_Server_delete, which
+  // still closes the open sessions through the wrapper.
+  static final _log = Logger('open62541.Server');
+  final List<ffi.NativeCallable> _authorizationCallbacks = [];
+  final Map<int, MethodSessionInfo> _authorizedSessions = {};
+  int _lastSessionKey = 0;
+  final Set<String> _authorizationHooksThatThrew = {};
+
+  void _installAuthorization(ServerAuthorization authorization) {
+    final ac = _config.ref.accessControl;
+    final activate = ac.activateSession.asFunction<_ActivateSession>();
+    final close = ac.closeSession.asFunction<_CloseSession>();
+    final activateWrapper = ffi.NativeCallable<_ActivateSessionNative>.isolateLocal((
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_AccessControl> ac,
+      ffi.Pointer<raw.UA_EndpointDescription> endpoint,
+      ffi.Pointer<raw.UA_ByteString> certificate,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<raw.UA_ExtensionObject> token,
+      ffi.Pointer<ffi.Pointer<ffi.Void>> sessionContext,
+    ) {
+      final status = activate(server, ac, endpoint, certificate, sessionId, token, sessionContext);
+      if (status == raw.UA_STATUSCODE_GOOD) {
+        try {
+          _authorizedSessions.remove(sessionContext.value.address);
+          sessionContext.value = ffi.Pointer.fromAddress(++_lastSessionKey);
+        } catch (_) {
+          return raw.UA_STATUSCODE_BADINTERNALERROR;
+        }
+      }
+      return status;
+    }, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
+    final closeWrapper = ffi.NativeCallable<_CloseSessionNative>.isolateLocal((
+      ffi.Pointer<raw.UA_Server> server,
+      ffi.Pointer<raw.UA_AccessControl> ac,
+      ffi.Pointer<raw.UA_NodeId> sessionId,
+      ffi.Pointer<ffi.Void> sessionContext,
+    ) {
+      try {
+        _authorizedSessions.remove(sessionContext.address);
+      } catch (_) {
+        // Nothing to undo: the entry is gone or never was.
+      }
+      close(server, ac, sessionId, sessionContext);
+    });
+    _authorizationCallbacks.addAll([activateWrapper, closeWrapper]);
+    ac.activateSession = activateWrapper.nativeFunction;
+    ac.closeSession = closeWrapper.nativeFunction;
+
+    final userAccessLevel = authorization.userAccessLevel;
+    if (userAccessLevel != null) {
+      final callback = ffi.NativeCallable<_NodeHookNative<raw.UA_Byte>>.isolateLocal((
+        ffi.Pointer<raw.UA_Server> server,
+        ffi.Pointer<raw.UA_AccessControl> ac,
+        ffi.Pointer<raw.UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<raw.UA_NodeId> nodeId,
+        ffi.Pointer<ffi.Void> nodeContext,
+      ) {
+        try {
+          final session = _authorizedSession(sessionId, sessionContext);
+          if (session == null) return 0;
+          return userAccessLevel(session, NodeIdFfi.fromRaw(nodeId.ref))?.value ?? 0xFF;
+        } catch (error, stack) {
+          _authorizationHookThrew('userAccessLevel', error, stack);
+          return 0;
+        }
+      }, exceptionalReturn: 0);
+      _authorizationCallbacks.add(callback);
+      ac.getUserAccessLevel = callback.nativeFunction;
+    }
+
+    final userExecutable = authorization.userExecutable;
+    if (userExecutable != null) {
+      bool decide(
+        ffi.Pointer<raw.UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<raw.UA_NodeId> methodId,
+        ffi.Pointer<raw.UA_NodeId> objectId,
+      ) {
+        try {
+          final session = _authorizedSession(sessionId, sessionContext);
+          if (session == null) return false;
+          final object = objectId == ffi.nullptr ? null : NodeIdFfi.fromRaw(objectId.ref);
+          return userExecutable(session, NodeIdFfi.fromRaw(methodId.ref), object);
+        } catch (error, stack) {
+          _authorizationHookThrew('userExecutable', error, stack);
+          return false;
+        }
+      }
+
+      final callback = ffi.NativeCallable<_NodeHookNative<ffi.Bool>>.isolateLocal(
+        (
+          ffi.Pointer<raw.UA_Server> server,
+          ffi.Pointer<raw.UA_AccessControl> ac,
+          ffi.Pointer<raw.UA_NodeId> sessionId,
+          ffi.Pointer<ffi.Void> sessionContext,
+          ffi.Pointer<raw.UA_NodeId> methodId,
+          ffi.Pointer<ffi.Void> methodContext,
+        ) => decide(sessionId, sessionContext, methodId, ffi.nullptr),
+        exceptionalReturn: false,
+      );
+      final onObject = ffi.NativeCallable<_ExecutableOnObjectNative>.isolateLocal(
+        (
+          ffi.Pointer<raw.UA_Server> server,
+          ffi.Pointer<raw.UA_AccessControl> ac,
+          ffi.Pointer<raw.UA_NodeId> sessionId,
+          ffi.Pointer<ffi.Void> sessionContext,
+          ffi.Pointer<raw.UA_NodeId> methodId,
+          ffi.Pointer<ffi.Void> methodContext,
+          ffi.Pointer<raw.UA_NodeId> objectId,
+          ffi.Pointer<ffi.Void> objectContext,
+        ) => decide(sessionId, sessionContext, methodId, objectId),
+        exceptionalReturn: false,
+      );
+      _authorizationCallbacks.addAll([callback, onObject]);
+      ac.getUserExecutable = callback.nativeFunction;
+      ac.getUserExecutableOnObject = onObject.nativeFunction;
+    }
+
+    final allowBrowse = authorization.allowBrowse;
+    if (allowBrowse != null) {
+      final callback = ffi.NativeCallable<_NodeHookNative<ffi.Bool>>.isolateLocal((
+        ffi.Pointer<raw.UA_Server> server,
+        ffi.Pointer<raw.UA_AccessControl> ac,
+        ffi.Pointer<raw.UA_NodeId> sessionId,
+        ffi.Pointer<ffi.Void> sessionContext,
+        ffi.Pointer<raw.UA_NodeId> nodeId,
+        ffi.Pointer<ffi.Void> nodeContext,
+      ) {
+        try {
+          final session = _authorizedSession(sessionId, sessionContext);
+          if (session == null) return false;
+          return allowBrowse(session, NodeIdFfi.fromRaw(nodeId.ref));
+        } catch (error, stack) {
+          _authorizationHookThrew('allowBrowse', error, stack);
+          return false;
+        }
+      }, exceptionalReturn: false);
+      _authorizationCallbacks.add(callback);
+      ac.allowBrowseNode = callback.nativeFunction;
+    }
+  }
+
+  /// The session behind a hook's arguments, resolved on its first hook call
+  /// after activation; `null` (deny) without one: a monitored item of a
+  /// subscription whose session timed out is sampled with no session.
+  MethodSessionInfo? _authorizedSession(ffi.Pointer<raw.UA_NodeId> sessionId, ffi.Pointer<ffi.Void> sessionContext) {
+    if (sessionId == ffi.nullptr || sessionContext == ffi.nullptr) return null;
+    final key = sessionContext.address;
+    final known = _authorizedSessions[key];
+    if (known != null) return known;
+    if (_server == ffi.nullptr) return null;
+    return _authorizedSessions[key] = _resolveSessionInfo(sessionId);
+  }
+
+  void _authorizationHookThrew(String hook, Object error, StackTrace stack) {
+    if (_authorizationHooksThatThrew.add(hook)) {
+      _log.severe('ServerAuthorization.$hook threw, the request is denied (logged once)', error, stack);
+    }
+  }
 
   /// The text of the `ApplicationDescription.applicationName` this server
   /// announces (open62541's default unless given to the constructor).
@@ -532,9 +1646,11 @@ class Server {
     _config.ref.asyncOperationCancelCallback = _asyncCancelDispatcher!.nativeFunction;
   }
 
-  /// The deadline open62541 gives an async operation (a parked method call)
-  /// before cancelling it with `Bad_Timeout` — `Duration.zero` means
-  /// unlimited. Defaults to 2 minutes (`UA_ServerConfig_setMinimal`).
+  /// The deadline open62541 gives an async operation (a parked method call
+  /// or data-source write) before cancelling it with `Bad_Timeout`, checked
+  /// once a second — `Duration.zero` means unlimited. Defaults to 2 minutes,
+  /// set by the constructor: `UA_ServerConfig_setMinimal` sets that value
+  /// only in a multithreaded build, and this package builds single-threaded.
   Duration get asyncOperationTimeout => Duration(milliseconds: _config.ref.asyncOperationTimeout.round());
   set asyncOperationTimeout(Duration timeout) {
     _config.ref.asyncOperationTimeout = timeout.inMilliseconds.toDouble();
@@ -669,7 +1785,11 @@ class Server {
   /// * [value] - The initial value and type information for the variable
   ///
   /// Optional parameters:
-  /// * [accessLevel] - Controls read/write access to the variable (defaults to read and write enabled)
+  /// * [accessLevel] - Controls client access to the variable. Defaults to
+  ///   read-only: a client write is refused with `Bad_UserAccessDenied`. Pass
+  ///   `const AccessLevelMask(read: true, write: true)` for a node clients may
+  ///   write. [Server.write] is unaffected: the server's own writes bypass the
+  ///   access level.
   /// * [parentNodeId] - The parent node in the address space (defaults to Objects folder)
   /// * [parentReferenceNodeId] - The reference type to the parent (defaults to Organizes)
   /// * [basedatavariableType] - The base type for the variable (defaults to BaseDataVariableType)
@@ -693,7 +1813,7 @@ class Server {
   void addVariableNode(
     NodeId variableNodeId,
     DynamicValue value, {
-    AccessLevelMask accessLevel = const AccessLevelMask(read: true, write: true),
+    AccessLevelMask accessLevel = const AccessLevelMask(read: true),
     NodeId? parentNodeId,
     NodeId? parentReferenceNodeId,
     NodeId? baseDataVariableType,
@@ -1246,6 +2366,19 @@ class Server {
     return index;
   }
 
+  /// Publishes the DataType node [requestedNewNodeId] (by default a
+  /// HasSubtype child of Structure) and, for a structured type open62541
+  /// knows under that id, its `Default Binary` DataTypeEncoding object with
+  /// the HasEncoding reference to it (see `_publishDefaultBinaryEncoding`).
+  ///
+  /// The type is one registered with [addCustomType] (the encoding id is
+  /// the one documented there) or a bundled NS0 structure the reduced
+  /// nodeset does not ship as a node — `EndpointUrlListDataType` i=11943,
+  /// `NetworkGroupDataType` i=11944 (`ServerNetworkGroups` needs both) —
+  /// which gets its bundled encoding object, i=11957 / i=11958
+  /// (`<Type>_Encoding_DefaultBinary` as in the full nodeset), not a derived
+  /// string id. An enum, or a DataType open62541 does not know, gets the
+  /// node only.
   void addDataTypeNode(
     NodeId requestedNewNodeId,
     String browseName, {
@@ -1274,6 +2407,53 @@ class Server {
         getType(UaTypes.dataTypeAttributes),
       );
     }, ua_calloc);
+    _publishDefaultBinaryEncoding(requestedNewNodeId);
+  }
+
+  /// Publishes the `Default Binary` DataTypeEncoding object of the custom
+  /// structured DataType [typeId] (registered with [addCustomType]) and the
+  /// HasEncoding reference from the DataType node to it.
+  ///
+  /// OPC 10000-3 §8.2 / 10000-6 §5.2.2.15: a structured DataType has an
+  /// Object of type DataTypeEncodingType (i=76), BrowseName `0:Default
+  /// Binary`, no parent (as NS0's own `Argument_Encoding_DefaultBinary`),
+  /// reached from the DataType node via HasEncoding (i=38); its NodeId is
+  /// the one every ExtensionObject of the type carries. open62541 derives
+  /// the DataTypeDefinition (including `defaultEncodingId`) from the
+  /// registered `UA_DataType` but never creates the node or the reference,
+  /// so a client that resolves the type by browsing HasEncoding, or that
+  /// looks the wire id up in the address space, found nothing. A DataType
+  /// that is not a registered structure (an enum from [_addEnumType], a type
+  /// whose encoding id is its own id) gets no encoding object.
+  void _publishDefaultBinaryEncoding(NodeId typeId) {
+    final type = _findDataType(typeId);
+    if (type == ffi.nullptr) return;
+    final kind = type.ref.typeKind;
+    if (kind != raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE &&
+        kind != raw.UA_DataTypeKind.UA_DATATYPEKIND_OPTSTRUCT &&
+        kind != raw.UA_DataTypeKind.UA_DATATYPEKIND_UNION) {
+      return;
+    }
+    final encodingId = type.ref.binaryEncodingId.toNodeId();
+    if (encodingId == typeId || encodingId == NodeId.nullId) return;
+    // As in addDataTypeNode: the attributes are scratch in the arena.
+    using((arena) {
+      final attr = arena<raw.UA_ObjectAttributes>();
+      attr.ref = raw.UA_ObjectAttributes_default;
+      attr.ref.displayName.text.set('Default Binary', allocator: arena);
+      _addNode(
+        raw.UA_NodeClass.UA_NODECLASS_OBJECT,
+        encodingId,
+        NodeId.nullId,
+        NodeId.nullId,
+        'Default Binary',
+        NodeId.dataTypeEncodingType,
+        attr.cast(),
+        getType(UaTypes.objectAttributes),
+        browseNameNs: 0,
+      );
+    }, ua_calloc);
+    addReference(typeId, NodeId.hasEncoding, encodingId);
   }
 
   /// Resolves the identity of the session behind a native callback's
@@ -1283,7 +2463,7 @@ class Server {
   /// session-owned memory, which this method fully copies into Dart values
   /// before returning.
   MethodSessionInfo _resolveSessionInfo(ffi.Pointer<raw.UA_NodeId> sessionIdPtr) {
-    final sessionId = NodeId.fromRaw(sessionIdPtr.ref);
+    final sessionId = NodeIdFfi.fromRaw(sessionIdPtr.ref);
 
     // An empty UA_String can carry a null data pointer; treat it as ''.
     String uaStr(raw.UA_String s) => s.length == 0 ? '' : s.value;
@@ -1342,7 +2522,7 @@ class Server {
       final entries = diagVariant.ref.data.cast<raw.UA_SessionSecurityDiagnosticsDataType>();
       for (var i = 0; i < diagVariant.ref.arrayLength; i++) {
         final entry = (entries + i).ref;
-        if (NodeId.fromRaw(entry.sessionId) != sessionId) continue;
+        if (NodeIdFfi.fromRaw(entry.sessionId) != sessionId) continue;
         final userId = clientUserId ?? uaStr(entry.clientUserIdOfSession);
         identity = switch (uaStr(entry.authenticationMechanism)) {
           'Anonymous' => const AnonymousSessionIdentity(),
@@ -1360,11 +2540,9 @@ class Server {
     // Fallback when the diagnostics array is unavailable but the session
     // exists: an empty clientUserId means anonymous, a non-empty one means a
     // username token (open62541 fills it from the UserNameIdentityToken; an
-    // X509 subject name would be misattributed here). The server advertises
-    // the certificate token, because setMinimal leaves the session PKI on
-    // AcceptAll, but no client can present one: an X509 token needs a
-    // signature by a SecurityPolicy other than None, the only one setMinimal
-    // configures.
+    // X509 subject name would be misattributed here, but an X509 token needs
+    // a signature by a SecurityPolicy other than None, the only one setMinimal
+    // configures, and a server with a certificate has diagnostics).
     if (identity == null && clientUserId != null) {
       identity = clientUserId.isEmpty ? const AnonymousSessionIdentity() : UsernameSessionIdentity(clientUserId);
     }
@@ -1945,7 +3123,7 @@ class Server {
           throw UaStatusException(result.ref.statusCode);
         }
         return [
-          for (var i = 0; i < result.ref.referencesSize; i++) NodeId.fromRaw(result.ref.references[i].nodeId.nodeId),
+          for (var i = 0; i < result.ref.referencesSize; i++) NodeIdFfi.fromRaw(result.ref.references[i].nodeId.nodeId),
         ];
       } finally {
         raw.UA_clear(result.cast(), getType(UaTypes.browseResult));
@@ -2584,7 +3762,8 @@ class Server {
   /// not possible through this call.
   ///
   /// [RedundancySupport.none] puts `ServerRedundancy` back on the base type,
-  /// deletes `ServerUriArray` and reports `None`; it takes no [serverUris].
+  /// deletes `ServerUriArray` (and `ServerNetworkGroups`) and reports `None`;
+  /// it takes no [serverUris] and no [networkGroups].
   /// Every other mode requires a non-empty [serverUris]: Part 5 specifies
   /// the *server URIs* (the `applicationUri` of each member) in the order a
   /// client should try them. §6.3.9 requires the local server among them,
@@ -2597,8 +3776,29 @@ class Server {
   /// ([ArgumentError]): it calls for `TransparentRedundancyType`, which this
   /// does not model.
   ///
+  /// A ServerUri is an identity, not an address. With [networkGroups] the
+  /// set is published the way Part 5 §6.3.10 lets a client find the members
+  /// from one of them: `ServerRedundancy` is typed
+  /// `NonTransparentNetworkRedundancyType` (`i=11945`, a subtype of `i=2039`
+  /// with the mandatory `ServerNetworkGroups` property `i=11948`), and
+  /// `ServerNetworkGroups` (`i=14415`, a `NetworkGroupDataType[]`) lists, in
+  /// the order of `ServerUriArray`, one `NetworkGroupDataType` per member:
+  /// its ServerUri and, as its single network path, an
+  /// `EndpointUrlListDataType` holding the endpoint URLs the map gives for it
+  /// (a member mapped to an empty list has no path). §6.3.10 wants the
+  /// ServerUris of the groups to be those of `ServerUriArray`, so the map's
+  /// keys must be exactly the members, the local server's ApplicationUri
+  /// ([applicationUri]) included; a stranger or a missing member is an
+  /// [ArgumentError]. The DataType nodes `EndpointUrlListDataType`
+  /// (`i=11943`) and `NetworkGroupDataType` (`i=11944`), which the reduced
+  /// NS0 lacks although open62541 knows both types, are added as `Structure`
+  /// subtypes, so a client can read the property's DataType and its
+  /// DataTypeDefinition. A call without [networkGroups] on a server that had
+  /// them removes `ServerNetworkGroups` and types the object
+  /// `NonTransparentRedundancyType` again.
+  ///
   /// Callable before or after [start], and again at any time: the mode and
-  /// the array are updated in place (a member joining or leaving the set).
+  /// the arrays are updated in place (a member joining or leaving the set).
   /// A configuration made before [start] survives it: open62541 deletes the
   /// standard `ServerUriArray` when the server is *created*
   /// (`UA_Server_init` → `initNS0` → `configureNS0`), and
@@ -2611,9 +3811,18 @@ class Server {
   /// server.setRedundancy(
   ///   RedundancySupport.hot,
   ///   serverUris: ['urn:plant:opcua:a', 'urn:plant:opcua:b'],
+  ///   networkGroups: {
+  ///     server.applicationUri: ['opc.tcp://me:4840'],
+  ///     'urn:plant:opcua:a': ['opc.tcp://a:4840'],
+  ///     'urn:plant:opcua:b': ['opc.tcp://b:4840', 'opc.tcp://b-alt:4840'],
+  ///   },
   /// );
   /// ```
-  void setRedundancy(RedundancySupport support, {List<String> serverUris = const []}) {
+  void setRedundancy(
+    RedundancySupport support, {
+    List<String> serverUris = const [],
+    Map<String, List<String>>? networkGroups,
+  }) {
     if (support == RedundancySupport.transparent) {
       throw ArgumentError.value(
         support,
@@ -2624,29 +3833,73 @@ class Server {
     if (support == RedundancySupport.none && serverUris.isNotEmpty) {
       throw ArgumentError.value(serverUris, 'serverUris', 'RedundancySupport.none publishes no ServerUriArray');
     }
+    if (support == RedundancySupport.none && networkGroups != null) {
+      throw ArgumentError.value(
+        networkGroups,
+        'networkGroups',
+        'RedundancySupport.none publishes no ServerNetworkGroups',
+      );
+    }
     if (support != RedundancySupport.none && serverUris.isEmpty) {
       throw ArgumentError.value(serverUris, 'serverUris', 'a redundant set needs at least one server URI');
     }
+    // Part 5 §6.3.9: the array shall contain the local server.
+    final ownUri = _config.ref.applicationDescription.applicationUri.value;
+    final members = serverUris.contains(ownUri) ? serverUris : [ownUri, ...serverUris];
+    if (networkGroups != null) {
+      // §6.3.10: the ServerUris of the groups are those of ServerUriArray.
+      final strangers = networkGroups.keys.where((uri) => !members.contains(uri)).toList();
+      final missing = members.where((uri) => !networkGroups.containsKey(uri)).toList();
+      if (strangers.isNotEmpty || missing.isNotEmpty) {
+        throw ArgumentError.value(
+          networkGroups,
+          'networkGroups',
+          'the keys must be exactly the members of the set (ServerUriArray: $members)'
+              '${strangers.isEmpty ? '' : '; not members: $strangers'}'
+              '${missing.isEmpty ? '' : '; without a group: $missing'}',
+        );
+      }
+    }
 
+    final serverNetworkGroups = NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERREDUNDANCY_SERVERNETWORKGROUPS);
     if (support == RedundancySupport.none) {
       setTypeDefinition(NodeId.serverRedundancy, NodeId.fromNumeric(0, raw.UA_NS0ID_SERVERREDUNDANCYTYPE));
-      if (_nodeExists(NodeId.serverUriArray)) {
-        deleteNode(NodeId.serverUriArray);
+      for (final property in [NodeId.serverUriArray, serverNetworkGroups]) {
+        if (_nodeExists(property)) {
+          deleteNode(property);
+        }
       }
     } else {
       final nonTransparentType = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANSPARENTREDUNDANCYTYPE);
       if (!_nodeExists(nonTransparentType)) {
         _addNonTransparentRedundancyType(nonTransparentType);
       }
-      setTypeDefinition(NodeId.serverRedundancy, nonTransparentType);
-      // Part 5 §6.3.9: the array shall contain the local server.
-      final ownUri = _config.ref.applicationDescription.applicationUri.value;
-      final members = serverUris.contains(ownUri) ? serverUris : [ownUri, ...serverUris];
+      if (networkGroups != null) {
+        final networkType = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANSPARENTNETWORKREDUNDANCYTYPE);
+        _ensureNetworkGroupDataTypes();
+        if (!_nodeExists(networkType)) {
+          _addNonTransparentNetworkRedundancyType(networkType, parentType: nonTransparentType);
+        }
+        setTypeDefinition(NodeId.serverRedundancy, networkType);
+      } else {
+        setTypeDefinition(NodeId.serverRedundancy, nonTransparentType);
+        if (_nodeExists(serverNetworkGroups)) {
+          deleteNode(serverNetworkGroups);
+        }
+      }
       final uris = DynamicValue.fromList(members, typeId: NodeId.uastring, name: 'ServerUriArray');
       if (_nodeExists(NodeId.serverUriArray)) {
         write(NodeId.serverUriArray, uris);
       } else {
         _addNs0Property(NodeId.serverUriArray, NodeId.serverRedundancy, uris);
+      }
+      if (networkGroups != null) {
+        final groups = _networkGroupsValue([for (final uri in members) (uri, networkGroups[uri]!)]);
+        if (_nodeExists(serverNetworkGroups)) {
+          write(serverNetworkGroups, groups);
+        } else {
+          _addNs0Property(serverNetworkGroups, NodeId.serverRedundancy, groups);
+        }
       }
     }
 
@@ -2655,6 +3908,86 @@ class Server {
     setVariableValueSource(
       NodeId.redundancySupport,
       onRead: () => DynamicValue(value: _redundancySupport.value, typeId: NodeId.int32, name: 'RedundancySupport'),
+    );
+  }
+
+  /// A `NetworkGroupDataType[]` named `ServerNetworkGroups`: one group per
+  /// `(serverUri, endpointUrls)` of [groups], each with one network path (an
+  /// `EndpointUrlListDataType`) holding its URLs, or no path for an empty
+  /// list. The NS0 struct type ids are enough: `valueToVariant` encodes a
+  /// struct of a type open62541 knows with its DefaultBinary encoding id.
+  static DynamicValue _networkGroupsValue(List<(String, List<String>)> groups) {
+    final networkGroupType = NodeId.fromNumeric(0, raw.UA_NS0ID_NETWORKGROUPDATATYPE);
+    final endpointUrlListType = NodeId.fromNumeric(0, raw.UA_NS0ID_ENDPOINTURLLISTDATATYPE);
+    return DynamicValue.fromList(
+      [
+        for (final (uri, urls) in groups)
+          DynamicValue(typeId: networkGroupType)
+            ..['ServerUri'] = DynamicValue(value: uri, typeId: NodeId.uastring)
+            ..['NetworkPaths'] = DynamicValue.fromList([
+              if (urls.isNotEmpty)
+                DynamicValue(typeId: endpointUrlListType)
+                  ..['EndpointUrlList'] = DynamicValue.fromList(urls, typeId: NodeId.uastring),
+            ], typeId: endpointUrlListType),
+      ],
+      typeId: networkGroupType,
+      name: 'ServerNetworkGroups',
+    );
+  }
+
+  /// Adds the DataType nodes `EndpointUrlListDataType` (`i=11943`) and
+  /// `NetworkGroupDataType` (`i=11944`) as subtypes of `Structure` when the
+  /// address space lacks them. open62541's reduced NS0 nodeset has neither,
+  /// although its `UA_TYPES` table knows both types, so once the nodes exist
+  /// it serves their DataTypeDefinition from the table. Their
+  /// `_Encoding_DefaultBinary` objects cannot be added (the nodeset has no
+  /// `HasEncoding` reference type); harmless on the wire, where the encoding
+  /// id travels in the value.
+  void _ensureNetworkGroupDataTypes() {
+    for (final (id, name) in [
+      (raw.UA_NS0ID_ENDPOINTURLLISTDATATYPE, 'EndpointUrlListDataType'),
+      (raw.UA_NS0ID_NETWORKGROUPDATATYPE, 'NetworkGroupDataType'),
+    ]) {
+      final typeId = NodeId.fromNumeric(0, id);
+      if (_nodeExists(typeId)) continue;
+      // As in addDataTypeNode: the attributes are scratch in the arena.
+      using((arena) {
+        final attr = arena<raw.UA_DataTypeAttributes>();
+        attr.ref.displayName.text.set(name, allocator: arena);
+        _addNode(
+          raw.UA_NodeClass.UA_NODECLASS_DATATYPE,
+          typeId,
+          NodeId.structure,
+          NodeId.hasSubtype,
+          name,
+          NodeId.nullId,
+          attr.cast(),
+          getType(UaTypes.dataTypeAttributes),
+          browseNameNs: 0,
+        );
+      }, ua_calloc);
+    }
+  }
+
+  /// Adds `NonTransparentNetworkRedundancyType` (Part 5 §6.3.10) as [typeId]:
+  /// a subtype of `NonTransparentRedundancyType` ([parentType]) with the
+  /// mandatory `ServerNetworkGroups` property (`i=11948`, an empty
+  /// `NetworkGroupDataType[]`), with `0:` browse names like the rest of NS0.
+  void _addNonTransparentNetworkRedundancyType(NodeId typeId, {required NodeId parentType}) {
+    _addObjectTypeNode(
+      typeId,
+      0,
+      'NonTransparentNetworkRedundancyType',
+      parentType: parentType,
+      displayName: LocalizedText('NonTransparentNetworkRedundancyType', ''),
+      isAbstract: false,
+    );
+    final declaration = NodeId.fromNumeric(0, raw.UA_NS0ID_NONTRANSPARENTNETWORKREDUNDANCYTYPE_SERVERNETWORKGROUPS);
+    _addNs0Property(declaration, typeId, _networkGroupsValue(const []));
+    addReference(
+      declaration,
+      NodeId.fromNumeric(0, raw.UA_NS0ID_HASMODELLINGRULE),
+      NodeId.fromNumeric(0, raw.UA_NS0ID_MODELLINGRULE_MANDATORY),
     );
   }
 
@@ -2726,8 +4059,9 @@ class Server {
     String browseName,
     NodeId typeDefinition,
     ffi.Pointer<raw.UA_NodeAttributes> attr,
-    ffi.Pointer<raw.UA_DataType> attributeType,
-  ) {
+    ffi.Pointer<raw.UA_DataType> attributeType, {
+    int browseNameNs = 1,
+  }) {
     // open62541 deep-copies the NodeId arguments and the browse name (both
     // begin and finish use copies), so they are scratch in the arena, released
     // whether or not the calls succeed.
@@ -2741,7 +4075,7 @@ class Server {
         requestedRaw,
         parentNodeId.toRaw(allocator: arena),
         referenceTypeId.toRaw(allocator: arena),
-        raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: arena).cast()),
+        raw.UA_QUALIFIEDNAME(browseNameNs, browseName.toNativeUtf8(allocator: arena).cast()),
         typeDefinition.toRaw(allocator: arena),
         attr.cast(),
         attributeType,
@@ -2908,7 +4242,33 @@ class Server {
     );
   }
 
-  // populate structschema for out type
+  /// Registers a custom structured DataType [typeId] whose fields are the
+  /// members of the object [value] (a schema: each field's `typeId` is its
+  /// DataType, `isArray` / `isOptional` as declared, values are placeholders).
+  /// Publish its DataType node with [addDataTypeNode].
+  ///
+  /// The type's DefaultBinary DataTypeEncoding NodeId — what every
+  /// ExtensionObject of this type carries on the wire, what the DataType
+  /// node's `DataTypeDefinition.defaultEncodingId` names, and the NodeId of
+  /// the `Default Binary` object [addDataTypeNode] publishes — is derived
+  /// from [typeId]: `ns=N;s=Name` gets `ns=N;s=Name_Encoding_DefaultBinary`
+  /// (the OPC UA naming convention); a numeric or other identifier gets a
+  /// string id derived the same way from its text (`ns=N;i=42` →
+  /// `ns=N;s=42_Encoding_DefaultBinary`). The rule is stable: it is the id a
+  /// client matches the wire against.
+  ///
+  /// A second registration of the same [typeId] is ignored (the first
+  /// schema stays in force).
+  ///
+  /// The encoding-id registry is process-global, not per server: a [Client]
+  /// in the same process that writes a value built from scratch (a `typeId`
+  /// and no `extObjEncodingId`) of a DataType id some local [Server]
+  /// registered encodes it with that server's encoding id, also when the
+  /// write goes to a foreign server that uses the same DataType id with a
+  /// different encoding id. A value built from a definition fetched from
+  /// the server it is written to (`readAttribute` DATATYPEDEFINITION,
+  /// `DynamicValue.from`) carries that server's id as its
+  /// `extObjEncodingId` and is unaffected.
   void addCustomType(NodeId typeId, DynamicValue value) {
     if (!value.isObject) {
       throw 'Value must be a object';
@@ -2933,29 +4293,31 @@ class Server {
     array.ref.typesSize = 1;
     array.ref.types = ua_calloc<raw.UA_DataType>(1);
     array.ref.types[0].typeId = typeId.toRaw();
-    // Derive the DefaultBinary DataTypeEncoding NodeId from the typeId, which
-    // is unique by construction. Deriving it from `value.name` (as done
-    // previously) collides for same-namespace types with a null or duplicate
-    // name - e.g. nested auto-registered schemas - and open62541 resolves an
-    // incoming ExtensionObject by the FIRST type whose encoding id matches, so
-    // colliding ids made client writes decode against the wrong schema. Keep
-    // this derivation stable: it is part of the wire contract for this type.
-    array.ref.types[0].binaryEncodingId = NodeId.fromString(typeId.namespace, "BinaryEncoding_Default:$typeId").toRaw();
+    // The DefaultBinary DataTypeEncoding NodeId, derived from the typeId (see
+    // defaultBinaryEncodingIdOf for the rule). Deriving it from `value.name`
+    // (as done once) collides for same-namespace types with a null or
+    // duplicate name - e.g. nested auto-registered schemas - and open62541
+    // resolves an incoming ExtensionObject by the FIRST type whose encoding id
+    // matches, so colliding ids made client writes decode against the wrong
+    // schema. open62541 copies this id into the DataTypeDefinition it answers
+    // for the DataType node (`defaultEncodingId`) and matches incoming
+    // ExtensionObjects against it; the serializer puts it on every
+    // ExtensionObject this process writes for the type (which, before, carried
+    // the DataType id: a 1.04 client matching the wire against the
+    // defaultEncodingId it fetched showed an opaque ExtensionObject).
+    final binaryEncodingId = defaultBinaryEncodingIdOf(typeId);
+    array.ref.types[0].binaryEncodingId = binaryEncodingId.toRaw();
+    registerCustomBinaryEncodingId(typeId, binaryEncodingId);
 
-    array.ref.types[0].typeKind = raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
+    // A struct with an optional field is an OPTSTRUCT: an encoding mask leads
+    // the body on the wire and the field is a pointer in memory.
+    array.ref.types[0].typeKind = value.asObject.values.any((member) => member.isOptional)
+        ? raw.UA_DataTypeKind.UA_DATATYPEKIND_OPTSTRUCT
+        : raw.UA_DataTypeKind.UA_DATATYPEKIND_STRUCTURE;
 
     final memberCount = value.asObject.length;
     array.ref.types[0].membersSize = memberCount;
     array.ref.types[0].members = ua_calloc<raw.UA_DataTypeMember>(memberCount);
-    // Accumulate the in-memory size of the struct. open62541 materialises the
-    // struct in native memory (e.g. when validating/decoding the value) by
-    // walking the members: each member is placed at the running offset plus its
-    // `padding`, then the offset advances by the member type's `memSize`. With a
-    // packed layout (padding == 0) the total size must therefore equal the sum
-    // of the member type sizes. A too-small `memSize` makes open62541 write
-    // past the allocation while placing pointer-bearing members (e.g. UA_String),
-    // corrupting the heap and aborting the process.
-    int memSize = 0;
     for (var i = 0; i < memberCount; i++) {
       final entry = value.asObject.entries.elementAt(i);
       final member = entry.value;
@@ -2981,12 +4343,8 @@ class Server {
       array.ref.types[0].members[i].memberType = memberType;
       array.ref.types[0].members[i].isOptional = member.isOptional;
       array.ref.types[0].members[i].isArray = member.isArray;
-      array.ref.types[0].members[i].padding = 0;
-      // Arrays are stored as a (size_t length, T* data) pair in the native
-      // struct; scalar members occupy the member type's own size.
-      memSize += member.isArray ? ffi.sizeOf<ffi.Size>() + ffi.sizeOf<ffi.Pointer<ffi.Void>>() : memberType.ref.memSize;
     }
-    array.ref.types[0].memSize = memSize;
+    layoutStructure(array.ref.types);
 
     // Have open62541 clear the pointers we are allocating here on configuration clean-up
     array.ref.cleanup = true;
@@ -3886,6 +5244,22 @@ class Server {
     _historizingNodes.clear();
     _asyncCancelDispatcher?.close();
     _asyncCancelDispatcher = null;
+    // The node-management guard: open62541 no longer calls into the access
+    // control plugin once the server is deleted.
+    _allowAddNodeGuard?.close();
+    _allowAddReferenceGuard?.close();
+    _allowDeleteNodeGuard?.close();
+    _allowDeleteReferenceGuard?.close();
+    _allowAddNodeGuard = null;
+    _allowAddReferenceGuard = null;
+    _allowDeleteNodeGuard = null;
+    _allowDeleteReferenceGuard = null;
+    // The authorization hooks and session wrappers, likewise.
+    for (final callback in _authorizationCallbacks) {
+      callback.close();
+    }
+    _authorizationCallbacks.clear();
+    _authorizedSessions.clear();
     if (ret != 0) {
       throw "Failed to delete server ${statusCodeToString(ret)}";
     }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -13,6 +14,7 @@ import 'extensions.dart';
 import 'node_id.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
+import 'types/endpoint_description.dart';
 import 'types/native_decode.dart';
 import 'types/opcua_serializer.dart';
 import 'ua_allocation.dart';
@@ -227,11 +229,9 @@ class ClientConfig {
 
   /// The `applicationUri` of the ApplicationDescription this client presents
   /// in CreateSession. Set it **before** connecting. On the server it
-  /// surfaces as `MethodSessionInfo.applicationUri`. It is not taken from the
-  /// client certificate: when connecting with one, it must equal the
-  /// certificate's URI SubjectAltName, which open62541 only warns about on
-  /// the client while the server rejects the session with
-  /// `BadCertificateInvalid`.
+  /// surfaces as `MethodSessionInfo.applicationUri`. Note: when connecting
+  /// with a certificate, open62541 overwrites this with the URI embedded in
+  /// the certificate.
   String get applicationUri => _clientConfig.ref.clientDescription.applicationUri.value;
   set applicationUri(String uri) {
     _clientConfig.ref.clientDescription.applicationUri.set(uri);
@@ -290,12 +290,194 @@ class ClientConfig {
 
 typedef ReadAttributeParam = Map<NodeId, List<AttributeId>>;
 
-// Installed on every client config: open62541 reads a private key password
-// from stdin when a key does not parse and no callback is set.
-int _refusePrivateKeyPassword(ffi.Pointer<raw.UA_ClientConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
-    raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED;
+/// The Bad status of the one BrowseResult of a Browse. Surfaces from
+/// [Client.browse] with the message it always had; typed so the client's own
+/// lookups can tell "no such node" from a failed service.
+class _BrowseResultError implements Exception {
+  const _BrowseResultError(this.statusCode);
+  final int statusCode;
+  @override
+  String toString() => 'Browse result error: ${statusCodeToString(statusCode)}';
+}
 
+/// Checks that the certificate arguments of a [Client] make sense together
+/// and throws an [ArgumentError] when they do not. `ClientIsolate.create`
+/// forwards the same arguments and runs this check first, on the calling
+/// isolate, so a bad combination is an exception there and not an error lost
+/// in a worker that never got a client.
+///
+/// The rules:
+///  * [certificate] and [privateKey] come together.
+///  * The lists and [acceptAllCertificates] need a certificate: the server
+///    certificate is only verified on a channel with a security policy, and
+///    a client without a certificate offers SecurityPolicy#None only.
+///  * With a certificate, either a non-empty [trustList] or
+///    `acceptAllCertificates: true`; not both, and not neither. open62541's
+///    `UA_ClientConfig_setDefaultEncryption` treats an empty trust list as
+///    "leave the previous verification in place", which is accept-all with a
+///    warning in the log; refusing it here makes accepting any server an
+///    explicit choice. An [issuerList] or [revocationList] alone is refused
+///    for the same reason: issuer certificates only complete a chain, they
+///    cannot anchor trust.
+///  * The [privateKey] is not encrypted (a PKCS#8 `EncryptedPrivateKeyInfo`,
+///    DER or PEM, or a legacy PEM with `Proc-Type: 4,ENCRYPTED`): open62541
+///    would ask for its password on stdin and block the process.
+void checkClientCertificateArguments({
+  required Uint8List? certificate,
+  required Uint8List? privateKey,
+  required List<Uint8List>? trustList,
+  required List<Uint8List>? issuerList,
+  required List<Uint8List>? revocationList,
+  required bool acceptAllCertificates,
+}) {
+  if ((certificate == null) != (privateKey == null)) {
+    throw ArgumentError('certificate and privateKey come together; got only one of them');
+  }
+  if (privateKey != null && isEncryptedPrivateKey(privateKey)) {
+    throw ArgumentError.value(
+      '<${privateKey.length} bytes>',
+      'privateKey',
+      'is encrypted; pass the decrypted key (DER). open62541 would prompt for its password on stdin',
+    );
+  }
+  final hasLists = trustList != null || issuerList != null || revocationList != null;
+  if (certificate == null) {
+    if (hasLists || acceptAllCertificates) {
+      throw ArgumentError(
+        'trustList, issuerList, revocationList and acceptAllCertificates need a certificate and privateKey: '
+        'without them the client offers SecurityPolicy#None only and never sees a server certificate to verify',
+      );
+    }
+    return;
+  }
+  if (acceptAllCertificates) {
+    if (hasLists) {
+      throw ArgumentError(
+        'acceptAllCertificates: true and a trustList/issuerList/revocationList contradict each other',
+      );
+    }
+    return;
+  }
+  if (trustList == null || trustList.isEmpty) {
+    throw ArgumentError(
+      'a certificate needs a non-empty trustList (the server certificates, or the CA certificates that issued '
+      'them, DER), or acceptAllCertificates: true to skip server authentication. open62541 treats an empty '
+      'trust list as "accept every certificate", so an empty one is refused rather than silently accepting any server',
+    );
+  }
+}
+
+/// open62541's `privateKeyPasswordCallback`, which it calls when the key
+/// does not load without a password and otherwise replaces by a prompt on
+/// stdin. It hands over no password, so open62541 retries with an empty one
+/// and returns its own status for the key.
+int _noPrivateKeyPassword(ffi.Pointer<raw.UA_ClientConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
+    raw.UA_STATUSCODE_GOOD;
+
+/// A `UA_ByteString` in [arena] holding a copy of [bytes].
+ffi.Pointer<raw.UA_ByteString> _byteString(Arena arena, Uint8List bytes) {
+  final string = arena<raw.UA_ByteString>();
+  string.ref.length = bytes.length;
+  string.ref.data = arena<ffi.Uint8>(bytes.length);
+  string.ref.data.asTypedList(bytes.length).setAll(0, bytes);
+  return string;
+}
+
+/// An array of `UA_ByteString` in [arena], one per element of [list], each
+/// holding a copy. `nullptr` for an empty list.
+ffi.Pointer<raw.UA_ByteString> _byteStrings(Arena arena, List<Uint8List> list) {
+  if (list.isEmpty) return ffi.nullptr;
+  final array = arena<raw.UA_ByteString>(list.length);
+  for (var i = 0; i < list.length; i++) {
+    final bytes = list[i];
+    array[i].length = bytes.length;
+    array[i].data = arena<ffi.Uint8>(bytes.length);
+    array[i].data.asTypedList(bytes.length).setAll(0, bytes);
+  }
+  return array;
+}
+
+/// An OPC UA client over open62541, pumped by the caller ([runIterate] or
+/// [keepConnected]).
+///
+/// ## Security
+///
+/// Without a [certificate] the client offers SecurityPolicy#None: nothing on
+/// the wire is signed or encrypted, and a [username]/[password] only travels
+/// if [allowUnencryptedPassword] is set, in clear text then.
+///
+/// With a [certificate] and [privateKey] (DER, not encrypted, see
+/// [checkClientCertificateArguments]) and a [securityMode] of
+/// `Sign` or `SignAndEncrypt` the channel is signed or encrypted with a
+/// policy the server offers (Basic256Sha256, Aes128Sha256RsaOaep, ...).
+/// Encryption alone does not say *who* the peer is: the server's certificate
+/// must be verified, or anyone on the path can present their own certificate
+/// and read everything. Pass the certificates to trust in [trustList] (DER:
+/// the server's own certificate, or the CA certificate that issued it), and
+/// optionally [issuerList] (intermediate CA certificates, which only complete
+/// a chain and are not trusted by themselves) and [revocationList] (CRLs,
+/// DER). open62541 verifies the server certificate against them before the
+/// channel opens and refuses a server that does not match: [connect] throws a
+/// [UaStatusException] with the certificate status (`BadCertificateUntrusted`
+/// for a certificate that is in no list, `BadCertificateTimeInvalid`,
+/// `BadCertificateRevoked`, ...).
+///
+/// [acceptAllCertificates] skips that verification: any certificate opens
+/// the channel. The session is still encrypted, which stops passive
+/// eavesdropping, but the server is not authenticated, so an active attacker
+/// (a machine in the middle, a spoofed endpoint) goes unnoticed. It is
+/// opt-in: a certificate without a [trustList] and without
+/// `acceptAllCertificates: true` is an [ArgumentError], see
+/// [checkClientCertificateArguments].
+///
+/// The endpoint hostname is not checked against the server certificate.
+///
+/// ## Discovery, and trust on first use
+///
+/// A [trustList] needs the server certificate before the first secure
+/// connection. [getEndpoints] gets it from the server itself: the
+/// GetEndpoints service runs over a SecurityPolicy#None channel without a
+/// session, so it needs no certificate and no trust list, and every
+/// [EndpointDescription] it returns carries the [EndpointDescription.serverCertificate]
+/// (DER) with the policy and mode of that endpoint. Discovery authenticates
+/// nothing: a machine in the middle at that moment hands over its own
+/// certificate, and trusting it would make every later "encrypted" session
+/// its to read. So before the certificate is trusted, compare its
+/// [EndpointDescription.certificateThumbprint] (SHA-1, what the server's
+/// own certificate manager shows) with one obtained out of band, from the
+/// server's operator. Then persist the DER and pass it as [trustList] from
+/// then on; a server whose certificate changes is refused with
+/// `BadCertificateUntrusted`, which is the point.
+///
+/// ```dart
+/// final endpoints = await Client.getEndpoints('opc.tcp://plc:4840');
+/// final endpoint = endpoints.firstWhere(
+///   (e) => e.securityMode == MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
+/// );
+/// print('server certificate ${endpoint.certificateThumbprint}'); // confirm out of band
+/// await File('server_cert.der').writeAsBytes(endpoint.serverCertificate);
+/// // Next time:
+/// final client = Client(
+///   securityMode: MessageSecurityMode.UA_MESSAGESECURITYMODE_SIGNANDENCRYPT,
+///   certificate: clientCertificate,
+///   privateKey: clientKey,
+///   trustList: [await File('server_cert.der').readAsBytes()],
+/// );
+/// ```
 class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
+  /// See the class documentation for the certificate arguments; they are
+  /// checked by [checkClientCertificateArguments] before anything is
+  /// allocated.
+  ///
+  /// [allowUnencryptedPassword]: open62541 refuses to send a password over
+  /// SecurityPolicy#None, where it travels in clear text, so username
+  /// authentication over None fails silently at the server. This opt-in
+  /// sends it anyway. Only for a network trusted end to end (a lab, a
+  /// machine network behind its own firewall); anywhere else use a
+  /// certificate with `SignAndEncrypt` and a [trustList].
+  ///
+  /// [schemaCacheSize] caps the DataType definitions the client keeps for
+  /// decoding (see [defs]).
   Client({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -304,10 +486,23 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     MessageSecurityMode? securityMode,
     Uint8List? certificate,
     Uint8List? privateKey,
+    List<Uint8List>? trustList,
+    List<Uint8List>? issuerList,
+    List<Uint8List>? revocationList,
+    bool acceptAllCertificates = false,
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    this.schemaCacheSize = defaultSchemaCacheSize,
   }) {
+    checkClientCertificateArguments(
+      certificate: certificate,
+      privateKey: privateKey,
+      trustList: trustList,
+      issuerList: issuerList,
+      revocationList: revocationList,
+      acceptAllCertificates: acceptAllCertificates,
+    );
     final config = ua_calloc<raw.UA_ClientConfig>();
 
     if (logLevel != null) {
@@ -329,45 +524,15 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
       config.ref.securityModeAsInt = securityMode.value;
     }
 
-    config.ref.privateKeyPasswordCallback = ffi.Pointer.fromFunction(
-      _refusePrivateKeyPassword,
-      raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED,
-    );
-
     if (certificate != null && privateKey != null) {
-      final status = using((arena) {
-        final rawCertificate = arena<raw.UA_ByteString>();
-        rawCertificate.ref.data = arena<ffi.Uint8>(certificate.length);
-        rawCertificate.ref.length = certificate.length;
-        rawCertificate.ref.data.asTypedList(certificate.length).setAll(0, certificate);
-
-        final rawPrivateKey = arena<raw.UA_ByteString>();
-        rawPrivateKey.ref.data = arena<ffi.Uint8>(privateKey.length);
-        rawPrivateKey.ref.length = privateKey.length;
-        rawPrivateKey.ref.data.asTypedList(privateKey.length).setAll(0, privateKey);
-
-        return raw.UA_ClientConfig_setDefaultEncryption(
-          config,
-          rawCertificate.ref,
-          rawPrivateKey.ref,
-          ffi.nullptr,
-          0,
-          ffi.nullptr,
-          0,
-        );
-      }, ua_calloc);
-      if (status != raw.UA_STATUSCODE_GOOD) {
-        raw.UA_ClientConfig_clear(config);
+      try {
+        _setEncryption(config, certificate, privateKey, trustList, issuerList, revocationList, acceptAllCertificates);
+      } catch (_) {
+        // A client made of the config and deleted frees what it holds.
+        raw.UA_Client_delete(raw.UA_Client_newWithConfig(config));
         ua_calloc.free(config);
-        throw UaStatusException(status);
+        rethrow;
       }
-
-      // Accept all certificates
-      ffi.Pointer<raw.UA_CertificateGroup> certificateVerification = ua_calloc<raw.UA_CertificateGroup>();
-      certificateVerification.ref = config.ref.certificateVerification;
-      raw.UA_CertificateGroup_AcceptAll(certificateVerification);
-      config.ref.certificateVerification = certificateVerification.ref;
-      ua_calloc.free(certificateVerification);
     }
 
     if (username != null) {
@@ -401,23 +566,216 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     ua_calloc.free(config);
   }
 
+  /// `UA_ClientConfig_setDefaultEncryption` and the certificate verification
+  /// on [config]; throws a [UaStatusException] when open62541 refuses the
+  /// certificate or key, leaving the caller to free [config].
+  static void _setEncryption(
+    ffi.Pointer<raw.UA_ClientConfig> config,
+    Uint8List certificate,
+    Uint8List privateKey,
+    List<Uint8List>? trustList,
+    List<Uint8List>? issuerList,
+    List<Uint8List>? revocationList,
+    bool acceptAllCertificates,
+  ) {
+    // Everything here is scratch for the calls: open62541 keeps its own
+    // copies of the certificate and key (in each security policy, the key
+    // decrypted to DER) and of the lists (UA_Array_copy into a
+    // UA_TrustListDataType that UA_CertificateGroup_Memorystore copies
+    // again into its store, after which the first copy is cleared;
+    // addToTrustList appends copies the same way).
+    using((arena) {
+      final rawCertificate = _byteString(arena, certificate);
+      final rawPrivateKey = _byteString(arena, privateKey);
+      final trust = trustList ?? const <Uint8List>[];
+      final revocation = revocationList ?? const <Uint8List>[];
+      // Only for this call: the pointer is into this isolate.
+      config.ref.privateKeyPasswordCallback = ffi.Pointer.fromFunction(
+        _noPrivateKeyPassword,
+        raw.UA_STATUSCODE_BADINTERNALERROR,
+      );
+      final status = raw.UA_ClientConfig_setDefaultEncryption(
+        config,
+        rawCertificate.ref,
+        rawPrivateKey.ref,
+        _byteStrings(arena, trust),
+        trust.length,
+        _byteStrings(arena, revocation),
+        revocation.length,
+      );
+      config.ref.privateKeyPasswordCallback = ffi.nullptr;
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        throw UaStatusException(status);
+      }
+      // A DER key passes setDefaultEncryption unparsed; each policy then
+      // fails to load it and is left out, with only None remaining.
+      if (config.ref.securityPoliciesSize <= 1) {
+        throw const UaStatusException(raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED);
+      }
+      // Dart FFI cannot take the address of the UA_CertificateGroup nested
+      // in the config, so the plugin calls below get a copy of the struct.
+      // They only read it (the store is behind `context`, which the copy
+      // shares) or set its function pointers, so the copy goes back.
+      final group = arena<raw.UA_CertificateGroup>();
+      group.ref = config.ref.certificateVerification;
+      if (acceptAllCertificates) {
+        raw.UA_CertificateGroup_AcceptAll(group);
+      } else if (issuerList != null && issuerList.isNotEmpty) {
+        // setDefaultEncryption takes no issuer list; the memory store it
+        // installed (for a non-empty trust list, which
+        // checkClientCertificateArguments guarantees here) does.
+        final issuers = arena<raw.UA_TrustListDataType>();
+        issuers.ref.specifiedLists = raw.UA_TrustListMasks.UA_TRUSTLISTMASKS_ISSUERCERTIFICATES.value;
+        issuers.ref.issuerCertificates = _byteStrings(arena, issuerList);
+        issuers.ref.issuerCertificatesSize = issuerList.length;
+        final addToTrustList = group.ref.addToTrustList
+            .asFunction<int Function(ffi.Pointer<raw.UA_CertificateGroup>, ffi.Pointer<raw.UA_TrustListDataType>)>();
+        final status = addToTrustList(group, issuers);
+        if (status != raw.UA_STATUSCODE_GOOD) {
+          throw UaStatusException(status);
+        }
+      }
+      config.ref.certificateVerification = group.ref;
+    }, ua_calloc);
+  }
+
   ClientConfig get config => _clientConfig;
+
+  /// The endpoints the server at [endpointUrl] offers, from its GetEndpoints
+  /// service: for each, the security policy and mode, the identity tokens
+  /// it accepts, who the server says it is, and its certificate (DER), which
+  /// is how a client gets the certificate for its [trustList] (see the
+  /// class documentation: trust on first use, with the thumbprint confirmed
+  /// out of band, because discovery authenticates nothing).
+  ///
+  /// Needs no certificate and no trust list: the service runs over a
+  /// SecurityPolicy#None channel without a session. Keeps nothing: a native
+  /// client of its own, made for the call and deleted after it, on an
+  /// isolate of its own ([Isolate.run]), because open62541's
+  /// `UA_Client_getEndpoints` drives its own event loop and blocks until the
+  /// answer, so the calling isolate, and whatever it pumps, keeps running
+  /// meanwhile. The same static is on `ClientIsolate`.
+  ///
+  /// [timeout] bounds each step (opening the channel, the service call):
+  /// a host that does not answer is a [TimeoutException]; a refused
+  /// connection, a URL that is no endpoint URL or a Bad service result is a
+  /// [UaStatusException] with open62541's status. [logLevel] is the
+  /// temporary client's; the default keeps a failed attempt quiet below a
+  /// warning.
+  static Future<List<EndpointDescription>> getEndpoints(
+    String endpointUrl, {
+    Duration timeout = const Duration(seconds: 10),
+    LogLevel logLevel = LogLevel.UA_LOGLEVEL_WARNING,
+  }) async {
+    final (status, endpoints) = await Isolate.run(
+      () => _discoverEndpoints(endpointUrl, timeout, logLevel),
+      debugName: 'open62541 GetEndpoints',
+    );
+    if (status == raw.UA_STATUSCODE_BADTIMEOUT) {
+      throw TimeoutException('GetEndpoints on $endpointUrl: no answer within $timeout', timeout);
+    }
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
+    return endpoints;
+  }
+
+  /// [getEndpoints]'s native half, on the worker isolate: a default client
+  /// with [timeout] as its response timeout, `UA_Client_getEndpoints`
+  /// (connect without a session, GetEndpoints, disconnect), the answer
+  /// copied to Dart, and everything native freed before it returns. The
+  /// status comes back as a value; the caller throws on it.
+  static (int, List<EndpointDescription>) _discoverEndpoints(String url, Duration timeout, LogLevel logLevel) {
+    final config = ua_calloc<raw.UA_ClientConfig>();
+    config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
+    raw.UA_ClientConfig_setDefault(config);
+    // Bounds the channel open and the service call each (0 would be no
+    // timeout at all).
+    config.ref.timeout = timeout.inMilliseconds;
+    final client = raw.UA_Client_newWithConfig(config);
+    // The client holds a copy of the struct; the struct itself is ours.
+    ua_calloc.free(config);
+    try {
+      return using((arena) {
+        final size = arena<ffi.Size>();
+        final array = arena<ffi.Pointer<raw.UA_EndpointDescription>>();
+        // The URL is copied into the client config; the C string is scratch.
+        final status = raw.UA_Client_getEndpoints(client, url.toNativeUtf8(allocator: arena).cast(), size, array);
+        if (status != raw.UA_STATUSCODE_GOOD) {
+          // Nothing was handed out: the out parameters are untouched.
+          return (status, const <EndpointDescription>[]);
+        }
+        try {
+          return (status, [for (var i = 0; i < size.value; i++) endpointDescriptionFromNative(array.value[i])]);
+        } finally {
+          // The array is open62541's allocation: cleared and freed as one.
+          raw.UA_Array_delete(array.value.cast(), size.value, getTypeByIndex(raw.UA_TYPES_ENDPOINTDESCRIPTION));
+        }
+      }, ua_calloc);
+    } finally {
+      raw.UA_Client_delete(client);
+    }
+  }
 
   @override
   Future<void> awaitConnect() async {
     if (state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
       return;
     }
-    await config.stateStream.firstWhere((state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED);
+    await config.stateStream.firstWhere(
+      (state) => state.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED,
+      orElse: () => throw const ClientDeletedException(),
+    );
   }
 
+  /// Connects to [url] and completes once the session is activated; the
+  /// caller pumps ([runIterate]) meanwhile.
+  ///
+  /// [timeout] bounds the whole handshake (default 30 s, `null` waits as long
+  /// as it takes): a peer that accepts the connection and never answers, or a
+  /// server that never activates the session, is a [TimeoutException]. The
+  /// attempt is then abandoned (the client disconnects), so [delete] and a
+  /// later [connect] work. A handshake that fails instead is a
+  /// [UaStatusException] with open62541's status.
   @override
-  Future<void> connect(String url) async {
+  Future<void> connect(String url, {Duration? timeout = const Duration(seconds: 30)}) async {
+    _requireClient();
     final instantReturn = _issueConnect(url);
     if (instantReturn != raw.UA_STATUSCODE_GOOD) {
       throw 'Failed to connect: ${statusCodeToString(instantReturn)}';
     }
-    await awaitConnect();
+    if (timeout == null) return _awaitHandshake();
+    await _awaitHandshake().timeout(
+      timeout,
+      onTimeout: () {
+        if (_client != ffi.nullptr) raw.UA_Client_disconnect(_client);
+        throw TimeoutException('connect to $url: no activated session within $timeout', timeout);
+      },
+    );
+  }
+
+  /// Completes when the session is activated, or throws a [UaStatusException]
+  /// with open62541's connect status when the handshake fails instead: a
+  /// server certificate the trust list rejects (`BadCertificateUntrusted`),
+  /// no endpoint for the security mode, a refused identity token, ...
+  /// open62541 stops its connect state machine on a bad connect status and
+  /// only another `connect()` restarts it, so once the status is bad there
+  /// is nothing left to wait for. [awaitConnect] keeps waiting for an
+  /// activation on purpose: under [keepConnected] a bad status is what the
+  /// supervisor recovers from, and a waiter there wants the recovery.
+  Future<void> _awaitHandshake() async {
+    bool settled(ClientState s) =>
+        s.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED || s.recoveryStatus != raw.UA_STATUSCODE_GOOD;
+    // The connect call ran the first step of the handshake synchronously
+    // and its state events are gone: start from the state as it is now.
+    var snapshot = state;
+    if (!settled(snapshot)) {
+      snapshot = await config.stateStream.firstWhere(settled, orElse: () => throw const ClientDeletedException());
+    }
+    if (snapshot.sessionState != raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED) {
+      _requireClient();
+      throw UaStatusException(snapshot.recoveryStatus);
+    }
   }
 
   /// Issues a (re)connect to [url] without awaiting session activation.
@@ -469,7 +827,9 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   ///
   /// The returned future completes when the session first reaches ACTIVATED.
   /// After that the supervisor keeps running in the background until
-  /// [stopKeepConnected] (or [delete]) is called. This method OWNS the event
+  /// [stopKeepConnected] (or [delete]) is called. An attempt still in flight
+  /// after [connectTimeout] (a peer that accepts and never answers) is
+  /// abandoned and retried; `null` lets it run. This method OWNS the event
   /// loop pump — do not run your own `runIterate` loop alongside it.
   ///
   /// Existing `connect()` / `runIterate()` semantics are unchanged; recovery is
@@ -522,6 +882,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     Duration maxBackoff = const Duration(seconds: 5),
     Duration iterateInterval = const Duration(milliseconds: 10),
     bool nonBlocking = false,
+    Duration? connectTimeout = const Duration(seconds: 30),
   }) {
     // Restart cleanly if already supervising: the running pump and supervisor
     // check this generation on every turn and stop as soon as it has moved on,
@@ -530,7 +891,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     final firstActivation = Completer<void>();
     _keepConnected = true;
     _startPump(iterateInterval, nonBlocking, generation);
-    _superviseConnection(url, retryInterval, maxBackoff, firstActivation, generation);
+    _superviseConnection(url, retryInterval, maxBackoff, connectTimeout, firstActivation, generation);
     return firstActivation.future;
   }
 
@@ -558,6 +919,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     String url,
     Duration retryInterval,
     Duration maxBackoff,
+    Duration? connectTimeout,
     Completer<void> firstActivation,
     int generation,
   ) async {
@@ -565,12 +927,15 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     var backoff = retryInterval;
     var everActivated = false;
     var wasActivated = false;
+    // How long the attempt in flight has been; null when none is.
+    Stopwatch? connectingSince;
 
     while (_keepConnected && generation == _keepConnectedGeneration && _client != ffi.nullptr) {
       final snapshot = state;
       final activated = snapshot.sessionState == raw.UA_SessionState.UA_SESSIONSTATE_ACTIVATED;
 
       if (activated) {
+        connectingSince = null;
         // Signal a recovery (session came back after having dropped).
         if (everActivated && !wasActivated && !_reconnectController.isClosed) {
           _reconnectController.add(null);
@@ -593,9 +958,16 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
           snapshot.recoveryStatus == raw.UA_STATUSCODE_GOOD &&
           snapshot.channelState != raw.UA_SecureChannelState.UA_SECURECHANNELSTATE_CLOSED;
       if (connecting) {
-        await Future.delayed(pollInterval);
-        continue;
+        connectingSince ??= Stopwatch()..start();
+        if (connectTimeout == null || connectingSince.elapsed < connectTimeout) {
+          await Future.delayed(pollInterval);
+          continue;
+        }
+        // A peer that never answers keeps the attempt in flight forever:
+        // abandon it and start over.
+        raw.UA_Client_disconnect(_client);
       }
+      connectingSince = null;
 
       // Either we have never connected, or the connect latch has gone bad and
       // open62541 has given up. Re-issue connect to reset connectStatus and
@@ -649,6 +1021,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   }
 
   Future<void> _write(raw.UA_NodeId nodeId, DynamicValue value) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     Completer<void> completer = Completer<void>();
 
     final variant = valueToVariant(value);
@@ -722,6 +1095,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   Stream<ClientState> get stateStream => config.stateStream;
 
   ClientState get state {
+    _requireClient();
     ffi.Pointer<ffi.UnsignedInt> state = ua_calloc<ffi.UnsignedInt>();
     ffi.Pointer<ffi.UnsignedInt> sessionState = ua_calloc<ffi.UnsignedInt>();
     ffi.Pointer<ffi.Uint32> connectStatus = ua_calloc<ffi.Uint32>();
@@ -767,6 +1141,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   /// with an error.
   @override
   Future<DataValue> readValue(NodeId nodeId) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     final completer = Completer<DataValue>();
 
     final readValueId = ua_calloc<raw.UA_ReadValueId>();
@@ -1098,6 +1473,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   // single point of entry for all read operations.
   @override
   Future<Map<NodeId, DynamicValue>> readAttribute(ReadAttributeParam nodes) async {
+    _requireClient();
     final nodeCount = nodes.entries.map<int>((entry) => entry.value.length).fold(0, (prev, curr) => prev + curr);
     ffi.Pointer<raw.UA_ReadValueId> readValueId = ua_calloc<raw.UA_ReadValueId>(nodeCount);
     final completer = Completer<Map<NodeId, DynamicValue>>();
@@ -1170,15 +1546,22 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
           }
           ua_calloc.free(source);
 
-          assert(pointers.length == response.ref.resultsSize);
-          if (pointers.length != nodeCount && pointers.isEmpty) {
+          if (pointers.isEmpty && nodeCount > 0) {
             completer.completeError(
               "The connection might be broken, got no response when reading attributes for nodes: $nodes",
               StackTrace.current,
             );
             return;
           }
-          assert(nodeCount == pointers.length);
+          // A result per attribute read, in order: any other count cannot be
+          // matched to the request.
+          if (pointers.length != nodeCount) {
+            for (final pointer in pointers) {
+              raw.UA_DataValue_delete(pointer);
+            }
+            completer.completeError(UaStatusException(raw.UA_STATUSCODE_BADUNEXPECTEDERROR), StackTrace.current);
+            return;
+          }
 
           try {
             final retVal = <NodeId, DynamicValue>{};
@@ -1373,6 +1756,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     required int nodeClassMask,
     required int resultMask,
   }) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     final completer = Completer<List<BrowseResultItem>>();
 
     final request = raw.UA_BrowseRequest_new();
@@ -1432,7 +1816,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
 
           final browseResult = response.ref.results[0];
           if (browseResult.statusCode != raw.UA_STATUSCODE_GOOD) {
-            completer.completeError('Browse result error: ${statusCodeToString(browseResult.statusCode)}');
+            completer.completeError(_BrowseResultError(browseResult.statusCode));
             return;
           }
 
@@ -1485,6 +1869,10 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     ffi.Pointer<ffi.Uint8> continuationPointData,
     int continuationPointLength,
   ) {
+    if (_client == ffi.nullptr) {
+      ua_calloc.free(continuationPointData);
+      return Future.error(const ClientDeletedException());
+    }
     final completer = Completer<List<BrowseResultItem>>();
 
     final request = raw.UA_BrowseNextRequest_new();
@@ -1627,6 +2015,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     bool publishingEnabled = true,
     int priority = 0,
   }) {
+    if (_client == ffi.nullptr) return Future.error(const ClientDeletedException());
     ffi.Pointer<raw.UA_CreateSubscriptionRequest> request = raw.UA_CreateSubscriptionRequest_new();
     raw.UA_CreateSubscriptionRequest_init(request);
     request.ref.requestedPublishingInterval = requestedPublishingInterval.inMicroseconds / 1000.0;
@@ -1677,9 +2066,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
           raw.UA_CreateSubscriptionRequest_delete(request);
           callback.close();
           if (response.ref.responseHeader.serviceResult != raw.UA_STATUSCODE_GOOD) {
-            completer.completeError(
-              'unable to create subscription ${response.ref.responseHeader.serviceResult} ${statusCodeToString(response.ref.responseHeader.serviceResult)}',
-            );
+            completer.completeError(UaStatusException(response.ref.responseHeader.serviceResult));
             return;
           }
           completer.complete(response.ref.subscriptionId);
@@ -2041,6 +2428,11 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     };
 
     controller.onListen = () async {
+      if (_client == ffi.nullptr) {
+        controller.addError(const ClientDeletedException());
+        unawaited(controller.close());
+        return;
+      }
       // Register this stream so Client.delete() can tear it down if it is still
       // active at delete time. Cleanup paths that bypass onCancel remove it.
       _activeMonitoredStreams[controller] = monitorTeardown;
@@ -2265,8 +2657,18 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
               } catch (e) {
                 _safeErr("Error adding data: $e");
               }
-            } catch (e) {
-              _safeErr("Error converting data for: $item to type $DynamicValue: $e");
+            } catch (e, stackTrace) {
+              // A sample this client cannot decode (a type it has no
+              // conversion for, a struct body that does not parse) is the
+              // consumer's news, not a log line's: it goes out as an error
+              // event. The stream stays open and the subscription stays up,
+              // so the next sample is delivered as usual. [isClosed] is
+              // checked again here: the VALUE branch above awaited.
+              if (!controller.isClosed) {
+                controller.addError(e, stackTrace);
+              } else {
+                _safeErr("Error converting data for: $item to type $DynamicValue: $e");
+              }
             }
           });
 
@@ -2607,6 +3009,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
 
   @override
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
+    _requireClient();
     final completer = Completer<List<DynamicValue>>();
     final callbackInner =
         ffi.NativeCallable<
@@ -2733,8 +3136,48 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     return completer.future;
   }
 
-  Future<Schema> buildSchema(NodeId nodeIdType) async {
-    var map = Schema();
+  /// Fetches the DataTypeDefinition of [nodeIdType] and, recursively, of
+  /// every structured type its fields use, as a [Schema] keyed by DataType id.
+  ///
+  /// The definitions are the server's word. One whose field is of the type
+  /// being defined, directly or through other types (A → B → A), would be
+  /// fetched forever, one readAttribute per level; such a definition is
+  /// invalid (a structure cannot contain itself by value) and is refused with
+  /// a [DataTypeDefinitionCycle] naming the types on the cycle. The nesting is
+  /// also capped at [DataTypeDefinitionTooDeep.limit] levels, the bound
+  /// open62541's binary decoder uses. Each distinct type is fetched once per
+  /// call, however many fields use it, and a type needing more than
+  /// [schemaCacheSize] definitions is refused with a
+  /// [DataTypeDefinitionTooMany]. Either way the read that needed the schema
+  /// fails and the client stays usable.
+  Future<Schema> buildSchema(NodeId nodeIdType) => _buildSchemaWith(nodeIdType, defs);
+
+  /// [buildSchema], taking a field's type from [cached] when it is there.
+  Future<Schema> _buildSchemaWith(NodeId nodeIdType, Schema cached) async {
+    final build = _SchemaBuild(cached);
+    await _buildSchema(nodeIdType, const [], build);
+    return build.map;
+  }
+
+  /// [resolving] is the chain of DataType ids whose definitions are being
+  /// built, outermost first: the types whose fields led here.
+  Future<void> _buildSchema(NodeId nodeIdType, List<NodeId> resolving, _SchemaBuild build) async {
+    final path = [...resolving, nodeIdType];
+    if (resolving.contains(nodeIdType)) {
+      throw DataTypeDefinitionCycle(path.sublist(resolving.indexOf(nodeIdType)));
+    }
+    if (resolving.length >= DataTypeDefinitionTooDeep.limit) {
+      throw DataTypeDefinitionTooDeep(path);
+    }
+    final map = build.map;
+    if (map.containsKey(nodeIdType)) return;
+    final cached = build.cached[nodeIdType];
+    if (cached != null && resolving.isNotEmpty) {
+      map[nodeIdType] = cached;
+      return;
+    }
+    if (!build.fetched.add(nodeIdType)) return;
+    if (build.fetched.length > schemaCacheSize) throw DataTypeDefinitionTooMany(path, schemaCacheSize);
     final read = await readAttribute({
       nodeIdType: [AttributeId.UA_ATTRIBUTEID_DATATYPEDEFINITION],
     });
@@ -2743,7 +3186,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
       // type (or a vendor alias of one, e.g. TwinCAT's STRING at a custom
       // NodeId), not a struct/enum. Return an empty schema; the value then
       // decodes by its wire type.
-      return map;
+      return;
     }
     map[nodeIdType] = read.values.first;
     final val = map[nodeIdType]!;
@@ -2758,23 +3201,47 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     if (val.isObject) {
       for (var entry in val.entries) {
         if (nodeIdToPayloadType(entry.value.typeId) == null) {
-          final temporary = await buildSchema(entry.value.typeId!);
-          map.addAll(temporary);
+          await _buildSchema(entry.value.typeId!, path, build);
+          final schema = map[entry.value.typeId];
+          if (schema == null) continue;
           if (val[entry.value.name].isArray) {
             // todo: only supports one level of array
             for (var i = 0; i < val[entry.value.name].asArray.length; i++) {
-              val[entry.value.name][i] = map[entry.value.typeId]!;
+              val[entry.value.name][i] = schema;
             }
           } else {
-            val[entry.value.name] = map[entry.value.typeId]!;
+            val[entry.value.name] = schema;
           }
         }
       }
     }
-    return map;
+    if (expandedNodes(val, build.counted) > ValueTooLarge.limit) throw ValueTooLarge(nodeIdType);
   }
 
+  /// The default of [schemaCacheSize].
+  static const defaultSchemaCacheSize = 4096;
+
+  /// The most entries [defs] holds: a server chooses the DataType ids it
+  /// serves, so without a bound every distinct one would stay for the life
+  /// of the client. When a new definition would go past it the cache is
+  /// emptied and refilled on demand. A single type whose definitions alone
+  /// exceed it is kept anyway, until the next one arrives.
+  final int schemaCacheSize;
+
+  /// The DataType definitions fetched so far, by DataType id (and by
+  /// DefaultBinary encoding id once resolved); at most [schemaCacheSize].
   Schema defs = {};
+
+  /// Adds [schemas] to [defs], emptying both caches first if they would
+  /// outgrow [schemaCacheSize]. A decode in flight holds its own definitions
+  /// (see [_variantToValueAutoSchema]), so emptying never takes them away.
+  void _cacheSchemas(Schema schemas) {
+    if (defs.length + schemas.length > schemaCacheSize || _dataTypeByEncoding.length >= schemaCacheSize) {
+      defs.clear();
+      _dataTypeByEncoding.clear();
+    }
+    defs.addAll(schemas);
+  }
 
   Future<DynamicValue> _variantToValueAutoSchema(raw.UA_Variant data, [NodeId? dataTypeId]) async {
     // An empty variant (type == NULL) has no payload and no type to probe a
@@ -2784,7 +3251,6 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     if (data.type == ffi.nullptr) {
       return DynamicValue();
     }
-    var typeId = data.type.ref.typeId.toNodeId();
     if (isNativeStructKind(data.type.ref.typeKind)) {
       // A structure open62541 knows (every NS0 DataType) came decoded into the
       // native struct: variantToValue walks the type's member table, which
@@ -2793,23 +3259,103 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
       // that has no definition of its own.
       return variantToValue(data, defs: defs);
     }
-    if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null) {
-      if (!defs.containsKey(dataTypeId)) {
-        defs.addAll(await buildSchema(dataTypeId));
-      }
-    } else if (typeId == NodeId.structure) {
-      // Cast the data to extension object
-      final ext = data.data.cast<raw.UA_ExtensionObject>();
-      typeId = ext.ref.content.encoded.typeId.toNodeId();
-      if (!defs.containsKey(typeId)) {
-        // Copy our data before async switch
-        defs.addAll(await buildSchema(typeId));
-      }
-      // TODO: Test
-      dataTypeId ??= typeId;
+    // What this call fetched, which a concurrent call emptying the cache
+    // while this one awaits must not take from under the decode below.
+    final fetched = Schema();
+    bool known(NodeId id) => defs.containsKey(id) || fetched.containsKey(id);
+    Future<void> fetch(NodeId id) async {
+      final schema = await _buildSchemaWith(id, fetched.isEmpty ? defs : {...defs, ...fetched});
+      fetched.addAll(schema);
+      _cacheSchemas(schema);
     }
-    final retValue = variantToValue(data, defs: defs, dataTypeId: dataTypeId);
+
+    if (dataTypeId != null && nodeIdToPayloadType(dataTypeId) == null && !known(dataTypeId)) {
+      await fetch(dataTypeId);
+    }
+    final isExtensionObject = data.type.ref.typeKind == raw.UA_DataTypeKind.UA_DATATYPEKIND_EXTENSIONOBJECT;
+    if (isExtensionObject && (dataTypeId == null || !known(dataTypeId))) {
+      // No usable DataType at hand: none (readValue, call outputs) or one
+      // without a definition (BaseDataType i=24, as a relay serves a value
+      // under). The ExtensionObject's typeId is the type's DefaultBinary
+      // encoding id, a DataTypeEncoding object, not the DataType. Resolve it
+      // the way a browser does, by its inverse HasEncoding reference; a
+      // server that encodes under the DataType id has no such reference, and
+      // the wire id is then tried as the DataType itself.
+      final ext = data.data.cast<raw.UA_ExtensionObject>();
+      final encodingId = ext.ref.content.encoded.typeId.toNodeId();
+      var resolved = _dataTypeByEncoding[encodingId];
+      if (resolved != null && !known(resolved)) {
+        await fetch(resolved);
+      }
+      if (resolved == null) {
+        final resolution = await _resolveEncoding(encodingId);
+        resolved = resolution.dataType;
+        if (resolved == null && resolution.nodeExists && !known(encodingId)) {
+          await fetch(encodingId);
+        }
+        if (resolved == null && known(encodingId)) {
+          resolved = encodingId;
+        }
+        if (resolved != null && !known(resolved)) {
+          await fetch(resolved);
+        }
+        if (resolved != null && known(resolved)) {
+          _dataTypeByEncoding[encodingId] = resolved;
+        } else {
+          resolved = null;
+        }
+      }
+      if (resolved == null) {
+        // Nothing in the address space describes this ExtensionObject: keep
+        // its body with the wire id rather than fail the read.
+        return decodeExtensionObjectsOpaque(data, defs: fetched.isEmpty ? defs : {...defs, ...fetched});
+      }
+      // Alias the schema under the encoding id, which is what a nested
+      // ExtensionObject is looked up by.
+      if (!known(encodingId)) {
+        // Held in [fetched] too: adding the alias may empty the cache.
+        final schema = fetched[resolved] ??= defs[resolved]!;
+        fetched[encodingId] = schema;
+        _cacheSchemas({encodingId: schema});
+      }
+      dataTypeId = resolved;
+    }
+    final retValue = variantToValue(data, defs: fetched.isEmpty ? defs : {...defs, ...fetched}, dataTypeId: dataTypeId);
     return retValue;
+  }
+
+  /// DataType id per DefaultBinary encoding id resolved so far.
+  final Map<NodeId, NodeId> _dataTypeByEncoding = {};
+
+  /// Resolves a DefaultBinary encoding id to its DataType: the target of
+  /// the encoding object's inverse HasEncoding reference.
+  ///
+  /// `dataType` is null when the node has no such reference or does not
+  /// exist (`nodeExists` tells which; a server that encodes under the
+  /// DataType id publishes no encoding object). A Browse that fails for any
+  /// other reason (the service, the connection) is thrown, never taken for
+  /// "no such node".
+  Future<({NodeId? dataType, bool nodeExists})> _resolveEncoding(NodeId encodingId) async {
+    try {
+      final refs = await browse(
+        encodingId,
+        direction: raw.UA_BrowseDirection.UA_BROWSEDIRECTION_INVERSE.value,
+        referenceTypeId: NodeId.hasEncoding,
+        includeSubtypes: false,
+        nodeClassMask: NodeClass.UA_NODECLASS_DATATYPE.value,
+      );
+      return (dataType: refs.isEmpty ? null : refs.first.nodeId, nodeExists: true);
+    } on _BrowseResultError catch (e) {
+      const noSuchNode = {
+        raw.UA_STATUSCODE_BADNODEIDUNKNOWN,
+        raw.UA_STATUSCODE_BADNODEIDINVALID,
+        raw.UA_STATUSCODE_BADNOTFOUND,
+      };
+      if (noSuchNode.contains(e.statusCode)) {
+        return (dataType: null, nodeExists: false);
+      }
+      rethrow;
+    }
   }
 
   // ignore: unused_element
@@ -2822,10 +3368,17 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   }
 
   void disconnect() {
+    _requireClient();
     final statusCode = raw.UA_Client_disconnect(_client);
     if (statusCode != raw.UA_STATUSCODE_GOOD) {
       throw 'Unable to disconnect: $statusCode ${statusCodeToString(statusCode)}';
     }
+  }
+
+  /// Throws a [ClientDeletedException] once [delete] has freed the native
+  /// client, which a service call would dereference.
+  void _requireClient() {
+    if (_client == ffi.nullptr) throw const ClientDeletedException();
   }
 
   @override
@@ -2912,4 +3465,19 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   /// stop when a later call has moved it on.
   int _keepConnectedGeneration = 0;
   final StreamController<void> _reconnectController = StreamController<void>.broadcast();
+}
+
+/// The state of one [Client.buildSchema] call.
+class _SchemaBuild {
+  _SchemaBuild(this.cached);
+
+  /// Definitions fetched by earlier calls.
+  final Schema cached;
+  final Schema map = Schema();
+
+  /// The types this call has read, so that each is read once.
+  final Set<NodeId> fetched = {};
+
+  /// See [expandedNodes].
+  final Map<DynamicValue, int> counted = Map.identity();
 }

@@ -491,6 +491,54 @@ void main() {
             );
           });
 
+          test('a sample the client cannot decode is an error event, and the stream goes on', () async {
+            // A Guid (built-in type 14) is a value open62541 decodes and this
+            // client has no conversion for: the sample reaches the monitor
+            // callback and its conversion throws. Every notification is
+            // rewritten until the first error has arrived, then the server
+            // writes a value the proxy leaves alone.
+            proxy.rewriteNotification = asGuid;
+            final subId = await (proxied as ClientApi).subscriptionCreate();
+            final events = <Map<NodeId, DataValue>>[];
+            final errors = <Object>[];
+            var done = false;
+            final subscription = proxied
+                .monitoredDataValues({
+                  goodNodeId: [AttributeId.UA_ATTRIBUTEID_VALUE],
+                }, subId)
+                .listen(events.add, onError: errors.add, onDone: () => done = true);
+            addTearDown(subscription.cancel);
+
+            Future<void> until(bool Function() condition, String what) async {
+              final deadline = DateTime.now().add(Duration(seconds: 10));
+              while (!condition()) {
+                if (DateTime.now().isAfter(deadline)) {
+                  fail('timed out waiting for $what; got events $events and errors $errors');
+                }
+                await Future.delayed(Duration(milliseconds: 20));
+              }
+            }
+
+            await until(() => errors.isNotEmpty, 'the decode error');
+            expect(proxy.notificationRewrites, greaterThan(0), reason: 'anti-vacuity: a notification was rewritten');
+            expect(events, isEmpty, reason: 'the undecodable sample is not delivered as a value');
+            expect(errors.first, isNot(isA<UaStatusException>()), reason: 'a decode error, not a Bad status');
+            expect(done, isFalse, reason: 'the stream is not closed by one bad sample');
+
+            // The next sample is left alone. (A second later the client may
+            // also backfill the item it never saw a sample for with a read,
+            // which is 42 or 44 depending on timing, so the wait is for 44.)
+            proxy.rewriteNotification = null;
+            server.write(goodNodeId, DynamicValue(value: 44, typeId: NodeId.int32));
+            await until(
+              () => events.any((event) => event[goodNodeId]?.value.value == 44),
+              'the sample after the bad one',
+            );
+            server.write(goodNodeId, DynamicValue(value: 42, typeId: NodeId.int32));
+
+            expect(done, isFalse, reason: 'the subscription survived the bad sample');
+          });
+
           test('a Good sample without a value is delivered as a null value with status Good', () async {
             proxy.rewriteNotification = goodWithoutValue;
             final subId = await (proxied as ClientApi).subscriptionCreate();

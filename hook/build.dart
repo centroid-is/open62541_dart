@@ -46,8 +46,8 @@ const Map<String, String> _open62541Sha256 = {
 };
 
 /// mbedTLS release version and the SHA-256 of its `.tar.bz2` release asset.
-const String _mbedtlsVersion = '3.6.5';
-const String _mbedtlsSha256 = '4a11f1777bb95bf4ad96721cac945a26e04bf19f57d905f241fe77ebeddf46d8';
+const String _mbedtlsVersion = '3.6.7';
+const String _mbedtlsSha256 = 'a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6';
 
 /// Downloads [url] over HTTPS and verifies the payload against
 /// [expectedSha256], returning the raw bytes.
@@ -112,28 +112,131 @@ Future<Uri> _downloadMbedTLS(Uri baseDir) async {
   final decompressed = BZip2Decoder().decodeBytes(bytes);
   final archive = TarDecoder().decodeBytes(decompressed);
 
-  if (!await extractDir.exists()) {
-    await extractDir.create(recursive: true);
-  }
-
-  for (var file in archive) {
-    if (file.isFile) {
-      final outputStream = OutputFileStream('${extractDir.path.toString()}/${file.name}');
-      file.writeContent(outputStream);
-      outputStream.closeSync();
-    }
-  }
-  // Rename extracted folder (e.g. mbedtls-3.6.5) to 'src' for shorter paths
+  await extractArchiveInto(archive, extractDir);
+  // Rename extracted folder (e.g. mbedtls-3.6.7) to 'src' for shorter paths
   final folder = extractDir.listSync().firstWhere((element) => element is Directory);
   await (folder as Directory).rename(srcDir.path);
   await versionStamp.writeAsString(_mbedtlsVersion);
   return srcDir.uri;
 }
 
+/// Writes the regular files of [archive] under [extractDir].
+///
+/// Directory entries are implied by the files under them, and symbolic links
+/// are skipped: nothing this hook builds needs one, and a link is how an
+/// archive reaches outside its own tree (an entry under a link that points at
+/// `/` or `..` lands wherever the link does). Every entry's path must resolve
+/// inside [extractDir] once `..` and absolute names are taken into account,
+/// or the whole extraction is refused naming the entry. The archives are
+/// verified against a pinned SHA-256 before they get here, so this is
+/// defense in depth, not the line that holds.
+Future<void> extractArchiveInto(Archive archive, Directory extractDir) async {
+  if (!await extractDir.exists()) {
+    await extractDir.create(recursive: true);
+  }
+  // Resolved: the base must be the same string the entries are compared to,
+  // and a relative extractDir or one reached through a symlink is not.
+  final base = Directory(await extractDir.resolveSymbolicLinks()).uri;
+  final basePath = base.toFilePath();
+  for (final file in archive) {
+    if (file.isSymbolicLink || !file.isFile) continue;
+    // An entry name is refused when it is absolute (a leading separator or
+    // a Windows drive letter, which `Uri.toFilePath` would reject on Windows
+    // rather than resolve), when the URI resolution removing `.` and `..`
+    // segments lands outside the base, or when the name is not a file path
+    // at all.
+    final name = file.name.replaceAll('\\', '/');
+    final absolute = name.startsWith('/') || RegExp(r'^[A-Za-z]:').hasMatch(name);
+    String? target;
+    if (!absolute) {
+      try {
+        target = base.resolveUri(Uri(path: name)).toFilePath();
+      } on UnsupportedError {
+        target = null;
+      } on FormatException {
+        target = null;
+      }
+    }
+    if (target == null || !target.startsWith(basePath) || target == basePath) {
+      throw Exception('Refusing to extract "${file.name}": it resolves outside ${extractDir.path}');
+    }
+    final outputStream = OutputFileStream(target);
+    file.writeContent(outputStream);
+    outputStream.closeSync();
+  }
+}
+
 String _targetKey(BuildInput input) {
   final os = input.config.code.targetOS.toString();
   final arch = input.config.code.targetArchitecture.toString();
   return '$os-$arch';
+}
+
+/// Compiler and linker hardening for the native builds, per toolchain.
+///
+/// The toolchain follows the target OS the way the build itself does:
+/// `native_toolchain_cmake` configures a Windows target with CMake's default
+/// generator there (Visual Studio, so MSVC), an Android target through the
+/// NDK's toolchain file and an iOS/macOS target through its Xcode toolchain
+/// file (clang both), and Linux with the system compiler (GCC or clang). Every
+/// one of them understands its flags, so nothing is probed on the host.
+///
+/// GCC/clang: `-fstack-protector-strong` puts a canary in every frame that
+/// holds an array or has a local's address taken; `_FORTIFY_SOURCE=2` compiles
+/// a bounded `__*_chk` libc call in place of an unbounded one wherever the
+/// compiler knows the destination size (it needs optimisation, which the
+/// Release build's -O3 gives; Apple's libc fortifies a subset and the rest
+/// compiles as before). On Linux and Android the shared library is linked
+/// with `-z relro -z now` as well: the GOT is resolved at load and then made
+/// read-only, so a write primitive cannot redirect a call through it. The
+/// Apple linker has no RELRO (`__DATA_CONST` is its default equivalent).
+///
+/// MSVC: `/GS` is the canary, `/guard:cf` Control Flow Guard (wanted by both
+/// the compiler and the linker), `/DYNAMICBASE` ASLR and `/NXCOMPAT` DEP for
+/// the DLL.
+///
+/// mbedTLS is built as a static library and linked into libopen62541, so it
+/// takes the same compile flags; the linker flags apply where it is linked.
+/// `test/native_hardening_test.dart` reads the marks these leave in the ELF.
+///
+/// The flags reach CMake as a script passed in `CMAKE_PROJECT_INCLUDE`, which
+/// CMake runs after every `project()` call, after the toolchain file. They
+/// cannot go in `CMAKE_C_FLAGS`: `native_toolchain_cmake`'s toolchain files
+/// `set()` that variable (`-march=...`) and shadow the command-line value.
+///
+/// The text of the script for [targetOS]; [floatLittleEndian] adds the
+/// open62541-only define, [sanitizer] ASan + UBSan.
+String hardeningCmake(OS targetOS, {bool floatLittleEndian = false, bool sanitizer = false}) {
+  final compile = <String>[];
+  final link = <String>[];
+  if (targetOS == OS.windows) {
+    compile.addAll(['/GS', '/guard:cf']);
+    link.addAll(['/DYNAMICBASE', '/NXCOMPAT', '/guard:cf']);
+  } else {
+    compile.addAll(['-fstack-protector-strong', '-D_FORTIFY_SOURCE=2']);
+    if (targetOS == OS.linux || targetOS == OS.android) {
+      link.addAll(['-Wl,-z,relro', '-Wl,-z,now']);
+    }
+  }
+  if (sanitizer) {
+    compile.addAll(['-fsanitize=address,undefined', '-fno-omit-frame-pointer']);
+    link.add('-fsanitize=address,undefined');
+  }
+  return [
+    if (floatLittleEndian) 'add_compile_definitions(UA_FLOAT_LITTLE_ENDIAN=1)',
+    'add_compile_options("\$<\$<COMPILE_LANGUAGE:C>:${compile.join(';')}>")',
+    if (link.isNotEmpty) 'add_link_options(${link.join(' ')})',
+    '',
+  ].join('\n');
+}
+
+/// Writes [script] to `hardening-<name>.cmake` under [dir] and returns the
+/// path to hand to `CMAKE_PROJECT_INCLUDE`.
+Future<String> _writeHardening(Uri dir, String name, String script) async {
+  final file = File.fromUri(dir.resolve('hardening-$name.cmake'));
+  await file.parent.create(recursive: true);
+  await file.writeAsString(script);
+  return file.path;
 }
 
 /// Configures + builds + installs a CMake project via `native_toolchain_cmake`.
@@ -173,11 +276,23 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
   // it, so an install that is still present afterwards is the pinned version.
   final sourceDir = await _downloadMbedTLS(input.outputDirectoryShared);
 
-  // Skip if already built for this target
+  // Skip if already built for this target with these flags. The flags are
+  // stamped into the install prefix: the prefix outlives a package upgrade,
+  // and an install built under other flags (or none) would otherwise be
+  // linked in as it is. A mismatch discards the install and rebuilds; the
+  // CMake build directory under src/ is reconfigured, so only the objects
+  // the flags touch recompile.
+  final hardening = hardeningCmake(input.config.code.targetOS);
+  final flags = hardening;
+  final flagsStamp = File.fromUri(installPrefix.resolve('flags'));
   final includeCheck = File.fromUri(installPrefix.resolve('include/mbedtls/ssl.h'));
   if (await includeCheck.exists()) {
-    logger.info('mbedTLS already built, skipping');
-    return installPrefix;
+    if (await flagsStamp.exists() && await flagsStamp.readAsString() == flags) {
+      logger.info('mbedTLS already built, skipping');
+      return installPrefix;
+    }
+    logger.info('mbedTLS install was built with other flags, rebuilding');
+    await Directory.fromUri(installPrefix).delete(recursive: true);
   }
 
   await _buildCmakeProject(
@@ -195,9 +310,11 @@ Future<Uri> _buildMbedTLS(BuildInput input, BuildOutputBuilder output, Logger lo
       'USE_STATIC_MBEDTLS_LIBRARY': 'ON',
       'BUILD_SHARED_LIBS': 'OFF',
       'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
+      'CMAKE_PROJECT_INCLUDE': await _writeHardening(input.outputDirectoryShared, 'mbedtls', hardening),
     },
     targets: ['install'],
   );
+  await flagsStamp.writeAsString(flags);
 
   return installPrefix;
 }
@@ -234,17 +351,7 @@ Future<Uri> download(Uri outputDirectory, String version) async {
   final bytes = await _downloadVerified(url, expectedSha256: expectedSha256, what: 'open62541 $version');
   final archive = ZipDecoder().decodeBytes(bytes);
 
-  if (!await extractDir.exists()) {
-    await extractDir.create(recursive: true);
-  }
-
-  for (var file in archive) {
-    if (file.isFile) {
-      final outputStream = OutputFileStream('${extractDir.path.toString()}/${file.name}');
-      file.writeContent(outputStream);
-      outputStream.closeSync();
-    }
-  }
+  await extractArchiveInto(archive, extractDir);
   // Rename extracted folder (e.g. open62541-includes) to 'src' for shorter paths
   final folder = extractDir.listSync().firstWhere((element) => element is Directory);
   if (!await Directory.fromUri(folder.uri).exists()) {
@@ -785,6 +892,15 @@ Future<ProcessResult?> _tryRun(String executable, List<String> arguments, String
 Future<void> main(List<String> args) async {
   final version = "v1.5.9";
   await build(args, (input, output) async {
+    // A web build asks for no code assets, and there is nothing this hook could
+    // usefully produce for one: dart2js has no C library to link. Without this
+    // guard the hook still runs and dies in `_targetKey`, because
+    // `input.config.code` throws rather than answering when code assets were
+    // not requested — so `flutter build web` fails on a package the web code
+    // never calls into. The pure-Dart half of this package
+    // (`open62541_types.dart`) is exactly what such a build imports.
+    if (!input.config.buildCodeAssets) return;
+
     final extractedFiles = await download(input.outputDirectoryShared, version);
     await _applyPatches(extractedFiles, input.packageRoot);
 
@@ -801,7 +917,16 @@ Future<void> main(List<String> args) async {
     final libPrefix = isWindows ? '' : 'lib';
     final libSuffix = isWindows ? '.lib' : '.a';
 
-    final sanitizer = Platform.environment['ENABLE_SANITIZER'] == '1';
+    // An (empty) `.open62541_sanitizer` file in the package root builds the
+    // library with ASan + UBSan (CI's test-asan job), on top of the hardening
+    // flags. The hooks runner starts hooks with a scrubbed environment, so an
+    // environment variable never reaches this point, and `dart test` passes no
+    // user-defines; a file is the one switch that does. It is registered as a
+    // dependency so creating or removing it reruns the hook.
+    final marker = input.packageRoot.resolve('.open62541_sanitizer');
+    final sanitizer = await File.fromUri(marker).exists();
+    output.dependencies.add(marker);
+    final hardening = hardeningCmake(input.config.code.targetOS, floatLittleEndian: true, sanitizer: sanitizer);
 
     await _buildCmakeProject(
       input: input,
@@ -826,26 +951,22 @@ Future<void> main(List<String> args) async {
         // and raw-Ethernet transports stay off.
         'UA_ENABLE_PUBSUB': 'ON',
         'UA_ENABLE_PUBSUB_INFORMATIONMODEL': 'ON',
+        // No XML decoder in the library: nothing in the Dart API or on the
+        // opc.tcp binary path reaches it, and turning it off changes no
+        // struct the bindings use. JSON stays on: event filter parsing
+        // requires it, and turning events off shifts UA_ServerConfig fields.
+        'UA_ENABLE_XML_ENCODING': 'OFF',
         'MBEDTLS_INCLUDE_DIRS': mbedtlsInstall.resolve('include/').toFilePath(),
         'MBEDTLS_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedtls$libSuffix').toFilePath(),
         'MBEDX509_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedx509$libSuffix').toFilePath(),
         'MBEDCRYPTO_LIBRARY': mbedtlsLibDir.resolve('${libPrefix}mbedcrypto$libSuffix').toFilePath(),
-        // Force the fast (memcpy/"overlayable") IEEE 754 encoding path.
-        //
-        // open62541's config.h only sets UA_FLOAT_LITTLE_ENDIAN=1 when the
-        // compiler defines __FLOAT_WORD_ORDER__ (a GCC-only macro) or when the
-        // target is x86. clang (e.g. on macOS arm64) defines neither, so
-        // UA_FLOAT_LITTLE_ENDIAN resolves to 0, UA_BINARY_OVERLAYABLE_FLOAT
-        // becomes 0, and the library falls back to the slow generic pack754/
-        // unpack754 codec in ua_types_encoding_binary.c. That generic codec
-        // normalizes the mantissa to "1.x" and therefore silently corrupts
-        // subnormal (denormalized) Float/Double values on the wire. Every
-        // target we build for uses little-endian IEEE 754 floats, so forcing
-        // this on is both correct and required for subnormals to round-trip.
-        'CMAKE_C_FLAGS': sanitizer
-            ? '-DUA_FLOAT_LITTLE_ENDIAN=1 -fsanitize=address,undefined -fno-omit-frame-pointer'
-            : '-DUA_FLOAT_LITTLE_ENDIAN=1',
-        if (sanitizer) 'CMAKE_SHARED_LINKER_FLAGS': '-fsanitize=address,undefined',
+        // Also forces UA_FLOAT_LITTLE_ENDIAN=1: open62541's config.h leaves it 0 under clang
+        // (macOS arm64), which selects the pack754 codec that corrupts subnormal floats.
+        'CMAKE_PROJECT_INCLUDE': await _writeHardening(
+          input.outputDirectoryShared,
+          sanitizer ? '$name-asan' : name,
+          hardening,
+        ),
       },
       targets: ['install'],
     );
