@@ -63,17 +63,17 @@ flag.
 
 ```yaml
 dependencies:
-  open62541: ^1.5.9
+  open62541: ^1.5.10
 ```
 
 Then run `dart pub get` (allow extra time for the first native build).
 
 ## Versioning
 
-The package version mirrors the bundled open62541 release exactly: `1.5.9` wraps
-open62541 `v1.5.9`. Dart-side fixes that ship the **same** native library version
-use a build-metadata suffix — `1.5.9+1`, `1.5.9+2`, … — which pub.dev orders
-after `1.5.9`. So `open62541: ^1.5.9` accepts `1.5.9`, any binding-only `+N`
+The package version mirrors the bundled open62541 release exactly: `1.5.10` wraps
+open62541 `v1.5.10`. Dart-side fixes that ship the **same** native library version
+use a build-metadata suffix — `1.5.10+1`, `1.5.10+2`, … — which pub.dev orders
+after `1.5.10`. So `open62541: ^1.5.10` accepts `1.5.10`, any binding-only `+N`
 revision, and later `1.x` upstream releases.
 
 ## Usage
@@ -194,9 +194,10 @@ node, write every node whose access level allows it and call methods; it may
 not add or delete nodes or references (new: those services answer
 `BadUserAccessDenied` unless `allowClientNodeManagement: true`). Run it on a
 trusted network only (a machine network behind its own firewall, a lab,
-`localhost`). `addVariableNode` defaults to `AccessLevelMask(read: true,
-write: true)`; `addDataSourceVariableNode` is read-only unless `onWrite` is
-given.
+`localhost`). `addVariableNode` defaults to read-only (`AccessLevelMask(read:
+true)`; a client write is answered `BadNotWritable`), pass
+`AccessLevelMask(read: true, write: true)` for a writable node;
+`addDataSourceVariableNode` is read-only unless `onWrite` is given.
 
 A secured server takes its own `certificate` and `privateKey` (DER, or an
 encrypted PEM key with its `privateKeyPassword`; the `applicationUri` must be the URI in the certificate's subjectAltName, or the
