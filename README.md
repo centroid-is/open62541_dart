@@ -119,8 +119,10 @@ More examples are in the [`example/`](example/) directory: a minimal client
 nothing on the wire is signed or encrypted, and a username/password only
 travels if `allowUnencryptedPassword: true` is set (in clear text then; for a
 network you trust end to end). With a `certificate` and `privateKey` (DER,
-not encrypted: an encrypted key is an `ArgumentError`, a key open62541
-cannot load a `UaStatusException` from the constructor) and `securityMode: SignAndEncrypt` the channel is encrypted, and the server
+or an encrypted PEM key with its `privateKeyPassword`; an encrypted key
+without one is an `ArgumentError`, a key open62541 cannot load a
+`UaStatusException` from the constructor) and `securityMode: SignAndEncrypt`
+the channel is encrypted, and the server
 is authenticated against the `trustList` (DER: the server's own certificate,
 or the CA certificate that issued it), with an optional `issuerList`
 (intermediate CAs, which complete a chain but are not trusted by themselves)
@@ -144,7 +146,12 @@ authenticated, so an active attacker (a machine in the middle, a spoofed
 endpoint) goes unnoticed. It is an explicit opt-in: a certificate with
 neither a `trustList` nor `acceptAllCertificates: true` is an
 `ArgumentError`, because open62541 treats an empty trust list as "accept
-every certificate". `ClientIsolate.create` takes the same arguments. The
+every certificate". `securityPolicy` pins the endpoint's SecurityPolicy
+(otherwise the client takes the endpoint the server ranks highest),
+`applicationUri` is the ApplicationUri the client announces (with a
+certificate it must be the certificate's URI, an `ArgumentError`
+otherwise), and `rejectedServerCertificates` lists the server certificates
+the trust list refused. `ClientIsolate.create` takes the same arguments. The
 endpoint hostname is not checked against the server certificate.
 
 **Discovery, and trust on first use.** The trust list needs the server
@@ -188,8 +195,8 @@ trusted network only (a machine network behind its own firewall, a lab,
 write: true)`; `addDataSourceVariableNode` is read-only unless `onWrite` is
 given.
 
-A secured server takes its own `certificate` and `privateKey` (DER; the
-`applicationUri` must be the URI in the certificate's subjectAltName, or the
+A secured server takes its own `certificate` and `privateKey` (DER, or an
+encrypted PEM key with its `privateKeyPassword`; the `applicationUri` must be the URI in the certificate's subjectAltName, or the
 constructor throws) and the client certificates to trust, and refuses
 anonymous sessions in favour of users:
 
@@ -215,8 +222,8 @@ neither is an `ArgumentError`, as on the client). SecurityPolicy None is then
 off by default (`allowNone`; the None policy stays for discovery, so a client
 can still call GetEndpoints) and a client that offers only None finds no
 endpoint. Anonymous sessions are allowed exactly when `allowAnonymous` is,
-on every endpoint; `users` are username/password logins that open62541's
-default access-control plugin keeps in memory in plain text and compares in
+on every endpoint; `users` are username/password logins that the
+`DefaultAccessControl` keeps in memory in plain text and compares in
 constant time. A password over SecurityPolicy None travels in clear text,
 and the server refuses it unless `allowUnencryptedPassword: true` (the
 `Client` has the same opt-in); over an encrypted channel it is always
@@ -232,22 +239,31 @@ sessions and channels, which open62541 cannot leave uncapped: 65535 is the
 ceiling), and `ServerLimits.unlimited` lifts every cap for a server whose
 clients are all known to behave. `Server.limits` reports what is in force.
 
-Who may do what is `authorization`: hooks that open62541 asks per session,
-each optional, each given the session (`MethodSessionInfo`, whose `identity`
-is anonymous, a username or a certificate subject):
+Who may log in and what each session may do is an `AccessControl`: open62541's
+access-control plugin in Dart. `activateSession` accepts a session by
+returning its context (any object; refuse by throwing a `UaStatusException`),
+and every later hook gets that context and a `NodeRef` whose `tag` is the
+access tag the node was added with (`accessTag:` on the add* methods,
+`Server.setAccessTag`). `DefaultAccessControl` is what `allowAnonymous` and
+`users` configure; extend it to keep its logins (the context is the user
+name) and restrict per node:
 
 ```dart
-final server = Server(
-  users: {'operator': '...', 'viewer': '...'},
-  authorization: ServerAuthorization(
-    userAccessLevel: (session, node) => switch (session.identity) {
-      UsernameSessionIdentity(username: 'operator') => null, // the node's own
-      _ => const AccessLevelMask(read: true),
-    },
-    userExecutable: (session, method, object) => session.identity is UsernameSessionIdentity,
-    allowBrowse: (session, node) => node != secretFolder,
-  ),
-);
+const operatorOnly = 1;
+
+class Plant extends DefaultAccessControl {
+  Plant() : super(allowAnonymous: false, users: {'operator': '...', 'viewer': '...'});
+
+  @override
+  int userAccessLevel(Object? context, NodeRef node) =>
+      node.tag == operatorOnly && context != 'operator' ? const AccessLevelMask(read: true).value : 0xFF;
+
+  @override
+  bool userExecutableOnObject(Object? context, NodeRef method, NodeRef object) => context == 'operator';
+}
+
+final server = Server(certificate: cert, privateKey: key, trustList: [clientCert], accessControl: Plant());
+server.addVariableNode(setpoint, value, accessLevel: readWrite, accessTag: operatorOnly);
 ```
 
 A hook only restricts: open62541 ANDs the user access level with the node's
@@ -256,9 +272,11 @@ own, so a read-only node stays read-only. What it refuses is answered
 node and a Read of its other attributes). The host's own `read`, `write` and
 `add...Node` calls are never asked. The hooks run synchronously on the
 server's isolate inside `runIterate`, `userAccessLevel` once per value read
-or written, so they must be quick; the session's identity is looked up once
-per session, and a trivial hook adds about 0.1 µs to a read. A hook that
-throws denies.
+or written, so they must be quick: the session's context is a map lookup by
+the session's handle and the tag is the node's open62541 context, and a
+trivial hook adds about 0.1 µs to a read. A hook that throws denies, and its
+first exception is logged. A method handler gets the session's context as
+`MethodSessionInfo.context`.
 
 ### Monitoring with quality
 

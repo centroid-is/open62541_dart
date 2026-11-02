@@ -17,6 +17,7 @@ import 'package:open62541/open62541.dart';
 import 'common.dart';
 import 'heap_growth.dart';
 import 'secure_fixtures.dart';
+import 'security_harness.dart';
 
 const nonePolicy = 'http://opcfoundation.org/UA/SecurityPolicy#None';
 
@@ -156,6 +157,24 @@ void main() {
         expect(endpoint.serverCertificate, isEmpty);
         expect(endpoint.certificateThumbprint, isEmpty);
         expect(endpoint.endpointUrl, contains(':${server.port}'));
+      });
+    }
+  });
+
+  group('against a Dart Server that serves SecurityPolicy#None for discovery only:', () {
+    late PumpedServer server;
+
+    setUpAll(() {
+      final identity = createSelfSignedCertificate(applicationUri: securedServerUri, subject: ['CN=discovery only']);
+      server = PumpedServer.secured(identity, trustList: [clientIdentity.certificate]);
+    });
+    tearDownAll(() => server.delete());
+
+    for (final clientType in clientTypes) {
+      test('$clientType client: the secure endpoints, though there is no None endpoint to select', () async {
+        final endpoints = await discoverOf(clientType)(server.url, logLevel: LogLevel.UA_LOGLEVEL_FATAL);
+        expect(endpoints, hasLength(6));
+        expect(endpoints.map((e) => e.securityPolicyUri), isNot(contains(nonePolicy)));
       });
     }
   });

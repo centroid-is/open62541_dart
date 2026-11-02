@@ -12,6 +12,7 @@ import 'common.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'node_id.dart';
+import 'security.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'types/create_type.dart';
 import 'types/endpoint_description.dart';
@@ -320,8 +321,13 @@ class _BrowseResultError implements Exception {
 ///    for the same reason: issuer certificates only complete a chain, they
 ///    cannot anchor trust.
 ///  * The [privateKey] is not encrypted (a PKCS#8 `EncryptedPrivateKeyInfo`,
-///    DER or PEM, or a legacy PEM with `Proc-Type: 4,ENCRYPTED`): open62541
-///    would ask for its password on stdin and block the process.
+///    DER or PEM, or a legacy PEM with `Proc-Type: 4,ENCRYPTED`) unless
+///    [privateKeyPassword] is given: open62541 would ask for its password on
+///    stdin and block the process. The [Client] decrypts it with the
+///    password first (PEM only, which is what open62541 can decrypt).
+///  * [applicationUri], with a certificate, is one of its `URI:`
+///    SubjectAltNames: servers refuse a client whose certificate does not
+///    carry the ApplicationUri it announces (`BadCertificateUriInvalid`).
 void checkClientCertificateArguments({
   required Uint8List? certificate,
   required Uint8List? privateKey,
@@ -329,15 +335,30 @@ void checkClientCertificateArguments({
   required List<Uint8List>? issuerList,
   required List<Uint8List>? revocationList,
   required bool acceptAllCertificates,
+  String? privateKeyPassword,
+  String? applicationUri,
 }) {
   if ((certificate == null) != (privateKey == null)) {
     throw ArgumentError('certificate and privateKey come together; got only one of them');
   }
-  if (privateKey != null && isEncryptedPrivateKey(privateKey)) {
+  if (privateKeyPassword != null && privateKey == null) {
+    throw ArgumentError('privateKeyPassword needs a privateKey');
+  }
+  if (certificate != null &&
+      applicationUri != null &&
+      !Certificate.fromDer(certificate).hasApplicationUri(applicationUri)) {
+    throw ArgumentError.value(
+      applicationUri,
+      'applicationUri',
+      'is not a URI SubjectAltName of the certificate, which names ${Certificate.fromDer(certificate).applicationUris}',
+    );
+  }
+  if (privateKey != null && privateKeyPassword == null && isEncryptedPrivateKey(privateKey)) {
     throw ArgumentError.value(
       '<${privateKey.length} bytes>',
       'privateKey',
-      'is encrypted; pass the decrypted key (DER). open62541 would prompt for its password on stdin',
+      'is encrypted; pass the decrypted key (DER), or an encrypted PEM key with its privateKeyPassword. '
+          'open62541 would prompt for its password on stdin',
     );
   }
   final hasLists = trustList != null || issuerList != null || revocationList != null;
@@ -476,6 +497,15 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   /// machine network behind its own firewall); anywhere else use a
   /// certificate with `SignAndEncrypt` and a [trustList].
   ///
+  /// [privateKeyPassword] decrypts an encrypted PEM [privateKey] in Dart
+  /// (`UA_CertificateUtils_decryptPrivateKey`) before open62541 sees it; a
+  /// wrong password is a `BadSecurityChecksFailed` [UaStatusException].
+  /// [applicationUri] is the ApplicationUri the client announces; with a
+  /// certificate it must be one of the certificate's `URI:`
+  /// SubjectAltNames. [securityPolicy] pins the endpoint's SecurityPolicy;
+  /// without it the client takes the endpoint the server ranks highest
+  /// among those of [securityMode].
+  ///
   /// [schemaCacheSize] caps the DataType definitions the client keeps for
   /// decoding (see [defs]).
   Client({
@@ -494,7 +524,14 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
     this.schemaCacheSize = defaultSchemaCacheSize,
+    String? privateKeyPassword,
+    String? applicationUri,
+    SecurityPolicy? securityPolicy,
   }) {
+    if (privateKeyPassword != null && privateKey != null) {
+      // Decrypted here, so that open62541 never sees an encrypted key.
+      privateKey = decryptPrivateKey(privateKey, password: privateKeyPassword);
+    }
     checkClientCertificateArguments(
       certificate: certificate,
       privateKey: privateKey,
@@ -502,6 +539,8 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
       issuerList: issuerList,
       revocationList: revocationList,
       acceptAllCertificates: acceptAllCertificates,
+      privateKeyPassword: privateKey == null ? privateKeyPassword : null,
+      applicationUri: applicationUri,
     );
     final config = ua_calloc<raw.UA_ClientConfig>();
 
@@ -523,6 +562,9 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     if (securityMode != null) {
       config.ref.securityModeAsInt = securityMode.value;
     }
+    if (securityPolicy != null) {
+      config.ref.securityPolicyUri.set(securityPolicy.uri);
+    }
 
     if (certificate != null && privateKey != null) {
       try {
@@ -532,7 +574,12 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
         raw.UA_Client_delete(raw.UA_Client_newWithConfig(config));
         ua_calloc.free(config);
         rethrow;
+      } finally {
+        if (privateKeyPassword != null) privateKey.fillRange(0, privateKey.length, 0);
       }
+    }
+    if (applicationUri != null) {
+      config.ref.clientDescription.applicationUri.set(applicationUri);
     }
 
     if (username != null) {
@@ -641,6 +688,13 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
 
   ClientConfig get config => _clientConfig;
 
+  /// Server certificates this client refused, oldest first (open62541 keeps
+  /// the last 100). Empty without a [trustList].
+  List<Certificate> get rejectedServerCertificates {
+    _requireClient();
+    return rejectedCertificates(_clientConfig._clientConfig.ref.certificateVerification);
+  }
+
   /// The endpoints the server at [endpointUrl] offers, from its GetEndpoints
   /// service: for each, the security policy and mode, the identity tokens
   /// it accepts, who the server says it is, and its certificate (DER), which
@@ -692,6 +746,12 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     // Bounds the channel open and the service call each (0 would be no
     // timeout at all).
     config.ref.timeout = timeout.inMilliseconds;
+    // A preset endpoint skips open62541's endpoint selection, which refuses
+    // a server that serves SecurityPolicy#None for discovery only
+    // (BadIdentityTokenRejected: no None endpoint to select).
+    config.ref.endpoint.endpointUrl.set(url);
+    config.ref.endpoint.securityModeAsInt = MessageSecurityMode.UA_MESSAGESECURITYMODE_NONE.value;
+    config.ref.endpoint.securityPolicyUri.set(SecurityPolicy.none.uri);
     final client = raw.UA_Client_newWithConfig(config);
     // The client holds a copy of the struct; the struct itself is ours.
     ua_calloc.free(config);

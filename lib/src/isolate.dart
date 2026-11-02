@@ -8,6 +8,7 @@ import 'client_api.dart';
 import 'dynamic_value.dart';
 import 'extensions.dart';
 import 'node_id.dart';
+import 'security.dart';
 import 'types/endpoint_description.dart';
 import 'types/errors.dart';
 
@@ -187,6 +188,10 @@ class GetStateMessage extends IsolateMessage {
   const GetStateMessage(super.requestId);
 }
 
+class RejectedServerCertificatesMessage extends IsolateMessage {
+  const RejectedServerCertificatesMessage(super.requestId);
+}
+
 class MonitorCancelMessage extends IsolateMessage {
   const MonitorCancelMessage(super.requestId);
 }
@@ -293,6 +298,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    String? privateKeyPassword,
+    String? applicationUri,
+    SecurityPolicy? securityPolicy,
     int schemaCacheSize = Client.defaultSchemaCacheSize,
   }) {
     _initIsolate(
@@ -310,6 +318,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
       allowUnencryptedPassword: allowUnencryptedPassword,
+      privateKeyPassword: privateKeyPassword,
+      applicationUri: applicationUri,
+      securityPolicy: securityPolicy,
       schemaCacheSize: schemaCacheSize,
     );
   }
@@ -345,6 +356,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     int schemaCacheSize = Client.defaultSchemaCacheSize,
     Duration iterateInterval = const Duration(milliseconds: 10),
     bool allowUnencryptedPassword = false,
+    String? privateKeyPassword,
+    String? applicationUri,
+    SecurityPolicy? securityPolicy,
   }) async {
     // The worker's Client constructor would throw where nobody awaits it
     // (errorsAreFatal is false there) and every later call would find no
@@ -356,6 +370,8 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       issuerList: issuerList,
       revocationList: revocationList,
       acceptAllCertificates: acceptAllCertificates,
+      privateKeyPassword: privateKeyPassword,
+      applicationUri: applicationUri,
     );
     final isolate = ClientIsolate._(
       secureChannelLifeTime: secureChannelLifeTime,
@@ -372,6 +388,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       logLevel: logLevel,
       connectivityCheckInterval: connectivityCheckInterval,
       allowUnencryptedPassword: allowUnencryptedPassword,
+      privateKeyPassword: privateKeyPassword,
+      applicationUri: applicationUri,
+      securityPolicy: securityPolicy,
       schemaCacheSize: schemaCacheSize,
     );
 
@@ -411,6 +430,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     LogLevel? logLevel,
     Duration connectivityCheckInterval = const Duration(seconds: 1),
     bool allowUnencryptedPassword = false,
+    String? privateKeyPassword,
+    String? applicationUri,
+    SecurityPolicy? securityPolicy,
     int schemaCacheSize = Client.defaultSchemaCacheSize,
   }) async {
     try {
@@ -445,6 +467,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
           logLevel: logLevel,
           connectivityCheckInterval: connectivityCheckInterval,
           allowUnencryptedPassword: allowUnencryptedPassword,
+          privateKeyPassword: privateKeyPassword,
+          applicationUri: applicationUri,
+          securityPolicy: securityPolicy,
           schemaCacheSize: schemaCacheSize,
           sendPort: _receivePort.sendPort,
         ),
@@ -913,6 +938,24 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     return controller.stream;
   }
 
+  /// Server certificates the worker's client refused (see
+  /// [Client.rejectedServerCertificates]).
+  Future<List<Certificate>> get rejectedServerCertificates async {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final completer = Completer<List<Certificate>>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(RejectedServerCertificatesMessage(id));
+
+    try {
+      return await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
   /// Get the current client state
   Future<ClientState> get state async {
     if (_isClosed) throw const ClientIsolateClosedException();
@@ -1175,6 +1218,9 @@ class _IsolateData {
   final LogLevel? logLevel;
   final Duration connectivityCheckInterval;
   final bool allowUnencryptedPassword;
+  final String? privateKeyPassword;
+  final String? applicationUri;
+  final SecurityPolicy? securityPolicy;
   final int schemaCacheSize;
   final SendPort sendPort;
 
@@ -1193,6 +1239,9 @@ class _IsolateData {
     this.logLevel,
     required this.connectivityCheckInterval,
     required this.allowUnencryptedPassword,
+    this.privateKeyPassword,
+    this.applicationUri,
+    this.securityPolicy,
     required this.schemaCacheSize,
     required this.sendPort,
   });
@@ -1238,6 +1287,9 @@ void _isolateEntryPoint(_IsolateData data) {
       connectivityCheckInterval: data.connectivityCheckInterval,
       schemaCacheSize: data.schemaCacheSize,
       allowUnencryptedPassword: data.allowUnencryptedPassword,
+      privateKeyPassword: data.privateKeyPassword,
+      applicationUri: data.applicationUri,
+      securityPolicy: data.securityPolicy,
     );
   } catch (e) {
     receivePort.close();
@@ -1378,6 +1430,8 @@ void _isolateEntryPoint(_IsolateData data) {
           resultMask: message.resultMask,
         );
         sendPort.send(IsolateResponse.success(message.requestId, result));
+      } else if (message is RejectedServerCertificatesMessage) {
+        sendPort.send(IsolateResponse.success(message.requestId, client.rejectedServerCertificates));
       } else if (message is GetStateMessage) {
         final result = client.state;
         sendPort.send(IsolateResponse.success(message.requestId, result));

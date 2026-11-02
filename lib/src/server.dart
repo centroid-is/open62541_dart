@@ -3,11 +3,12 @@ import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
-import 'package:logging/logging.dart';
 
 import 'package:open62541/open62541.dart';
+import 'access_control.dart';
 import 'common.dart';
 import 'extensions.dart';
+import 'security.dart';
 import 'third_party/open62541.g.dart' as raw;
 import 'types/custom_type_registry.dart';
 import 'types/struct_layout.dart';
@@ -125,13 +126,9 @@ class ServerStatistics {
 /// i.e. which OPC UA UserIdentityToken the client presented in
 /// ActivateSession.
 ///
-/// Derived server-side from open62541's per-session security diagnostics
-/// (`authenticationMechanism` in the NS0 SessionSecurityDiagnosticsArray,
-/// available because this package's native build enables
-/// `UA_ENABLE_DIAGNOSTICS`) combined with the session's `0:clientUserId`
-/// attribute. The identity is established by open62541's core in
-/// ActivateSession *before* the access-control plugin runs, so it is available
-/// with the default access-control plugin — no custom plugin required.
+/// Taken from the token the server's [AccessControl] accepted
+/// ([SessionActivation.tokenType]), which every [Server] has: a
+/// [DefaultAccessControl] unless one is given.
 sealed class SessionIdentity {
   const SessionIdentity();
 }
@@ -149,9 +146,7 @@ class AnonymousSessionIdentity extends SessionIdentity {
 class UsernameSessionIdentity extends SessionIdentity {
   const UsernameSessionIdentity(this.username);
 
-  /// The token's userName. open62541 records it as the session's
-  /// `0:clientUserId` attribute during ActivateSession (the password is never
-  /// retained).
+  /// The token's userName ([SessionActivation.username]).
   final String username;
 
   @override
@@ -162,10 +157,8 @@ class UsernameSessionIdentity extends SessionIdentity {
 class CertificateSessionIdentity extends SessionIdentity {
   const CertificateSessionIdentity(this.subjectName);
 
-  /// The subject distinguished name of the identity certificate. open62541
-  /// extracts it (`UA_CertificateUtils_getSubjectName`) into the session's
-  /// `0:clientUserId` attribute during ActivateSession; the certificate
-  /// thumbprint itself is not exposed through the public 1.5.x API.
+  /// The subject distinguished name of the identity certificate
+  /// ([Certificate.subject] of [SessionActivation.userCertificate]).
   final String subjectName;
 
   @override
@@ -175,11 +168,11 @@ class CertificateSessionIdentity extends SessionIdentity {
 /// Identity of the client session that invoked a method callback (see
 /// [Server.addMethodNode]).
 ///
-/// All fields other than [sessionId] are looked up live when the method is
-/// called, via `UA_Server_getSessionAttribute` (open62541 keeps
-/// `0:sessionName`, `0:clientDescription` and `0:clientUserId` as always
-/// defined, read-only session attributes) and the NS0
-/// SessionSecurityDiagnosticsArray. They are `null` when the session cannot
+/// The session name and the client's application description are looked up
+/// live when the method is called, via `UA_Server_getSessionAttribute`
+/// (open62541 keeps `0:sessionName` and `0:clientDescription` as always
+/// defined, read-only session attributes); the [identity] and [context] come
+/// from the session's activation. They are `null` when the session cannot
 /// be resolved — e.g. a local call through the internal admin session, or a
 /// session that disappeared mid-call.
 class MethodSessionInfo {
@@ -189,6 +182,7 @@ class MethodSessionInfo {
     this.applicationUri,
     this.applicationName,
     this.identity,
+    this.context,
   });
 
   /// The server-assigned identifier of the calling session (a Guid NodeId in
@@ -214,128 +208,19 @@ class MethodSessionInfo {
   final String? applicationName;
 
   /// The activation identity (anonymous / username / certificate), or `null`
-  /// when it cannot be determined — a local admin-session call, a session
-  /// that vanished, or an unsupported token type (e.g. IssuedIdentityToken,
-  /// which open62541 1.5 does not record).
+  /// for a local admin-session call or a session that vanished.
   final SessionIdentity? identity;
+
+  /// What the server's [AccessControl.activateSession] returned for the
+  /// session (the user name, for a [DefaultAccessControl] login); `null` for
+  /// the admin session.
+  final Object? context;
 
   @override
   String toString() =>
       'MethodSessionInfo(sessionId: $sessionId, sessionName: $sessionName, '
       'applicationUri: $applicationUri, applicationName: $applicationName, '
-      'identity: $identity)';
-}
-
-typedef _ActivateSessionNative =
-    raw.UA_StatusCode Function(
-      ffi.Pointer<raw.UA_Server>,
-      ffi.Pointer<raw.UA_AccessControl>,
-      ffi.Pointer<raw.UA_EndpointDescription>,
-      ffi.Pointer<raw.UA_ByteString>,
-      ffi.Pointer<raw.UA_NodeId>,
-      ffi.Pointer<raw.UA_ExtensionObject>,
-      ffi.Pointer<ffi.Pointer<ffi.Void>>,
-    );
-typedef _ActivateSession =
-    int Function(
-      ffi.Pointer<raw.UA_Server>,
-      ffi.Pointer<raw.UA_AccessControl>,
-      ffi.Pointer<raw.UA_EndpointDescription>,
-      ffi.Pointer<raw.UA_ByteString>,
-      ffi.Pointer<raw.UA_NodeId>,
-      ffi.Pointer<raw.UA_ExtensionObject>,
-      ffi.Pointer<ffi.Pointer<ffi.Void>>,
-    );
-typedef _CloseSessionNative =
-    ffi.Void Function(
-      ffi.Pointer<raw.UA_Server>,
-      ffi.Pointer<raw.UA_AccessControl>,
-      ffi.Pointer<raw.UA_NodeId>,
-      ffi.Pointer<ffi.Void>,
-    );
-typedef _CloseSession =
-    void Function(
-      ffi.Pointer<raw.UA_Server>,
-      ffi.Pointer<raw.UA_AccessControl>,
-      ffi.Pointer<raw.UA_NodeId>,
-      ffi.Pointer<ffi.Void>,
-    );
-
-/// getUserAccessLevel, getUserExecutable and allowBrowseNode: (server, ac,
-/// sessionId, sessionContext, nodeId, nodeContext).
-typedef _NodeHookNative<R extends ffi.NativeType> =
-    R Function(
-      ffi.Pointer<raw.UA_Server>,
-      ffi.Pointer<raw.UA_AccessControl>,
-      ffi.Pointer<raw.UA_NodeId>,
-      ffi.Pointer<ffi.Void>,
-      ffi.Pointer<raw.UA_NodeId>,
-      ffi.Pointer<ffi.Void>,
-    );
-typedef _ExecutableOnObjectNative =
-    ffi.Bool Function(
-      ffi.Pointer<raw.UA_Server>,
-      ffi.Pointer<raw.UA_AccessControl>,
-      ffi.Pointer<raw.UA_NodeId>,
-      ffi.Pointer<ffi.Void>,
-      ffi.Pointer<raw.UA_NodeId>,
-      ffi.Pointer<ffi.Void>,
-      ffi.Pointer<raw.UA_NodeId>,
-      ffi.Pointer<ffi.Void>,
-    );
-
-/// Per-user authorization of client sessions, see the `authorization`
-/// argument of [Server].
-///
-/// Each hook is optional; open62541's own answer (everything allowed) stands
-/// for a hook left `null`, and a [Server] without an authorization keeps
-/// open62541's default functions untouched. Every hook gets the session as
-/// a [MethodSessionInfo]: its [MethodSessionInfo.identity] says who logged
-/// in (anonymous, a username, a certificate subject). It is resolved once
-/// per session activation and kept until the session closes or activates
-/// again.
-///
-/// The hooks restrict, they never grant: open62541 ANDs what they return
-/// with the node's own attributes (`src/server/ua_services_attribute.c`,
-/// `getUserAccessLevel` and the Call service's `executable` check), so a
-/// read-only node stays read-only whatever [userAccessLevel] answers. They
-/// apply to client sessions only: the host's own [Server.read],
-/// [Server.write], [Server.addVariableNode] and the rest run as open62541's
-/// admin session, which is never asked.
-///
-/// The hooks are called synchronously on the isolate that created the
-/// server, from [Server.runIterate], while a request is being served:
-/// [userAccessLevel] once per Read or Write of a variable's value (and per
-/// sample of a monitored item, and per node of a HistoryRead), so it must be
-/// cheap and must not wait for anything. A hook that throws denies (no
-/// access, not executable, not browsable); the first exception of each hook
-/// is logged on the `open62541.Server` logger (package:logging), later ones
-/// are not.
-class ServerAuthorization {
-  const ServerAuthorization({this.userAccessLevel, this.userExecutable, this.allowBrowse});
-
-  /// The access a session has to a variable node's value: the
-  /// `UserAccessLevel` attribute, ANDed with the node's `AccessLevel`.
-  /// `null` leaves the node's own access level. A Read or Write the result
-  /// does not allow is `BadUserAccessDenied`, as is a HistoryRead of a node
-  /// without [AccessLevelMask.historyRead] in the result.
-  final AccessLevelMask? Function(MethodSessionInfo session, NodeId node)? userAccessLevel;
-
-  /// Whether a session may call the method [method] (on [object]; `null`
-  /// when a client reads the method's `UserExecutable` attribute). A
-  /// refused Call is `BadUserAccessDenied`.
-  final bool Function(MethodSessionInfo session, NodeId method, NodeId? object)? userExecutable;
-
-  /// Whether a session may browse [node], and read its attributes other
-  /// than the Value: a refused Browse of the node is `BadUserAccessDenied`,
-  /// TranslateBrowsePathsToNodeIds does not pass through it
-  /// (`src/server/ua_services_view.c`), and a Read of any attribute but
-  /// Value and RolePermissions is `BadUserAccessDenied`
-  /// (`src/server/ua_services_attribute.c`, `ReadWithNodeMaybeAsync`; the
-  /// Value is [userAccessLevel]'s). open62541 asks only about the node a
-  /// Browse starts from: the node still appears among its parent's
-  /// references.
-  final bool Function(MethodSessionInfo session, NodeId node)? allowBrowse;
+      'identity: $identity, context: $context)';
 }
 
 /// The complete read result of a data-source variable node: the [value] plus
@@ -577,6 +462,10 @@ const String defaultServerApplicationUri = 'urn:open62541.unconfigured.applicati
 ///  * Someone must be able to log in: with `allowAnonymous: false` there
 ///    must be [users], or a trust list (a client certificate in it can be
 ///    presented as an X509 identity token).
+///  * An [accessControl] decides alone who logs in: [allowAnonymous] and
+///    [users] are left at their defaults, it offers at least one token
+///    type, no issued token, and a certificate token only with a
+///    certificate and a non-empty trust list to verify it.
 ///  * [hostname], when given, is not empty.
 ///  * The [limits] are non-negative, `maxSecureChannels`/`maxSessions` fit a
 ///    UInt16 and are not 0 (open62541 would refuse every channel and
@@ -593,6 +482,7 @@ void checkServerSecurityArguments({
   required Map<String, String>? users,
   required String? hostname,
   required ServerLimits limits,
+  AccessControl? accessControl,
 }) {
   if ((certificate == null) != (privateKey == null)) {
     throw ArgumentError('certificate and privateKey come together; got only one of them');
@@ -601,7 +491,8 @@ void checkServerSecurityArguments({
     throw ArgumentError.value(
       '<${privateKey.length} bytes>',
       'privateKey',
-      'is encrypted; pass the decrypted key (DER). open62541 would prompt for its password on stdin',
+      'is encrypted; pass the decrypted key (DER), or an encrypted PEM key with its privateKeyPassword. '
+          'open62541 would prompt for its password on stdin',
     );
   }
   final hasLists = trustList != null || issuerList != null || revocationList != null;
@@ -629,7 +520,15 @@ void checkServerSecurityArguments({
       'every certificate" for an empty trust list, so an empty one is refused rather than silently accepting any client',
     );
   }
-  if (!allowAnonymous && (users == null || users.isEmpty) && !trusts) {
+  if (accessControl != null) {
+    if (!allowAnonymous || users != null) {
+      throw ArgumentError(
+        'allowAnonymous and users configure the default access control; with an accessControl it decides who '
+        'may log in, so leave them out',
+      );
+    }
+    AccessControlHooks.tokenTypes(accessControl, certificateTrust: certificate != null && trusts);
+  } else if (!allowAnonymous && (users == null || users.isEmpty) && !trusts) {
     throw ArgumentError(
       'allowAnonymous: false needs users (username/password), or a trustList whose client certificates can be '
       'presented as X509 identity tokens: as given, no client could log in',
@@ -741,7 +640,8 @@ typedef _HistoryReadInFlight = ({
 /// * **Encryption.** Without a `certificate` the server offers
 ///   SecurityPolicy#None only: nothing on the wire is signed or encrypted,
 ///   and nothing authenticates the server to its clients. With a
-///   `certificate` and `privateKey` (DER) it offers every policy the build
+///   `certificate` and `privateKey` (DER, or an encrypted PEM key with
+///   `privateKeyPassword`) it offers every policy the build
 ///   has (Basic256Sha256, Aes256Sha256RsaPss, Aes128Sha256RsaOaep) in both
 ///   Sign and SignAndEncrypt, and verifies each client's application
 ///   certificate against the `trustList` (plus `issuerList` and
@@ -751,7 +651,8 @@ typedef _HistoryReadInFlight = ({
 ///   with a certificate, so a secured server is not also an open one. See
 ///   [endpoints].
 /// * **Authentication.** `allowAnonymous` (default `true`) and `users`
-///   (username to password). A password over SecurityPolicy#None travels in
+///   (username to password), or an `accessControl` ([AccessControl]) that
+///   decides in Dart. A password over SecurityPolicy#None travels in
 ///   clear text, so open62541 refuses it there unless
 ///   `allowUnencryptedPassword` is set; over an encrypted channel it is
 ///   always accepted.
@@ -763,8 +664,8 @@ typedef _HistoryReadInFlight = ({
 ///   `BadUserAccessDenied` unless `allowClientNodeManagement: true`. The
 ///   host's own [addVariableNode], [deleteNode], [addReference], ... are
 ///   not affected, they run as the server's internal admin session.
-///   `authorization` ([ServerAuthorization]) restricts reads, writes,
-///   calls and browsing per user.
+///   `accessControl` ([AccessControl]) restricts reads, writes, calls and
+///   browsing per session.
 /// * **Listen address.** All interfaces, or `hostname` only.
 /// * **Limits.** [ServerLimits], see [limits].
 class Server {
@@ -805,9 +706,14 @@ class Server {
   ///
   /// Without a [certificate] the configuration is open62541's
   /// `UA_ServerConfig_setMinimal`: one endpoint, SecurityPolicy#None. With a
-  /// [certificate] and [privateKey] (DER, unencrypted: an encrypted key is an
-  /// `ArgumentError` before any native call, a key open62541 cannot load a
-  /// `BadSecurityChecksFailed` [UaStatusException]) it is
+  /// [certificate] and [privateKey] (DER; an encrypted PEM key with its
+  /// [privateKeyPassword], decrypted here with
+  /// `UA_CertificateUtils_decryptPrivateKey`, a wrong password a
+  /// `BadSecurityChecksFailed` [UaStatusException]; an encrypted key without
+  /// one, or an encrypted DER key, which open62541 cannot decrypt, is an
+  /// `ArgumentError` before any native call; a key open62541 cannot load a
+  /// `BadSecurityChecksFailed` [UaStatusException]; a key of another
+  /// certificate an `ArgumentError`) it is
   /// `UA_ServerConfig_setDefaultWithSecurityPolicies`: the
   /// policies Basic256Sha256, Aes256Sha256RsaPss and Aes128Sha256RsaOaep,
   /// each as a Sign and a SignAndEncrypt endpoint, plus SecurityPolicy#None
@@ -844,11 +750,14 @@ class Server {
   ///
   /// [allowAnonymous] (default `true`) offers the anonymous user-token
   /// policy; [users] (username to password) the username one, with those
-  /// logins. Both go to open62541's default access-control plugin
-  /// (`UA_AccessControl_default`, `plugins/ua_accesscontrol_default.c`),
-  /// which copies the logins and keeps them in memory as given: the
-  /// password is stored in plain text and compared in constant time
-  /// (`UA_constantTimeEqual`) with what the client sent; nothing is hashed.
+  /// logins; a non-empty [trustList] the certificate one. They make the
+  /// server's [DefaultAccessControl], open62541's default access-control
+  /// plugin (`UA_AccessControl_default`) in Dart, which keeps the logins in
+  /// memory as given: the password is stored in plain text and compared in
+  /// constant time with what the client sent; nothing is hashed. An
+  /// [accessControl] replaces it: it decides alone who may log in, and
+  /// [allowAnonymous] and [users] must then be left at their defaults (an
+  /// [ArgumentError] otherwise).
   /// What is not allowed is not offered: the endpoints list no anonymous
   /// UserTokenPolicy when `allowAnonymous` is false, so a client that only
   /// has an anonymous token finds no endpoint for it (open62541's client
@@ -884,9 +793,13 @@ class Server {
   /// [addVariableNode], [deleteNode], [addReference] and the rest go
   /// through unchecked). [allowClientNodeManagement] restores the old
   /// behaviour, where any client may reshape the address space.
-  /// [authorization] decides per session what open62541's plugin would
+  /// [accessControl] decides per session what open62541's plugin would
   /// allow everyone: a variable's user access level, whether a method may
-  /// be called, whether a node may be browsed, see [ServerAuthorization].
+  /// be called, whether a node may be browsed, ... see [AccessControl]. It
+  /// knows a node by the access tag given to [addVariableNode] and the
+  /// other add* methods (`accessTag:`) or [setAccessTag]. Node management
+  /// stays refused without [allowClientNodeManagement]; with it, the
+  /// access control's `allowAddNode` and the others decide.
   ///
   /// ### Listen address
   ///
@@ -927,16 +840,25 @@ class Server {
     bool allowUnencryptedPassword = false,
     bool allowClientNodeManagement = false,
     ServerLimits limits = const ServerLimits(),
-    ServerAuthorization? authorization,
+    String? privateKeyPassword,
+    AccessControl? accessControl,
   }) : allowNone = allowNone ?? certificate == null,
-       allowAnonymous = allowAnonymous,
+       allowAnonymous = accessControl == null
+           ? allowAnonymous
+           : accessControl.userTokenTypes.contains(UserTokenType.UA_USERTOKENTYPE_ANONYMOUS),
        allowClientNodeManagement = allowClientNodeManagement,
        hostname = hostname,
        hasCertificate = certificate != null,
        acceptAllClientCertificates = acceptAllClientCertificates {
+    if (privateKeyPassword != null && privateKey == null) {
+      throw ArgumentError('privateKeyPassword needs a privateKey');
+    }
+    // Decrypted here, so that open62541 never sees an encrypted key (it
+    // would ask for the password on stdin).
+    final key = privateKeyPassword == null ? privateKey : decryptPrivateKey(privateKey!, password: privateKeyPassword);
     checkServerSecurityArguments(
       certificate: certificate,
-      privateKey: privateKey,
+      privateKey: key,
       trustList: trustList,
       issuerList: issuerList,
       revocationList: revocationList,
@@ -946,162 +868,166 @@ class Server {
       users: users,
       hostname: hostname,
       limits: limits,
+      accessControl: accessControl,
     );
-    final logins = users ?? const <String, String>{};
+    final trusts = trustList != null && trustList.isNotEmpty;
+    final control =
+        accessControl ??
+        DefaultAccessControl(allowAnonymous: allowAnonymous, users: users ?? const {}, allowCertificate: trusts);
+    final tokenTypes = AccessControlHooks.tokenTypes(control, certificateTrust: certificate != null && trusts);
     final portNumber = port ?? 4840;
     // The config struct is scratch. UA_Server_newWithConfig moves its contents
     // into the server and zeroes the struct it was given, and a failing
     // UA_ServerConfig_setMinimal / _setDefaultWithSecurityPolicies clears it,
     // so either way only the struct itself is left, for the arena to free.
-    using((arena) {
-      if (certificate != null) {
-        // Before anything is allocated that a throw would leak: the server's
-        // certificate must carry the ApplicationUri it announces.
-        final uri = applicationUri ?? defaultServerApplicationUri;
-        final uriString = arena<raw.UA_String>()..ref.set(uri, allocator: arena);
-        final match = raw.UA_CertificateUtils_verifyApplicationUri(_byteString(arena, certificate), uriString);
-        if (match != raw.UA_STATUSCODE_GOOD) {
-          throw ArgumentError(
-            'the certificate does not carry the applicationUri "$uri" in its subjectAltName '
-            '(${statusCodeToString(match)}): clients check the two against each other, give the certificate\'s URI',
+    try {
+      using((arena) {
+        if (certificate != null) {
+          // Before anything is allocated that a throw would leak: the server's
+          // certificate must carry the ApplicationUri it announces.
+          final uri = applicationUri ?? defaultServerApplicationUri;
+          final uriString = arena<raw.UA_String>()..ref.set(uri, allocator: arena);
+          final match = raw.UA_CertificateUtils_verifyApplicationUri(_byteString(arena, certificate), uriString);
+          if (match != raw.UA_STATUSCODE_GOOD) {
+            throw ArgumentError(
+              'the certificate does not carry the applicationUri "$uri" in its subjectAltName '
+              '(${statusCodeToString(match)}): clients check the two against each other, give the certificate\'s URI',
+            );
+          }
+        }
+
+        final config = arena<raw.UA_ServerConfig>();
+        if (logLevel != null) {
+          config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
+        }
+        config.ref.privateKeyPasswordCallback = ffi.Pointer.fromFunction(
+          _refusePrivateKeyPassword,
+          raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED,
+        );
+        // Both set the logging level if not set.
+        final int res;
+        if (certificate == null) {
+          res = raw.UA_ServerConfig_setMinimal(config, portNumber, ffi.nullptr);
+        } else {
+          // The certificate store copies the lists (UA_Array_copy into a
+          // UA_TrustListDataType) and the policies copy the certificate and
+          // the decrypted key, so all of this is scratch.
+          final trust = trustList ?? const <Uint8List>[];
+          final issuers = issuerList ?? const <Uint8List>[];
+          final crls = revocationList ?? const <Uint8List>[];
+          res = raw.UA_ServerConfig_setDefaultWithSecurityPolicies(
+            config,
+            portNumber,
+            _byteString(arena, certificate),
+            _byteString(arena, key!),
+            _byteStrings(arena, trust),
+            trust.length,
+            _byteStrings(arena, issuers),
+            issuers.length,
+            _byteStrings(arena, crls),
+            crls.length,
           );
         }
-      }
-
-      final config = arena<raw.UA_ServerConfig>();
-      if (logLevel != null) {
-        config.ref.logging = raw.UA_Log_Stdout_new(logLevel);
-      }
-      config.ref.privateKeyPasswordCallback = ffi.Pointer.fromFunction(
-        _refusePrivateKeyPassword,
-        raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED,
-      );
-      // Both set the logging level if not set.
-      final int res;
-      if (certificate == null) {
-        res = raw.UA_ServerConfig_setMinimal(config, portNumber, ffi.nullptr);
-      } else {
-        // The certificate store copies the lists (UA_Array_copy into a
-        // UA_TrustListDataType) and the policies copy the certificate and
-        // the decrypted key, so all of this is scratch.
-        final trust = trustList ?? const <Uint8List>[];
-        final issuers = issuerList ?? const <Uint8List>[];
-        final crls = revocationList ?? const <Uint8List>[];
-        res = raw.UA_ServerConfig_setDefaultWithSecurityPolicies(
-          config,
-          portNumber,
-          _byteString(arena, certificate),
-          _byteString(arena, privateKey!),
-          _byteStrings(arena, trust),
-          trust.length,
-          _byteStrings(arena, issuers),
-          issuers.length,
-          _byteStrings(arena, crls),
-          crls.length,
-        );
-      }
-      if (res != raw.UA_STATUSCODE_GOOD) {
-        throw UaStatusException(res);
-      }
-      // A DER key open62541 cannot use is copied unparsed; each secure
-      // policy then fails to build its context, which open62541 only logs,
-      // and the server would come up with the None endpoint alone.
-      if (certificate != null) {
-        var secure = 0;
-        for (var i = 0; i < config.ref.endpointsSize; i++) {
-          if (config.ref.endpoints[i].securityPolicyUri.value != securityPolicyNoneUri) secure++;
+        if (res != raw.UA_STATUSCODE_GOOD) {
+          throw UaStatusException(res);
         }
-        if (secure == 0) {
+        // A DER key open62541 cannot use is copied unparsed; each secure
+        // policy then fails to build its context, which open62541 only logs,
+        // and the server would come up with the None endpoint alone.
+        if (certificate != null) {
+          var secure = 0;
+          for (var i = 0; i < config.ref.endpointsSize; i++) {
+            if (config.ref.endpoints[i].securityPolicyUri.value != securityPolicyNoneUri) secure++;
+          }
+          if (secure == 0) {
+            raw.UA_ServerConfig_clear(config);
+            throw UaStatusException(raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED);
+          }
+          // open62541 builds the policies from any key it can parse; one of
+          // another certificate fails every handshake later.
+          final pair = raw.UA_CertificateUtils_checkKeyPair(_byteString(arena, certificate), _byteString(arena, key!));
+          if (pair != raw.UA_STATUSCODE_GOOD) {
+            raw.UA_ServerConfig_clear(config);
+            throw ArgumentError.value('<${key.length} bytes>', 'privateKey', 'is not the key of the certificate');
+          }
+        }
+        // setMinimal sets its 2-minute asyncOperationTimeout only under
+        // UA_MULTITHREADING >= 100 (plugins/ua_config_default.c); this package
+        // builds single-threaded, which leaves 0, "never cancel": a parked
+        // method call or data-source write whose handler never completes
+        // would stay in flight (and in _inFlightMethodCalls/_inFlightWrites)
+        // for the life of the server. See [asyncOperationTimeout].
+        config.ref.asyncOperationTimeout = 120000;
+
+        config.ref.allowNonePolicyPassword = allowUnencryptedPassword;
+        // The plugin both set* functions installed keeps its context and
+        // clear; its token policies and callbacks become the access
+        // control's. A server without an accessControl keeps the plugin's
+        // per-node functions, which allow everything, as the Dart default
+        // would, without a call into Dart per read.
+        final hooks = AccessControlHooks(control);
+        try {
+          hooks.install(config, tokenTypes, nodeHooks: accessControl != null);
+        } catch (_) {
           raw.UA_ServerConfig_clear(config);
-          throw UaStatusException(raw.UA_STATUSCODE_BADSECURITYCHECKSFAILED);
+          hooks.close();
+          rethrow;
         }
-      }
-      // setMinimal sets its 2-minute asyncOperationTimeout only under
-      // UA_MULTITHREADING >= 100 (plugins/ua_config_default.c); this package
-      // builds single-threaded, which leaves 0, "never cancel": a parked
-      // method call or data-source write whose handler never completes
-      // would stay in flight (and in _inFlightMethodCalls/_inFlightWrites)
-      // for the life of the server. See [asyncOperationTimeout].
-      config.ref.asyncOperationTimeout = 120000;
-
-      // Authentication. Both set* functions installed the default plugin
-      // with anonymous only; it is re-created when the logins differ (the
-      // plugin copies the logins: plugins/ua_accesscontrol_default.c,
-      // UA_AccessControl_default, so the array is scratch).
-      if (!allowAnonymous || logins.isNotEmpty) {
-        final array = arena<raw.UA_UsernamePasswordLogin>(logins.length);
-        var i = 0;
-        for (final entry in logins.entries) {
-          array[i].username.set(entry.key, allocator: arena);
-          array[i].password.set(entry.value, allocator: arena);
-          i++;
+        _accessControlHooks = hooks;
+        if (!this.allowNone) {
+          _dropNoneEndpoints(config);
         }
-        final status = raw.UA_AccessControl_default(config, allowAnonymous, ffi.nullptr, logins.length, array);
-        if (status != raw.UA_STATUSCODE_GOOD) {
-          throw 'Failed to set up the server access control ${statusCodeToString(status)}';
+
+        // Listen address. setDefaultConfig put one URL, `opc.tcp://:port`, in
+        // serverUrls (UA_malloc'd); `set` frees that data and leaves a malloc'd
+        // copy that UA_ServerConfig_clean releases with the array.
+        if (hostname != null) {
+          config.ref.serverUrls[0].set('opc.tcp://$hostname:$portNumber');
         }
-      }
-      config.ref.allowNonePolicyPassword = allowUnencryptedPassword;
-      // The plugin offers an X509 user-token policy whenever sessionPKI has
-      // a verifier, and the accept-all verifier is one: drop those policies
-      // unless a trust list backs them, so that a certificate login means
-      // a trusted certificate.
-      if (trustList == null || trustList.isEmpty) {
-        _dropUserTokenPolicies(config, raw.UA_UserTokenType.UA_USERTOKENTYPE_CERTIFICATE);
-      }
-      if (!this.allowNone) {
-        _dropNoneEndpoints(config);
-      }
 
-      // Listen address. setDefaultConfig put one URL, `opc.tcp://:port`, in
-      // serverUrls (UA_malloc'd); `set` frees that data and leaves a malloc'd
-      // copy that UA_ServerConfig_clean releases with the array.
-      if (hostname != null) {
-        config.ref.serverUrls[0].set('opc.tcp://$hostname:$portNumber');
-      }
+        _applyLimits(config, limits);
 
-      _applyLimits(config, limits);
+        // The identity strings go in before UA_Server_newWithConfig: server
+        // init copies applicationUri into NamespaceArray[1], and startup writes
+        // it to ServerArray[0]. The defaults were allocated with UA_malloc
+        // (plain malloc); `UA_String.set` frees that data and leaves a malloc'd
+        // copy in its place, which UA_ServerConfig_clean releases with the rest
+        // of the ApplicationDescription / BuildInfo when the server is deleted.
+        final description = config.ref.applicationDescription;
+        if (applicationName != null) {
+          description.applicationName.locale.set('en');
+          description.applicationName.text.set(applicationName);
+        }
+        if (applicationUri != null) {
+          description.applicationUri.set(applicationUri);
+        }
+        final buildInfo = config.ref.buildInfo;
+        if (productName != null) {
+          buildInfo.productName.set(productName);
+        }
+        if (manufacturerName != null) {
+          buildInfo.manufacturerName.set(manufacturerName);
+        }
+        if (productUri != null) {
+          description.productUri.set(productUri);
+          buildInfo.productUri.set(productUri);
+        }
 
-      // The identity strings go in before UA_Server_newWithConfig: server
-      // init copies applicationUri into NamespaceArray[1], and startup writes
-      // it to ServerArray[0]. The defaults were allocated with UA_malloc
-      // (plain malloc); `UA_String.set` frees that data and leaves a malloc'd
-      // copy in its place, which UA_ServerConfig_clean releases with the rest
-      // of the ApplicationDescription / BuildInfo when the server is deleted.
-      final description = config.ref.applicationDescription;
-      if (applicationName != null) {
-        description.applicationName.locale.set('en');
-        description.applicationName.text.set(applicationName);
-      }
-      if (applicationUri != null) {
-        description.applicationUri.set(applicationUri);
-      }
-      final buildInfo = config.ref.buildInfo;
-      if (productName != null) {
-        buildInfo.productName.set(productName);
-      }
-      if (manufacturerName != null) {
-        buildInfo.manufacturerName.set(manufacturerName);
-      }
-      if (productUri != null) {
-        description.productUri.set(productUri);
-        buildInfo.productUri.set(productUri);
-      }
-
-      _server = raw.UA_Server_newWithConfig(config);
-      _config = raw.UA_Server_getConfig(_server);
-    }, ua_calloc);
+        _server = raw.UA_Server_newWithConfig(config);
+        _config = raw.UA_Server_getConfig(_server);
+      }, ua_calloc);
+    } finally {
+      if (!identical(key, privateKey)) key?.fillRange(0, key.length, 0);
+    }
 
     if (!allowClientNodeManagement) {
       _installNodeManagementGuard();
-    }
-    if (authorization != null) {
-      _installAuthorization(authorization);
     }
   }
 
   late ffi.Pointer<raw.UA_Server> _server;
   late ffi.Pointer<raw.UA_ServerConfig> _config;
+  AccessControlHooks? _accessControlHooks;
 
   /// Whether a SecurityPolicy#None endpoint is offered (see the
   /// constructor's `allowNone`).
@@ -1194,28 +1120,6 @@ class Server {
     }
     config.ref.endpointsSize = kept;
     config.ref.securityPolicyNoneDiscoveryOnly = true;
-  }
-
-  /// Removes the user-token policies of [tokenType] from the access-control
-  /// plugin's array (`UA_Array_new`'d, released with `userTokenPoliciesSize`
-  /// entries by the plugin's `clear`), the same way as [_dropNoneEndpoints].
-  static void _dropUserTokenPolicies(ffi.Pointer<raw.UA_ServerConfig> config, raw.UA_UserTokenType tokenType) {
-    final ac = config.ref.accessControl;
-    final policies = ac.userTokenPolicies;
-    final size = ffi.sizeOf<raw.UA_UserTokenPolicy>();
-    var kept = 0;
-    for (var i = 0; i < ac.userTokenPoliciesSize; i++) {
-      final policy = policies + i;
-      if (policy.ref.tokenType == tokenType) {
-        raw.UA_clear(policy.cast(), getTypeByIndex(raw.UA_TYPES_USERTOKENPOLICY));
-        continue;
-      }
-      if (kept != i) {
-        (policies + kept).cast<ffi.Uint8>().asTypedList(size).setAll(0, policy.cast<ffi.Uint8>().asTypedList(size));
-      }
-      kept++;
-    }
-    config.ref.accessControl.userTokenPoliciesSize = kept;
   }
 
   // ---- Node-management guard ----------------------------------------------
@@ -1354,174 +1258,48 @@ class Server {
     ac.allowDeleteReference = _allowDeleteReferenceGuard!.nativeFunction;
   }
 
-  // ---- Authorization ------------------------------------------------------
-  //
-  // The hooks of [ServerAuthorization] replace the plugin's
-  // getUserAccessLevel, getUserExecutable(OnObject) and allowBrowseNode, each
-  // only when given. activateSession and closeSession are wrapped around the
-  // plugin's own: every successful activation gets a fresh key in the
-  // session context (the default plugin leaves it NULL and never reads it),
-  // under which the session's identity is cached on first use, so a hook
-  // costs a map lookup. Closed in [delete], after UA_Server_delete, which
-  // still closes the open sessions through the wrapper.
-  static final _log = Logger('open62541.Server');
-  final List<ffi.NativeCallable> _authorizationCallbacks = [];
-  final Map<int, MethodSessionInfo> _authorizedSessions = {};
-  int _lastSessionKey = 0;
-  final Set<String> _authorizationHooksThatThrew = {};
-  AccessLevelMask? Function(MethodSessionInfo session, NodeId node)? _userAccessLevel;
+  /// Client application certificates this server refused at
+  /// OpenSecureChannel, oldest first (open62541 keeps the last 100). Empty
+  /// for a server without a certificate or with
+  /// `acceptAllClientCertificates`.
+  List<Certificate> get rejectedClientCertificates => rejectedCertificates(_config.ref.secureChannelPKI);
 
-  void _installAuthorization(ServerAuthorization authorization) {
-    final ac = _config.ref.accessControl;
-    final activate = ac.activateSession.asFunction<_ActivateSession>();
-    final close = ac.closeSession.asFunction<_CloseSession>();
-    final activateWrapper = ffi.NativeCallable<_ActivateSessionNative>.isolateLocal((
-      ffi.Pointer<raw.UA_Server> server,
-      ffi.Pointer<raw.UA_AccessControl> ac,
-      ffi.Pointer<raw.UA_EndpointDescription> endpoint,
-      ffi.Pointer<raw.UA_ByteString> certificate,
-      ffi.Pointer<raw.UA_NodeId> sessionId,
-      ffi.Pointer<raw.UA_ExtensionObject> token,
-      ffi.Pointer<ffi.Pointer<ffi.Void>> sessionContext,
-    ) {
-      final status = activate(server, ac, endpoint, certificate, sessionId, token, sessionContext);
-      if (status == raw.UA_STATUSCODE_GOOD) {
-        try {
-          _authorizedSessions.remove(sessionContext.value.address);
-          sessionContext.value = ffi.Pointer.fromAddress(++_lastSessionKey);
-        } catch (_) {
-          return raw.UA_STATUSCODE_BADINTERNALERROR;
-        }
-      }
-      return status;
-    }, exceptionalReturn: raw.UA_STATUSCODE_BADINTERNALERROR);
-    final closeWrapper = ffi.NativeCallable<_CloseSessionNative>.isolateLocal((
-      ffi.Pointer<raw.UA_Server> server,
-      ffi.Pointer<raw.UA_AccessControl> ac,
-      ffi.Pointer<raw.UA_NodeId> sessionId,
-      ffi.Pointer<ffi.Void> sessionContext,
-    ) {
-      try {
-        _authorizedSessions.remove(sessionContext.address);
-      } catch (_) {
-        // Nothing to undo: the entry is gone or never was.
-      }
-      close(server, ac, sessionId, sessionContext);
-    });
-    _authorizationCallbacks.addAll([activateWrapper, closeWrapper]);
-    ac.activateSession = activateWrapper.nativeFunction;
-    ac.closeSession = closeWrapper.nativeFunction;
+  /// User certificates (X.509 identity tokens) this server refused at
+  /// ActivateSession, oldest first (the last 100).
+  List<Certificate> get rejectedUserCertificates => rejectedCertificates(_config.ref.sessionPKI);
 
-    final userAccessLevel = _userAccessLevel = authorization.userAccessLevel;
-    if (userAccessLevel != null) {
-      final callback = ffi.NativeCallable<_NodeHookNative<raw.UA_Byte>>.isolateLocal((
-        ffi.Pointer<raw.UA_Server> server,
-        ffi.Pointer<raw.UA_AccessControl> ac,
-        ffi.Pointer<raw.UA_NodeId> sessionId,
-        ffi.Pointer<ffi.Void> sessionContext,
-        ffi.Pointer<raw.UA_NodeId> nodeId,
-        ffi.Pointer<ffi.Void> nodeContext,
-      ) {
-        try {
-          final session = _authorizedSession(sessionId, sessionContext);
-          if (session == null) return 0;
-          return userAccessLevel(session, NodeIdFfi.fromRaw(nodeId.ref))?.value ?? 0xFF;
-        } catch (error, stack) {
-          _authorizationHookThrew('userAccessLevel', error, stack);
-          return 0;
-        }
-      }, exceptionalReturn: 0);
-      _authorizationCallbacks.add(callback);
-      ac.getUserAccessLevel = callback.nativeFunction;
-    }
-
-    final userExecutable = authorization.userExecutable;
-    if (userExecutable != null) {
-      bool decide(
-        ffi.Pointer<raw.UA_NodeId> sessionId,
-        ffi.Pointer<ffi.Void> sessionContext,
-        ffi.Pointer<raw.UA_NodeId> methodId,
-        ffi.Pointer<raw.UA_NodeId> objectId,
-      ) {
-        try {
-          final session = _authorizedSession(sessionId, sessionContext);
-          if (session == null) return false;
-          final object = objectId == ffi.nullptr ? null : NodeIdFfi.fromRaw(objectId.ref);
-          return userExecutable(session, NodeIdFfi.fromRaw(methodId.ref), object);
-        } catch (error, stack) {
-          _authorizationHookThrew('userExecutable', error, stack);
-          return false;
-        }
-      }
-
-      final callback = ffi.NativeCallable<_NodeHookNative<ffi.Bool>>.isolateLocal(
-        (
-          ffi.Pointer<raw.UA_Server> server,
-          ffi.Pointer<raw.UA_AccessControl> ac,
-          ffi.Pointer<raw.UA_NodeId> sessionId,
-          ffi.Pointer<ffi.Void> sessionContext,
-          ffi.Pointer<raw.UA_NodeId> methodId,
-          ffi.Pointer<ffi.Void> methodContext,
-        ) => decide(sessionId, sessionContext, methodId, ffi.nullptr),
-        exceptionalReturn: false,
-      );
-      final onObject = ffi.NativeCallable<_ExecutableOnObjectNative>.isolateLocal(
-        (
-          ffi.Pointer<raw.UA_Server> server,
-          ffi.Pointer<raw.UA_AccessControl> ac,
-          ffi.Pointer<raw.UA_NodeId> sessionId,
-          ffi.Pointer<ffi.Void> sessionContext,
-          ffi.Pointer<raw.UA_NodeId> methodId,
-          ffi.Pointer<ffi.Void> methodContext,
-          ffi.Pointer<raw.UA_NodeId> objectId,
-          ffi.Pointer<ffi.Void> objectContext,
-        ) => decide(sessionId, sessionContext, methodId, objectId),
-        exceptionalReturn: false,
-      );
-      _authorizationCallbacks.addAll([callback, onObject]);
-      ac.getUserExecutable = callback.nativeFunction;
-      ac.getUserExecutableOnObject = onObject.nativeFunction;
-    }
-
-    final allowBrowse = authorization.allowBrowse;
-    if (allowBrowse != null) {
-      final callback = ffi.NativeCallable<_NodeHookNative<ffi.Bool>>.isolateLocal((
-        ffi.Pointer<raw.UA_Server> server,
-        ffi.Pointer<raw.UA_AccessControl> ac,
-        ffi.Pointer<raw.UA_NodeId> sessionId,
-        ffi.Pointer<ffi.Void> sessionContext,
-        ffi.Pointer<raw.UA_NodeId> nodeId,
-        ffi.Pointer<ffi.Void> nodeContext,
-      ) {
-        try {
-          final session = _authorizedSession(sessionId, sessionContext);
-          if (session == null) return false;
-          return allowBrowse(session, NodeIdFfi.fromRaw(nodeId.ref));
-        } catch (error, stack) {
-          _authorizationHookThrew('allowBrowse', error, stack);
-          return false;
-        }
-      }, exceptionalReturn: false);
-      _authorizationCallbacks.add(callback);
-      ac.allowBrowseNode = callback.nativeFunction;
+  /// Closes the session [sessionId] at once, as if it had timed out without
+  /// keeping its subscriptions: the access control's `closeSession` runs and
+  /// the client has to activate a new session. Throws a
+  /// [UaStatusException] (`BadSessionIdInvalid`) for an unknown session.
+  void closeSession(NodeId sessionId) {
+    final status = using((arena) {
+      final id = arena<raw.UA_NodeId>()..ref = sessionId.toRaw(allocator: arena);
+      return raw.UA_Server_closeSession(_server, id);
+    }, ua_calloc);
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
     }
   }
 
-  /// The session behind a hook's arguments, resolved on its first hook call
-  /// after activation; `null` (deny) without one: a monitored item of a
-  /// subscription whose session timed out is sampled with no session.
-  MethodSessionInfo? _authorizedSession(ffi.Pointer<raw.UA_NodeId> sessionId, ffi.Pointer<ffi.Void> sessionContext) {
-    if (sessionId == ffi.nullptr || sessionContext == ffi.nullptr) return null;
-    final key = sessionContext.address;
-    final known = _authorizedSessions[key];
-    if (known != null) return known;
-    if (_server == ffi.nullptr) return null;
-    return _authorizedSessions[key] = _resolveSessionInfo(sessionId);
+  /// Sets the access tag of an existing node: the [NodeRef.tag] the
+  /// [AccessControl] hooks see for it (`0`, the default, is no tag). The tag
+  /// is stored as the node's open62541 node context, so a hook reads it
+  /// without a lookup.
+  void setAccessTag(NodeId nodeId, int tag) {
+    _checkAccessTag(tag);
+    final status = using(
+      (arena) => raw.UA_Server_setNodeContext(_server, nodeId.toRaw(allocator: arena), ffi.Pointer.fromAddress(tag)),
+      ua_calloc,
+    );
+    if (status != raw.UA_STATUSCODE_GOOD) {
+      throw UaStatusException(status);
+    }
   }
 
-  void _authorizationHookThrew(String hook, Object error, StackTrace stack) {
-    if (_authorizationHooksThatThrew.add(hook)) {
-      _log.severe('ServerAuthorization.$hook threw, the request is denied (logged once)', error, stack);
+  static void _checkAccessTag(int tag) {
+    if (tag < 0) {
+      throw ArgumentError.value(tag, 'accessTag', 'must not be negative');
     }
   }
 
@@ -1796,6 +1574,8 @@ class Server {
   /// * [parentNodeId] - The parent node in the address space (defaults to Objects folder)
   /// * [parentReferenceNodeId] - The reference type to the parent (defaults to Organizes)
   /// * [basedatavariableType] - The base type for the variable (defaults to BaseDataVariableType)
+  /// * [accessTag] - What the [AccessControl] hooks see as [NodeRef.tag]
+  ///   (see [setAccessTag]).
   /// * [historizing] - The node's Historizing attribute: whether the server
   ///   collects history for it (see [setHistorizing])
   ///
@@ -1821,8 +1601,10 @@ class Server {
     NodeId? parentReferenceNodeId,
     NodeId? baseDataVariableType,
     NodeId? typeId,
+    int accessTag = 0,
     bool historizing = false,
   }) {
+    _checkAccessTag(accessTag);
     final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
     final resolvedType = baseDataVariableType ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEDATAVARIABLETYPE);
@@ -1881,7 +1663,7 @@ class Server {
         name,
         resolvedType.toRaw(allocator: arena),
         attr,
-        ffi.nullptr,
+        ffi.Pointer.fromAddress(accessTag),
         ffi.nullptr,
       );
       if (returnCode != raw.UA_STATUSCODE_GOOD) {
@@ -2148,6 +1930,9 @@ class Server {
   /// applying it itself, and the callbacks always produce/consume the complete
   /// value, so honouring the request silently would return (or overwrite) the
   /// full value instead of the requested slice.
+  ///
+  /// [accessTag] is what the [AccessControl] hooks see as [NodeRef.tag] (see
+  /// [setAccessTag]).
   void addDataSourceVariableNode(
     NodeId nodeId, {
     DynamicValue Function()? onRead,
@@ -2159,11 +1944,13 @@ class Server {
     NodeId? baseDataVariableType,
     NodeId? typeId,
     AccessLevelMask? accessLevel,
+    int accessTag = 0,
     bool historizing = false,
   }) {
     if ((onRead == null) == (onReadValue == null)) {
       throw ArgumentError('Provide exactly one of onRead / onReadValue');
     }
+    _checkAccessTag(accessTag);
     _ensureDataSourceDispatchers();
 
     final effectiveAccess = accessLevel ?? AccessLevelMask(read: true, write: onWrite != null);
@@ -2193,7 +1980,7 @@ class Server {
         raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: arena).cast()),
         resolvedType.toRaw(allocator: arena),
         attr,
-        ffi.nullptr,
+        ffi.Pointer.fromAddress(accessTag),
         ffi.nullptr,
       );
     }, ua_calloc);
@@ -2465,7 +2252,7 @@ class Server {
   /// `UA_Server_getSessionAttribute` returns *shallow* variants into
   /// session-owned memory, which this method fully copies into Dart values
   /// before returning.
-  MethodSessionInfo _resolveSessionInfo(ffi.Pointer<raw.UA_NodeId> sessionIdPtr) {
+  MethodSessionInfo _resolveSessionInfo(ffi.Pointer<raw.UA_NodeId> sessionIdPtr, ffi.Pointer<ffi.Void> sessionContext) {
     final sessionId = NodeIdFfi.fromRaw(sessionIdPtr.ref);
 
     // An empty UA_String can carry a null data pointer; treat it as ''.
@@ -2494,7 +2281,6 @@ class Server {
         : null;
 
     final sessionName = readAttr('sessionName', decodeString);
-    final clientUserId = readAttr('clientUserId', decodeString);
     String? applicationUri;
     String? applicationName;
     readAttr('clientDescription', (v) {
@@ -2506,56 +2292,22 @@ class Server {
       return null;
     });
 
-    // The activation token *type* is not part of the session attributes; it is
-    // recorded (as `authenticationMechanism`) in the per-session security
-    // diagnostics, served by the NS0 SessionSecurityDiagnosticsArray node
-    // (UA_ENABLE_DIAGNOSTICS is on in this package's native build).
-    SessionIdentity? identity;
-    final diagVariant = raw.UA_Variant_new();
-    final diagStatus = raw.UA_Server_readValue(
-      _server,
-      NodeId.fromNumeric(
-        0,
-        raw.UA_NS0ID_SERVER_SERVERDIAGNOSTICS_SESSIONSDIAGNOSTICSSUMMARY_SESSIONSECURITYDIAGNOSTICSARRAY,
-      ).toRaw(),
-      diagVariant,
-    );
-    if (diagStatus == raw.UA_STATUSCODE_GOOD &&
-        diagVariant.ref.type == getTypeByIndex(raw.UA_TYPES_SESSIONSECURITYDIAGNOSTICSDATATYPE)) {
-      final entries = diagVariant.ref.data.cast<raw.UA_SessionSecurityDiagnosticsDataType>();
-      for (var i = 0; i < diagVariant.ref.arrayLength; i++) {
-        final entry = (entries + i).ref;
-        if (NodeIdFfi.fromRaw(entry.sessionId) != sessionId) continue;
-        final userId = clientUserId ?? uaStr(entry.clientUserIdOfSession);
-        identity = switch (uaStr(entry.authenticationMechanism)) {
-          'Anonymous' => const AnonymousSessionIdentity(),
-          'UserName' => UsernameSessionIdentity(userId),
-          'Certificate' => CertificateSessionIdentity(userId),
-          // 'IssuedToken' (and anything unknown): open62541 records no
-          // usable identity for it.
-          _ => null,
-        };
-        break;
-      }
-    }
-    raw.UA_Variant_delete(diagVariant);
-
-    // Fallback when the diagnostics array is unavailable but the session
-    // exists: an empty clientUserId means anonymous, a non-empty one means a
-    // username token (open62541 fills it from the UserNameIdentityToken; an
-    // X509 subject name would be misattributed here, but an X509 token needs
-    // a signature by a SecurityPolicy other than None, the only one setMinimal
-    // configures, and a server with a certificate has diagnostics).
-    if (identity == null && clientUserId != null) {
-      identity = clientUserId.isEmpty ? const AnonymousSessionIdentity() : UsernameSessionIdentity(clientUserId);
-    }
-
+    final active = _accessControlHooks?.session(sessionContext);
+    final activation = active?.activation;
     return MethodSessionInfo(
       sessionId: sessionId,
       sessionName: sessionName,
       applicationUri: applicationUri,
       applicationName: applicationName,
-      identity: identity,
+      identity: switch (activation?.tokenType) {
+        UserTokenType.UA_USERTOKENTYPE_ANONYMOUS => const AnonymousSessionIdentity(),
+        UserTokenType.UA_USERTOKENTYPE_USERNAME => UsernameSessionIdentity(activation!.username ?? ''),
+        UserTokenType.UA_USERTOKENTYPE_CERTIFICATE => CertificateSessionIdentity(
+          activation!.userCertificate?.subject ?? '',
+        ),
+        _ => null,
+      },
+      context: active?.context,
     );
   }
 
@@ -2600,6 +2352,8 @@ class Server {
   ///   HasComponent).
   /// * [browseName] - The browse/display name (defaults to the method node's
   ///   string identifier; required if [methodNodeId] is numeric).
+  /// * [accessTag] - What the [AccessControl] hooks see as [NodeRef.tag]
+  ///   (see [setAccessTag]).
   void addMethodNode(
     NodeId methodNodeId, {
     required Future<List<DynamicValue>> Function(List<DynamicValue> inputs, MethodSessionInfo session) callback,
@@ -2608,7 +2362,9 @@ class Server {
     NodeId? parentNodeId,
     NodeId? parentReferenceNodeId,
     String? browseName,
+    int accessTag = 0,
   }) {
+    _checkAccessTag(accessTag);
     final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_HASCOMPONENT);
     if (browseName == null && !methodNodeId.isString()) {
@@ -2658,7 +2414,7 @@ class Server {
 
             // Session info is captured NOW — the session can be gone by the
             // time the handler's future completes.
-            final session = _resolveSessionInfo(sessionId);
+            final session = _resolveSessionInfo(sessionId, sessionContext);
 
             final Future<List<DynamicValue>> resultsFuture;
             try {
@@ -2737,7 +2493,7 @@ class Server {
           _buildArguments(inputArguments, arena),
           outputArguments.length,
           _buildArguments(outputArguments, arena),
-          ffi.nullptr,
+          ffi.Pointer.fromAddress(accessTag),
           ffi.nullptr,
         );
       }, ua_calloc);
@@ -2798,6 +2554,8 @@ class Server {
   ///   Organizes).
   /// * [typeDefinition] - The object's TypeDefinition (defaults to
   ///   BaseObjectType).
+  /// * [accessTag] - What the [AccessControl] hooks see as [NodeRef.tag]
+  ///   (see [setAccessTag]).
   ///
   /// Throws an exception if the server fails to add the node.
   ///
@@ -2813,7 +2571,9 @@ class Server {
     NodeId? parentNodeId,
     NodeId? parentReferenceNodeId,
     NodeId? typeDefinition,
+    int accessTag = 0,
   }) {
+    _checkAccessTag(accessTag);
     final resolvedParent = parentNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
     final resolvedRef = parentReferenceNodeId ?? NodeId.fromNumeric(0, raw.UA_NS0ID_ORGANIZES);
     final resolvedType = typeDefinition ?? NodeId.fromNumeric(0, raw.UA_NS0ID_BASEOBJECTTYPE);
@@ -2842,6 +2602,9 @@ class Server {
         getType(UaTypes.objectAttributes),
       );
     }, ua_calloc);
+    if (accessTag != 0) {
+      setAccessTag(nodeId, accessTag);
+    }
   }
 
   /// Adds an Object node of type `FolderType` - a convenience over
@@ -3341,7 +3104,7 @@ class Server {
   /// The other nodes go to the backend in one call per request, which
   /// answers asynchronously ([HistoryBackend]). A node also needs the
   /// HistoryRead bit of the session's UserAccessLevel: its AccessLevel
-  /// ([setAccessLevel]), ANDed with [ServerAuthorization.userAccessLevel]
+  /// ([setAccessLevel]), ANDed with [AccessControl.userAccessLevel]
   /// when the server has one. Without it the node is answered
   /// `Bad_UserAccessDenied` and never reaches the backend.
   /// Raw reads go to [HistoryBackend.readRaw], aggregates to
@@ -3566,7 +3329,7 @@ class Server {
           results[i].statusCode = status;
           continue;
         }
-        if (!releaseContinuationPoints && !_historyReadAllowed(sessionId, sessionContext, nodeId)) {
+        if (!releaseContinuationPoints && !_historyReadAllowed(sessionContext, nodeId)) {
           results[i].statusCode = raw.UA_STATUSCODE_BADUSERACCESSDENIED;
           continue;
         }
@@ -3599,7 +3362,7 @@ class Server {
 
       // Session info is captured now: the session can be gone by the time
       // the backend answers.
-      final session = _resolveSessionInfo(sessionId);
+      final session = _resolveSessionInfo(sessionId, sessionContext);
       final requests = [for (final node in nodes) request(node, timestamps, session)];
       final inFlight = (
         results: results,
@@ -3659,29 +3422,17 @@ class Server {
 
   /// Whether the session may read the history of [nodeId]: the HistoryRead
   /// bit of its UserAccessLevel, the node's AccessLevel ANDed with
-  /// [ServerAuthorization.userAccessLevel] as the Read service reports it.
+  /// [AccessControl.userAccessLevel] as the Read service reports it.
   /// open62541 1.5.9 never checks that bit on a HistoryRead.
-  bool _historyReadAllowed(ffi.Pointer<raw.UA_NodeId> sessionId, ffi.Pointer<ffi.Void> sessionContext, NodeId nodeId) {
-    var user = 0xFF;
-    final hook = _userAccessLevel;
-    if (hook != null) {
-      try {
-        final session = _authorizedSession(sessionId, sessionContext);
-        if (session == null) return false;
-        user = hook(session, nodeId)?.value ?? 0xFF;
-      } catch (error, stack) {
-        _authorizationHookThrew('userAccessLevel', error, stack);
-        return false;
-      }
+  bool _historyReadAllowed(ffi.Pointer<ffi.Void> sessionContext, NodeId nodeId) => using((arena) {
+    final id = arena<raw.UA_NodeId>()..ref = nodeId.toRaw(allocator: arena);
+    final user = _accessControlHooks?.userAccessLevel(_server, sessionContext, id) ?? 0xFF;
+    final level = arena<ffi.Uint8>();
+    if (raw.UA_Server_readAccessLevel(_server, id.ref, level) != raw.UA_STATUSCODE_GOOD) {
+      return false;
     }
-    return using((arena) {
-      final level = arena<ffi.Uint8>();
-      if (raw.UA_Server_readAccessLevel(_server, nodeId.toRaw(allocator: arena), level) != raw.UA_STATUSCODE_GOOD) {
-        return false;
-      }
-      return level.value & user & raw.UA_ACCESSLEVELMASK_HISTORYREAD != 0;
-    }, ua_calloc);
-  }
+    return level.value & user & raw.UA_ACCESSLEVELMASK_HISTORYREAD != 0;
+  }, ua_calloc);
 
   void _failHistoryRead(_HistoryReadInFlight call, Object error) {
     final status = error is UaStatusException ? error.statusCode : raw.UA_STATUSCODE_BADINTERNALERROR;
@@ -5293,12 +5044,10 @@ class Server {
     _allowAddReferenceGuard = null;
     _allowDeleteNodeGuard = null;
     _allowDeleteReferenceGuard = null;
-    // The authorization hooks and session wrappers, likewise.
-    for (final callback in _authorizationCallbacks) {
-      callback.close();
-    }
-    _authorizationCallbacks.clear();
-    _authorizedSessions.clear();
+    // The access control, likewise: UA_Server_delete ran its closeSession
+    // for the sessions still open.
+    _accessControlHooks?.close();
+    _accessControlHooks = null;
     if (ret != 0) {
       throw "Failed to delete server ${statusCodeToString(ret)}";
     }

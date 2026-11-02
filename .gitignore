@@ -13,6 +13,7 @@ lib/src/generated/*
 ffigen.yaml
 doc/api/
 *.der
+!test/fixtures/pki/*.der
 .env
 .vscode
 mbedtls-*
