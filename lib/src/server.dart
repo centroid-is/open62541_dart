@@ -306,17 +306,19 @@ typedef _ExecutableOnObjectNative =
 /// The hooks are called synchronously on the isolate that created the
 /// server, from [Server.runIterate], while a request is being served:
 /// [userAccessLevel] once per Read or Write of a variable's value (and per
-/// sample of a monitored item), so it must be cheap and must not wait for
-/// anything. A hook that throws denies (no access, not executable, not
-/// browsable); the first exception of each hook is logged on the
-/// `open62541.Server` logger (package:logging), later ones are not.
+/// sample of a monitored item, and per node of a HistoryRead), so it must be
+/// cheap and must not wait for anything. A hook that throws denies (no
+/// access, not executable, not browsable); the first exception of each hook
+/// is logged on the `open62541.Server` logger (package:logging), later ones
+/// are not.
 class ServerAuthorization {
   const ServerAuthorization({this.userAccessLevel, this.userExecutable, this.allowBrowse});
 
   /// The access a session has to a variable node's value: the
   /// `UserAccessLevel` attribute, ANDed with the node's `AccessLevel`.
   /// `null` leaves the node's own access level. A Read or Write the result
-  /// does not allow is `BadUserAccessDenied`.
+  /// does not allow is `BadUserAccessDenied`, as is a HistoryRead of a node
+  /// without [AccessLevelMask.historyRead] in the result.
   final AccessLevelMask? Function(MethodSessionInfo session, NodeId node)? userAccessLevel;
 
   /// Whether a session may call the method [method] (on [object]; `null`
@@ -1367,6 +1369,7 @@ class Server {
   final Map<int, MethodSessionInfo> _authorizedSessions = {};
   int _lastSessionKey = 0;
   final Set<String> _authorizationHooksThatThrew = {};
+  AccessLevelMask? Function(MethodSessionInfo session, NodeId node)? _userAccessLevel;
 
   void _installAuthorization(ServerAuthorization authorization) {
     final ac = _config.ref.accessControl;
@@ -1409,7 +1412,7 @@ class Server {
     ac.activateSession = activateWrapper.nativeFunction;
     ac.closeSession = closeWrapper.nativeFunction;
 
-    final userAccessLevel = authorization.userAccessLevel;
+    final userAccessLevel = _userAccessLevel = authorization.userAccessLevel;
     if (userAccessLevel != null) {
       final callback = ffi.NativeCallable<_NodeHookNative<raw.UA_Byte>>.isolateLocal((
         ffi.Pointer<raw.UA_Server> server,
@@ -3336,9 +3339,11 @@ class Server {
   ///   at once, with no data.
   ///
   /// The other nodes go to the backend in one call per request, which
-  /// answers asynchronously ([HistoryBackend]). The HistoryRead bit of a
-  /// node's access level is not checked here: open62541 leaves that to the
-  /// access control plugin, which this server does not configure for history.
+  /// answers asynchronously ([HistoryBackend]). A node also needs the
+  /// HistoryRead bit of the session's UserAccessLevel: its AccessLevel
+  /// ([setAccessLevel]), ANDed with [ServerAuthorization.userAccessLevel]
+  /// when the server has one. Without it the node is answered
+  /// `Bad_UserAccessDenied` and never reaches the backend.
   /// Raw reads go to [HistoryBackend.readRaw], aggregates to
   /// [HistoryBackend.readProcessed] and reads at given times to
   /// [HistoryBackend.readAtTime]; a request for modified values or events
@@ -3416,6 +3421,7 @@ class Server {
     final returnBounds = details.ref.returnBounds;
     _dispatchHistoryRead(
       sessionId,
+      sessionContext,
       timestampsToReturn,
       releaseContinuationPoints,
       nodesToReadSize,
@@ -3458,6 +3464,7 @@ class Server {
     final aggregateTypes = [for (var i = 0; i < d.aggregateTypeSize; i++) d.aggregateType[i].toNodeId()];
     _dispatchHistoryRead(
       sessionId,
+      sessionContext,
       timestampsToReturn,
       releaseContinuationPoints,
       nodesToReadSize,
@@ -3501,6 +3508,7 @@ class Server {
     final useSimpleBounds = d.useSimpleBounds;
     _dispatchHistoryRead(
       sessionId,
+      sessionContext,
       timestampsToReturn,
       releaseContinuationPoints,
       nodesToReadSize,
@@ -3526,6 +3534,7 @@ class Server {
   /// it is copied into Dart here.
   void _dispatchHistoryRead<R>(
     ffi.Pointer<raw.UA_NodeId> sessionId,
+    ffi.Pointer<ffi.Void> sessionContext,
     int timestampsToReturn,
     bool releaseContinuationPoints,
     int nodesToReadSize,
@@ -3555,6 +3564,10 @@ class Server {
         final status = _historyNodeStatus(nodeId);
         if (status != raw.UA_STATUSCODE_GOOD) {
           results[i].statusCode = status;
+          continue;
+        }
+        if (!releaseContinuationPoints && !_historyReadAllowed(sessionId, sessionContext, nodeId)) {
+          results[i].statusCode = raw.UA_STATUSCODE_BADUSERACCESSDENIED;
           continue;
         }
         final cp = valueId.continuationPoint;
@@ -3641,6 +3654,32 @@ class Server {
       return status == raw.UA_STATUSCODE_BADNODEIDUNKNOWN
           ? raw.UA_STATUSCODE_BADNODEIDUNKNOWN
           : raw.UA_STATUSCODE_BADHISTORYOPERATIONINVALID;
+    }, ua_calloc);
+  }
+
+  /// Whether the session may read the history of [nodeId]: the HistoryRead
+  /// bit of its UserAccessLevel, the node's AccessLevel ANDed with
+  /// [ServerAuthorization.userAccessLevel] as the Read service reports it.
+  /// open62541 1.5.9 never checks that bit on a HistoryRead.
+  bool _historyReadAllowed(ffi.Pointer<raw.UA_NodeId> sessionId, ffi.Pointer<ffi.Void> sessionContext, NodeId nodeId) {
+    var user = 0xFF;
+    final hook = _userAccessLevel;
+    if (hook != null) {
+      try {
+        final session = _authorizedSession(sessionId, sessionContext);
+        if (session == null) return false;
+        user = hook(session, nodeId)?.value ?? 0xFF;
+      } catch (error, stack) {
+        _authorizationHookThrew('userAccessLevel', error, stack);
+        return false;
+      }
+    }
+    return using((arena) {
+      final level = arena<ffi.Uint8>();
+      if (raw.UA_Server_readAccessLevel(_server, nodeId.toRaw(allocator: arena), level) != raw.UA_STATUSCODE_GOOD) {
+        return false;
+      }
+      return level.value & user & raw.UA_ACCESSLEVELMASK_HISTORYREAD != 0;
     }, ua_calloc);
   }
 

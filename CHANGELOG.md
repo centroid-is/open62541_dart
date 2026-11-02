@@ -32,10 +32,17 @@ changes that ship the same native library version.
   dropped. The server answers itself: `Bad_TimestampsToReturnInvalid` for
   Neither, `Bad_NodeIdUnknown`, `Bad_HistoryOperationInvalid` for a node not
   made historizing, and `releaseContinuationPoints` (handed to
-  `HistoryBackend.releaseContinuationPoints`, answered at once). The HistoryRead
-  access bit is left to access control, as in open62541. A
+  `HistoryBackend.releaseContinuationPoints`, answered at once). A
   `UaStatusException` from the backend answers every node with its code,
   any other error `Bad_InternalError`. `TimestampsToReturn` is exported.
+- **HistoryRead honours the session's UserAccessLevel.** open62541 1.5.9
+  never checks the HistoryRead bit of UserAccessLevel on a HistoryRead (its
+  history database only checks HistoryWrite, for updates). The server now
+  does, per node, before the backend is called: the node's AccessLevel,
+  ANDed with `ServerAuthorization.userAccessLevel` when the server has one,
+  must carry `AccessLevelMask.historyRead`, or the node is answered
+  `Bad_UserAccessDenied` (as is every node of a hook that throws). A release
+  of continuation points reads nothing and is not checked.
 - **Native: HistoryRead can complete asynchronously** (`hook/async_history_read.patch`).
   open62541 1.5.9 answers a HistoryRead as soon as the history database's
   read callback returns. The build now patches the AsyncManager with a

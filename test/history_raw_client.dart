@@ -126,10 +126,22 @@ class RawHistoryClient {
   // header is kept, which is what lets [cancel] name the request.
   var _nextRequestHandle = 1;
 
-  static Future<RawHistoryClient> connect(int port) async {
+  /// Connects anonymously, or as [username] (over SecurityPolicy#None, so
+  /// the server must allow an unencrypted password).
+  static Future<RawHistoryClient> connect(int port, {String? username, String? password}) async {
     final config = ua_calloc<raw.UA_ClientConfig>();
     config.ref.logging = raw.UA_Log_Stdout_new(LogLevel.UA_LOGLEVEL_FATAL);
     raw.UA_ClientConfig_setDefault(config);
+    if (username != null) {
+      using((arena) {
+        raw.UA_ClientConfig_setAuthenticationUsername(
+          config,
+          username.toNativeUtf8(allocator: arena).cast(),
+          (password ?? '').toNativeUtf8(allocator: arena).cast(),
+        );
+      }, ua_calloc);
+      config.ref.allowNonePolicyPassword = true;
+    }
     final client = raw.UA_Client_newWithConfig(config);
     ua_calloc.free(config);
     using((arena) {

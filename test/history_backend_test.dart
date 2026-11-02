@@ -244,6 +244,7 @@ void main() {
 
   test('setHistorizing and deleteNode keep the historizing nodes in step', () async {
     server.setHistorizing(plain, true);
+    server.setAccessLevel(plain, const AccessLevelMask(read: true, historyRead: true));
     backend.series[plain] = samples(1, base: 9);
     expect(valuesOf((await client.read([node(plain)])).results.single), [9]);
 
@@ -260,6 +261,7 @@ void main() {
       source,
       browseName: 'source',
       onRead: () => DynamicValue(value: 1, typeId: NodeId.int32),
+      accessLevel: const AccessLevelMask(read: true, historyRead: true),
       historizing: true,
     );
     backend.series[source] = samples(2, base: 50);
