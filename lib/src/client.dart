@@ -230,7 +230,7 @@ class ClientConfig {
 
   /// The `applicationUri` of the ApplicationDescription this client presents
   /// in CreateSession. Set it **before** connecting. On the server it
-  /// surfaces as `MethodSessionInfo.applicationUri`. Note: when connecting
+  /// surfaces as `SessionInfo.applicationUri`. Note: when connecting
   /// with a certificate, open62541 overwrites this with the URI embedded in
   /// the certificate.
   String get applicationUri => _clientConfig.ref.clientDescription.applicationUri.value;
@@ -241,7 +241,7 @@ class ClientConfig {
   /// The text of the `applicationName` LocalizedText this client presents in
   /// CreateSession (the locale is left as configured, "en" by default). Set
   /// it **before** connecting. On the server it surfaces as
-  /// `MethodSessionInfo.applicationName`.
+  /// `SessionInfo.applicationName`.
   String get applicationName => _clientConfig.ref.clientDescription.applicationName.text.value;
   set applicationName(String name) {
     _clientConfig.ref.clientDescription.applicationName.text.set(name);
@@ -249,7 +249,7 @@ class ClientConfig {
 
   /// The client-defined session name sent in CreateSession. Set it **before**
   /// connecting. On the server it surfaces as
-  /// `MethodSessionInfo.sessionName`. When unset open62541 generates one from
+  /// `SessionInfo.sessionName`. When unset open62541 generates one from
   /// the application URI.
   String get sessionName => _clientConfig.ref.sessionName.value;
   set sessionName(String name) {
