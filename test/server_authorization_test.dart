@@ -175,7 +175,9 @@ void main() {
           final alice = await login(clientType, 'alice');
           await expectLater(
             alice.write(readOnly, DynamicValue(value: 2, typeId: NodeId.int32)),
-            refusedWith(raw.UA_STATUSCODE_BADUSERACCESSDENIED),
+            // The node's own AccessLevel lacks the write bit: open62541
+            // 1.5.10 checks it before the UserAccessLevel (f978a4c4).
+            refusedWith(raw.UA_STATUSCODE_BADNOTWRITABLE),
           );
         });
 

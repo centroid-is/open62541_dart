@@ -167,8 +167,10 @@ abstract class AccessControl {
   /// with its AccessLevel attribute: the CurrentRead (`0x01`) and
   /// CurrentWrite (`0x02`) bits gate reads, monitored items and writes of
   /// its value, and the HistoryRead bit (`0x04`) a HistoryRead of it; what
-  /// they do not allow is `BadUserAccessDenied`. Answer `0xFF` for full
-  /// access: `0x03` would deny every HistoryRead.
+  /// the AccessLevel allows but they do not is `BadUserAccessDenied` (what
+  /// the AccessLevel itself does not allow is `BadNotReadable` or
+  /// `BadNotWritable`, open62541 1.5.10). Answer `0xFF` for full access:
+  /// `0x03` would deny every HistoryRead.
   int userAccessLevel(Object? context, NodeRef node) => 0xFF;
 
   /// The session's write mask for the node's attributes, ANDed with its

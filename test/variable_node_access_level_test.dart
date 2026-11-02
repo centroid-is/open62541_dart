@@ -36,14 +36,12 @@ void main() {
         server.delete();
       });
 
-      test('a node added with the default refuses a client write with Bad_UserAccessDenied', () async {
+      test('a node added with the default refuses a client write with Bad_NotWritable', () async {
         expect((await client.read(defaultNodeId)).asInt, 1, reason: 'anti-vacuity: the node reads');
 
         await expectLater(
           client.write(defaultNodeId, DynamicValue(value: 2, typeId: NodeId.int32)),
-          throwsA(
-            isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', raw.UA_STATUSCODE_BADUSERACCESSDENIED),
-          ),
+          throwsA(isA<UaStatusException>().having((e) => e.statusCode, 'statusCode', raw.UA_STATUSCODE_BADNOTWRITABLE)),
         );
         expect((await client.read(defaultNodeId)).asInt, 1, reason: 'the refused write changed nothing');
       });

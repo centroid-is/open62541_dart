@@ -44,6 +44,7 @@ const Map<String, String> _open62541Sha256 = {
   'v1.5.7': '79ded488caf7b8dc7f1ad1269d0142a80c47bab1d5725663f194f72ac8911a78',
   'v1.5.8': 'aae5d1e6c73f8fd5a72e36e6d21afb27bf5eacbe3f20e3581dbde80d3024cadc',
   'v1.5.9': 'e67790c33feeee660a3831fb2546a3dea070d93003c7901523cf8ed3963ef840',
+  'v1.5.10': 'eaa1a6ab450aee2cfc3dba5d107abc91d9c471f19929f7d975825d3d632c4d39',
 };
 
 /// mbedTLS release version and the SHA-256 of its `.tar.bz2` release asset.
@@ -468,7 +469,7 @@ Future<void> _applyPatches(Uri sourceDir, Uri packageRoot) async {
 
 /// Lets a HistoryRead complete asynchronously, like Read, Write and Call.
 ///
-/// open62541 1.5.9 calls the `UA_HistoryDatabase` read callback once and
+/// open62541 1.5.10 calls the `UA_HistoryDatabase` read callback once and
 /// sends the response when it returns, so a backend whose data comes from an
 /// asynchronous store (a database queried from Dart) cannot answer it. The
 /// patch adds the async operation type `UA_ASYNCOPERATIONTYPE_HISTORYREAD_REQUEST`
@@ -979,7 +980,7 @@ Future<ProcessResult?> _tryRun(String executable, List<String> arguments, String
 }
 
 Future<void> main(List<String> args) async {
-  final version = "v1.5.9";
+  final version = "v1.5.10";
   await build(args, (input, output) async {
     // A web build asks for no code assets, and there is nothing this hook could
     // usefully produce for one: dart2js has no C library to link. Without this

@@ -4,6 +4,56 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## 1.5.10
+
+Bundles open62541 [v1.5.10](https://github.com/open62541/open62541/releases/tag/v1.5.10)
+(mbedTLS stays at 3.6.7). Upstream behaviour changes you may notice:
+
+- **A write to a node whose AccessLevel lacks the write bit is
+  `Bad_NotWritable`, a read without the read bit `Bad_NotReadable`**
+  (f978a4c4). open62541 now checks the node's own `AccessLevel` before the
+  session's `UserAccessLevel`; 1.5.9 answered both `Bad_UserAccessDenied`.
+  A client write to a node added with `addVariableNode`'s default (read-only)
+  access level is therefore `Bad_NotWritable`. `Bad_UserAccessDenied` now
+  means the node allows it but the session's user level (for example a
+  `ServerAuthorization.userAccessLevel` hook) does not. HistoryRead is
+  unchanged: a node without the HistoryRead bit is still
+  `Bad_UserAccessDenied`.
+- **Sessions at `maxSessions`.** A CreateSession at the limit first purges
+  the oldest session that was never activated, and only then answers
+  `Bad_TooManySessions` (566c4f98). At `maxSecureChannels` a channel whose
+  session is not yet activated counts as having no session and may be purged
+  (54ae10a1).
+- **Re-activating a session with a different identity is rejected**
+  (`Bad_IdentityChangeNotSupported`): besides the token type and user name,
+  open62541 now compares the full X.509 user certificate (c3ea534a).
+- **RegisterServer(2) requires a SecureChannel with a client certificate**
+  (`Bad_SecurityModeInsufficient` otherwise), whose ApplicationUri must match
+  the registered `serverUri` (`Bad_CertificateUriInvalid`); a discovery
+  server keeps at most 1000 registrations (c3ab8fb3, 7225bc4c).
+- **The SecureChannel nonce is exactly the SecurityPolicy's nonce length**
+  instead of at least 32 bytes (c67baebc). Of the policies this package
+  builds only Basic128Rsa15 (16 bytes) is affected.
+- **ECC policies in Sign mode derive only the signing key** (1e4eff47). This is
+  not wire-compatible with open62541 1.5.9 and older for ECC + Sign. This
+  package's server offers no ECC policy; a client talking ECC + Sign to an
+  older peer may fail.
+- The six AccessControl callbacks `activateSession`, `getUserRightsMask`,
+  `getUserAccessLevel`, `getUserExecutable`, `getUserExecutableOnObject` and
+  `allowBrowseNode` are mandatory: a server without them does not start
+  (5aa2e35a). The package always installs them.
+
+Package changes:
+
+- `hook/delete_by_client_handle.patch` is rewritten for 1.5.10. Upstream
+  added the request/response size check (b2355d39), which made the patch's
+  own index guard dead, and made subscription callbacks re-entrant
+  (ee56907d): after each deleted MonitoredItem the loop checks that the
+  Subscription still exists, since the item's delete callback may have
+  removed it. The clientHandle path now does the same check.
+- Bindings regenerated: only the version constants and the `UA_AccessControl`
+  doc comment change.
+
 ## 1.5.9+1
 
 - **Data-source handlers can see the session.**

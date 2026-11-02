@@ -1,6 +1,6 @@
 /* THIS IS A SINGLE-FILE DISTRIBUTION CONCATENATED FROM THE OPEN62541 SOURCES
  * visit http://open62541.org/ for information about this software
- * Git-Revision: v1.5.9
+ * Git-Revision: v1.5.10
  */
 
 /*
@@ -30,10 +30,10 @@
  * ----------------- */
 #define UA_OPEN62541_VER_MAJOR 1
 #define UA_OPEN62541_VER_MINOR 5
-#define UA_OPEN62541_VER_PATCH 9
+#define UA_OPEN62541_VER_PATCH 10
 #define UA_OPEN62541_VER_LABEL "" /* Release candidate label, etc. */
 #define UA_OPEN62541_VER_COMMIT "unknown-commit"
-#define UA_OPEN62541_VERSION "v1.5.9"
+#define UA_OPEN62541_VERSION "v1.5.10"
 
 /**
  * Architecture
@@ -40613,7 +40613,7 @@ UA_parseEndpointUrlEthernet(const UA_String *endpointUrl, UA_String *target,
 
 /* Convert given byte string to a positive number. Returns the number of valid
  * digits. Stops if a non-digit char is found and returns the number of digits
- * up to that point. */
+ * up to that point. Returns zero if the number does not fit into 32 bits. */
 size_t UA_EXPORT
 UA_readNumber(const UA_Byte *buf, size_t buflen, UA_UInt32 *number);
 
@@ -40916,7 +40916,12 @@ typedef struct UA_AccessControl UA_AccessControl;
  *
  * The ``sessionId`` and ``sessionContext`` can be both NULL. This is the case
  * when, for example, a MonitoredItem (the underlying Subscription) is detached
- * from its Session but continues to run. */
+ * from its Session but continues to run.
+ *
+ * The callbacks ``activateSession``, ``getUserRightsMask``,
+ * ``getUserAccessLevel``, ``getUserExecutable``, ``getUserExecutableOnObject``
+ * and ``allowBrowseNode`` are mandatory. The server does not start without
+ * them. The other callbacks can be NULL. */
 
 struct UA_AccessControl {
     void *context;

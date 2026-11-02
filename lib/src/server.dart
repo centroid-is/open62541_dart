@@ -322,7 +322,7 @@ enum RedundancySupport {
 ///
 /// A field left `null` takes its default, [defaults], chosen so that a
 /// runaway or hostile client cannot exhaust the server while an ordinary one
-/// never notices them. An explicit `0` lifts a cap: open62541 1.5.9 skips
+/// never notices them. An explicit `0` lifts a cap: open62541 1.5.10 skips
 /// the check for every UInt32 field that is 0 (each field says where). The
 /// two UInt16 fields, [maxSecureChannels] and [maxSessions], cannot be 0:
 /// open62541 compares the current count against them with `>=`, so 0 would
@@ -385,16 +385,17 @@ class ServerLimits {
 
   /// Secure channels open at once (`maxSecureChannels`, a UInt16; default
   /// 100, at most 65535, never 0). At the limit the server first purges a
-  /// channel without a session; if there is none the new connection is
-  /// dropped without an answer (`src/server/ua_server_binary.c`,
+  /// channel without an activated session; if there is none the new
+  /// connection is dropped without an answer (`src/server/ua_server_binary.c`,
   /// `createServerSecureChannel`, `currentChannelCount >= maxSecureChannels`).
   /// Keep it at or above [maxSessions]: open62541 warns at startup otherwise.
   final int? maxSecureChannels;
 
   /// Sessions at once (`maxSessions`, a UInt16; default 100, at most 65535,
-  /// never 0). CreateSession beyond it is answered `BadTooManySessions`
-  /// (`src/server/ua_services_session.c`, `UA_Session_create`,
-  /// `sessionCount >= maxSessions`).
+  /// never 0). At the limit CreateSession first purges the oldest session
+  /// that was never activated; if there is none it is answered
+  /// `BadTooManySessions` (`src/server/ua_services_session.c`,
+  /// `UA_Session_create`, `sessionCount >= maxSessions`).
   final int? maxSessions;
 
   /// Subscriptions on the whole server (`maxSubscriptions`; default 1000,
@@ -1604,7 +1605,7 @@ class Server {
   ///
   /// Optional parameters:
   /// * [accessLevel] - Controls client access to the variable. Defaults to
-  ///   read-only: a client write is refused with `Bad_UserAccessDenied`. Pass
+  ///   read-only: a client write is refused with `Bad_NotWritable`. Pass
   ///   `const AccessLevelMask(read: true, write: true)` for a node clients may
   ///   write. [Server.write] is unaffected: the server's own writes bypass the
   ///   access level.
@@ -3501,7 +3502,7 @@ class Server {
   /// Whether the session may read the history of [nodeId]: the HistoryRead
   /// bit of its UserAccessLevel, the node's AccessLevel ANDed with
   /// [AccessControl.userAccessLevel] as the Read service reports it.
-  /// open62541 1.5.9 never checks that bit on a HistoryRead.
+  /// open62541 1.5.10 never checks that bit on a HistoryRead.
   bool _historyReadAllowed(ffi.Pointer<ffi.Void> sessionContext, NodeId nodeId) => using((arena) {
     final id = arena<raw.UA_NodeId>()..ref = nodeId.toRaw(allocator: arena);
     final user = _accessControlHooks?.userAccessLevel(_server, sessionContext, id) ?? 0xFF;
