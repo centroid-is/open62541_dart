@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:ffi' as ffi;
+import 'dart:math' show max;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -89,12 +90,27 @@ final class ActiveSession {
   final SessionActivation activation;
 }
 
+/// The largest access tag (`accessTag:`, `Server.setAccessTag`).
+const maxAccessTag = 0x3FFFFFFFFFFFFFFF;
+
+/// The node context that stores access [tag]: odd, so it never equals a
+/// pointer open62541 keeps in the same place (an aligned address is even),
+/// and null for no tag.
+ffi.Pointer<ffi.Void> accessTagContext(int tag) => ffi.Pointer.fromAddress(tag == 0 ? 0 : (tag << 1) | 1);
+
+/// Whether the node context at [address] is an access tag or none, rather
+/// than open62541's own (a `UA_Subscription*` on the SubscriptionDiagnostics
+/// variables).
+bool isAccessTagContext(int address) => address == 0 || address & 1 == 1;
+
+int _accessTagOf(int address) => address & 1 == 1 ? address >>> 1 : 0;
+
 /// A node an [AccessControl] hook decides about. The library reuses the
 /// object for every call: it is valid only during the hook it is passed to.
 abstract interface class NodeRef {
   /// The node's access tag (`accessTag:` of the add* methods,
   /// `Server.setAccessTag`); `0` for a node without one, such as every NS0
-  /// node.
+  /// node and every node whose context open62541 uses itself.
   int get tag;
 
   /// The node's id, decoded on first use.
@@ -150,7 +166,9 @@ abstract class AccessControl {
   /// The session's access level for a variable (`UserAccessLevel`), ANDed
   /// with its AccessLevel attribute: the CurrentRead (`0x01`) and
   /// CurrentWrite (`0x02`) bits gate reads, monitored items and writes of
-  /// its value; a Read or Write they do not allow is `BadUserAccessDenied`.
+  /// its value, and the HistoryRead bit (`0x04`) a HistoryRead of it; what
+  /// they do not allow is `BadUserAccessDenied`. Answer `0xFF` for full
+  /// access: `0x03` would deny every HistoryRead.
   int userAccessLevel(Object? context, NodeRef node) => 0xFF;
 
   /// The session's write mask for the node's attributes, ANDed with its
@@ -221,10 +239,6 @@ abstract class AccessControl {
       _ => false,
     };
   }
-
-  /// Whether the session may update or delete history of [node]
-  /// (HistoryUpdate).
-  bool allowHistoryUpdate(Object? context, NodeRef node) => true;
 }
 
 /// open62541's default access control (`UA_AccessControl_default`) in
@@ -268,8 +282,7 @@ class DefaultAccessControl extends AccessControl {
           throw const UaStatusException(raw.UA_STATUSCODE_BADIDENTITYTOKENINVALID);
         }
         final expected = users[username];
-        // Compared in full whatever the outcome, like open62541's default.
-        final match = _constantTimeEquals(utf8.encode(expected ?? ''), password) && expected != null;
+        final match = _constantTimeEquals(utf8.encode(expected ?? ''), password) & (expected != null);
         if (!match) throw const UaStatusException(raw.UA_STATUSCODE_BADUSERACCESSDENIED);
         return username;
       case UserTokenType.UA_USERTOKENTYPE_CERTIFICATE:
@@ -280,10 +293,15 @@ class DefaultAccessControl extends AccessControl {
     }
   }
 
+  /// Every attempt, for a known user or an unknown one (against an empty
+  /// password), compares the same number of bytes, at least 256, so the
+  /// timing shows neither whether the user exists nor how long either
+  /// password is.
   static bool _constantTimeEquals(List<int> a, List<int> b) {
     var diff = a.length ^ b.length;
-    for (var i = 0; i < a.length; i++) {
-      diff |= a[i] ^ (i < b.length ? b[i] : 0);
+    final n = max(256, max(a.length, b.length));
+    for (var i = 0; i < n; i++) {
+      diff |= (i < a.length ? a[i] : 0) ^ (i < b.length ? b[i] : 0);
     }
     return diff == 0;
   }
@@ -312,19 +330,19 @@ final class _NodeRef implements NodeRef {
   int? _tag;
   NodeId? _nodeId;
 
-  /// Points this reference at [id]; [tag] is the node context when the hook
-  /// has it, else it is looked up on first use.
-  _NodeRef at(ffi.Pointer<raw.UA_Server> server, ffi.Pointer<raw.UA_NodeId> id, int? tag) {
+  /// Points this reference at [id]; [context] is the node context when the
+  /// hook has it, else it is looked up on first use.
+  _NodeRef at(ffi.Pointer<raw.UA_Server> server, ffi.Pointer<raw.UA_NodeId> id, int? context) {
     _server = server;
     _id = id;
-    _tag = tag;
+    _tag = context == null ? null : _accessTagOf(context);
     _nodeId = null;
     return this;
   }
 
   @override
   int get tag => _tag ??= raw.UA_Server_getNodeContext(_server, _id.ref, _contextOut) == raw.UA_STATUSCODE_GOOD
-      ? _contextOut.value.address
+      ? _accessTagOf(_contextOut.value.address)
       : 0;
 
   @override
@@ -351,6 +369,27 @@ typedef _ItemHook =
 typedef _Notification = ffi.Void Function(ffi.Pointer<raw.UA_Server>, ffi.UnsignedInt, raw.UA_KeyValueMap);
 
 final _log = Logger('open62541.Server');
+
+/// The `applicationUri` and the `applicationName` text of the
+/// ApplicationDescription session [sessionId] was created with (the
+/// `0:clientDescription` session attribute), copied to Dart; `null` for an
+/// unknown session.
+({String applicationUri, String applicationName})? clientDescriptionOf(
+  ffi.Pointer<raw.UA_Server> server,
+  ffi.Pointer<raw.UA_NodeId> sessionId,
+) => using((arena) {
+  final variant = arena<raw.UA_Variant>();
+  final key = raw.UA_QUALIFIEDNAME(0, 'clientDescription'.toNativeUtf8(allocator: arena).cast());
+  // A shallow view into the session's own description.
+  if (raw.UA_Server_getSessionAttribute(server, sessionId, key, variant) != raw.UA_STATUSCODE_GOOD ||
+      variant.ref.type != getTypeByIndex(raw.UA_TYPES_APPLICATIONDESCRIPTION) ||
+      variant.ref.data == ffi.nullptr) {
+    return null;
+  }
+  final description = variant.ref.data.cast<raw.UA_ApplicationDescription>().ref;
+  String text(raw.UA_String s) => s.length == 0 ? '' : s.value;
+  return (applicationUri: text(description.applicationUri), applicationName: text(description.applicationName.text));
+}, ua_calloc);
 
 /// open62541's ids for the token policies of its default plugin
 /// (`plugins/ua_accesscontrol_default.c`); the server appends the mode and
@@ -518,33 +557,6 @@ final class AccessControlHooks {
     ac.allowAddReference = itemHook('allowAddReference', accessControl.allowAddReference).cast();
     ac.allowDeleteNode = itemHook('allowDeleteNode', accessControl.allowDeleteNode).cast();
     ac.allowDeleteReference = itemHook('allowDeleteReference', accessControl.allowDeleteReference).cast();
-    ac.allowHistoryUpdateUpdateData = keep(
-      ffi.NativeCallable<
-        ffi.Bool Function(
-          ffi.Pointer<raw.UA_Server>,
-          ffi.Pointer<raw.UA_AccessControl>,
-          ffi.Pointer<raw.UA_NodeId>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Pointer<raw.UA_NodeId>,
-          ffi.UnsignedInt,
-          ffi.Pointer<raw.UA_DataValue>,
-        )
-      >.isolateLocal(_allowHistoryUpdateData, exceptionalReturn: false),
-    );
-    ac.allowHistoryUpdateDeleteRawModified = keep(
-      ffi.NativeCallable<
-        ffi.Bool Function(
-          ffi.Pointer<raw.UA_Server>,
-          ffi.Pointer<raw.UA_AccessControl>,
-          ffi.Pointer<raw.UA_NodeId>,
-          ffi.Pointer<ffi.Void>,
-          ffi.Pointer<raw.UA_NodeId>,
-          ffi.Int64,
-          ffi.Int64,
-          ffi.Bool,
-        )
-      >.isolateLocal(_allowHistoryDelete, exceptionalReturn: false),
-    );
   }
 
   /// The session's user access level for [nodeId] as the getUserAccessLevel
@@ -681,37 +693,6 @@ final class AccessControlHooks {
     }
   }
 
-  bool _allowHistoryUpdateData(
-    ffi.Pointer<raw.UA_Server> server,
-    ffi.Pointer<raw.UA_AccessControl> ac,
-    ffi.Pointer<raw.UA_NodeId> sessionId,
-    ffi.Pointer<ffi.Void> sessionContext,
-    ffi.Pointer<raw.UA_NodeId> nodeId,
-    int performInsertReplace,
-    ffi.Pointer<raw.UA_DataValue> value,
-  ) => _decide(
-    'allowHistoryUpdate',
-    sessionContext,
-    false,
-    (context) => accessControl.allowHistoryUpdate(context, _node.at(server, nodeId, null)),
-  );
-
-  bool _allowHistoryDelete(
-    ffi.Pointer<raw.UA_Server> server,
-    ffi.Pointer<raw.UA_AccessControl> ac,
-    ffi.Pointer<raw.UA_NodeId> sessionId,
-    ffi.Pointer<ffi.Void> sessionContext,
-    ffi.Pointer<raw.UA_NodeId> nodeId,
-    int startTimestamp,
-    int endTimestamp,
-    bool isDeleteModified,
-  ) => _decide(
-    'allowHistoryUpdate',
-    sessionContext,
-    false,
-    (context) => accessControl.allowHistoryUpdate(context, _node.at(server, nodeId, null)),
-  );
-
   int _activateSession(
     ffi.Pointer<raw.UA_Server> server,
     ffi.Pointer<raw.UA_AccessControl> ac,
@@ -756,7 +737,7 @@ final class AccessControlHooks {
         clientCertificate: channelCertificate.ref.length == 0
             ? null
             : leafCertificate(Uint8List.fromList(channelCertificate.ref.asTypedList())),
-        clientApplicationUri: _clientApplicationUri(server, sessionIdPtr),
+        clientApplicationUri: clientDescriptionOf(server, sessionIdPtr)?.applicationUri,
         securityMode: MessageSecurityMode.fromValue(endpoint.ref.securityModeAsInt),
         securityPolicyUri: endpoint.ref.securityPolicyUri.length == 0 ? '' : endpoint.ref.securityPolicyUri.value,
         reactivation: previous != null,
@@ -777,19 +758,6 @@ final class AccessControlHooks {
       password?.fillRange(0, password.length, 0);
     }
   }
-
-  String? _clientApplicationUri(ffi.Pointer<raw.UA_Server> server, ffi.Pointer<raw.UA_NodeId> sessionId) =>
-      using((arena) {
-        final variant = arena<raw.UA_Variant>();
-        final key = raw.UA_QUALIFIEDNAME(0, 'clientDescription'.toNativeUtf8(allocator: arena).cast());
-        // A shallow view into the session's own description.
-        if (raw.UA_Server_getSessionAttribute(server, sessionId, key, variant) != raw.UA_STATUSCODE_GOOD ||
-            variant.ref.type != getTypeByIndex(raw.UA_TYPES_APPLICATIONDESCRIPTION)) {
-          return null;
-        }
-        final uri = variant.ref.data.cast<raw.UA_ApplicationDescription>().ref.applicationUri;
-        return uri.length == 0 ? '' : uri.value;
-      }, ua_calloc);
 
   void _closeSession(
     ffi.Pointer<raw.UA_Server> server,

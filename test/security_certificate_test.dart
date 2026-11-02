@@ -7,7 +7,8 @@ import 'package:ffi/ffi.dart';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
-import 'package:open62541/src/security.dart' show byteStringIn, decryptPrivateKey;
+import 'package:open62541/src/common.dart' show byteStringIn;
+import 'package:open62541/src/security.dart' show decryptPrivateKey;
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'package:open62541/src/ua_allocation.dart';
 import 'pki_fixtures.dart';

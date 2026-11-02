@@ -181,7 +181,9 @@ class CertificateSessionIdentity extends SessionIdentity {
 ///
 /// An operation of the server itself ([Server.read], [Server.write]) runs in
 /// open62541's internal admin session. Its info has [isAdminSession] set,
-/// [sessionId] is [adminSessionId], and every other field is `null`.
+/// [sessionId] is [adminSessionId], and every other field is `null`. A
+/// monitored item of a subscription whose session timed out is still
+/// sampled, without a session: [hasSession] is false then.
 class SessionInfo {
   const SessionInfo({
     required this.sessionId,
@@ -203,6 +205,15 @@ class SessionInfo {
 
   /// Whether the server itself, not a client, performs the operation.
   bool get isAdminSession => sessionId == adminSessionId;
+
+  /// The null NodeId (`i=0`), the [sessionId] of a read without a session:
+  /// a monitored item's sample after its session timed out, while the
+  /// subscription waits for a client to take it over. Every other field is
+  /// `null` then.
+  static final NodeId noSessionId = NodeId.fromNumeric(0, 0);
+
+  /// Whether a session is behind the operation (see [noSessionId]).
+  bool get hasSession => sessionId != noSessionId;
 
   /// The client-defined session name (`0:sessionName` session attribute,
   /// from the CreateSession request), or `null` if the session cannot be
@@ -595,28 +606,6 @@ void checkServerSecurityArguments({
   checkLimit('maxChunkCount', limits.maxChunkCount, 0xFFFFFFFF);
 }
 
-/// A `UA_ByteString` in [arena] holding a copy of [bytes].
-ffi.Pointer<raw.UA_ByteString> _byteString(Arena arena, Uint8List bytes) {
-  final string = arena<raw.UA_ByteString>();
-  string.ref.length = bytes.length;
-  string.ref.data = arena<ffi.Uint8>(bytes.length);
-  string.ref.data.asTypedList(bytes.length).setAll(0, bytes);
-  return string;
-}
-
-/// An array of `UA_ByteString` in [arena], one per element of [list], each
-/// holding a copy. `nullptr` for an empty list.
-ffi.Pointer<raw.UA_ByteString> _byteStrings(Arena arena, List<Uint8List> list) {
-  if (list.isEmpty) return ffi.nullptr;
-  final array = arena<raw.UA_ByteString>(list.length);
-  for (var i = 0; i < list.length; i++) {
-    array[i].length = list[i].length;
-    array[i].data = arena<ffi.Uint8>(list[i].length);
-    array[i].data.asTypedList(list[i].length).setAll(0, list[i]);
-  }
-  return array;
-}
-
 // open62541 reads a private key password from stdin when a key does not parse
 // and no callback is set.
 int _refusePrivateKeyPassword(ffi.Pointer<raw.UA_ServerConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
@@ -882,38 +871,38 @@ class Server {
     // Decrypted here, so that open62541 never sees an encrypted key (it
     // would ask for the password on stdin).
     final key = privateKeyPassword == null ? privateKey : decryptPrivateKey(privateKey!, password: privateKeyPassword);
-    checkServerSecurityArguments(
-      certificate: certificate,
-      privateKey: key,
-      trustList: trustList,
-      issuerList: issuerList,
-      revocationList: revocationList,
-      acceptAllClientCertificates: acceptAllClientCertificates,
-      allowNone: allowNone,
-      allowAnonymous: allowAnonymous,
-      users: users,
-      hostname: hostname,
-      limits: limits,
-      accessControl: accessControl,
-    );
-    final trusts = trustList != null && trustList.isNotEmpty;
-    final control =
-        accessControl ??
-        DefaultAccessControl(allowAnonymous: allowAnonymous, users: users ?? const {}, allowCertificate: trusts);
-    final tokenTypes = AccessControlHooks.tokenTypes(control, certificateTrust: certificate != null && trusts);
-    final portNumber = port ?? 4840;
-    // The config struct is scratch. UA_Server_newWithConfig moves its contents
-    // into the server and zeroes the struct it was given, and a failing
-    // UA_ServerConfig_setMinimal / _setDefaultWithSecurityPolicies clears it,
-    // so either way only the struct itself is left, for the arena to free.
     try {
+      checkServerSecurityArguments(
+        certificate: certificate,
+        privateKey: key,
+        trustList: trustList,
+        issuerList: issuerList,
+        revocationList: revocationList,
+        acceptAllClientCertificates: acceptAllClientCertificates,
+        allowNone: allowNone,
+        allowAnonymous: allowAnonymous,
+        users: users,
+        hostname: hostname,
+        limits: limits,
+        accessControl: accessControl,
+      );
+      final trusts = trustList != null && trustList.isNotEmpty;
+      final control =
+          accessControl ??
+          DefaultAccessControl(allowAnonymous: allowAnonymous, users: users ?? const {}, allowCertificate: trusts);
+      final tokenTypes = AccessControlHooks.tokenTypes(control, certificateTrust: certificate != null && trusts);
+      final portNumber = port ?? 4840;
+      // The config struct is scratch. UA_Server_newWithConfig moves its contents
+      // into the server and zeroes the struct it was given, and a failing
+      // UA_ServerConfig_setMinimal / _setDefaultWithSecurityPolicies clears it,
+      // so either way only the struct itself is left, for the arena to free.
       using((arena) {
         if (certificate != null) {
           // Before anything is allocated that a throw would leak: the server's
           // certificate must carry the ApplicationUri it announces.
           final uri = applicationUri ?? defaultServerApplicationUri;
           final uriString = arena<raw.UA_String>()..ref.set(uri, allocator: arena);
-          final match = raw.UA_CertificateUtils_verifyApplicationUri(_byteString(arena, certificate), uriString);
+          final match = raw.UA_CertificateUtils_verifyApplicationUri(byteStringIn(arena, certificate), uriString);
           if (match != raw.UA_STATUSCODE_GOOD) {
             throw ArgumentError(
               'the certificate does not carry the applicationUri "$uri" in its subjectAltName '
@@ -944,13 +933,13 @@ class Server {
           res = raw.UA_ServerConfig_setDefaultWithSecurityPolicies(
             config,
             portNumber,
-            _byteString(arena, certificate),
-            _byteString(arena, key!),
-            _byteStrings(arena, trust),
+            byteStringIn(arena, certificate),
+            byteStringIn(arena, key!),
+            byteStringsIn(arena, trust),
             trust.length,
-            _byteStrings(arena, issuers),
+            byteStringsIn(arena, issuers),
             issuers.length,
-            _byteStrings(arena, crls),
+            byteStringsIn(arena, crls),
             crls.length,
           );
         }
@@ -971,7 +960,10 @@ class Server {
           }
           // open62541 builds the policies from any key it can parse; one of
           // another certificate fails every handshake later.
-          final pair = raw.UA_CertificateUtils_checkKeyPair(_byteString(arena, certificate), _byteString(arena, key!));
+          final pair = raw.UA_CertificateUtils_checkKeyPair(
+            byteStringIn(arena, certificate),
+            byteStringIn(arena, key!),
+          );
           if (pair != raw.UA_STATUSCODE_GOOD) {
             raw.UA_ServerConfig_clear(config);
             throw ArgumentError.value('<${key.length} bytes>', 'privateKey', 'is not the key of the certificate');
@@ -1039,7 +1031,7 @@ class Server {
           buildInfo.productUri.set(productUri);
         }
 
-        _server = raw.UA_Server_newWithConfig(config);
+        _handle = raw.UA_Server_newWithConfig(config);
         _config = raw.UA_Server_getConfig(_server);
       }, ua_calloc);
     } finally {
@@ -1051,7 +1043,18 @@ class Server {
     }
   }
 
-  late ffi.Pointer<raw.UA_Server> _server;
+  late ffi.Pointer<raw.UA_Server> _handle;
+
+  /// The native server. A [StateError] once [delete] has begun: also for a
+  /// callback that runs inside `UA_Server_delete`, such as an
+  /// [AccessControl.closeSession] for a session still open, which would
+  /// otherwise call into a server being freed.
+  ffi.Pointer<raw.UA_Server> get _server {
+    final handle = _handle;
+    if (handle == ffi.nullptr) throw StateError('Server has been deleted');
+    return handle;
+  }
+
   late ffi.Pointer<raw.UA_ServerConfig> _config;
   AccessControlHooks? _accessControlHooks;
 
@@ -1311,21 +1314,29 @@ class Server {
   /// Sets the access tag of an existing node: the [NodeRef.tag] the
   /// [AccessControl] hooks see for it (`0`, the default, is no tag). The tag
   /// is stored as the node's open62541 node context, so a hook reads it
-  /// without a lookup.
+  /// without a lookup. A node whose context open62541 itself uses (the
+  /// SubscriptionDiagnostics variables carry their subscription there) is
+  /// refused with a [StateError].
   void setAccessTag(NodeId nodeId, int tag) {
     _checkAccessTag(tag);
-    final status = using(
-      (arena) => raw.UA_Server_setNodeContext(_server, nodeId.toRaw(allocator: arena), ffi.Pointer.fromAddress(tag)),
-      ua_calloc,
-    );
+    final status = using((arena) {
+      final id = nodeId.toRaw(allocator: arena);
+      final current = arena<ffi.Pointer<ffi.Void>>();
+      final read = raw.UA_Server_getNodeContext(_server, id, current);
+      if (read != raw.UA_STATUSCODE_GOOD) return read;
+      if (!isAccessTagContext(current.value.address)) {
+        throw StateError('$nodeId carries a context of open62541\'s own; it cannot take an access tag');
+      }
+      return raw.UA_Server_setNodeContext(_server, id, accessTagContext(tag));
+    }, ua_calloc);
     if (status != raw.UA_STATUSCODE_GOOD) {
       throw UaStatusException(status);
     }
   }
 
   static void _checkAccessTag(int tag) {
-    if (tag < 0) {
-      throw ArgumentError.value(tag, 'accessTag', 'must not be negative');
+    if (tag < 0 || tag > maxAccessTag) {
+      throw ArgumentError.value(tag, 'accessTag', 'must be 0 to $maxAccessTag');
     }
   }
 
@@ -1689,7 +1700,7 @@ class Server {
         name,
         resolvedType.toRaw(allocator: arena),
         attr,
-        ffi.Pointer.fromAddress(accessTag),
+        accessTagContext(accessTag),
         ffi.nullptr,
       );
       if (returnCode != raw.UA_STATUSCODE_GOOD) {
@@ -2020,7 +2031,7 @@ class Server {
         raw.UA_QUALIFIEDNAME(1, browseName.toNativeUtf8(allocator: arena).cast()),
         resolvedType.toRaw(allocator: arena),
         attr,
-        ffi.Pointer.fromAddress(accessTag),
+        accessTagContext(accessTag),
         ffi.nullptr,
       );
     }, ua_calloc);
@@ -2324,6 +2335,10 @@ class Server {
   /// session-owned memory, which this method fully copies into Dart values
   /// before returning.
   SessionInfo _resolveSessionInfo(ffi.Pointer<raw.UA_NodeId> sessionIdPtr, ffi.Pointer<ffi.Void> sessionContext) {
+    // open62541 keeps sampling the monitored items of a subscription whose
+    // session timed out (src/server/ua_session.c detaches it) and reads them
+    // with no session at all.
+    if (sessionIdPtr == ffi.nullptr) return SessionInfo(sessionId: SessionInfo.noSessionId);
     final sessionId = NodeIdFfi.fromRaw(sessionIdPtr.ref);
     if (sessionId == SessionInfo.adminSessionId) return SessionInfo(sessionId: sessionId);
 
@@ -2353,24 +2368,15 @@ class Server {
         : null;
 
     final sessionName = readAttr('sessionName', decodeString);
-    String? applicationUri;
-    String? applicationName;
-    readAttr('clientDescription', (v) {
-      if (v.type == getTypeByIndex(raw.UA_TYPES_APPLICATIONDESCRIPTION) && v.data != ffi.nullptr) {
-        final desc = v.data.cast<raw.UA_ApplicationDescription>().ref;
-        applicationUri = uaStr(desc.applicationUri);
-        applicationName = uaStr(desc.applicationName.text);
-      }
-      return null;
-    });
+    final description = clientDescriptionOf(_server, sessionIdPtr);
 
     final active = _accessControlHooks?.session(sessionContext);
     final activation = active?.activation;
     return SessionInfo(
       sessionId: sessionId,
       sessionName: sessionName,
-      applicationUri: applicationUri,
-      applicationName: applicationName,
+      applicationUri: description?.applicationUri,
+      applicationName: description?.applicationName,
       identity: switch (activation?.tokenType) {
         UserTokenType.UA_USERTOKENTYPE_ANONYMOUS => const AnonymousSessionIdentity(),
         UserTokenType.UA_USERTOKENTYPE_USERNAME => UsernameSessionIdentity(activation!.username ?? ''),
@@ -2565,7 +2571,7 @@ class Server {
           _buildArguments(inputArguments, arena),
           outputArguments.length,
           _buildArguments(outputArguments, arena),
-          ffi.Pointer.fromAddress(accessTag),
+          accessTagContext(accessTag),
           ffi.nullptr,
         );
       }, ua_calloc);
@@ -4940,7 +4946,7 @@ class Server {
   /// }
   /// ```
   bool runIterate({bool waitInterval = false}) {
-    if (_server != ffi.nullptr) {
+    if (_handle != ffi.nullptr) {
       // Check if the server is running
       final state = raw.UA_Server_getLifecycleState(_server);
       if (state == raw.UA_LifecycleState.UA_LIFECYCLESTATE_STOPPED) {
@@ -4998,7 +5004,7 @@ class Server {
   /// }
   /// ```
   void shutdown({Duration? delay, bool announceServiceLevel = false}) {
-    if (_server == ffi.nullptr) {
+    if (_handle == ffi.nullptr) {
       throw StateError('Server has been deleted; shutdown() must be called before delete()');
     }
     if (delay != null) {
@@ -5060,15 +5066,15 @@ class Server {
   /// ```
   void delete() {
     // Already deleted: a second delete() is a safe no-op (not a double free).
-    if (_server == ffi.nullptr) {
+    if (_handle == ffi.nullptr) {
       return;
     }
-    final server = _server;
+    final server = _handle;
     // Invalidate the handle FIRST so nothing can observe a dangling pointer:
-    // [runIterate] (typically driven from a detached async loop) checks
-    // `_server != nullptr` and now returns false instead of calling into freed
-    // native memory when the loop ticks after this delete.
-    _server = ffi.nullptr;
+    // [runIterate] (typically driven from a detached async loop) returns
+    // false, and every other method throws a StateError, also from a
+    // callback UA_Server_delete runs (closeSession of an open session).
+    _handle = ffi.nullptr;
     int ret = raw.UA_Server_delete(server);
     // The server no longer holds references to any of our native callbacks, so
     // it is safe to close them and release the native trampolines.

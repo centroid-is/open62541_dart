@@ -6,6 +6,7 @@ import 'package:test/test.dart';
 import 'package:open62541/open62541.dart';
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'common.dart';
+import 'raw_session.dart' show waitFor;
 import 'security_harness.dart';
 
 const _clientUri = 'urn:open62541.dart.test.dssession.client';
@@ -156,6 +157,41 @@ void main() {
       expect(reads.map((s) => s.sessionId).toSet(), {caller.sessionId});
       expect(values, contains(0));
     });
+
+    test('a subscription whose session timed out samples on, without a session', () async {
+      final proxy = await TcpProxy.start(server.port);
+      final detached = Client(
+        logLevel: LogLevel.UA_LOGLEVEL_FATAL,
+        requestedSessionTimeout: const Duration(seconds: 1),
+      );
+      var pumping = true;
+      final pump = () async {
+        while (pumping && detached.runIterate(const Duration(milliseconds: 10))) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+      }();
+      addTearDown(() async {
+        pumping = false;
+        await pump;
+        await detached.delete();
+      });
+      await detached.connect('opc.tcp://127.0.0.1:${proxy.port}');
+      final subId = await detached.subscriptionCreate(requestedPublishingInterval: const Duration(milliseconds: 50));
+      detached.monitor(_node, subId, samplingInterval: const Duration(milliseconds: 50)).listen((_) {});
+      await waitFor(() => reads.any((s) => s.hasSession), reason: 'a sample in the session');
+
+      // The client goes silent; the server times the session out after a
+      // second and keeps the subscription, sampling it with no session.
+      pumping = false;
+      await pump;
+      proxy.cut();
+      await waitFor(() => reads.any((s) => !s.hasSession), reason: 'a sample without a session');
+      final orphan = reads.lastWhere((s) => !s.hasSession);
+      expect(orphan.sessionId, SessionInfo.noSessionId);
+      expect(orphan.isAdminSession, isFalse);
+      expect([orphan.sessionName, orphan.applicationUri, orphan.identity, orphan.context], everyElement(isNull));
+      expect((await client.read(_node)).asInt, stored, reason: 'the server serves on');
+    }, timeout: const Timeout(Duration(seconds: 60)));
 
     test('errors from the session handlers map to statuses like onWrite / onReadValue', () async {
       final node = NodeId.fromString(1, 'ds.session.errors');

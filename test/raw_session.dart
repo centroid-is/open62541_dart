@@ -194,52 +194,6 @@ class RawSession {
     }
   }
 
-  /// Sends a request of type [requestType], filled in by [fill] into zeroed
-  /// memory (allocations from `ua_calloc`, freed with the request), and
-  /// answers what [read] takes from the response of type [responseType].
-  Future<T> service<T>(
-    int requestType,
-    int responseType,
-    void Function(ffi.Pointer<ffi.Uint8> request) fill,
-    T Function(ffi.Pointer<ffi.Uint8> response) read,
-  ) async {
-    final type = getTypeByIndex(requestType);
-    final request = ua_calloc<ffi.Uint8>(type.ref.memSize);
-    fill(request);
-    final result = Completer<T>();
-    final callback =
-        ffi.NativeCallable<
-          ffi.Void Function(ffi.Pointer<raw.UA_Client>, ffi.Pointer<ffi.Void>, ffi.Uint32, ffi.Pointer<ffi.Void>)
-        >.isolateLocal((ffi.Pointer<raw.UA_Client> c, ffi.Pointer<ffi.Void> userdata, int id, ffi.Pointer<ffi.Void> r) {
-          try {
-            result.complete(read(r.cast()));
-          } catch (e, s) {
-            result.completeError(e, s);
-          }
-        });
-    final sent = raw.UA_Client_AsyncService(
-      _client,
-      request.cast(),
-      type,
-      callback.nativeFunction,
-      getTypeByIndex(responseType),
-      ffi.nullptr,
-      ffi.nullptr,
-    );
-    raw.UA_clear(request.cast(), type);
-    ua_calloc.free(request);
-    try {
-      expect(sent, raw.UA_STATUSCODE_GOOD);
-      while (!result.isCompleted) {
-        raw.UA_Client_run_iterate(_client, 0);
-        await Future<void>.delayed(const Duration(milliseconds: 1));
-      }
-      return await result.future;
-    } finally {
-      callback.close();
-    }
-  }
-
   void close() {
     raw.UA_Client_disconnect(_client);
     raw.UA_Client_delete(_client);

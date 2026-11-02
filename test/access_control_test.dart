@@ -9,6 +9,7 @@ import 'package:logging/logging.dart';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
+import 'package:open62541/src/access_control.dart' show accessTagContext, isAccessTagContext, maxAccessTag;
 import 'package:open62541/src/third_party/open62541.g.dart' as raw;
 import 'common.dart';
 import 'raw_session.dart';
@@ -44,6 +45,7 @@ class RecordingAccessControl extends AccessControl {
   var throwOnActivate = false;
   var accessLevelCalls = 0;
   var rightsMaskCalls = 0;
+  final tagsSeen = <NodeId, int>{};
 
   @override
   Set<UserTokenType> get userTokenTypes => types;
@@ -69,6 +71,7 @@ class RecordingAccessControl extends AccessControl {
   @override
   int userAccessLevel(Object? context, NodeRef node) {
     accessLevelCalls++;
+    tagsSeen[node.nodeId] = node.tag;
     if (throwOnAccessLevel) throw StateError('userAccessLevel failed');
     return switch (node.tag) {
       _readOnly => raw.UA_ACCESSLEVELMASK_READ,
@@ -312,6 +315,32 @@ void main() {
       );
     });
 
+    test('a tag is stored so that it cannot collide with a context of open62541\'s', () async {
+      // open62541 keeps pointers in some node contexts (the UA_Subscription*
+      // of SubscriptionDiagnostics variables): a tag is odd, a pointer even.
+      expect(accessTagContext(0).address, 0);
+      expect(accessTagContext(5).address, 11);
+      expect(isAccessTagContext(accessTagContext(maxAccessTag).address), isTrue);
+      expect(isAccessTagContext(0x7f0012345670), isFalse);
+      server.server.setAccessTag(_plain, maxAccessTag);
+      await pumped(client, client.readValue(_plain));
+      expect(ac.tagsSeen[_plain], maxAccessTag);
+      expect(() => server.server.setAccessTag(_plain, maxAccessTag + 1), throwsArgumentError);
+
+      await pumped(client, client.subscriptionCreate());
+      final session = ac.activations.single.sessionId;
+      final array = (await pumped(
+        client,
+        client.browse(session),
+      )).firstWhere((c) => c.browseName == 'SubscriptionDiagnosticsArray');
+      final subscriptions = await pumped(client, client.browse(array.nodeId));
+      final diagnostics = subscriptions.firstWhere((c) => c.nodeClass == NodeClass.UA_NODECLASS_VARIABLE).nodeId;
+      final children = await pumped(client, client.browse(diagnostics));
+      final child = children.firstWhere((c) => c.browseName == 'SubscriptionId').nodeId;
+      await pumped(client, client.readValue(child));
+      expect(ac.tagsSeen[child], 0);
+    });
+
     test('a throwing userAccessLevel denies, and is logged once', () async {
       final logged = <LogRecord>[];
       final records = Logger.root.onRecord.where((r) => r.loggerName == 'open62541.Server').listen(logged.add);
@@ -391,6 +420,18 @@ void main() {
     expect(ac.closed, isEmpty);
     server.delete();
     expect(ac.closed.single.context, 'operator');
+    await deleteClient(client);
+  });
+
+  test('a closeSession that reads the server during delete gets a StateError, not a crash', () async {
+    final ac = _ReadingOnClose();
+    final server = acServer(ac);
+    ac.server = server.server;
+    final client = securedClient(username: 'operator', password: 'secret');
+    expect(await connectStatus(client, server.url), raw.UA_STATUSCODE_GOOD);
+    server.delete();
+    expect(ac.readErrors.single, isA<StateError>());
+    expect(() => server.server.read(_plain), throwsStateError);
     await deleteClient(client);
   });
 
@@ -490,6 +531,13 @@ void main() {
       final users = DefaultAccessControl(users: {'a': 'b'}, allowCertificate: true);
       expect(users.userTokenTypes, {_anonymous, _username, _certificate});
       expect(users.activateSession(activation(_username, username: 'a', password: utf8.encode('b'))), 'a');
+      for (final (name, attempt) in [('a', 'bb'), ('a', ''), ('a', 'B'), ('b', 'b'), ('a', 'b' * 300)]) {
+        expect(
+          () => users.activateSession(activation(_username, username: name, password: utf8.encode(attempt))),
+          throwsA(isA<UaStatusException>()),
+          reason: '$name/$attempt',
+        );
+      }
       expect(users.activateSession(activation(_anonymous)), isNull);
     });
 
@@ -579,4 +627,20 @@ void main() {
     expect(ac.activations.single.clientCertificate, isNull);
     expect(ac.activations.single.securityPolicyUri, SecurityPolicy.none.uri);
   });
+}
+
+/// Reads a server variable when a session closes: during [Server.delete] the
+/// server is going away, so the read must fail in Dart.
+class _ReadingOnClose extends RecordingAccessControl {
+  late Server server;
+  final readErrors = <Object>[];
+
+  @override
+  void closeSession(ActiveSession session) {
+    try {
+      server.read(NodeId.fromNumeric(0, raw.UA_NS0ID_SERVER_SERVERSTATUS_STATE));
+    } catch (error) {
+      readErrors.add(error);
+    }
+  }
 }

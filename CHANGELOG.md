@@ -15,7 +15,10 @@ changes that ship the same native library version.
   call: `context` is what the server's `AccessControl.activateSession`
   returned for the reading or writing session, `identity` the token it
   accepted. A monitored item samples in the session that owns its
-  subscription. `Server.read` and `Server.write` run in open62541's admin
+  subscription; once that session has timed out, open62541 keeps sampling
+  the subscription with no session, reported as `SessionInfo.hasSession`
+  false (`sessionId` is `SessionInfo.noSessionId`, every other field
+  `null`). `Server.read` and `Server.write` run in open62541's admin
   session, reported as `SessionInfo.isAdminSession` (`sessionId` is
   `SessionInfo.adminSessionId`, every other field `null`); `Server.write` to
   a node with a session write handler runs it but cannot wait for it and
@@ -61,7 +64,10 @@ changes that ship the same native library version.
   at construction. The per-node hooks get the context and a `NodeRef`, whose
   `tag` is the node's access tag (`accessTag:` on `addVariableNode`,
   `addDataSourceVariableNode`, `addMethodNode` and `addObjectNode`, and
-  `Server.setAccessTag`, stored as the node's open62541 context) and whose
+  `Server.setAccessTag`, stored as the node's open62541 context, encoded
+  odd so it never equals a pointer open62541 keeps there; `setAccessTag`
+  refuses a node whose context is open62541's own with a `StateError`) and
+  whose
   `nodeId` is decoded only when asked for: `userAccessLevel` (was
   `ServerAuthorization.userAccessLevel`; an int now, `0xFF` keeps the node's
   own), `userExecutableOnObject` (gates Call; was `userExecutable` with an
@@ -69,8 +75,9 @@ changes that ship the same native library version.
   `userRightsMask`, `allowAddNode` / `allowAddReference` / `allowDeleteNode`
   / `allowDeleteReference` (asked only with `allowClientNodeManagement:
   true`, which still gates node management), `allowTransferSubscription`
-  (open62541's rule by default) and `allowHistoryUpdate`; HistoryRead's
-  check of the HistoryRead bit asks `userAccessLevel` too. Everything 1.5.9
+  (open62541's rule by default); HistoryRead's check of the HistoryRead bit
+  (`0x04`) asks `userAccessLevel` too, so a policy answers `0xFF`, not
+  `0x03`, for full access. HistoryUpdate stays unsupported. Everything 1.5.9
   said of the hooks holds: they restrict and never grant (ANDed with the
   node's AccessLevel and WriteMask), a refusal is `BadUserAccessDenied` on
   Read, Write and Call, `allowBrowse` hides what is below a node and its
@@ -82,14 +89,17 @@ changes that ship the same native library version.
   session's open62541 context is its handle), so a trivial
   `userAccessLevel` still costs about 0.1 µs a read. `DefaultAccessControl(
   allowAnonymous:, users:, allowCertificate:)` is `UA_AccessControl_default`
-  in Dart (constant-time password compare, the user name as context); a
+  in Dart (the user name as context; the password compare takes the same
+  time for a known and an unknown user and any length up to 256 bytes); a
   `Server` without an `accessControl` uses one built from `allowAnonymous`,
   `users` and a non-empty `trustList` and leaves open62541's per-node
   functions in place, so nothing changes for it. With an `accessControl`,
   `allowAnonymous` and `users` must be left out (`ArgumentError`).
   `MethodSessionInfo.context` is the calling session's context, and its
   `identity` now comes from the activation instead of a scan of the session
-  diagnostics. Migration: move the three hooks into an `AccessControl`
+  diagnostics. During `Server.delete` (which closes the open sessions
+  through `closeSession`) and after it, every `Server` method throws a
+  `StateError` instead of passing a freed server to open62541. Migration: move the three hooks into an `AccessControl`
   subclass (`extends DefaultAccessControl(users: ...)` keeps the logins and
   makes the user name the context), tag the nodes they decide about, and
   return `0xFF` where the hook returned `null`.

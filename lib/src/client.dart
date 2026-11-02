@@ -432,29 +432,6 @@ void _checkUserCertificate(Uint8List? certificate, Uint8List? key, String? passw
 int _noPrivateKeyPassword(ffi.Pointer<raw.UA_ClientConfig> config, ffi.Pointer<raw.UA_ByteString> password) =>
     raw.UA_STATUSCODE_GOOD;
 
-/// A `UA_ByteString` in [arena] holding a copy of [bytes].
-ffi.Pointer<raw.UA_ByteString> _byteString(Arena arena, Uint8List bytes) {
-  final string = arena<raw.UA_ByteString>();
-  string.ref.length = bytes.length;
-  string.ref.data = arena<ffi.Uint8>(bytes.length);
-  string.ref.data.asTypedList(bytes.length).setAll(0, bytes);
-  return string;
-}
-
-/// An array of `UA_ByteString` in [arena], one per element of [list], each
-/// holding a copy. `nullptr` for an empty list.
-ffi.Pointer<raw.UA_ByteString> _byteStrings(Arena arena, List<Uint8List> list) {
-  if (list.isEmpty) return ffi.nullptr;
-  final array = arena<raw.UA_ByteString>(list.length);
-  for (var i = 0; i < list.length; i++) {
-    final bytes = list[i];
-    array[i].length = bytes.length;
-    array[i].data = arena<ffi.Uint8>(bytes.length);
-    array[i].data.asTypedList(bytes.length).setAll(0, bytes);
-  }
-  return array;
-}
-
 /// An OPC UA client over open62541, pumped by the caller ([runIterate] or
 /// [keepConnected]).
 ///
@@ -582,20 +559,25 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
       // Decrypted here, so that open62541 never sees an encrypted key.
       privateKey = decryptPrivateKey(privateKey, password: privateKeyPassword);
     }
-    checkClientCertificateArguments(
-      certificate: certificate,
-      privateKey: privateKey,
-      trustList: trustList,
-      issuerList: issuerList,
-      revocationList: revocationList,
-      acceptAllCertificates: acceptAllCertificates,
-      privateKeyPassword: privateKey == null ? privateKeyPassword : null,
-      applicationUri: applicationUri,
-      userCertificate: userCertificate,
-      userPrivateKey: userPrivateKey,
-      userPrivateKeyPassword: userPrivateKeyPassword,
-      username: username,
-    );
+    try {
+      checkClientCertificateArguments(
+        certificate: certificate,
+        privateKey: privateKey,
+        trustList: trustList,
+        issuerList: issuerList,
+        revocationList: revocationList,
+        acceptAllCertificates: acceptAllCertificates,
+        privateKeyPassword: privateKey == null ? privateKeyPassword : null,
+        applicationUri: applicationUri,
+        userCertificate: userCertificate,
+        userPrivateKey: userPrivateKey,
+        userPrivateKeyPassword: userPrivateKeyPassword,
+        username: username,
+      );
+    } catch (_) {
+      if (privateKeyPassword != null) privateKey?.fillRange(0, privateKey.length, 0);
+      rethrow;
+    }
     final config = ua_calloc<raw.UA_ClientConfig>();
 
     if (logLevel != null) {
@@ -641,8 +623,8 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
       final status = using(
         (arena) => raw.UA_ClientConfig_setAuthenticationCert(
           config,
-          _byteString(arena, userCertificate).ref,
-          _byteString(arena, key).ref,
+          byteStringIn(arena, userCertificate).ref,
+          byteStringIn(arena, key).ref,
         ),
         ua_calloc,
       );
@@ -707,8 +689,8 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     // again into its store, after which the first copy is cleared;
     // addToTrustList appends copies the same way).
     using((arena) {
-      final rawCertificate = _byteString(arena, certificate);
-      final rawPrivateKey = _byteString(arena, privateKey);
+      final rawCertificate = byteStringIn(arena, certificate);
+      final rawPrivateKey = byteStringIn(arena, privateKey);
       final trust = trustList ?? const <Uint8List>[];
       final revocation = revocationList ?? const <Uint8List>[];
       // Only for this call: the pointer is into this isolate.
@@ -720,9 +702,9 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
         config,
         rawCertificate.ref,
         rawPrivateKey.ref,
-        _byteStrings(arena, trust),
+        byteStringsIn(arena, trust),
         trust.length,
-        _byteStrings(arena, revocation),
+        byteStringsIn(arena, revocation),
         revocation.length,
       );
       config.ref.privateKeyPasswordCallback = ffi.nullptr;
@@ -748,7 +730,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
         // checkClientCertificateArguments guarantees here) does.
         final issuers = arena<raw.UA_TrustListDataType>();
         issuers.ref.specifiedLists = raw.UA_TrustListMasks.UA_TRUSTLISTMASKS_ISSUERCERTIFICATES.value;
-        issuers.ref.issuerCertificates = _byteStrings(arena, issuerList);
+        issuers.ref.issuerCertificates = byteStringsIn(arena, issuerList);
         issuers.ref.issuerCertificatesSize = issuerList.length;
         final addToTrustList = group.ref.addToTrustList
             .asFunction<int Function(ffi.Pointer<raw.UA_CertificateGroup>, ffi.Pointer<raw.UA_TrustListDataType>)>();

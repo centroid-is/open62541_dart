@@ -276,3 +276,24 @@ bool isEncryptedPrivateKey(Uint8List key) {
   final text = String.fromCharCodes(key);
   return text.contains('-----BEGIN ENCRYPTED PRIVATE KEY-----') || text.contains('Proc-Type: 4,ENCRYPTED');
 }
+
+/// A `UA_ByteString` in [arena] holding a copy of [bytes].
+ffi.Pointer<raw.UA_ByteString> byteStringIn(Arena arena, List<int> bytes) {
+  final s = arena<raw.UA_ByteString>();
+  s.ref.length = bytes.length;
+  if (bytes.isNotEmpty) {
+    s.ref.data = arena<ffi.Uint8>(bytes.length)..asTypedList(bytes.length).setAll(0, bytes);
+  }
+  return s;
+}
+
+/// An array of `UA_ByteString` in [arena], one per element of [list], each
+/// holding a copy; `nullptr` for an empty list.
+ffi.Pointer<raw.UA_ByteString> byteStringsIn(Arena arena, List<List<int>> list) {
+  if (list.isEmpty) return ffi.nullptr;
+  final array = arena<raw.UA_ByteString>(list.length);
+  for (var i = 0; i < list.length; i++) {
+    array[i] = byteStringIn(arena, list[i]).ref;
+  }
+  return array;
+}

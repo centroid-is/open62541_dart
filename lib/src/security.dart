@@ -330,20 +330,18 @@ Certificate? leafCertificate(Uint8List chain) {
   }
 }
 
-/// A `UA_ByteString` in [arena] holding a copy of [bytes].
-ffi.Pointer<raw.UA_ByteString> byteStringIn(Arena arena, List<int> bytes) {
-  final s = arena<raw.UA_ByteString>();
-  s.ref.length = bytes.length;
-  if (bytes.isNotEmpty) {
-    s.ref.data = arena<ffi.Uint8>(bytes.length)..asTypedList(bytes.length).setAll(0, bytes);
-  }
-  return s;
-}
-
+/// A `UA_String` array in [arena], each string followed by a NUL byte that
+/// its length leaves out: `UA_CreateCertificate` hands the value of an `IP:`
+/// SubjectAltName to `inet_pton`, which reads to a NUL (a heap overflow by
+/// one byte under ASan without it).
 ffi.Pointer<raw.UA_String> _uaStrings(Arena arena, List<String> values) {
   final array = arena<raw.UA_String>(values.length);
   for (var i = 0; i < values.length; i++) {
-    array[i].set(values[i], allocator: arena);
+    final bytes = utf8.encode(values[i]);
+    final data = arena<ffi.Uint8>(bytes.length + 1);
+    data.asTypedList(bytes.length).setAll(0, bytes);
+    array[i].data = data;
+    array[i].length = bytes.length;
   }
   return array;
 }
