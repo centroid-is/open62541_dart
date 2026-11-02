@@ -11,6 +11,7 @@ import 'ua_allocation.dart';
 
 typedef MonitoringMode = raw.UA_MonitoringMode;
 typedef AttributeId = raw.UA_AttributeId;
+typedef TimestampsToReturn = raw.UA_TimestampsToReturn;
 typedef MessageSecurityMode = raw.UA_MessageSecurityMode;
 typedef SecureChannelState = raw.UA_SecureChannelState;
 typedef SessionState = raw.UA_SessionState;
