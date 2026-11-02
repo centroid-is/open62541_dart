@@ -1,5 +1,6 @@
 library;
 
+export 'src/access_control.dart' show AccessControl, DefaultAccessControl, SessionActivation, ActiveSession, NodeRef;
 export 'src/access_level.dart' show AccessLevelMask;
 export 'src/client.dart'
     show Client, ClientState, DataValue, BrowseResultItem, BrowseTreeItem, NodeClass, BrowseResultMask;
@@ -46,11 +47,12 @@ export 'src/pubsub.dart'
         DataSetFieldMeta,
         pubSubTransportUdpUadp,
         uadpDefaultNetworkMessageContentMask;
+export 'src/security.dart'
+    show SecurityPolicy, Certificate, CertificateAndKey, createSelfSignedCertificate, checkKeyPair;
 export 'src/server.dart'
     show
         Server,
         ServerLimits,
-        ServerAuthorization,
         ServerEndpoint,
         checkServerSecurityArguments,
         securityPolicyNoneUri,
@@ -59,6 +61,7 @@ export 'src/server.dart'
         RedundancySupport,
         DataSourceValue,
         ServerStatistics,
+        SessionInfo,
         MethodSessionInfo,
         SessionIdentity,
         AnonymousSessionIdentity,

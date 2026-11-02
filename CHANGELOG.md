@@ -6,6 +6,150 @@ changes that ship the same native library version.
 
 ## 1.5.9+1
 
+- **Data-source handlers can see the session.**
+  `addDataSourceVariableNode` and `setVariableValueSource` take
+  `onReadWithSession: (SessionInfo session)` and `onWriteWithSession:
+  (DynamicValue value, SessionInfo session)` next to `onReadValue` and
+  `onWrite`, which are unchanged (giving a plain and a session variant of
+  one kind is an `ArgumentError`). The session resolves as for a method
+  call: `context` is what the server's `AccessControl.activateSession`
+  returned for the reading or writing session, `identity` the token it
+  accepted. A monitored item samples in the session that owns its
+  subscription; once that session has timed out, open62541 keeps sampling
+  the subscription with no session, reported as `SessionInfo.hasSession`
+  false (`sessionId` is `SessionInfo.noSessionId`, every other field
+  `null`). `Server.read` and `Server.write` run in open62541's admin
+  session, reported as `SessionInfo.isAdminSession` (`sessionId` is
+  `SessionInfo.adminSessionId`, every other field `null`); `Server.write` to
+  a node with a session write handler runs it but cannot wait for it and
+  throws `Bad_WaitingForResponse`. Errors map to statuses as for `onWrite`
+  and `onReadValue`. `MethodSessionInfo` is renamed `SessionInfo` (the
+  history requests carry one too); `MethodSessionInfo` remains as a
+  typedef.
+- **X.509 user identity tokens.** `Client(userCertificate:,
+  userPrivateKey:, userPrivateKeyPassword:)` (and `ClientIsolate` /
+  `ClientIsolate.create`) activates the session with the user certificate
+  instead of a user name (`UA_ClientConfig_setAuthenticationCert`, after the
+  channel encryption is set up). The key (DER, or an encrypted PEM key with
+  its password, decrypted in Dart) is checked against the certificate, and a
+  certificate without its key, a user name as well, or an encrypted key
+  without its password is an `ArgumentError`, also from
+  `checkClientCertificateArguments` on the calling isolate. The server
+  verifies the certificate against its `trustList` (the same store as the
+  client application certificates) and offers the certificate token only
+  with one; its `AccessControl` sees `SessionActivation.userCertificate`, a
+  method handler a `CertificateSessionIdentity` with the certificate's
+  subject. An untrusted user certificate is refused with
+  `BadIdentityTokenRejected` (open62541 hides the verification result) and
+  listed in `Server.rejectedUserCertificates`; `connect` fails with it at
+  once, on both clients. On the None endpoint of a secured server the token
+  is still signed under the server's best SecurityPolicy, so open62541
+  accepts it; the activation's `securityMode` is None, for an
+  `AccessControl` to refuse.
+- **Breaking: `ServerAuthorization` is now `AccessControl`.**
+  `Server(authorization: ServerAuthorization(...))` is gone;
+  `Server(accessControl:)` takes an `AccessControl`, open62541's
+  access-control plugin in Dart. `activateSession(SessionActivation)`
+  accepts a session by returning its context (any object) or refuses it by
+  throwing a `UaStatusException` (anything else thrown is
+  `BadUserAccessDenied`); `SessionActivation` carries the token type, the
+  user name and password (zeroed after the call) or the verified user
+  certificate, the client's channel certificate and ApplicationUri, the
+  endpoint's mode and policy, the previous context on re-activation and the
+  client's remote address. `closeSession(ActiveSession)` sees the session
+  end (client close, timeout, `Server.closeSession`, server deletion).
+  `userTokenTypes` are the identity tokens every endpoint offers, one policy
+  per type; a certificate token needs a certificate and a non-empty
+  `trustList`, an issued token is refused, and either is an `ArgumentError`
+  at construction. The per-node hooks get the context and a `NodeRef`, whose
+  `tag` is the node's access tag (`accessTag:` on `addVariableNode`,
+  `addDataSourceVariableNode`, `addMethodNode` and `addObjectNode`, and
+  `Server.setAccessTag`, stored as the node's open62541 context, encoded
+  odd so it never equals a pointer open62541 keeps there; `setAccessTag`
+  refuses a node whose context is open62541's own with a `StateError`) and
+  whose
+  `nodeId` is decoded only when asked for: `userAccessLevel` (was
+  `ServerAuthorization.userAccessLevel`; an int now, `0xFF` keeps the node's
+  own), `userExecutableOnObject` (gates Call; was `userExecutable` with an
+  object), `userExecutable` (the attribute), `allowBrowse`,
+  `userRightsMask`, `allowAddNode` / `allowAddReference` / `allowDeleteNode`
+  / `allowDeleteReference` (asked only with `allowClientNodeManagement:
+  true`, which still gates node management), `allowTransferSubscription`
+  (open62541's rule by default); HistoryRead's check of the HistoryRead bit
+  (`0x04`) asks `userAccessLevel` too, so a policy answers `0xFF`, not
+  `0x03`, for full access. HistoryUpdate stays unsupported. Everything 1.5.9
+  said of the hooks holds: they restrict and never grant (ANDed with the
+  node's AccessLevel and WriteMask), a refusal is `BadUserAccessDenied` on
+  Read, Write and Call, `allowBrowse` hides what is below a node and its
+  attributes but the Value, not the node in its parent's Browse, the admin
+  session is never asked, a request without an activated session (a
+  monitored item of a session that is gone) is denied, and a hook that
+  throws denies with its first exception logged on `open62541.Server`.
+  The session lookup is the same per-activation map as before (the
+  session's open62541 context is its handle), so a trivial
+  `userAccessLevel` still costs about 0.1 µs a read. `DefaultAccessControl(
+  allowAnonymous:, users:, allowCertificate:)` is `UA_AccessControl_default`
+  in Dart (the user name as context; the password compare takes the same
+  time for a known and an unknown user and any length up to 256 bytes); a
+  `Server` without an `accessControl` uses one built from `allowAnonymous`,
+  `users` and a non-empty `trustList` and leaves open62541's per-node
+  functions in place, so nothing changes for it. With an `accessControl`,
+  `allowAnonymous` and `users` must be left out (`ArgumentError`).
+  `MethodSessionInfo.context` is the calling session's context, and its
+  `identity` now comes from the activation instead of a scan of the session
+  diagnostics. During `Server.delete` (which closes the open sessions
+  through `closeSession`) and after it, every `Server` method throws a
+  `StateError` instead of passing a freed server to open62541. Migration: move the three hooks into an `AccessControl`
+  subclass (`extends DefaultAccessControl(users: ...)` keeps the logins and
+  makes the user name the context), tag the nodes they decide about, and
+  return `0xFF` where the hook returned `null`.
+- **Certificates.** `Certificate` holds an X.509 certificate as DER
+  (`Certificate.fromDer` / `fromPem`, `toPem`), parsed on construction with
+  open62541's `UA_CertificateUtils_*`: `subject`, `notAfter`, `keyBits`,
+  `applicationUris` (its `URI:` SubjectAltNames), `hasApplicationUri`,
+  `sha1Thumbprint` (the OPC UA thumbprint, as
+  `EndpointDescription.certificateThumbprint`) and `sha256Thumbprint`.
+  `createSelfSignedCertificate(applicationUri:, subject:, dnsNames:,
+  ipAddresses:, keyBits:, validity:)` makes an application instance
+  certificate (RSA, CA:FALSE, serverAuth + clientAuth, `CertificateAndKey`
+  with a DER key) with `UA_CreateCertificate`; its serial number is always
+  1, which open62541 hard-codes, so give each application a unique subject.
+  `checkKeyPair` tells whether a key belongs to a certificate.
+  `SecurityPolicy` names the policies by URI. Test PKI fixtures (a CA,
+  CA-issued leaves, a CRL, an expired leaf, an encrypted key) are under
+  `test/fixtures/pki` with the openssl script that makes them.
+- **`Server(privateKeyPassword:)` and `Client(privateKeyPassword:)`** (and
+  `ClientIsolate.create`): an encrypted PEM key is decrypted in Dart with
+  `UA_CertificateUtils_decryptPrivateKey` before open62541 sees it, and the
+  copy zeroed afterwards; a wrong password is a `BadSecurityChecksFailed`
+  `UaStatusException`. An encrypted key without a password, or an encrypted
+  DER key (open62541 decrypts PEM only), stays an `ArgumentError`.
+- **Fixed: a `Server` private key of another certificate made a server no
+  client could use.** open62541 builds every policy from any key it can
+  parse, so the server came up with all its endpoints and each handshake
+  failed. The constructor now checks the pair
+  (`UA_CertificateUtils_checkKeyPair`) and throws an `ArgumentError`.
+- **`Server.rejectedClientCertificates` / `rejectedUserCertificates`,
+  `Client.rejectedServerCertificates`** (a `Future` on `ClientIsolate`): the
+  certificates the trust list refused, oldest first (open62541 keeps the
+  last 100), as `Certificate`s.
+- **`Server.closeSession(sessionId)`** ends a session at once (the access
+  control's `closeSession` runs); an unknown session is
+  `BadSessionIdInvalid`.
+- **`Client(securityPolicy:, applicationUri:)`** (and `ClientIsolate` /
+  `ClientIsolate.create`): `securityPolicy` pins the endpoint's
+  SecurityPolicy (otherwise the client takes the endpoint the server ranks
+  highest, Aes256Sha256RsaPss for an open62541 server); `applicationUri` is
+  the ApplicationUri the client announces, and with a certificate must be
+  one of its `URI:` SubjectAltNames (`ArgumentError`, checked by
+  `checkClientCertificateArguments`, where servers would answer
+  `BadCertificateUriInvalid`).
+- **Fixed: `Client.getEndpoints` failed on a server that serves
+  SecurityPolicy#None for discovery only** (a `Server` with a certificate
+  and the default `allowNone: false`) with `BadIdentityTokenRejected`:
+  open62541's endpoint selection found no None endpoint before it asked.
+  The discovery client now presets the None endpoint and skips the
+  selection.
 - **`historyReadRaw`: the client side of HistoryRead.** `Client` and
   `ClientIsolate` implement the new `HistoryReadApi` (a separate interface,
   like `DataValueMonitoringApi`, so `ClientApi` implementers are unaffected):
@@ -39,7 +183,7 @@ changes that ship the same native library version.
   never checks the HistoryRead bit of UserAccessLevel on a HistoryRead (its
   history database only checks HistoryWrite, for updates). The server now
   does, per node, before the backend is called: the node's AccessLevel,
-  ANDed with `ServerAuthorization.userAccessLevel` when the server has one,
+  ANDed with `AccessControl.userAccessLevel` when the server has one,
   must carry `AccessLevelMask.historyRead`, or the node is answered
   `Bad_UserAccessDenied` (as is every node of a hook that throws). A release
   of continuation points reads nothing and is not checked.

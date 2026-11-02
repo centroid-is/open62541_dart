@@ -1,11 +1,12 @@
-// Per-user authorization (`Server(authorization: ServerAuthorization(...))`):
-// the user access level, method execution and browsing decided per session,
-// within what the node itself allows, never for the host's own calls.
+// Per-user authorization (`Server(accessControl: ...)`): the user access
+// level, method execution and browsing decided per session, within what the
+// node itself allows, never for the host's own calls.
 
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
+import 'package:logging/logging.dart';
 import 'package:test/test.dart';
 
 import 'package:open62541/open62541.dart';
@@ -25,22 +26,41 @@ final allowedMethod = NodeId.fromString(1, 'authz.allowed');
 final deniedMethod = NodeId.fromString(1, 'authz.denied');
 final objectsFolder = NodeId.fromNumeric(0, raw.UA_NS0ID_OBJECTSFOLDER);
 
-String? userOf(MethodSessionInfo session) => switch (session.identity) {
-  UsernameSessionIdentity(:final username) => username,
-  _ => null,
-};
+const _writableTag = 1;
+const _readOnlyTag = 2;
+const _throwingTag = 3;
+const _hiddenTag = 4;
+const _deniedTag = 5;
 
-/// Alice may write [writable], Bob only read it, anyone else nothing. The
-/// hook tries to grant write on [readOnly], throws for [throwing].
-AccessLevelMask? accessLevel(MethodSessionInfo session, NodeId node) {
-  if (node == throwing) throw StateError('a bug in the hook');
-  if (node == readOnly) return const AccessLevelMask(read: true, write: true);
-  if (node != writable) return null;
-  return switch (userOf(session)) {
-    'alice' => null,
-    'bob' => const AccessLevelMask(read: true),
-    _ => const AccessLevelMask(),
+/// Logs in alice and bob (the context is the user name) and anonymous
+/// sessions (context `null`). Alice may write [writable], Bob only read it,
+/// anyone else nothing. The hook tries to grant write on [readOnly], throws
+/// for [throwing]. [deniedMethod] may not be called, [hidden] not browsed.
+class Policy extends DefaultAccessControl {
+  Policy() : super(users: {'alice': 'a', 'bob': 'b'});
+
+  final executableAsked = <(Object?, NodeId, NodeId)>[];
+
+  @override
+  int userAccessLevel(Object? context, NodeRef node) => switch (node.tag) {
+    _throwingTag => throw StateError('a bug in the hook'),
+    _readOnlyTag => raw.UA_ACCESSLEVELMASK_READ | raw.UA_ACCESSLEVELMASK_WRITE,
+    _writableTag => switch (context) {
+      'alice' => 0xFF,
+      'bob' => raw.UA_ACCESSLEVELMASK_READ,
+      _ => 0,
+    },
+    _ => 0xFF,
   };
+
+  @override
+  bool userExecutableOnObject(Object? context, NodeRef method, NodeRef object) {
+    executableAsked.add((context, method.nodeId, object.nodeId));
+    return method.tag != _deniedTag;
+  }
+
+  @override
+  bool allowBrowse(Object? context, NodeRef node) => node.tag != _hiddenTag;
 }
 
 /// What [future] failed with, `null` if it did not.
@@ -54,39 +74,38 @@ Future<Object?> errorOf(Future<Object?> future) async {
 }
 
 void addNodes(Server server) {
-  for (final node in [writable, throwing, hidden]) {
+  for (final (node, tag) in [(writable, _writableTag), (throwing, _throwingTag), (hidden, _hiddenTag)]) {
     server.addVariableNode(
       node,
       DynamicValue(value: 1, typeId: NodeId.int32, name: node.string),
       accessLevel: readWrite,
+      accessTag: tag,
     );
   }
-  server.addVariableNode(readOnly, DynamicValue(value: 1, typeId: NodeId.int32, name: readOnly.string));
-  for (final method in [allowedMethod, deniedMethod]) {
+  server.addVariableNode(
+    readOnly,
+    DynamicValue(value: 1, typeId: NodeId.int32, name: readOnly.string),
+    accessTag: _readOnlyTag,
+  );
+  for (final (method, tag) in [(allowedMethod, 0), (deniedMethod, _deniedTag)]) {
     server.addMethodNode(
       method,
       callback: (inputs, session) async => [DynamicValue(value: 42, typeId: NodeId.int32)],
       outputArguments: [Argument(name: 'answer', dataType: NodeId.int32)],
+      accessTag: tag,
     );
   }
 }
 
-final allowing = ServerAuthorization(
-  userAccessLevel: accessLevel,
-  userExecutable: (session, method, object) => true,
-  allowBrowse: (session, node) => true,
-);
-
-/// An isolate's entry: a server with [allowing] for alice, pumped until
+/// An isolate's entry: a server with a [Policy], pumped until
 /// `null` arrives on the port it sends to [ready] with its own port; a
 /// [SendPort] sent there is answered with the open channel count.
 Future<void> serveWithAuthorization(SendPort ready) async {
   final server = Server(
     port: 0,
     logLevel: _fatal,
-    users: {'alice': 'a'},
     allowUnencryptedPassword: true,
-    authorization: allowing,
+    accessControl: Policy(),
     // The cycles open and close channels faster than a loaded machine may
     // reap them; the caps are not what this test is about.
     limits: ServerLimits.unlimited,
@@ -113,29 +132,18 @@ Future<void> serveWithAuthorization(SendPort ready) async {
 }
 
 void main() {
-  group('a server with users and an authorization:', () {
+  group('a server with users and an access control:', () {
     late Running running;
-    final executableAsked = <(String?, NodeId, NodeId?)>[];
+    final policy = Policy();
+    final logged = <LogRecord>[];
+    late StreamSubscription<LogRecord> records;
 
     setUpAll(() {
-      running = Running(
-        Server(
-          port: 0,
-          logLevel: _fatal,
-          users: {'alice': 'a', 'bob': 'b'},
-          allowUnencryptedPassword: true,
-          authorization: ServerAuthorization(
-            userAccessLevel: accessLevel,
-            userExecutable: (session, method, object) {
-              executableAsked.add((userOf(session), method, object));
-              return method != deniedMethod;
-            },
-            allowBrowse: (session, node) => node != hidden,
-          ),
-        ),
-      );
+      records = Logger.root.onRecord.where((r) => r.loggerName == 'open62541.Server').listen(logged.add);
+      running = Running(Server(port: 0, logLevel: _fatal, allowUnencryptedPassword: true, accessControl: policy));
       addNodes(running.server);
     });
+    tearDownAll(() => records.cancel());
     tearDownAll(() => running.stop());
 
     Future<ClientApi> login(String clientType, String? user) async {
@@ -181,10 +189,10 @@ void main() {
 
         test('a method the hook refuses is BadUserAccessDenied, the other is called', () async {
           final bob = await login(clientType, 'bob');
-          executableAsked.clear();
+          policy.executableAsked.clear();
           expect((await bob.call(objectsFolder, allowedMethod, [])).single.asInt, 42);
           expect('${await errorOf(bob.call(objectsFolder, deniedMethod, []))}', contains('BadUserAccessDenied'));
-          expect(executableAsked, [('bob', allowedMethod, objectsFolder), ('bob', deniedMethod, objectsFolder)]);
+          expect(policy.executableAsked, [('bob', allowedMethod, objectsFolder), ('bob', deniedMethod, objectsFolder)]);
         });
 
         test('a node the hook hides is neither browsed nor described, its value stays readable', () async {
@@ -201,13 +209,16 @@ void main() {
           expect(children.map((c) => c.nodeId), contains(hidden));
         });
 
-        test('a hook that throws denies, and the server goes on', () async {
+        test('a hook that throws denies, its first exception is logged, and the server goes on', () async {
           final alice = await login(clientType, 'alice');
           for (var i = 0; i < 3; i++) {
             final value = await alice.readValue(throwing);
             expect(value.statusCode, raw.UA_STATUSCODE_BADUSERACCESSDENIED);
           }
           expect((await alice.read(writable)).asInt, isNotNull);
+          final thrown = logged.where((r) => r.message.contains('AccessControl.userAccessLevel threw'));
+          expect(thrown, hasLength(1));
+          expect(thrown.single.error, isA<StateError>());
         });
       });
     }
@@ -221,22 +232,16 @@ void main() {
     });
   });
 
-  test('a hook is cheap: the identity is resolved once per session, not per read', () async {
+  test('a hook is cheap: the session context is looked up, not resolved per read', () async {
     // Server-side cost of userAccessLevel: the same 2 000-node Read from a
     // server without and one with a trivial hook, taken in turns. Client and
     // server share this isolate, so the request stays small enough for a
     // loopback socket buffer: a larger one stalls the client's send until
     // the deadline on Windows, where the server cannot drain it. The hook
-    // adds about 0.1 us a read (the FFI trampoline, a map lookup, the NodeId
-    // decode); resolving the session on every call adds about 3 us.
-    final servers = [
-      Server(port: 0, logLevel: _fatal),
-      Server(
-        port: 0,
-        logLevel: _fatal,
-        authorization: ServerAuthorization(userAccessLevel: (session, node) => null),
-      ),
-    ];
+    // adds about 0.1 us a read (the FFI trampoline, a map lookup by the
+    // session's handle); resolving the session on every call would add
+    // about 3 us.
+    final servers = [Server(port: 0, logLevel: _fatal), Server(port: 0, logLevel: _fatal, accessControl: _Trivial())];
     final clients = [for (final _ in servers) Client(logLevel: _fatal)];
     for (final server in servers) {
       server.addVariableNode(writable, DynamicValue(value: 1, typeId: NodeId.int32, name: 'w'));
@@ -300,7 +305,7 @@ void main() {
     expect(withHook - without, lessThan(without));
   });
 
-  group('the hooks and the session cache across a server\'s life:', () {
+  group('the hooks and the sessions across a server\'s life:', () {
     test(
       'connect, read and disconnect cycles leave nothing on the C heap',
       () async {
@@ -358,14 +363,8 @@ void main() {
     );
 
     for (final clientType in clientTypes) {
-      test('$clientType client: delete() with sessions open and identities cached is clean', () async {
-        final server = Server(
-          port: 0,
-          logLevel: _fatal,
-          users: {'alice': 'a', 'bob': 'b'},
-          allowUnencryptedPassword: true,
-          authorization: allowing,
-        );
+      test('$clientType client: delete() with sessions open is clean', () async {
+        final server = Server(port: 0, logLevel: _fatal, allowUnencryptedPassword: true, accessControl: Policy());
         addNodes(server);
         final running = Running(server);
         final clients = [
@@ -378,10 +377,16 @@ void main() {
           await client.readValue(writable);
           await client.browse(objectsFolder);
         }
-        // The server closes the three sessions (through the closeSession
-        // wrapper) inside UA_Server_delete, before its callbacks are closed.
+        // The server closes the three sessions (through the access control's
+        // closeSession) inside UA_Server_delete, before its callbacks are
+        // closed.
         await running.stop();
       });
     }
   });
+}
+
+class _Trivial extends DefaultAccessControl {
+  @override
+  int userAccessLevel(Object? context, NodeRef node) => 0xFF;
 }

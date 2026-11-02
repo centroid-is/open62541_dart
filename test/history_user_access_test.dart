@@ -8,7 +8,7 @@ import 'history_memory_backend.dart';
 import 'history_raw_client.dart';
 
 /// HistoryRead checks the HistoryRead bit of the session's UserAccessLevel:
-/// the node's AccessLevel, ANDed with `ServerAuthorization.userAccessLevel`.
+/// the node's AccessLevel, ANDed with `AccessControl.userAccessLevel`.
 
 final temperature = NodeId.fromString(1, 'history.temperature');
 final pressure = NodeId.fromString(1, 'history.pressure');
@@ -17,16 +17,20 @@ final throwing = NodeId.fromString(1, 'history.throwing');
 
 RawHistoryNode node(NodeId id, [Uint8List? cp]) => (nodeId: id, continuationPoint: cp);
 
-String? userOf(MethodSessionInfo session) => switch (session.identity) {
-  UsernameSessionIdentity(:final username) => username,
-  _ => null,
-};
+const _temperatureTag = 1;
+const _throwingTag = 2;
 
-/// Bob loses the HistoryRead bit on [temperature]; [throwing] has a bug.
-AccessLevelMask? userAccessLevel(MethodSessionInfo session, NodeId node) {
-  if (node == throwing) throw StateError('a bug in the hook');
-  if (node == temperature && userOf(session) == 'bob') return const AccessLevelMask(read: true);
-  return null;
+/// Alice and Bob log in; Bob loses the HistoryRead bit on [temperature],
+/// and [throwing] has a bug.
+class Policy extends DefaultAccessControl {
+  Policy() : super(users: {'alice': 'a', 'bob': 'b'});
+
+  @override
+  int userAccessLevel(Object? context, NodeRef node) => switch (node.tag) {
+    _throwingTag => throw StateError('a bug in the hook'),
+    _temperatureTag when context == 'bob' => const AccessLevelMask(read: true).value,
+    _ => 0xFF,
+  };
 }
 
 void main() {
@@ -34,20 +38,21 @@ void main() {
   late MemoryBackend backend;
   final clients = <RawHistoryClient>[];
 
-  Server start({ServerAuthorization? authorization}) {
+  Server start({AccessControl? accessControl}) {
     final server = Server(
       port: 0,
       logLevel: LogLevel.UA_LOGLEVEL_FATAL,
-      users: {'alice': 'a', 'bob': 'b'},
+      users: accessControl == null ? {'alice': 'a', 'bob': 'b'} : null,
       allowUnencryptedPassword: true,
-      authorization: authorization,
+      accessControl: accessControl,
     );
-    for (final id in [temperature, pressure, throwing]) {
+    for (final (id, tag) in [(temperature, _temperatureTag), (pressure, 0), (throwing, _throwingTag)]) {
       server.addVariableNode(
         id,
         DynamicValue(value: 0, typeId: NodeId.int32, name: id.string),
         accessLevel: const AccessLevelMask(read: true, historyRead: true),
         historizing: true,
+        accessTag: tag,
       );
     }
     server.addVariableNode(
@@ -96,7 +101,7 @@ void main() {
   });
 
   group('with a userAccessLevel hook', () {
-    setUp(() => server = start(authorization: ServerAuthorization(userAccessLevel: userAccessLevel)));
+    setUp(() => server = start(accessControl: Policy()));
 
     test('a node the hook strips of HistoryRead is denied; the others in the request are read', () async {
       final client = await connect(username: 'bob', password: 'b');
