@@ -4,7 +4,22 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## 1.5.10
+## 1.5.10+1
+
+- **`requestTimeout` on `Client` and `ClientIsolate`.** open62541's
+  per-request response timeout (`UA_ClientConfig.timeout`, 5 s) bounded every
+  service call with no way to change it, so a method call that runs longer
+  on the server (a large configuration import) failed with `BadTimeout` after
+  5 s whatever Dart-side `.timeout()` surrounded it. `Client(requestTimeout:)`
+  and `ClientIsolate.create(requestTimeout:)` set it (default
+  `Client.defaultRequestTimeout`, still 5 s; `Duration.zero` = no timeout; a
+  negative value or one past `UA_UInt32` ms is an `ArgumentError`). It can be
+  changed while connected, `Client.requestTimeout = ...` (also
+  `ClientConfig.requestTimeout`) and `ClientIsolate.setRequestTimeout(...)` /
+  `getRequestTimeout()`: open62541 reads it whenever a request is sent, so it
+  applies to the requests sent after the change. It also bounds the
+  synchronous CloseSession of `disconnect()` / `delete()`.
+
 
 Bundles open62541 [v1.5.10](https://github.com/open62541/open62541/releases/tag/v1.5.10)
 (mbedTLS stays at 3.6.7). Upstream behaviour changes you may notice:
