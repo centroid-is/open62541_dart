@@ -1419,11 +1419,17 @@ external ffi.Pointer<UA_Server> UA_Server_newWithConfig(ffi.Pointer<UA_ServerCon
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_Byte>)>()
 external int UA_Server_readAccessLevel(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_Byte> out);
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_NodeId>)>()
+external int UA_Server_readDataType(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_NodeId> out);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<ffi.Bool>)>()
 external int UA_Server_readHistorizing(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<ffi.Bool> out);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_Variant>)>()
 external int UA_Server_readValue(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_Variant> out);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_Int32>)>()
+external int UA_Server_readValueRank(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_Int32> out);
 
 @ffi.Native<UA_DataSetFieldResult Function(ffi.Pointer<UA_Server>, UA_NodeId)>()
 external UA_DataSetFieldResult UA_Server_removeDataSetField(ffi.Pointer<UA_Server> server, UA_NodeId dsfId);
@@ -1539,6 +1545,9 @@ external int UA_Server_triggerWriterGroupPublish(ffi.Pointer<UA_Server> server, 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_Byte)>()
 external int UA_Server_writeAccessLevel(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, int accessLevel);
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_NodeId)>()
+external int UA_Server_writeDataType(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_NodeId dataType);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_LocalizedText)>()
 external int UA_Server_writeDescription(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_LocalizedText description);
 
@@ -1547,6 +1556,9 @@ external int UA_Server_writeHistorizing(ffi.Pointer<UA_Server> server, UA_NodeId
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_Variant)>()
 external int UA_Server_writeValue(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_Variant value);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_Int32)>()
+external int UA_Server_writeValueRank(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, int valueRank);
 
 @ffi.Native<ffi.Pointer<ffi.Char> Function(UA_StatusCode)>()
 external ffi.Pointer<ffi.Char> UA_StatusCode_name(int code);
