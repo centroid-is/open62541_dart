@@ -258,6 +258,12 @@ class ClientConfig {
 
   int get outstandingPublishRequests => _clientConfig.ref.outStandingPublishRequests;
 
+  /// `UA_ClientConfig.timeout`, see [Client.requestTimeout].
+  Duration get requestTimeout => Duration(milliseconds: _clientConfig.ref.timeout);
+  set requestTimeout(Duration timeout) {
+    _clientConfig.ref.timeout = requestTimeoutMilliseconds(timeout);
+  }
+
   Future<void> close() async {
     await _stateStream.close();
     await _subscriptionInactivity.close();
@@ -299,6 +305,19 @@ class _BrowseResultError implements Exception {
   final int statusCode;
   @override
   String toString() => 'Browse result error: ${statusCodeToString(statusCode)}';
+}
+
+/// [Client.requestTimeout] in the milliseconds of `UA_ClientConfig.timeout`
+/// (a `UA_UInt32`, 0 meaning no timeout). Throws an [ArgumentError] for a
+/// negative duration or one past `UA_UInt32` milliseconds (about 49.7 days).
+/// `ClientIsolate` runs it on the calling isolate before anything reaches its
+/// worker.
+int requestTimeoutMilliseconds(Duration timeout) {
+  final ms = timeout.inMilliseconds;
+  if (ms < 0 || ms > 0xFFFFFFFF) {
+    throw ArgumentError.value(timeout, 'requestTimeout', 'must be between 0 (no timeout) and 0xFFFFFFFF ms');
+  }
+  return ms;
 }
 
 /// Checks that the certificate arguments of a [Client] make sense together
@@ -532,6 +551,12 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   ///
   /// [schemaCacheSize] caps the DataType definitions the client keeps for
   /// decoding (see [defs]).
+  ///
+  /// [requestTimeout] is how long the client waits for the answer to each
+  /// service call (`UA_ClientConfig.timeout`, default
+  /// [defaultRequestTimeout], 5 s) before failing it with `BadTimeout`; see
+  /// [requestTimeout] the property, which can also change it after
+  /// [connect].
   Client({
     Duration? secureChannelLifeTime,
     Duration? requestedSessionTimeout,
@@ -554,7 +579,9 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     Uint8List? userCertificate,
     Uint8List? userPrivateKey,
     String? userPrivateKeyPassword,
+    Duration requestTimeout = defaultRequestTimeout,
   }) {
+    final requestTimeoutMs = requestTimeoutMilliseconds(requestTimeout);
     if (privateKeyPassword != null && privateKey != null) {
       // Decrypted here, so that open62541 never sees an encrypted key.
       privateKey = decryptPrivateKey(privateKey, password: privateKeyPassword);
@@ -659,6 +686,9 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     }
 
     config.ref.connectivityCheckInterval = connectivityCheckInterval.inMilliseconds;
+    // Last: UA_ClientConfig_setDefault (which setDefaultEncryption runs
+    // again) replaces a 0 timeout with its 5 s, and 0 here means "none".
+    config.ref.timeout = requestTimeoutMs;
     _client = raw.UA_Client_newWithConfig(config);
     // UA_Client_newWithConfig *copies* the config struct into the client
     // (`client->config = *config`), so wrap the client's live copy — writes
@@ -3337,6 +3367,33 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
 
   /// The default of [schemaCacheSize].
   static const defaultSchemaCacheSize = 4096;
+
+  /// The default of [requestTimeout]: open62541's own 5 s.
+  static const defaultRequestTimeout = Duration(seconds: 5);
+
+  /// How long the client waits for the answer to a service call before
+  /// failing it with `BadTimeout` (`UA_ClientConfig.timeout`; 0 = no
+  /// timeout). It bounds every request (read, write, call, browse, ...) on
+  /// the native side, so a Dart `.timeout()` around a call can shorten the
+  /// wait but never lengthen it: a method that takes longer than this on
+  /// the server needs a larger value here.
+  ///
+  /// Settable at any time, also while connected: open62541 reads it when a
+  /// request is sent (as the request's `timeoutHint` and its client-side
+  /// deadline), so a change applies to the requests sent after it, not to
+  /// those already in flight. It is also the deadline of open62541's own
+  /// connect and activate-session steps and part of the subscription
+  /// inactivity threshold (publishing interval x keep-alive count + this).
+  /// A negative value or one past `UA_UInt32` milliseconds is an
+  /// [ArgumentError].
+  ///
+  /// It also bounds the CloseSession that [disconnect] and [delete] send
+  /// and wait for synchronously: against a server that does not answer it
+  /// (busy, or pumped on the same isolate as this client) they block for up
+  /// to this long. To give one long call room without that, raise it before
+  /// the call and lower it again afterwards.
+  Duration get requestTimeout => _clientConfig.requestTimeout;
+  set requestTimeout(Duration timeout) => _clientConfig.requestTimeout = timeout;
 
   /// The most entries [defs] holds: a server chooses the DataType ids it
   /// serves, so without a bound every distinct one would stay for the life

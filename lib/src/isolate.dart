@@ -188,6 +188,15 @@ class GetStateMessage extends IsolateMessage {
   const GetStateMessage(super.requestId);
 }
 
+class GetRequestTimeoutMessage extends IsolateMessage {
+  const GetRequestTimeoutMessage(super.requestId);
+}
+
+class SetRequestTimeoutMessage extends IsolateMessage {
+  final Duration timeout;
+  const SetRequestTimeoutMessage(super.requestId, this.timeout);
+}
+
 class RejectedServerCertificatesMessage extends IsolateMessage {
   const RejectedServerCertificatesMessage(super.requestId);
 }
@@ -305,6 +314,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     String? applicationUri,
     SecurityPolicy? securityPolicy,
     int schemaCacheSize = Client.defaultSchemaCacheSize,
+    Duration requestTimeout = Client.defaultRequestTimeout,
   }) {
     _initIsolate(
       secureChannelLifeTime: secureChannelLifeTime,
@@ -328,6 +338,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       applicationUri: applicationUri,
       securityPolicy: securityPolicy,
       schemaCacheSize: schemaCacheSize,
+      requestTimeout: requestTimeout,
     );
   }
 
@@ -368,7 +379,9 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     String? privateKeyPassword,
     String? applicationUri,
     SecurityPolicy? securityPolicy,
+    Duration requestTimeout = Client.defaultRequestTimeout,
   }) async {
+    requestTimeoutMilliseconds(requestTimeout);
     // The worker's Client constructor would throw where nobody awaits it
     // (errorsAreFatal is false there) and every later call would find no
     // client: check on this isolate, where the caller gets the exception.
@@ -408,6 +421,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
       applicationUri: applicationUri,
       securityPolicy: securityPolicy,
       schemaCacheSize: schemaCacheSize,
+      requestTimeout: requestTimeout,
     );
 
     try {
@@ -453,6 +467,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     String? applicationUri,
     SecurityPolicy? securityPolicy,
     int schemaCacheSize = Client.defaultSchemaCacheSize,
+    Duration requestTimeout = Client.defaultRequestTimeout,
   }) async {
     try {
       _receivePort = ReceivePort();
@@ -493,6 +508,7 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
           applicationUri: applicationUri,
           securityPolicy: securityPolicy,
           schemaCacheSize: schemaCacheSize,
+          requestTimeout: requestTimeout,
           sendPort: _receivePort.sendPort,
         ),
         // A worker isolate must NOT die on an uncaught error. In particular, a
@@ -978,6 +994,44 @@ class ClientIsolate implements ClientApi, DataValueMonitoringApi, HistoryReadApi
     }
   }
 
+  /// The worker client's [Client.requestTimeout] (`UA_ClientConfig.timeout`).
+  Future<Duration> getRequestTimeout() async {
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final completer = Completer<Duration>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(GetRequestTimeoutMessage(id));
+
+    try {
+      return await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
+  /// Sets the worker client's [Client.requestTimeout]; allowed while
+  /// connected, it applies to the requests sent after it (calls already in
+  /// flight keep the deadline they were sent with). An out-of-range value is
+  /// an [ArgumentError] here, before anything reaches the worker.
+  Future<void> setRequestTimeout(Duration timeout) async {
+    requestTimeoutMilliseconds(timeout);
+    if (_isClosed) throw const ClientIsolateClosedException();
+
+    final completer = Completer<void>();
+    final id = _generateId();
+    _pendingRequests[id] = completer;
+
+    _sendPort.send(SetRequestTimeoutMessage(id, timeout));
+
+    try {
+      await completer.future;
+    } finally {
+      _pendingRequests.remove(id);
+    }
+  }
+
   /// Get the current client state
   Future<ClientState> get state async {
     if (_isClosed) throw const ClientIsolateClosedException();
@@ -1247,6 +1301,7 @@ class _IsolateData {
   final String? applicationUri;
   final SecurityPolicy? securityPolicy;
   final int schemaCacheSize;
+  final Duration requestTimeout;
   final SendPort sendPort;
 
   _IsolateData({
@@ -1271,6 +1326,7 @@ class _IsolateData {
     this.applicationUri,
     this.securityPolicy,
     required this.schemaCacheSize,
+    required this.requestTimeout,
     required this.sendPort,
   });
 }
@@ -1321,6 +1377,7 @@ void _isolateEntryPoint(_IsolateData data) {
       privateKeyPassword: data.privateKeyPassword,
       applicationUri: data.applicationUri,
       securityPolicy: data.securityPolicy,
+      requestTimeout: data.requestTimeout,
     );
   } catch (e) {
     receivePort.close();
@@ -1461,6 +1518,11 @@ void _isolateEntryPoint(_IsolateData data) {
           resultMask: message.resultMask,
         );
         sendPort.send(IsolateResponse.success(message.requestId, result));
+      } else if (message is GetRequestTimeoutMessage) {
+        sendPort.send(IsolateResponse.success(message.requestId, client.requestTimeout));
+      } else if (message is SetRequestTimeoutMessage) {
+        client.requestTimeout = message.timeout;
+        sendPort.send(IsolateResponse.success(message.requestId, null));
       } else if (message is RejectedServerCertificatesMessage) {
         sendPort.send(IsolateResponse.success(message.requestId, client.rejectedServerCertificates));
       } else if (message is GetStateMessage) {

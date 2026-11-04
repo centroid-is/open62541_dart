@@ -113,6 +113,29 @@ More examples are in the [`example/`](example/) directory: a minimal client
 > client/server event loop must be driven periodically by calling `runIterate`
 > as shown above.
 
+### Client timeouts
+
+Options of `Client(...)` and `ClientIsolate.create(...)`:
+
+| Option | Default | What it bounds |
+| --- | --- | --- |
+| `requestTimeout` | 5 s (`Client.defaultRequestTimeout`, open62541's own) | Each service call (read, write, call, browse, ...): no answer in time is `BadTimeout`. `Duration.zero` = no timeout. Changeable after connect (`client.requestTimeout = ...`, `ClientIsolate.setRequestTimeout(...)`); applies to requests sent afterwards. |
+| `secureChannelLifeTime` | open62541's (10 min) | Requested SecureChannel lifetime before renewal. |
+| `requestedSessionTimeout` | open62541's (20 min) | Requested session timeout on the server. |
+| `connectivityCheckInterval` | 1 s | Interval of the client's keep-alive read. |
+
+`connect(url, timeout: ...)` (default 30 s) bounds the whole handshake, and a
+Dart `.timeout()` around a call can only shorten the wait: a method that runs
+longer than 5 s on the server (a large import, a commit) needs a larger
+`requestTimeout`:
+
+```dart
+final client = await ClientIsolate.create(requestTimeout: const Duration(minutes: 2));
+```
+
+`disconnect()` and `delete()` wait for the server's CloseSession answer for up
+to `requestTimeout` too, so a long one is best raised just for the long call.
+
 ### Security
 
 **Client.** Without a certificate the client offers SecurityPolicy None:
