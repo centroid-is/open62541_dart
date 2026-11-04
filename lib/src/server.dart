@@ -1388,6 +1388,10 @@ class Server {
   >?
   _dsWriteDispatcher;
   final Map<NodeId, _DataSourceRead> _dataSourceReads = {};
+
+  /// The data-source node whose DataType/ValueRank [setDataType] is writing
+  /// right now: its value read is answered with no value.
+  NodeId? _typeWriteNode;
   final Map<NodeId, _DataSourceWrite> _dataSourceWrites = {};
 
   // The declared DataType of each data-source node whose `typeId` was given.
@@ -1736,7 +1740,13 @@ class Server {
     ) {
       ffi.Pointer<raw.UA_Variant>? srcVar;
       try {
-        final handler = _dataSourceReads[nodeId.ref.toNodeId()];
+        final nid = nodeId.ref.toNodeId();
+        // [setDataType]'s own value check: answered with no value, without
+        // asking the node's handler (see there).
+        if (_typeWriteNode != null && nid == _typeWriteNode) {
+          return raw.UA_STATUSCODE_GOOD;
+        }
+        final handler = _dataSourceReads[nid];
         if (handler == null) {
           return raw.UA_STATUSCODE_BADNODEIDUNKNOWN;
         }
@@ -3076,6 +3086,86 @@ class Server {
         throw UaStatusException(status);
       }
       return AccessLevelMask.fromValue(out.value);
+    }, ua_calloc);
+  }
+
+  /// Replaces the DataType attribute of the variable [nodeId] in place by
+  /// [dataType], and with [scalar] (the default) its ValueRank by Scalar
+  /// (-1): the pair `typeId` sets on [addDataSourceVariableNode], for a node
+  /// whose type is known only after it was created. The node is not
+  /// recreated, so its monitored items, references and access tag stay as
+  /// they are; a client sees the new DataType on its next attribute read.
+  /// A [dataType] equal to the current one with the ValueRank already
+  /// Scalar is a no-op.
+  ///
+  /// open62541 checks the node's current value against the new DataType
+  /// and ValueRank. For a data-source node the value is not asked from its
+  /// handler during this call (the read is answered with no value): the
+  /// attribute declares the type of the values the handler will produce,
+  /// a handler may have side effects, and a node that has no value yet
+  /// (a handler throwing `Bad_NoData`, say) would otherwise refuse the
+  /// change. For a node with a stored value ([addVariableNode]) the value
+  /// is checked: `Bad_TypeMismatch` when it does not fit.
+  ///
+  /// Throws a [UaStatusException] with open62541's status, e.g.
+  /// `Bad_NodeIdUnknown` for a missing node, `Bad_AttributeIdInvalid` for a
+  /// node that is not a variable, `Bad_TypeMismatch` for a DataType the
+  /// node's VariableType does not allow.
+  void setDataType(NodeId nodeId, NodeId dataType, {bool scalar = true}) {
+    if (readDataType(nodeId) == dataType && (!scalar || readValueRank(nodeId) == raw.UA_VALUERANK_SCALAR)) {
+      return;
+    }
+    final previous = _typeWriteNode;
+    _typeWriteNode = nodeId;
+    try {
+      using((arena) {
+        final id = nodeId.toRaw(allocator: arena);
+        if (scalar) {
+          final status = raw.UA_Server_writeValueRank(_server, id, raw.UA_VALUERANK_SCALAR);
+          if (status != raw.UA_STATUSCODE_GOOD) {
+            throw UaStatusException(status);
+          }
+        }
+        final status = raw.UA_Server_writeDataType(_server, id, dataType.toRaw(allocator: arena));
+        if (status != raw.UA_STATUSCODE_GOOD) {
+          throw UaStatusException(status);
+        }
+      }, ua_calloc);
+    } finally {
+      _typeWriteNode = previous;
+    }
+    if (_dataSourceReads.containsKey(nodeId)) {
+      // The write dispatcher decodes a structured value by the node's type.
+      _dataSourceTypeIds[nodeId] = dataType;
+    }
+  }
+
+  /// The DataType attribute of the variable [nodeId] (`BaseDataType`,
+  /// `i=24`, for a node created without a type). Throws a
+  /// [UaStatusException] like [setDataType].
+  NodeId readDataType(NodeId nodeId) {
+    return using((arena) {
+      final out = ua_calloc<raw.UA_NodeId>();
+      final status = raw.UA_Server_readDataType(_server, nodeId.toRaw(allocator: arena), out);
+      final dataType = _takeOutNodeId(out);
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        throw UaStatusException(status);
+      }
+      return dataType;
+    }, ua_calloc);
+  }
+
+  /// The ValueRank attribute of the variable [nodeId]: -1 Scalar, -2 Any,
+  /// 1 one-dimensional array, …. Throws a [UaStatusException] like
+  /// [setDataType].
+  int readValueRank(NodeId nodeId) {
+    return using((arena) {
+      final out = arena<ffi.Int32>();
+      final status = raw.UA_Server_readValueRank(_server, nodeId.toRaw(allocator: arena), out);
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        throw UaStatusException(status);
+      }
+      return out.value;
     }, ua_calloc);
   }
 

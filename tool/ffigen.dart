@@ -100,6 +100,10 @@ Future<void> main() async {
     'UA_Server_writeHistorizing',
     'UA_Server_readAccessLevel',
     'UA_Server_writeAccessLevel',
+    'UA_Server_readDataType',
+    'UA_Server_writeDataType',
+    'UA_Server_readValueRank',
+    'UA_Server_writeValueRank',
 
     'UA_ServerConfig_setMinimal',
     'UA_ServerConfig_setBasics_withPort',
