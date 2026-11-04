@@ -4,21 +4,6 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
-## Unreleased
-
-- **`Server.setDataType(nodeId, dataType, {scalar = true})`** replaces the
-  DataType attribute of an existing variable node in place (and its
-  ValueRank by Scalar, as `addDataSourceVariableNode(typeId:)` sets it), so
-  a data-source node created without a type gets one once the application
-  knows it; the node's monitored items and references stay. open62541 checks
-  the current value against the new type; for a data-source node this call
-  answers that check with "no value" instead of calling the node's read
-  handler (no side effects, and a node without a value yet is not refused).
-  `Server.readDataType` and `Server.readValueRank` read the two attributes.
-  New raw bindings: `UA_Server_readDataType`, `UA_Server_writeDataType`,
-  `UA_Server_readValueRank`, `UA_Server_writeValueRank` (hand-inserted into
-  `open62541.g.dart` and listed in `tool/ffigen.dart`).
-
 ## 1.5.10
 
 Bundles open62541 [v1.5.10](https://github.com/open62541/open62541/releases/tag/v1.5.10)
@@ -60,6 +45,18 @@ Bundles open62541 [v1.5.10](https://github.com/open62541/open62541/releases/tag/
 
 Package changes:
 
+- **`Server.setDataType(nodeId, dataType, {scalar = true})`** replaces the
+  DataType attribute of an existing variable node in place (and its
+  ValueRank by Scalar, as `addDataSourceVariableNode(typeId:)` sets it), so
+  a data-source node created without a type gets one once the application
+  knows it; the node's monitored items and references stay. open62541 checks
+  the current value against the new type; for a data-source node this call
+  answers that check with "no value" instead of calling the node's read
+  handler (no side effects, and a node without a value yet is not refused).
+  `Server.readDataType` and `Server.readValueRank` read the two attributes.
+  New raw bindings: `UA_Server_readDataType`, `UA_Server_writeDataType`,
+  `UA_Server_readValueRank`, `UA_Server_writeValueRank` (hand-inserted into
+  `open62541.g.dart` and listed in `tool/ffigen.dart`).
 - `hook/delete_by_client_handle.patch` is rewritten for 1.5.10. Upstream
   added the request/response size check (b2355d39), which made the patch's
   own index guard dead, and made subscription callbacks re-entrant
