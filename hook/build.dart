@@ -465,6 +465,58 @@ Future<void> _applyPatches(Uri sourceDir, Uri packageRoot) async {
   await _patchAsyncManagerSingleThread(sourceDir);
   await _patchDynamicPort(sourceDir, packageRoot);
   await _patchAsyncHistoryRead(sourceDir, packageRoot);
+  await _patchClearArrayDimensions(sourceDir);
+}
+
+/// Lets the ArrayDimensions of a variable be cleared whatever its ValueRank.
+///
+/// `writeArrayDimensionsAttribute` in `src/server/ua_services_attribute.c`
+/// requires the number of ArrayDimensions to equal a positive ValueRank, also
+/// for an empty list, and `writeValueRank` requires a new ValueRank to fit the
+/// ArrayDimensions already stored. A variable with ValueRank 1 and
+/// ArrayDimensions `[20]` can then never become a scalar again: the ValueRank
+/// cannot change while the ArrayDimensions are set, and the ArrayDimensions
+/// cannot be cleared while the ValueRank is 1. OPC UA Part 3, 5.6.2 makes the
+/// attribute optional for a positive ValueRank, so clearing it is always valid;
+/// the patch skips the rank check for an empty list (a non-empty one is
+/// checked as before, and the current value is checked in either case).
+/// `Server.setDataType` clears the ArrayDimensions before it writes a new
+/// ValueRank. Anchored string replacement, same delivery mechanism as
+/// [_patchSubscriptionCleanup].
+Future<void> _patchClearArrayDimensions(Uri sourceDir) async {
+  final targetFile = File.fromUri(sourceDir.resolve('src/server/ua_services_attribute.c'));
+  if (!await targetFile.exists()) {
+    throw Exception('Cannot apply clear-array-dimensions patch: ua_services_attribute.c not found under $sourceDir');
+  }
+
+  var content = await targetFile.readAsString();
+
+  // Already patched? (idempotency marker)
+  if (content.contains('ArrayDimensions can always be cleared')) return;
+
+  // Anchored on the v1.5.x rank check in writeArrayDimensionsAttribute.
+  const original = '''    /* Check that the array dimensions match with the valuerank */
+    if(!compatibleValueRankArrayDimensions(server, session, node->valueRank,
+                                           arrayDimensionsSize)) {''';
+
+  const patched = '''    /* Check that the array dimensions match with the valuerank. The
+     * ArrayDimensions can always be cleared (open62541_dart patch): the
+     * attribute is optional for a positive ValueRank (Part 3, 5.6.2), and
+     * without this an array variable could never become a scalar again. */
+    if(arrayDimensionsSize > 0 &&
+       !compatibleValueRankArrayDimensions(server, session, node->valueRank,
+                                           arrayDimensionsSize)) {''';
+
+  final matches = original.allMatches(content).length;
+  if (matches != 1) {
+    throw Exception(
+      'Cannot apply clear-array-dimensions patch: expected exactly 1 occurrence of the '
+      'writeArrayDimensionsAttribute anchor in ua_services_attribute.c, found $matches. '
+      'The upstream source changed shape — re-verify and update the anchor.',
+    );
+  }
+  content = content.replaceFirst(original, patched);
+  await targetFile.writeAsString(content);
 }
 
 /// Lets a HistoryRead complete asynchronously, like Read, Write and Call.

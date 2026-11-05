@@ -3090,47 +3090,95 @@ class Server {
   }
 
   /// Replaces the DataType attribute of the variable [nodeId] in place by
-  /// [dataType], and with [scalar] (the default) its ValueRank by Scalar
-  /// (-1): the pair `typeId` sets on [addDataSourceVariableNode], for a node
-  /// whose type is known only after it was created. The node is not
-  /// recreated, so its monitored items, references and access tag stay as
-  /// they are; a client sees the new DataType on its next attribute read.
-  /// A [dataType] equal to the current one with the ValueRank already
-  /// Scalar is a no-op.
+  /// [dataType], together with its ValueRank and ArrayDimensions: what
+  /// `typeId` sets on [addDataSourceVariableNode], for a node whose type is
+  /// known only after it was created. The node is not recreated, so its
+  /// monitored items, references and access tag stay as they are; a client
+  /// sees the new attributes on its next attribute read.
   ///
-  /// open62541 checks the node's current value against the new DataType
-  /// and ValueRank. For a data-source node the value is not asked from its
-  /// handler during this call (the read is answered with no value): the
-  /// attribute declares the type of the values the handler will produce,
-  /// a handler may have side effects, and a node that has no value yet
-  /// (a handler throwing `Bad_NoData`, say) would otherwise refuse the
-  /// change. For a node with a stored value ([addVariableNode]) the value
-  /// is checked: `Bad_TypeMismatch` when it does not fit.
+  /// The ValueRank written is [valueRank] when given (-3 ScalarOrOneDimension,
+  /// -2 Any, -1 Scalar, 0 OneOrMoreDimensions, n ≥ 1 an n-dimensional array),
+  /// else Scalar (-1) with [scalar] (the default), else the current one. A
+  /// [valueRank] makes [scalar] irrelevant (passing `scalar: false` with
+  /// `valueRank: -1` is asserted against). E.g. a `String[20]`:
+  /// `setDataType(node, NodeId.uastring, valueRank: 1, arrayDimensions: [20])`.
+  ///
+  /// The ArrayDimensions written are [arrayDimensions] when given, one
+  /// length per dimension (0 for an unknown length); an empty list clears
+  /// them. Left out, they are kept while the ValueRank stays and cleared when
+  /// it changes (they cannot fit a different ValueRank). A non-empty list
+  /// must have exactly ValueRank entries, each 0…2³²-1, and a [valueRank]
+  /// must be -3 or more: otherwise an [ArgumentError], and nothing is
+  /// written.
+  ///
+  /// A call that changes none of DataType, ValueRank and ArrayDimensions is a
+  /// no-op. Otherwise the attributes are written in this order, which
+  /// open62541's consistency checks require (a ValueRank must fit the stored
+  /// ArrayDimensions and vice versa): (1) the stored ArrayDimensions are
+  /// cleared when the ValueRank changes or they are to be cleared, (2) the
+  /// ValueRank, (3) the new ArrayDimensions, (4) the DataType. When one of
+  /// the writes fails the ones before it are undone and the status is thrown.
+  /// (Clearing the ArrayDimensions under a positive ValueRank needs the
+  /// package's open62541 patch, see `hook/build.dart`.)
+  ///
+  /// open62541 checks the node's current value against each new attribute.
+  /// For a data-source node the value is not asked from its handler during
+  /// this call (the read is answered with no value): the attributes declare
+  /// the type of the values the handler will produce, a handler may have side
+  /// effects, and a node that has no value yet (a handler throwing
+  /// `Bad_NoData`, say) would otherwise refuse the change. For a node with a
+  /// stored value ([addVariableNode]) the value is checked:
+  /// `Bad_TypeMismatch` when it does not fit the DataType, the ValueRank
+  /// (a scalar for an array rank, an array for Scalar) or the
+  /// ArrayDimensions (more elements than declared).
   ///
   /// Throws a [UaStatusException] with open62541's status, e.g.
   /// `Bad_NodeIdUnknown` for a missing node, `Bad_AttributeIdInvalid` for a
-  /// node that is not a variable, `Bad_TypeMismatch` for a DataType the
-  /// node's VariableType does not allow.
-  void setDataType(NodeId nodeId, NodeId dataType, {bool scalar = true}) {
-    if (readDataType(nodeId) == dataType && (!scalar || readValueRank(nodeId) == raw.UA_VALUERANK_SCALAR)) {
+  /// node that is not a variable, `Bad_TypeMismatch` for attributes the
+  /// node's VariableType or stored value does not allow.
+  void setDataType(NodeId nodeId, NodeId dataType, {bool scalar = true, int? valueRank, List<int>? arrayDimensions}) {
+    assert(
+      valueRank == null || scalar || valueRank != raw.UA_VALUERANK_SCALAR,
+      'scalar: false contradicts valueRank: -1',
+    );
+    if (valueRank != null && valueRank < raw.UA_VALUERANK_SCALAR_OR_ONE_DIMENSION) {
+      throw ArgumentError.value(valueRank, 'valueRank', 'must be -3 or more');
+    }
+    for (final length in arrayDimensions ?? const <int>[]) {
+      if (length < 0 || length > 0xFFFFFFFF) {
+        throw ArgumentError.value(arrayDimensions, 'arrayDimensions', 'a length must be 0…2^32-1');
+      }
+    }
+    final from = _readTypeAttributes(nodeId);
+    final rank = valueRank ?? (scalar ? raw.UA_VALUERANK_SCALAR : from.valueRank);
+    if (arrayDimensions != null && arrayDimensions.isNotEmpty && arrayDimensions.length != rank) {
+      throw ArgumentError.value(arrayDimensions, 'arrayDimensions', 'needs exactly ValueRank ($rank) entries, or none');
+    }
+    final to = (
+      dataType: dataType,
+      valueRank: rank,
+      arrayDimensions: List<int>.unmodifiable(
+        arrayDimensions ?? (rank == from.valueRank ? from.arrayDimensions : const <int>[]),
+      ),
+    );
+    if (_sameTypeAttributes(from, to)) {
       return;
     }
     final previous = _typeWriteNode;
     _typeWriteNode = nodeId;
     try {
-      using((arena) {
-        final id = nodeId.toRaw(allocator: arena);
-        if (scalar) {
-          final status = raw.UA_Server_writeValueRank(_server, id, raw.UA_VALUERANK_SCALAR);
-          if (status != raw.UA_STATUSCODE_GOOD) {
-            throw UaStatusException(status);
-          }
+      try {
+        _writeTypeAttributes(nodeId, from, to);
+      } on UaStatusException {
+        // Undo what was written, from the state the failed write left.
+        try {
+          _writeTypeAttributes(nodeId, _readTypeAttributes(nodeId), from);
+        } on UaStatusException {
+          // The original state was consistent; nothing more to do if it
+          // cannot be restored.
         }
-        final status = raw.UA_Server_writeDataType(_server, id, dataType.toRaw(allocator: arena));
-        if (status != raw.UA_STATUSCODE_GOOD) {
-          throw UaStatusException(status);
-        }
-      }, ua_calloc);
+        rethrow;
+      }
     } finally {
       _typeWriteNode = previous;
     }
@@ -3138,6 +3186,61 @@ class Server {
       // The write dispatcher decodes a structured value by the node's type.
       _dataSourceTypeIds[nodeId] = dataType;
     }
+  }
+
+  _TypeAttributes _readTypeAttributes(NodeId nodeId) =>
+      (dataType: readDataType(nodeId), valueRank: readValueRank(nodeId), arrayDimensions: readArrayDimensions(nodeId));
+
+  static bool _sameTypeAttributes(_TypeAttributes a, _TypeAttributes b) =>
+      a.dataType == b.dataType && a.valueRank == b.valueRank && _sameDimensions(a.arrayDimensions, b.arrayDimensions);
+
+  static bool _sameDimensions(List<int> a, List<int> b) =>
+      a.length == b.length && Iterable<int>.generate(a.length).every((i) => a[i] == b[i]);
+
+  /// Writes the attributes of [to] that differ from [from], in the order
+  /// [setDataType] documents.
+  void _writeTypeAttributes(NodeId nodeId, _TypeAttributes from, _TypeAttributes to) {
+    void check(int status) {
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        throw UaStatusException(status);
+      }
+    }
+
+    using((arena) {
+      final id = nodeId.toRaw(allocator: arena);
+      var dimensions = from.arrayDimensions;
+      // (1) Stored ArrayDimensions fit only the current ValueRank.
+      if (dimensions.isNotEmpty && (to.valueRank != from.valueRank || to.arrayDimensions.isEmpty)) {
+        check(_writeArrayDimensions(id, const [], arena));
+        dimensions = const [];
+      }
+      // (2)
+      if (to.valueRank != from.valueRank) {
+        check(raw.UA_Server_writeValueRank(_server, id, to.valueRank));
+      }
+      // (3)
+      if (!_sameDimensions(to.arrayDimensions, dimensions)) {
+        check(_writeArrayDimensions(id, to.arrayDimensions, arena));
+      }
+      // (4)
+      if (to.dataType != from.dataType) {
+        check(raw.UA_Server_writeDataType(_server, id, to.dataType.toRaw(allocator: arena)));
+      }
+    }, ua_calloc);
+  }
+
+  /// UA_Server_writeArrayDimensions with a UInt32 array variant; an empty
+  /// [dimensions] is a null array (what a node created without them has).
+  int _writeArrayDimensions(raw.UA_NodeId id, List<int> dimensions, Arena arena) {
+    final variant = arena<raw.UA_Variant>();
+    variant.ref.type = getTypeByIndex(raw.UA_TYPES_UINT32);
+    variant.ref.arrayLength = dimensions.length;
+    if (dimensions.isNotEmpty) {
+      final data = arena<ffi.Uint32>(dimensions.length);
+      data.asTypedList(dimensions.length).setAll(0, dimensions);
+      variant.ref.data = data.cast();
+    }
+    return raw.UA_Server_writeArrayDimensions(_server, id, variant.ref);
   }
 
   /// The DataType attribute of the variable [nodeId] (`BaseDataType`,
@@ -3166,6 +3269,27 @@ class Server {
         throw UaStatusException(status);
       }
       return out.value;
+    }, ua_calloc);
+  }
+
+  /// The ArrayDimensions attribute of the variable [nodeId]: the length of
+  /// each dimension (0 for an unknown length), empty when the node has none
+  /// (a scalar, or an array whose lengths are not declared). Throws a
+  /// [UaStatusException] like [setDataType].
+  List<int> readArrayDimensions(NodeId nodeId) {
+    return using((arena) {
+      final out = arena.using(raw.UA_Variant_new(), raw.UA_Variant_delete);
+      final status = raw.UA_Server_readArrayDimensions(_server, nodeId.toRaw(allocator: arena), out);
+      if (status != raw.UA_STATUSCODE_GOOD) {
+        throw UaStatusException(status);
+      }
+      final variant = out.ref;
+      if (variant.arrayLength == 0 ||
+          variant.data == ffi.nullptr ||
+          variant.type != getTypeByIndex(raw.UA_TYPES_UINT32)) {
+        return const <int>[];
+      }
+      return List<int>.unmodifiable(variant.data.cast<ffi.Uint32>().asTypedList(variant.arrayLength));
     }, ua_calloc);
   }
 
@@ -5222,3 +5346,6 @@ class Server {
     }
   }
 }
+
+/// The attributes [Server.setDataType] writes.
+typedef _TypeAttributes = ({NodeId dataType, int valueRank, List<int> arrayDimensions});

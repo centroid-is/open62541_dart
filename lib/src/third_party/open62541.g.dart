@@ -1419,6 +1419,9 @@ external ffi.Pointer<UA_Server> UA_Server_newWithConfig(ffi.Pointer<UA_ServerCon
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_Byte>)>()
 external int UA_Server_readAccessLevel(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_Byte> out);
 
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_Variant>)>()
+external int UA_Server_readArrayDimensions(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_Variant> out);
+
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, ffi.Pointer<UA_NodeId>)>()
 external int UA_Server_readDataType(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, ffi.Pointer<UA_NodeId> out);
 
@@ -1544,6 +1547,9 @@ external int UA_Server_triggerWriterGroupPublish(ffi.Pointer<UA_Server> server, 
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_Byte)>()
 external int UA_Server_writeAccessLevel(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, int accessLevel);
+
+@ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_Variant)>()
+external int UA_Server_writeArrayDimensions(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_Variant arrayDimensions);
 
 @ffi.Native<UA_StatusCode Function(ffi.Pointer<UA_Server>, UA_NodeId, UA_NodeId)>()
 external int UA_Server_writeDataType(ffi.Pointer<UA_Server> server, UA_NodeId nodeId, UA_NodeId dataType);
