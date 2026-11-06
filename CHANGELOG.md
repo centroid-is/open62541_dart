@@ -4,6 +4,40 @@ The version number tracks the bundled [open62541](https://github.com/open62541/o
 release, followed by a package revision suffix (`+1`, `+2`, ...) for Dart-side
 changes that ship the same native library version.
 
+## 1.5.10+2
+
+- **`Server.setDataType` writes ValueRank and ArrayDimensions.** New named
+  parameters `valueRank` and `arrayDimensions`
+  (`setDataType(node, NodeId.uastring, valueRank: 1, arrayDimensions: [20])`
+  declares a `String[20]`); `scalar` keeps its meaning when `valueRank` is
+  left out. Before, an array node kept ValueRank Any (-2) and no
+  ArrayDimensions, which strict clients (UaExpert, Ignition) show as "scalar
+  or array". ArrayDimensions left out are kept while the ValueRank stays and
+  cleared when it changes; an empty list clears them; a non-empty list that
+  does not have ValueRank entries (or a ValueRank below -3) is an
+  `ArgumentError` before anything is written. The no-op check now compares
+  all three attributes, so a call that changes only the ValueRank or only the
+  ArrayDimensions is applied, and an array node turns back into a scalar of
+  the same DataType in one call: CentroidM's detour through BaseDataType in
+  `lib/src/north/address_space.dart` is no longer needed. The attributes are
+  written in the order open62541's consistency checks need (clear stale
+  ArrayDimensions, ValueRank, new ArrayDimensions, DataType); a failed write
+  undoes the ones before it. Data-source nodes still answer the value checks
+  with "no value"; a stored value that does not fit is `Bad_TypeMismatch`.
+- **`Server.readArrayDimensions(nodeId)`** returns the ArrayDimensions
+  attribute (empty when the node has none). New raw bindings
+  `UA_Server_readArrayDimensions` and `UA_Server_writeArrayDimensions`
+  (exported functions in open62541 1.5.10; hand-inserted into
+  `open62541.g.dart` and listed in `tool/ffigen.dart`).
+- **open62541 patch: ArrayDimensions can always be cleared.**
+  `writeArrayDimensionsAttribute` required an empty ArrayDimensions list to
+  have ValueRank entries, and `writeValueRank` requires the new ValueRank to
+  fit the stored ArrayDimensions, so a variable with ValueRank 1 and
+  ArrayDimensions `[20]` could never become a scalar again. OPC UA Part 3,
+  5.6.2 makes the attribute optional for a positive ValueRank; the patch
+  (`_patchClearArrayDimensions` in `hook/build.dart`) skips the rank check
+  for an empty list only. The native library is rebuilt.
+
 ## 1.5.10+1
 
 - **`requestTimeout` on `Client` and `ClientIsolate`.** open62541's

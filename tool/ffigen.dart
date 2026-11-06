@@ -104,6 +104,8 @@ Future<void> main() async {
     'UA_Server_writeDataType',
     'UA_Server_readValueRank',
     'UA_Server_writeValueRank',
+    'UA_Server_readArrayDimensions',
+    'UA_Server_writeArrayDimensions',
 
     'UA_ServerConfig_setMinimal',
     'UA_ServerConfig_setBasics_withPort',
