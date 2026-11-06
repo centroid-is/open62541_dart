@@ -507,7 +507,12 @@ Future<void> _patchClearArrayDimensions(Uri sourceDir) async {
        !compatibleValueRankArrayDimensions(server, session, node->valueRank,
                                            arrayDimensionsSize)) {''';
 
-  final matches = original.allMatches(content).length;
+  // `_patchAsyncHistoryRead` edits this file first with `git apply`, which
+  // on a Windows runner (core.autocrlf) writes it back with CRLF line
+  // endings; match and patch in the file's own line endings.
+  final eol = content.contains('\r\n') ? '\r\n' : '\n';
+  final anchor = original.replaceAll('\n', eol);
+  final matches = anchor.allMatches(content).length;
   if (matches != 1) {
     throw Exception(
       'Cannot apply clear-array-dimensions patch: expected exactly 1 occurrence of the '
@@ -515,7 +520,7 @@ Future<void> _patchClearArrayDimensions(Uri sourceDir) async {
       'The upstream source changed shape — re-verify and update the anchor.',
     );
   }
-  content = content.replaceFirst(original, patched);
+  content = content.replaceFirst(anchor, patched.replaceAll('\n', eol));
   await targetFile.writeAsString(content);
 }
 
