@@ -29,6 +29,7 @@ a Schneider **M241** and a Beckhoff **TwinCAT** (the rest against the emulators)
 
 - `scalar_roundtrip_test.dart` — every scalar type (+ array, live counter), all controllers.
 - `complex_type_test.dart` — struct round-trip; TwinCAT & M262 only.
+- `time_test.dart` — TwinCAT `TIME` (`MAIN.timeTest`): Int64 ms on the wire, range 0..2³²−1 ms; TwinCAT only.
 - `timing_test.dart` — read/write/struct round-trip latency (min/avg/p95/max) + accuracy under repetition.
 - `session_management_test.dart` — the session solutions above.
 - `reconnect_test.dart` — reconnection + no-session-accumulation via toxiproxy.

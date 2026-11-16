@@ -63,6 +63,9 @@ class PlcSession {
       },
       certificate: needsCert ? File(config.certPath).readAsBytesSync() : null,
       privateKey: needsCert ? File(config.keyPath).readAsBytesSync() : null,
+      // The controllers' self-signed server certs are not pinned in the test
+      // setup; a client certificate requires either a trust list or this.
+      acceptAllCertificates: needsCert,
       allowUnencryptedPassword: config.security == PlcSecurity.none,
       // SHORT timeouts so an abandoned session/channel is reaped by the PLC.
       requestedSessionTimeout: requestedSessionTimeout ?? config.sessionTimeout,
