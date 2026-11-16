@@ -6,6 +6,25 @@ changes that ship the same native library version.
 
 ## 1.5.10+2
 
+- **Fix: writing a value of a vendor DataType** (Beckhoff TwinCAT `TIME`,
+  `STRING`, ...). `Client.read` reports the node's DataType as the value's
+  `typeId`, and for TwinCAT's `TIME` that is `ns=3;i=3005`, a subtype of
+  Int64. Writing such a value back, or one built with that `typeId`, failed in
+  the client with `Unknown Namespace0Id value: 3005` before anything was sent:
+  the namespace was ignored and the number looked up among the NS0 types.
+  `Client.write` (and `ClientIsolate.write`, and the inputs of `call`) now
+  resolve a DataType that is not a built-in type to the built-in type it
+  derives from, by following HasSubtype on the server (cached per client, at
+  most `schemaCacheSize` entries), and write the value as that type; an
+  enumeration goes as Int32. This also covers NS0 subtypes such as Duration
+  (i=290). A DataType that derives from no built-in type is an
+  `ArgumentError` naming it. `Client.read` is unchanged. Structures are
+  unaffected. Regression test: `test/write_vendor_datatype_test.dart`
+  (in-process server with a TwinCAT-shaped `TIME` type) and
+  `test/plc/time_test.dart` (real TwinCAT: `MAIN.timeTest`).
+- PLC test harness: a client certificate needs a trust list or
+  `acceptAllCertificates` since 1.5.10, so the harness now accepts the
+  controllers' self-signed server certificates.
 - **`Server.setDataType` writes ValueRank and ArrayDimensions.** New named
   parameters `valueRank` and `arrayDimensions`
   (`setDataType(node, NodeId.uastring, valueRank: 1, arrayDimensions: [20])`

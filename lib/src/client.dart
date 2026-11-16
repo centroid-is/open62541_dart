@@ -1154,8 +1154,22 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     return false;
   }
 
+  /// Writes [value] to the Value attribute of [nodeId].
+  ///
+  /// A [DynamicValue.typeId] that is not a built-in OPC UA type — a vendor
+  /// DataType such as TwinCAT's `TIME` (`ns=3;i=3005`, a subtype of Int64),
+  /// which [read] reports as the value's typeId — is written as the built-in
+  /// type it derives from, found by following HasSubtype on the server (once
+  /// per DataType, then cached). So a value read, changed and written back
+  /// keeps working. A DataType that derives from no built-in type is an
+  /// [ArgumentError] naming it, and nothing is written.
   @override
-  Future<void> write(NodeId nodeId, DynamicValue value) {
+  Future<void> write(NodeId nodeId, DynamicValue value) async {
+    if (_client == ffi.nullptr) throw const ClientDeletedException();
+    return _writeEncodable(nodeId, await _encodableForWrite(value));
+  }
+
+  Future<void> _writeEncodable(NodeId nodeId, DynamicValue value) {
     // open62541 encodes the request before the service call returns, so the
     // buffer behind a string NodeId is scratch until then, not until the
     // write completes.
@@ -1165,6 +1179,103 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     } finally {
       arena.releaseAll();
     }
+  }
+
+  /// The built-in DataType a value of a non-built-in DataType is written as,
+  /// by that DataType's id. At most [schemaCacheSize] entries.
+  final Map<NodeId, NodeId> _builtinTypeOf = {};
+
+  /// NS0 DataTypes that are abstract: a value is never encoded as one, so the
+  /// HasSubtype walk goes on past them (Enumeration is handled on its own).
+  static final _abstractNs0Types = {
+    22, // Structure
+    24, // BaseDataType
+    26, // Number
+    27, // Integer
+    28, // UInteger
+    29, // Enumeration
+  };
+
+  /// Whether [valueToVariant] encodes [typeId] as is: a numeric NS0 id it
+  /// knows. Anything else (a vendor DataType, or an NS0 subtype such as
+  /// Duration i=290) is resolved by [_builtinTypeFor] first.
+  static bool _isKnownNs0Type(NodeId typeId) =>
+      typeId.namespace == 0 && typeId.isNumeric() && Namespace0Id.values.any((t) => t.value == typeId.numeric);
+
+  /// A structure, or an array of them: the serializer encodes those by their
+  /// own typeId (as an ExtensionObject), so their DataType is left alone.
+  static bool _isStructValue(DynamicValue v) =>
+      v.isObject || (v.isArray && v.asArray.isNotEmpty && _isStructValue(v.asArray.first));
+
+  static bool _needsBuiltinType(DynamicValue v) {
+    if (_isStructValue(v)) return false;
+    if (v.typeId != null && !_isKnownNs0Type(v.typeId!)) return true;
+    return v.isArray && v.asArray.any(_needsBuiltinType);
+  }
+
+  /// [value] with every non-built-in typeId replaced by the built-in type it
+  /// derives from. [value] itself is not changed: it is copied when anything
+  /// needs replacing, and returned as is otherwise.
+  Future<DynamicValue> _encodableForWrite(DynamicValue value) async {
+    if (!_needsBuiltinType(value)) return value;
+    final copy = DynamicValue.from(value);
+    Future<void> replace(DynamicValue v) async {
+      if (v.typeId != null && !_isKnownNs0Type(v.typeId!)) {
+        v.typeId = await _builtinTypeFor(v.typeId!);
+      }
+      if (v.isArray) {
+        for (final e in v.asArray) {
+          await replace(e);
+        }
+      }
+    }
+
+    await replace(copy);
+    return copy;
+  }
+
+  /// The built-in DataType [dataType] derives from: the first encodable NS0
+  /// type up its HasSubtype chain (Int32 for an enumeration).
+  Future<NodeId> _builtinTypeFor(NodeId dataType) async {
+    final cached = _builtinTypeOf[dataType];
+    if (cached != null) return cached;
+    ArgumentError noBuiltin() => ArgumentError.value(
+      dataType,
+      'typeId',
+      'cannot write a value of DataType $dataType: it does not derive (HasSubtype) from a built-in '
+          'OPC UA type; set DynamicValue.typeId to the built-in type',
+    );
+    Future<NodeId> walk() async {
+      final seen = <NodeId>{};
+      var current = dataType;
+      while (true) {
+        // Enumeration: an enum value is an Int32 on the wire.
+        if (current == NodeId.fromNumeric(0, 29)) return NodeId.int32;
+        if (_isKnownNs0Type(current) && !_abstractNs0Types.contains(current.numeric)) return current;
+        if (!seen.add(current) || seen.length > 32) throw noBuiltin();
+        final List<BrowseResultItem> refs;
+        try {
+          refs = await browse(
+            current,
+            direction: raw.UA_BrowseDirection.UA_BROWSEDIRECTION_INVERSE.value,
+            referenceTypeId: NodeId.hasSubtype,
+            includeSubtypes: false,
+          );
+        } on _BrowseResultError catch (e) {
+          // No such node: nothing to derive a built-in type from.
+          if (e.statusCode == raw.UA_STATUSCODE_BADNODEIDUNKNOWN) throw noBuiltin();
+          rethrow;
+        }
+        final parent = refs.where((r) => !r.isForward).firstOrNull;
+        if (parent == null) throw noBuiltin();
+        current = parent.nodeId;
+      }
+    }
+
+    final resolved = await walk();
+    if (_builtinTypeOf.length >= schemaCacheSize) _builtinTypeOf.clear();
+    _builtinTypeOf[dataType] = resolved;
+    return resolved;
   }
 
   Future<void> _write(raw.UA_NodeId nodeId, DynamicValue value) {
@@ -3157,6 +3268,9 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
   @override
   Future<List<DynamicValue>> call(NodeId objectId, NodeId methodId, Iterable<DynamicValue> args) async {
     _requireClient();
+    // An input of a vendor DataType goes as its built-in type, as in [write].
+    final inputs = [for (final a in args) await _encodableForWrite(a)];
+    _requireClient();
     final completer = Completer<List<DynamicValue>>();
     final callbackInner =
         ffi.NativeCallable<
@@ -3251,7 +3365,7 @@ class Client implements ClientApi, DataValueMonitoringApi, HistoryReadApi {
     final int statusCode;
     try {
       statusCode = using((arena) {
-        final values = args.toList();
+        final values = inputs;
         final inputArgs = arena<raw.UA_Variant>(values.length);
         for (var i = 0; i < values.length; i++) {
           // A shallow copy: the payload stays the variant's, freed with it.

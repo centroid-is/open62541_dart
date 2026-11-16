@@ -6,6 +6,9 @@ VAR
     // Local init guard so the fixture starts from a known, non-zero-ish state
     // the very first cycle (optional -- tests write their own values).
     bInit : BOOL := TRUE;
+    // TIME read/write (test/plc/time_test.dart): published as ns=4;s=MAIN.timeTest.
+    {attribute 'OPC.UA.DA' := '1'}
+    timeTest : TIME;
 END_VAR
 ]]></Declaration>
     <Implementation>
