@@ -31,6 +31,10 @@ jobs:
 
       - name: Set up Dart
         uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          # Pinned: an unpinned `stable` moved to 3.14 under us, and 3.14 no
+          # longer copies native assets to .dart_tool/lib. Bump on purpose.
+          sdk: 3.14.0
 
       - name: Install dependencies
         run: dart pub get
@@ -68,6 +72,10 @@ jobs:
 
       - name: Set up Dart
         uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          # Pinned: an unpinned `stable` moved to 3.14 under us, and 3.14 no
+          # longer copies native assets to .dart_tool/lib. Bump on purpose.
+          sdk: 3.14.0
 
       - name: Install dependencies
         run: dart pub get
@@ -84,6 +92,10 @@ jobs:
 
       - name: Set up Dart
         uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          # Pinned: an unpinned `stable` moved to 3.14 under us, and 3.14 no
+          # longer copies native assets to .dart_tool/lib. Bump on purpose.
+          sdk: 3.14.0
 
       - name: Install dependencies
         run: dart pub get
@@ -97,10 +109,17 @@ jobs:
           ASAN_OPTIONS="detect_leaks=0,halt_on_error=1" \
           dart test test/native_sanitizer_test.dart
 
+      # Every libopen62541.so the hooks built must be sanitised. Found rather
+      # than named: the hooks runner's output layout is the SDK's business
+      # (Dart 3.14 stopped copying the library to .dart_tool/lib).
       - name: Assert the library is sanitised
         run: |
-          LIB=.dart_tool/lib/libopen62541.so
-          nm -D "$LIB" | grep -q '__asan_' || { echo "::error::$LIB has no __asan_ symbols; the lane is not sanitising"; exit 1; }
+          mapfile -t LIBS < <(find .dart_tool -name libopen62541.so)
+          [ ${#LIBS[@]} -gt 0 ] || { echo "::error::no libopen62541.so under .dart_tool; the build step built nothing"; exit 1; }
+          for LIB in "${LIBS[@]}"; do
+            echo "checking $LIB"
+            nm -D "$LIB" | grep -q '__asan_' || { echo "::error::$LIB has no __asan_ symbols; the lane is not sanitising"; exit 1; }
+          done
 
       - name: Run tests with AddressSanitizer
         run: |
